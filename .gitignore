@@ -1,0 +1,3 @@
+# Ignore nested repositories
+compliance-client/
+compliance-sys-api/
