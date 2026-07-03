@@ -17,25 +17,33 @@ CREATE TABLE `eutr_steps`(
 );
 CREATE TABLE `eutr_templates`(
     `Id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    `Code` VARCHAR(255) NOT NULL,
     `Name` VARCHAR(255) NULL,
+    `VendorCode` VARCHAR(50) NULL,
     `IsDefault` TINYINT NULL DEFAULT 0,
-    `VersionId` TINYINT NULL,
+    `VersionId` TINYINT NOT NULL DEFAULT 1,
     `CreatedBy` VARCHAR(50) NULL,
     `CreatedDate` DATETIME NULL,
     `UpdatedBy` VARCHAR(50) NULL,
-    `UpdatedDate` DATETIME NULL
+    `UpdatedDate` DATETIME NULL,
+    `AlertFor` VARCHAR(50) NOT NULL,
+    `IsDeleted` TINYINT NULL DEFAULT 0,
+    `IsHide` TINYINT NULL DEFAULT 0
 );
 CREATE TABLE `eutr_template_details`(
     `Id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     `TemplateId` BIGINT UNSIGNED NULL,
+    `ParentId` BIGINT NOT NULL,
     `StepId` BIGINT UNSIGNED NULL,
     `RequirementType` TINYINT NULL DEFAULT 0,
+    `TakeFrom` TINYINT NOT NULL,
     `DisplayOrder` INT NULL DEFAULT 0,
     `CreatedBy` VARCHAR(50) NULL,
     `CreatedDate` DATETIME NULL,
     `UpdatedBy` VARCHAR(50) NULL,
     `UpdatedDate` DATETIME NULL
 );
+
 CREATE TABLE `eutr_references`(
     `Id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     `RefId` BIGINT UNSIGNED NULL,

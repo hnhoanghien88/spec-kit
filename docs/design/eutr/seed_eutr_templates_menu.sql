@@ -1,0 +1,54 @@
+-- ============================================================
+-- Seed script: EUTR Templates menu & permissions
+-- Run against the Authorization database (API_AUTHZ)
+-- ============================================================
+-- Menu entry follows the same pattern as eutr-steps (id=1)
+-- and eutr-masters (id=21). The frontend expects:
+--   code = "eutr-templates"
+--   url  = "/eutr/templates"
+--   parentId = <id of "EUTR system" parent menu>
+--
+-- Permission policies used by EutrTemplatesController:
+--   EutrTemplates.ReadAll   (POST get-all)
+--   EutrTemplates.Read      (GET {id})
+--   EutrTemplates.Create    (POST, POST import)
+--   EutrTemplates.Update    (PUT {id})
+--   EutrTemplates.Delete    (DELETE {id}, POST delete-multi)
+--   EutrTemplates.Download  (GET export)
+-- ============================================================
+
+-- 1. Insert menu item (adjust parentId and sortOrder to match your environment)
+-- INSERT INTO user_menu (Code, Name, Url, ParentId, SortOrder, Icon, HideInMenu, AppCode)
+-- VALUES ('eutr-templates', 'EUTR templates', '/eutr/templates', <EUTR_SYSTEM_PARENT_ID>, 3, NULL, 0, '<APP_CODE>');
+
+-- 2. Insert permissions for the menu item
+-- INSERT INTO menu_permission (MenuId, PermissionCode, PermissionName)
+-- SELECT Id, 'ReadAll',  'Read All'  FROM user_menu WHERE Code = 'eutr-templates'
+-- UNION ALL
+-- SELECT Id, 'Read',     'Read'      FROM user_menu WHERE Code = 'eutr-templates'
+-- UNION ALL
+-- SELECT Id, 'Create',   'Create'    FROM user_menu WHERE Code = 'eutr-templates'
+-- UNION ALL
+-- SELECT Id, 'Update',   'Update'    FROM user_menu WHERE Code = 'eutr-templates'
+-- UNION ALL
+-- SELECT Id, 'Delete',   'Delete'    FROM user_menu WHERE Code = 'eutr-templates'
+-- UNION ALL
+-- SELECT Id, 'Download', 'Download'  FROM user_menu WHERE Code = 'eutr-templates';
+
+-- 3. Grant permissions to roles (repeat for each role that needs access)
+-- INSERT INTO role_permission (RoleId, MenuId, PermissionCode)
+-- SELECT <ROLE_ID>, Id, 'ReadAll'  FROM user_menu WHERE Code = 'eutr-templates'
+-- UNION ALL
+-- SELECT <ROLE_ID>, Id, 'Read'     FROM user_menu WHERE Code = 'eutr-templates'
+-- UNION ALL
+-- SELECT <ROLE_ID>, Id, 'Create'   FROM user_menu WHERE Code = 'eutr-templates'
+-- UNION ALL
+-- SELECT <ROLE_ID>, Id, 'Update'   FROM user_menu WHERE Code = 'eutr-templates'
+-- UNION ALL
+-- SELECT <ROLE_ID>, Id, 'Delete'   FROM user_menu WHERE Code = 'eutr-templates'
+-- UNION ALL
+-- SELECT <ROLE_ID>, Id, 'Download' FROM user_menu WHERE Code = 'eutr-templates';
+
+-- NOTE: Table and column names are approximate — verify against the actual
+-- authorization database schema before running. Replace placeholder values
+-- (<EUTR_SYSTEM_PARENT_ID>, <APP_CODE>, <ROLE_ID>) with real values.
