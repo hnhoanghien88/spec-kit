@@ -2,7 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-07-02
-**Updated**: 2026-07-03
+**Updated**: 2026-07-07
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -116,3 +116,61 @@
   split into 3a (in-place, <24h) and 3b (versioning, ≥24h, with a `CreatedDate` backdating SQL
   snippet for testing). New Scenario 12 (Back button warning) added. Edge cases and
   Post-Validation Checks updated accordingly.
+
+### Update 2026-07-06 — Free-solo Step Combobox + Auto-create Step
+
+- **New: Free-solo Step combobox** — FR-007, FR-008b updated: combobox Step in Add step / Edit
+  step MUST support both selecting an existing EUTR step and typing a new step name not in the
+  list (free-solo). Acceptance scenario 3a added to US2; scenario 8 added to US3.
+- **New: Auto-create step on Save** — FR-007a added: on Save template, any step with a
+  freely-typed name that doesn't match (case-insensitive, trimmed) an existing EUTR step MUST be
+  auto-created in `eutr_steps` before saving `eutr_template_details`, then referenced by the new
+  StepId. Duplicate new names within the same Save MUST reuse one newly-created StepId.
+  Cross-references feature 001-eutr-steps (new step appears immediately in that screen).
+- Key Entities: EUTR Step updated to document the auto-create behavior and dependency on
+  001-eutr-steps' create flow. Assumptions updated with the name-matching rule (case-insensitive,
+  trimmed) and dedupe-within-save behavior.
+- Edge cases updated: empty EUTR steps list no longer blocks Add step (free-solo allows typing);
+  added cases for name-match reuse (no duplicate creation) and blank/whitespace-only typed names.
+- SC-016 added to verify auto-created steps appear immediately in the EUTR Steps screen.
+
+### Update 2026-07-06 — Revert Vendor API to Generic Reference (refType=13)
+
+- **Change: Vendor API reverted** — FR-002, FR-005, FR-005b, FR-011 updated: Vendor combobox
+  (`options={vendors}` in `EutrTemplatesAddEdit.jsx`) and Vendor name grid lookup MUST switch back
+  from the dedicated `GET /api/dynamics/vendors` endpoint to the generic
+  `POST /api/dynamics/reference` API with `refType = 13`. Frontend reuses the generic reference
+  component/hook (e.g. `ReferenceObjectAutocomplete` / `useReferenceObjects`) instead of the
+  `useVendors` hook.
+- **FR-018 marked Superseded** — the dedicated `GET /api/dynamics/vendors` endpoint added in
+  Update 2/3 is no longer the data source for this feature; it may still exist in `DynController`
+  unused by EUTR Templates.
+- User stories (1, 2, 3), acceptance scenarios, Key Entities (D365 Vendor), Success Criteria
+  (SC-003, SC-009), and Assumptions updated to reflect refType=13 as the vendor data source.
+  Historical Update 2/3 clarification entries preserved as-is for traceability.
+
+### Update 2026-07-07 — Alert For Combobox from compl_group_email
+
+- **Change: Alert for field type** — FR-005, FR-010 updated: Alert for switches from a free-text
+  textbox to a single-select combobox sourced from `compl_group_email` via `GET /api/group-email`
+  (`ComplGroupEmailController`), filtered to `GroupType=Alert(2)` and `IsAddition=false`, reusing
+  the existing "Alert group" combobox pattern already used elsewhere in the app (e.g.
+  `ComplianceMasterForm`, `MasterDefaultForm` via `GetAllGroupEmailUseCase` / `groupEmailType.ALERT`).
+- **New: FR-005c, FR-002a** — on Save, the selected group's Id (not Name) MUST be persisted into
+  the `AlertFor` column; on the main grid, the Alert for column MUST look up and display the
+  group's Name from `compl_group_email` by that Id. FR-001, FR-011 updated accordingly.
+- Acceptance scenarios added: US1 (2a — grid displays group Name), US2 (1a, 1b — combobox load +
+  Id persisted on save), US3 (7a, 7b — combobox pre-selects current group on Edit + save on
+  change).
+- Edge cases added: AlertFor Id no longer found in `compl_group_email` (blank display); empty
+  Alert group list blocks Save until a group exists.
+- Key Entities updated: EUTR Template's AlertFor attribute redefined as an Id reference to
+  `compl_group_email.Id` (was free text); new "Compl Group Email" key entity added.
+- SC-017, SC-018 added to verify combobox data source/pre-selection and Id-persist/Name-display
+  round trip.
+- Assumptions updated: reuse of existing group-email API/frontend pattern, single-select vs. the
+  multi-select many-to-many pattern used by other forms, AlertFor column type change (free text →
+  numeric Id) to flag for the plan phase, and behavior when a referenced group is later deleted.
+- No new [NEEDS CLARIFICATION] markers — GroupType=Alert filtering and single-select behavior are
+  reasonable defaults derived from the existing codebase convention (Content Quality and
+  Requirement Completeness items above remain unaffected).

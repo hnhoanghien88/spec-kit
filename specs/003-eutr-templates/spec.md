@@ -52,27 +52,76 @@
   trong cây bước mà CHƯA nhấn Save, hệ thống MUST hiển thị cảnh báo xác nhận trước khi rời trang.
   Nếu người dùng chọn rời đi, các thay đổi chưa lưu sẽ KHÔNG được áp dụng (mất thay đổi).
 
+### Session 2026-07-06 (Update 5)
+
+- Change: Đảo ngược lại quyết định ở Update 2/3 — combobox Vendor trên màn hình Add/Edit
+  (`EutrTemplatesAddEdit.jsx`, chỗ `options={vendors}`) MUST đổi logic tải dữ liệu từ endpoint
+  riêng `GET /api/dynamics/vendors` sang API reference chung `POST /api/dynamics/reference` với
+  `refType = 13`. Loại bỏ phụ thuộc vào hook `useVendors`/endpoint vendors riêng; combobox Vendor
+  và tra cứu Vendor name trên grid MUST dùng lại API reference chung (ví dụ qua
+  ReferenceObjectAutocomplete hoặc hook `useReferenceObjects` tương đương) với refType=13, theo
+  đúng pattern các trường reference khác trong hệ thống.
+
+### Session 2026-07-06 (Update 6)
+
+- Feature: Combobox chọn Step trong form Add step / Edit step MUST hỗ trợ vừa chọn step có sẵn
+  (nạp từ danh sách EUTR steps — feature 001-eutr-steps) vừa cho phép gõ tự do (free-solo) một tên
+  step mới chưa có trong danh sách.
+- Change: Khi nhấn Save template (Add hoặc Edit), với mỗi step trong cây có tên được nhập tự do mà
+  KHÔNG khớp (không phân biệt hoa/thường, đã trim khoảng trắng) với bất kỳ step nào đang có trong
+  danh sách EUTR steps, hệ thống MUST tự động tạo mới bản ghi step đó trong bảng eutr_steps (dùng
+  chung API/luồng tạo của feature 001-eutr-steps) TRƯỚC khi lưu eutr_template_details, sau đó dùng
+  StepId vừa tạo để tham chiếu cho step đó trong cây.
+- Change: Nếu nhiều step trong cùng cây bước của một lần Save dùng chung một tên mới (chưa tồn
+  tại), hệ thống chỉ MUST tạo 1 bản ghi step mới duy nhất cho tên đó và dùng chung StepId vừa tạo
+  cho tất cả các step trùng tên trong lần Save đó (tránh tạo trùng lặp).
+- Change: Step được tự động tạo qua màn hình Add/Edit Template MUST xuất hiện ngay trong danh sách
+  màn hình EUTR Steps (001-eutr-steps) sau khi Save thành công, với người tạo/ngày tạo ghi nhận tự
+  động như quy trình tạo step thông thường.
+
+### Session 2026-07-07 (Update 7)
+
+- Change: Trường **Alert for** trên màn hình Add/Edit đổi từ textbox nhập tự do sang **combobox**
+  chọn một (single-select) danh sách nhóm email lấy từ bảng `compl_group_email` (qua
+  `GET /api/group-email`, theo `ComplGroupEmailController`). Combobox hiển thị **Name** của group,
+  chỉ nạp các group có `GroupType = Alert (2)` và `IsAddition = false` (loại nhóm bổ sung/không
+  hoạt động) — theo đúng pattern combobox "Alert" đã có ở các form khác trong hệ thống (ví dụ
+  `ComplianceMasterForm`, `MasterDefaultForm`, dùng `groupEmailType.ALERT`).
+- Change: Khi nhấn Save template (Add hoặc Edit), hệ thống MUST lưu **Id** của group đã chọn (KHÔNG
+  lưu Name) vào cột `AlertFor` của bảng `eutr_templates`.
+- Change: Ở màn hình danh sách chính (grid), cột **Alert for** MUST hiển thị **Name** của group
+  tương ứng, tra cứu từ `compl_group_email` dựa trên Id đã lưu trong `AlertFor` — KHÔNG hiển thị
+  Id thô.
+- Change: Ở màn hình Edit, combobox Alert for MUST tự động chọn sẵn group hiện tại của template
+  (tra cứu theo Id đang lưu trong `AlertFor`).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Xem danh sách EUTR Templates (Priority: P1)
 
 Người dùng vào mục **EUTR system > EUTR templates** từ thanh điều hướng trái và thấy bảng liệt kê
 các template EUTR. Bảng hiển thị Code, Name, Vendor code, Vendor name, Alert for, Is default,
-Version, Created by, Created date. Cột Vendor name được tra cứu từ API riêng `GET /api/dynamics/vendors` (query D365 VendorsV3)
-dựa trên Vendor code. Người dùng có thể chuyển trang khi danh sách dài.
+Version, Created by, Created date. Cột Vendor name được tra cứu từ API reference chung
+`POST /api/dynamics/reference` với `refType = 13` dựa trên Vendor code. Cột Alert for hiển thị
+**Name** của group email cảnh báo, tra cứu từ bảng `compl_group_email` (qua `GET /api/group-email`)
+dựa trên Id đang lưu trong cột `AlertFor` của template — KHÔNG hiển thị Id thô. Người dùng có thể
+chuyển trang khi danh sách dài.
 
 **Why this priority**: Đây là giá trị cốt lõi — xem và tra cứu danh sách template hiện có là thao
 tác đầu tiên người dùng cần trước khi thực hiện bất kỳ hành động nào khác.
 
 **Independent Test**: Mở màn hình, xác nhận bảng tải đúng dữ liệu với vendor name được hiển thị
-chính xác từ API vendors, chuyển trang và thấy trang kế tiếp.
+chính xác từ API reference chung (refType=13), chuyển trang và thấy trang kế tiếp.
 
 **Acceptance Scenarios**:
 
 1. **Given** đang ở mục EUTR system, **When** chọn "EUTR templates" ở thanh trái, **Then** thấy
    breadcrumb "EUTR system > EUTR templates" và bảng với đầy đủ 9 cột.
 2. **Given** danh sách có template với Vendor code hợp lệ, **When** bảng hiển thị, **Then** cột
-   Vendor name hiển thị đúng VendorOrganizationName tương ứng từ API vendors.
+   Vendor name hiển thị đúng VendorOrganizationName tương ứng từ API reference chung (refType=13).
+2a. **Given** danh sách có template với AlertFor lưu Id của một group hợp lệ trong
+   `compl_group_email`, **When** bảng hiển thị, **Then** cột Alert for hiển thị đúng Name của group
+   đó (không hiển thị Id).
 3. **Given** danh sách vượt quá một trang, **When** chọn số trang khác, **Then** bảng hiển thị
    các bản ghi của trang đó.
 
@@ -84,13 +133,19 @@ Người dùng nhấn **Add** trên toolbar, hệ thống chuyển sang màn hì
 với breadcrumb "EUTR system > EUTR templates > Add". Màn hình được chia thành **2 cột** với cột
 trái được mở rộng và cột phải thu hẹp hơn so với trước: cột trái chứa form thông tin header (Code,
 Name, Alert for, Vendor, Default, và nút **Save** đặt ngay dưới checkbox Default), cột phải chứa
-cây bước (step tree) và các thao tác trên step. Người dùng nhập thông tin header (Name, Alert for, chọn
-Vendor từ API vendors, đánh dấu Default) — trường Code do hệ thống tự sinh theo quy tắc prefix
-+ số tăng dần (ví dụ: Templates-001) và hiển thị readonly. Combobox Vendor MUST gọi API riêng
-`GET /api/dynamics/vendors` để hiển thị danh sách vendor (VendorAccountNumber +
-VendorOrganizationName). Sau đó xây dựng cây
-bước bằng cách nhấn **Add step** nhiều lần. Mỗi step được chọn từ danh sách EUTR steps đã có,
-gán loại yêu cầu (Required/Optional) và nguồn lấy tài liệu (PO/Upload manual). Nếu tick chọn
+cây bước (step tree) và các thao tác trên step. Người dùng nhập thông tin header (Name, chọn
+Alert for từ combobox danh sách group email cảnh báo (`compl_group_email`, GroupType=Alert), chọn
+Vendor từ API reference chung refType=13, đánh dấu Default) — trường Code do hệ thống tự sinh
+theo quy tắc prefix + số tăng dần (ví dụ: Templates-001) và hiển thị readonly. Combobox Alert for
+(`GET /api/group-email`, lọc GroupType=Alert(2) và IsAddition=false) hiển thị Name của group; khi
+chọn, hệ thống lưu Id của group đó vào AlertFor. Combobox Vendor
+(`options={vendors}` trong `EutrTemplatesAddEdit.jsx`) MUST gọi API
+`POST /api/dynamics/reference` với `refType = 13` để hiển thị danh sách vendor
+(VendorAccountNumber + VendorOrganizationName). Sau đó xây dựng cây
+bước bằng cách nhấn **Add step** nhiều lần. Mỗi step được chọn từ danh sách EUTR steps đã có
+(combobox hỗ trợ free-solo — cũng có thể gõ trực tiếp một tên step mới chưa có trong danh sách),
+gán loại yêu cầu (Required/Optional) và nguồn lấy tài liệu (PO/Upload manual). Step được gõ mới sẽ
+tự động tạo vào danh sách EUTR steps khi Save template. Nếu tick chọn
 một step cha trước khi Add step, step mới sẽ là con của step đó (tạo cấu trúc đệ quy) — ParentId
 MUST được lưu chính xác vào bảng eutr_template_details. Người dùng có thể **chỉnh sửa step đã
 tạo** bằng cách nhấn icon Edit trên dòng step để đổi step, RequirementType hoặc TakeFrom. Cuối
@@ -103,10 +158,12 @@ sẽ bị mất.
 các bước EUTR cho từng vendor, là dữ liệu nền tảng cho quy trình EUTR.
 
 **Independent Test**: Nhấn Add, xác nhận Code được tự sinh (readonly), xác nhận layout 2 cột với
-cột trái rộng hơn cột phải và nút Save nằm dưới checkbox Default, nhập đầy đủ header với Vendor từ
-API vendors, thêm vài step (cả gốc và con), edit một step đã tạo, lưu, và xác nhận template mới
-xuất hiện trong danh sách với Code đúng định dạng, cây bước đúng cấu trúc, và ParentId được lưu
-chính xác. Thêm step rồi nhấn Back mà chưa Save — xác nhận hệ thống cảnh báo trước khi rời trang.
+cột trái rộng hơn cột phải và nút Save nằm dưới checkbox Default, nhập đầy đủ header với Alert for
+chọn từ combobox group email (compl_group_email) và Vendor từ API reference chung (refType=13),
+thêm vài step (cả gốc và con), edit một step đã tạo, lưu, và xác nhận template mới xuất hiện trong
+danh sách với Code đúng định dạng, cây bước đúng cấu trúc, cột Alert for hiển thị đúng Name của
+group đã chọn, và ParentId được lưu chính xác. Thêm step rồi nhấn Back mà chưa Save — xác nhận hệ
+thống cảnh báo trước khi rời trang.
 
 **Acceptance Scenarios**:
 
@@ -115,8 +172,13 @@ chính xác. Thêm step rồi nhấn Back mà chưa Save — xác nhận hệ th
    readonly + Name + AlertFor + Vendor + Default + nút Save) rộng hơn cột phải (cây bước + thao
    tác step).
 2. **Given** đang ở màn hình tạo mới, **When** mở combobox Vendor, **Then** hệ thống gọi API
-   `GET /api/dynamics/vendors` và hiển thị danh sách vendor gồm VendorAccountNumber và
-   VendorOrganizationName.
+   `POST /api/dynamics/reference` với `refType = 13` và hiển thị danh sách vendor gồm
+   VendorAccountNumber và VendorOrganizationName.
+1a. **Given** đang ở màn hình tạo mới, **When** mở combobox Alert for, **Then** hệ thống gọi API
+   `GET /api/group-email` và hiển thị danh sách Name của các group có GroupType=Alert(2) và
+   IsAddition=false.
+1b. **Given** đã chọn một group trong combobox Alert for và nhấn Save, **When** lưu thành công,
+   **Then** cột `AlertFor` trong bảng eutr_templates lưu Id của group đã chọn (không lưu Name).
 2a. **Given** đang ở màn hình tạo mới hoặc chỉnh sửa, **When** quan sát cột trái, **Then** nút
    Save hiển thị ngay bên dưới checkbox "Set as default template", KHÔNG còn ở thanh tiêu đề.
 2b. **Given** đã thêm một step mới vào cây bước nhưng CHƯA nhấn Save, **When** nhấn nút Back ở
@@ -128,6 +190,10 @@ chính xác. Thêm step rồi nhấn Back mà chưa Save — xác nhận hệ th
    hệ thống điều hướng thẳng về danh sách mà KHÔNG hiển thị cảnh báo.
 3. **Given** đã nhập header và chưa chọn step nào, **When** nhấn Add step, chọn step, gán
    Required và PO, rồi Save step, **Then** step xuất hiện ở gốc cây (ParentId = 0).
+3a. **Given** đang ở form Add step, **When** gõ vào combobox Step một tên chưa có trong danh sách
+   EUTR steps (thay vì chọn từ danh sách), gán Required và PO rồi Save step, **Then** step mới
+   (với tên vừa gõ) xuất hiện trên cây; khi Save template, hệ thống tạo bản ghi step mới trong
+   eutr_steps và dùng StepId đó cho step này trong eutr_template_details.
 4. **Given** đã có step "Forest" ở gốc và tick chọn nó, **When** nhấn Add step, chọn step khác,
    **Then** step mới xuất hiện là con của "Forest" trong cây (lưu ParentId = Id của Forest).
 5. **Given** cây bước có nhiều cấp, **When** người dùng collapse/expand một nhánh, **Then** cây
@@ -147,8 +213,8 @@ chính xác. Thêm step rồi nhấn Back mà chưa Save — xác nhận hệ th
 7. **Given** đã nhập đầy đủ thông tin, **When** nhấn Save ở footer, **Then** hệ thống lưu header
    vào bảng eutr_templates và các step vào bảng eutr_template_details (bao gồm ParentId chính xác
    cho từng step), rồi quay về danh sách.
-8. **Given** đang ở màn hình tạo mới, **When** để trống Name hoặc Alert for và nhấn Save,
-   **Then** hệ thống báo lỗi và không lưu (Code do hệ thống tự sinh nên không cần kiểm tra).
+8. **Given** đang ở màn hình tạo mới, **When** để trống Name hoặc không chọn Alert for rồi nhấn
+   Save, **Then** hệ thống báo lỗi và không lưu (Code do hệ thống tự sinh nên không cần kiểm tra).
 
 ---
 
@@ -156,8 +222,11 @@ chính xác. Thêm step rồi nhấn Back mà chưa Save — xác nhận hệ th
 
 Người dùng nhấn **Edit** trên một dòng trong grid, hệ thống chuyển sang màn hình chỉnh sửa
 (cùng layout 2 cột với màn hình Add) với dữ liệu template hiện tại được tải sẵn. Combobox Vendor
-MUST gọi API riêng `GET /api/dynamics/vendors` và hiển thị vendor hiện tại được chọn sẵn. Người dùng có thể chỉnh
-sửa header (Name, Alert for, Vendor, Default — Code là readonly), thêm/xóa step trong cây bước,
+MUST gọi API `POST /api/dynamics/reference` với `refType = 13` và hiển thị vendor hiện tại được
+chọn sẵn. Combobox Alert for MUST gọi API `GET /api/group-email` và hiển thị group hiện tại
+(tra cứu theo Id đang lưu trong AlertFor) được chọn sẵn. Người dùng có thể chỉnh sửa header
+(Name, Alert for, Vendor, Default — Code là readonly), thêm/xóa step trong cây bước
+(combobox Step khi Add step/Edit step hỗ trợ free-solo — chọn step có sẵn hoặc gõ tên step mới),
 và **chỉnh sửa step đã có** (đổi step, RequirementType, TakeFrom). Khi nhấn Save, hệ thống áp
 dụng logic versioning có điều kiện dựa trên tuổi của bản ghi đang sửa (CreatedDate):
 - Nếu bản ghi đang sửa được tạo **cách đây TRÊN 24 giờ**: hệ thống **không sửa trực tiếp dòng
@@ -173,8 +242,9 @@ Grid chỉ hiển thị phiên bản mới nhất (IsHide = 0).
 chế versioning giúp giữ lại lịch sử thay đổi để truy vết — đồng thời tránh tạo quá nhiều version
 rác khi người dùng sửa nhanh liên tiếp trong thời gian ngắn sau khi tạo.
 
-**Independent Test**: Nhấn Edit trên một template, xác nhận Vendor hiển thị đúng từ API vendors, thay
-đổi step (edit step đã có + thêm/xóa), lưu, và xác nhận: nếu template được tạo trên 24h, dòng cũ
+**Independent Test**: Nhấn Edit trên một template, xác nhận Vendor hiển thị đúng từ API reference
+(refType=13) và Alert for hiển thị đúng group hiện tại (từ `GET /api/group-email`), thay đổi step
+(edit step đã có + thêm/xóa), lưu, và xác nhận: nếu template được tạo trên 24h, dòng cũ
 bị ẩn (IsHide=1) và dòng mới hiển thị với VersionId cao hơn; nếu dưới 24h, dòng hiện tại được cập
 nhật trực tiếp mà không tạo dòng mới. Cây bước đúng với thay đổi, ParentId đúng trong DB.
 
@@ -204,7 +274,18 @@ nhật trực tiếp mà không tạo dòng mới. Cây bước đúng với tha
    combobox, rồi Save template, **Then** StepId mới thay cho StepId cũ được lưu đúng theo logic
    versioning hiện hành (dòng mới hoặc đè lên dòng hiện tại tùy tuổi bản ghi).
 7. **Given** đang mở màn hình Edit, **When** mở combobox Vendor, **Then** hệ thống gọi API
-   `GET /api/dynamics/vendors` và hiển thị danh sách vendor, với vendor hiện tại được chọn sẵn.
+   `POST /api/dynamics/reference` với `refType = 13` và hiển thị danh sách vendor, với vendor
+   hiện tại được chọn sẵn.
+7a. **Given** đang mở màn hình Edit, **When** mở combobox Alert for, **Then** hệ thống gọi API
+   `GET /api/group-email` và hiển thị danh sách group (GroupType=Alert(2), IsAddition=false), với
+   group hiện tại của template (theo Id lưu trong AlertFor) được chọn sẵn.
+7b. **Given** đang edit template, **When** đổi Alert for sang group khác rồi Save, **Then** Id
+   của group mới được lưu vào AlertFor theo đúng logic versioning hiện hành (dòng mới nếu trên
+   24h, đè lên dòng hiện tại nếu dưới 24h).
+8. **Given** đang edit template, **When** thêm một step mới bằng cách gõ tự do một tên chưa có
+   trong danh sách EUTR steps rồi Save step, sau đó Save template, **Then** hệ thống tạo bản ghi
+   step mới trong eutr_steps và lưu step đó vào eutr_template_details với StepId vừa tạo, theo
+   đúng logic versioning hiện hành (dòng mới nếu trên 24h, đè lên dòng hiện tại nếu dưới 24h).
 
 ---
 
@@ -255,11 +336,22 @@ trong danh sách.
 ### Edge Cases
 
 - Khi danh sách rỗng, bảng hiển thị trạng thái "No data" thay vì lỗi.
-- Khi Vendor code trong template không tìm thấy qua API vendors, cột Vendor name hiển thị trống
+- Khi Vendor code trong template không tìm thấy qua API reference (refType=13), cột Vendor name hiển thị trống
   hoặc giá trị mặc định, không gây lỗi cả bảng.
+- Khi Id lưu trong AlertFor không còn tồn tại trong `compl_group_email` (ví dụ group đã bị xóa),
+  cột Alert for trên grid hiển thị trống, không gây lỗi cả bảng.
+- Khi danh sách group (`GET /api/group-email`, GroupType=Alert) rỗng, combobox Alert for trên màn
+  hình Add/Edit hiển thị trạng thái không có lựa chọn và người dùng không thể Save cho đến khi có
+  ít nhất một group Alert được tạo trong màn hình quản lý group email.
 - Khi người dùng cố tạo step con lồng nhiều cấp, cây vẫn hiển thị và hoạt động đúng đệ quy.
-- Khi danh sách EUTR steps rỗng (chưa tạo step nào), combobox Add step hiển thị trống và người
-  dùng nhận được thông báo cần tạo step trước.
+- Khi danh sách EUTR steps rỗng (chưa tạo step nào), combobox Add step vẫn cho phép người dùng
+  gõ tự do (free-solo) để nhập tên step mới — không còn bắt buộc phải tạo step trước ở màn hình
+  001-eutr-steps.
+- Khi tên step người dùng gõ tự do trùng (không phân biệt hoa/thường, đã trim khoảng trắng) với
+  một step đã có trong danh sách EUTR steps, hệ thống MUST dùng lại StepId của step đã có, KHÔNG
+  tạo bản ghi trùng lặp trong eutr_steps.
+- Khi người dùng gõ tên step chỉ chứa khoảng trắng hoặc để trống rồi Save step, hệ thống MUST báo
+  lỗi yêu cầu chọn hoặc nhập tên step hợp lệ, không cho phép thêm step rỗng vào cây.
 - Khi lưu/xóa thất bại do lỗi mạng hoặc máy chủ, người dùng nhận thông báo lỗi và dữ liệu không
   bị thay đổi sai lệch.
 - Khi nhấn Back trên màn hình tạo/sửa mà KHÔNG có thay đổi step nào (chưa add/edit step gì), hệ
@@ -288,10 +380,14 @@ trong danh sách.
 
 - **FR-001**: Hệ thống MUST hiển thị danh sách EUTR templates dạng bảng với các cột: Code, Name,
   Vendor code, Vendor name, Alert for, Is default, Version, Created by, Created date và cột
-  Action (Edit, Delete). Grid chỉ hiển thị các template có IsDeleted = 0 VÀ IsHide = 0.
-- **FR-002**: Cột Vendor name MUST được tra cứu từ API riêng `GET /api/dynamics/vendors`
-  (dedicated endpoint query D365 VendorsV3) dựa trên VendorAccountNumber = Vendor code của
-  template. KHÔNG sử dụng API reference chung (`POST /api/dynamics/reference`).
+  Action (Edit, Delete). Grid chỉ hiển thị các template có IsDeleted = 0 VÀ IsHide = 0. Cột
+  Alert for MUST hiển thị Name của group email tương ứng (không hiển thị Id).
+- **FR-002**: Cột Vendor name MUST được tra cứu từ API reference chung
+  `POST /api/dynamics/reference` với `refType = 13` dựa trên VendorAccountNumber = Vendor code
+  của template. KHÔNG sử dụng endpoint riêng `GET /api/dynamics/vendors`.
+- **FR-002a**: Cột Alert for trên grid MUST được tra cứu Name từ bảng `compl_group_email` (qua
+  `GET /api/group-email`) dựa trên Id đang lưu trong cột `AlertFor` của template. Nếu Id không tìm
+  thấy (group đã bị xóa), cột Alert for hiển thị trống.
 - **FR-003**: Hệ thống MUST phân trang danh sách khi số bản ghi vượt một trang và cho phép
   chuyển trang.
 - **FR-004**: Khi nhấn Add, hệ thống MUST chuyển sang màn hình tạo mới (trang riêng, không popup)
@@ -303,25 +399,41 @@ trong danh sách.
   thu hẹp lại tương ứng, để trường nhập liệu Code/Name/AlertFor/Vendor có đủ không gian hiển thị.
 - **FR-005**: Màn hình tạo mới MUST có form header (cột trái) gồm: Code (textbox, readonly — hệ
   thống tự sinh theo quy tắc prefix + số tăng dần, ví dụ Templates-001; prefix và số chữ số
-  được cấu hình từ chức năng riêng phát triển sau), Name (textbox, bắt buộc), Alert for (textbox,
-  bắt buộc), Vendor (combobox từ API `GET /api/dynamics/vendors` hiển thị VendorAccountNumber +
-  VendorOrganizationName, tùy chọn — có thể bỏ trống), Default (checkbox).
-- **FR-005b**: Combobox Vendor MUST gọi API riêng `GET /api/dynamics/vendors` (dedicated
-  endpoint) để lấy danh sách vendor, thay vì sử dụng API reference chung
-  (`POST /api/dynamics/reference` với refType). Khi mở combobox, hệ thống MUST hiển thị danh
-  sách VendorAccountNumber + VendorOrganizationName từ endpoint vendors. Ở chế độ Edit, vendor
-  hiện tại của template MUST được chọn sẵn trong combobox. Frontend MUST loại bỏ component
-  ReferenceObjectAutocomplete cho trường Vendor và thay bằng component gọi trực tiếp endpoint
-  vendors mới (hỗ trợ phân trang, tìm kiếm theo VendorAccountNumber hoặc VendorOrganizationName).
+  được cấu hình từ chức năng riêng phát triển sau), Name (textbox, bắt buộc), Alert for (combobox
+  chọn một, bắt buộc — xem FR-005c), Vendor (combobox từ API `POST /api/dynamics/reference` với
+  `refType = 13` hiển thị VendorAccountNumber + VendorOrganizationName, tùy chọn — có thể bỏ
+  trống), Default (checkbox).
+- **FR-005c**: Combobox Alert for MUST gọi API `GET /api/group-email` (theo
+  `ComplGroupEmailController`) để lấy danh sách group từ bảng `compl_group_email`, chỉ hiển thị
+  các group có `GroupType = Alert (2)` và `IsAddition = false`, hiển thị **Name** của group cho
+  người dùng chọn (chọn một — single-select). Khi Save, hệ thống MUST lưu **Id** của group đã
+  chọn vào cột `AlertFor` của bảng eutr_templates (KHÔNG lưu Name). Ở chế độ Edit, group hiện tại
+  của template (tra cứu theo Id lưu trong AlertFor) MUST được chọn sẵn trong combobox.
+- **FR-005b**: Combobox Vendor (`options={vendors}` trong `EutrTemplatesAddEdit.jsx`) MUST gọi
+  API reference chung `POST /api/dynamics/reference` với `refType = 13` để lấy danh sách vendor,
+  thay vì sử dụng endpoint riêng `GET /api/dynamics/vendors`. Khi mở combobox, hệ thống MUST hiển
+  thị danh sách VendorAccountNumber + VendorOrganizationName trả về từ API reference (refType=13).
+  Ở chế độ Edit, vendor hiện tại của template MUST được chọn sẵn trong combobox. Frontend MUST
+  dùng lại component/hook reference chung (ví dụ ReferenceObjectAutocomplete hoặc
+  `useReferenceObjects`) cho trường Vendor, thay cho hook `useVendors` gọi endpoint riêng trước
+  đây (hỗ trợ tìm kiếm theo VendorAccountNumber hoặc VendorOrganizationName qua tham số
+  reference).
 - **FR-005a**: Mỗi VendorCode chỉ MUST có tối đa 1 template với IsDefault = 1 (trong các bản ghi
   IsDeleted=0, IsHide=0). Khi người dùng đánh dấu Default cho một template, hệ thống MUST tự động
   bỏ cờ IsDefault trên template default cũ cùng VendorCode (nếu có).
 - **FR-006**: Hệ thống MUST hiển thị cây bước (step tree) đệ quy ở phần body, hỗ trợ
   collapse/expand từng nhánh và drag-and-drop để sắp xếp lại thứ tự step trong cùng cấp.
   DisplayOrder MUST được cập nhật tự động theo vị trí kéo thả.
-- **FR-007**: Khi nhấn Add step, hệ thống MUST hiển thị form chọn step gồm: combobox step (từ
-  danh sách EUTR steps), combobox RequirementType (Required/Optional), combobox TakeFrom
-  (PO/Upload manual), và nút Save.
+- **FR-007**: Khi nhấn Add step, hệ thống MUST hiển thị form chọn step gồm: combobox step
+  (free-solo — nạp danh sách từ EUTR steps hiện có, cho phép chọn 1 step có sẵn HOẶC gõ trực tiếp
+  một tên step mới chưa có trong danh sách), combobox RequirementType (Required/Optional), combobox
+  TakeFrom (PO/Upload manual), và nút Save.
+- **FR-007a**: Khi nhấn Save template (Add hoặc Edit), với mỗi step trong cây bước có tên được
+  nhập tự do (không khớp — không phân biệt hoa/thường, đã trim khoảng trắng — với step nào đang có
+  trong danh sách EUTR steps), hệ thống MUST tự động tạo bản ghi step mới trong bảng eutr_steps
+  TRƯỚC khi lưu eutr_template_details, rồi dùng StepId vừa tạo để tham chiếu. Nếu nhiều step trong
+  cùng lần Save dùng chung một tên mới, hệ thống chỉ MUST tạo 1 bản ghi step mới và dùng chung
+  StepId cho các step đó.
 - **FR-008**: Nếu người dùng tick chọn một step cha trước khi Add step, step mới MUST là con của
   step đó (ParentId = Id của step cha). Nếu không chọn, step mới MUST là gốc (ParentId = 0).
 - **FR-008a**: Người dùng MUST có thể xóa step khỏi cây bước bằng hai cách: (1) nhấn icon xóa
@@ -329,11 +441,13 @@ trong danh sách.
   nút "Delete step" để xóa hàng loạt. Khi xóa step cha, toàn bộ step con MUST bị xóa theo.
 - **FR-008b**: Người dùng MUST có thể chỉnh sửa step đã tạo trong cây bước bằng cách nhấn icon
   Edit (bút chì) trên dòng step. Khi nhấn Edit, dòng step MUST chuyển sang chế độ chỉnh sửa
-  hiển thị: combobox Step (cho phép đổi sang step khác), combobox RequirementType
+  hiển thị: combobox Step (free-solo — cho phép đổi sang step khác có sẵn trong danh sách HOẶC gõ
+  trực tiếp một tên step mới chưa có trong danh sách), combobox RequirementType
   (Required/Optional) với giá trị hiện tại được chọn sẵn, combobox TakeFrom (PO/Upload manual)
   với giá trị hiện tại được chọn sẵn, nút Save (xác nhận thay đổi) và nút Cancel (hủy, giữ giá
   trị cũ). Sau khi Save, dòng step MUST cập nhật giá trị mới trên cây mà không cần nhấn Save
-  template.
+  template; nếu tên được gõ là tên mới chưa tồn tại, việc tạo bản ghi step mới trong eutr_steps
+  chỉ MUST xảy ra khi nhấn Save template (theo FR-007a), không xảy ra ngay khi Save step trên cây.
 - **FR-009**: Khi nhấn Save (đặt ngay dưới checkbox "Set as default template" ở cột trái, tạo
   mới), hệ thống MUST lưu thông tin header vào bảng eutr_templates (Code, Name, VendorCode,
   IsDefault, VersionId=1, AlertFor, IsDeleted=0, IsHide=0) và lưu từng step trong cây vào bảng
@@ -343,14 +457,15 @@ trong danh sách.
 - **FR-009a**: Nút Save trên màn hình Add/Edit MUST được đặt ở cột trái, ngay bên dưới checkbox
   "Set as default template" — KHÔNG đặt ở thanh tiêu đề (title bar) cùng hàng với nút Back. Nút
   Back MUST vẫn giữ nguyên vị trí ở thanh tiêu đề.
-- **FR-010**: Hệ thống MUST yêu cầu Name và Alert for không được để trống khi tạo hoặc sửa
-  template. Code do hệ thống tự sinh nên không cần người dùng nhập hay kiểm tra. VendorCode là
-  tùy chọn.
+- **FR-010**: Hệ thống MUST yêu cầu Name không được để trống và Alert for phải được chọn (một
+  group hợp lệ) khi tạo hoặc sửa template. Code do hệ thống tự sinh nên không cần người dùng nhập
+  hay kiểm tra. VendorCode là tùy chọn.
 - **FR-011**: Khi nhấn Edit trên một dòng, hệ thống MUST chuyển sang màn hình chỉnh sửa (cùng
   layout 2 cột với Add) với breadcrumb "EUTR system > EUTR templates > Edit", tải sẵn dữ liệu
-  header (bao gồm Vendor được chọn sẵn từ API `GET /api/dynamics/vendors`) và cây bước hiện tại của template
-  đó. Người dùng có thể chỉnh sửa step đã có (đổi step, RequirementType, TakeFrom) ngoài việc
-  thêm/xóa step.
+  header (bao gồm Vendor được chọn sẵn từ API `POST /api/dynamics/reference` với `refType = 13`,
+  và Alert for được chọn sẵn từ API `GET /api/group-email` dựa trên Id lưu trong AlertFor)
+  và cây bước hiện tại của template đó. Người dùng có thể chỉnh sửa step đã có (đổi step,
+  RequirementType, TakeFrom) ngoài việc thêm/xóa step.
 - **FR-012**: Khi Save ở màn hình Edit, hệ thống MUST áp dụng logic versioning có điều kiện dựa
   trên CreatedDate của bản ghi đang sửa so với thời điểm hiện tại:
   - Nếu bản ghi được tạo **cách đây TRÊN 24 giờ**: hệ thống MUST tạo dòng mới trong eutr_templates
@@ -379,21 +494,21 @@ trong danh sách.
 - **FR-017**: Toàn bộ văn bản hiển thị cho người dùng trên front-end MUST bằng tiếng Anh, bao
   gồm: nhãn cột, nút (Add, Edit, Delete, Save, Back, Add step, Import), breadcrumb, thông báo
   kiểm tra/lỗi, thông báo thành công, trạng thái rỗng ("No data"), và hộp thoại xác nhận.
-- **FR-018**: Backend MUST cung cấp endpoint riêng `GET /api/dynamics/vendors` trong DynController
-  để query danh sách vendors từ D365 VendorsV3. Endpoint MUST hỗ trợ phân trang (skip, top), lọc
-  (filter) và sắp xếp (order_by). Logic MUST theo pattern tương tự endpoint `data-area`
-  (SetEntity("VendorsV3"), _parser.ParseAndValidate, _dynamicService.QueryAsync). Endpoint MUST
-  sử dụng OData `$select` để chỉ lấy 3 cột cần thiết: `dataAreaId`, `VendorAccountNumber`,
-  `VendorOrganizationName` — KHÔNG lấy toàn bộ cột từ VendorsV3. Response trả về dữ liệu OData
-  chỉ gồm 3 trường trên. Endpoint này thay thế việc sử dụng refType=13 trong API reference chung
-  cho mục đích tra cứu vendor.
+- **FR-018 (Superseded by Update 5)**: Endpoint riêng `GET /api/dynamics/vendors` (được thêm ở
+  Update 2/3) KHÔNG còn được combobox Vendor hoặc tra cứu Vendor name trên grid sử dụng. Vendor
+  data MUST được tải lại qua API reference chung `POST /api/dynamics/reference` với
+  `refType = 13` (đã ánh xạ sẵn tới D365 VendorsV3 trong cấu hình reference type của hệ thống).
+  Endpoint `GET /api/dynamics/vendors` có thể vẫn tồn tại trong DynController nhưng không còn là
+  nguồn dữ liệu cho tính năng EUTR Templates.
 
 ### Key Entities *(include if feature involves data)*
 
 - **EUTR Template**: Đại diện cho một mẫu template EUTR gắn với vendor. Thuộc tính: định danh,
   Code (hệ thống tự sinh theo quy tắc prefix + số tăng dần, readonly — ví dụ Templates-001),
-  Name, Vendor code, Is default, VersionId, Alert for, IsDeleted (cờ xóa mềm, 0=hiện/1=đã xóa),
-  IsHide (cờ ẩn version cũ, 0=hiện/1=đã ẩn), người tạo, ngày tạo, người cập nhật, ngày cập nhật.
+  Name, Vendor code, Is default, VersionId, AlertFor (Id tham chiếu đến `compl_group_email.Id` —
+  KHÔNG còn là văn bản tự do; Name của group được hiển thị ở grid qua tra cứu), IsDeleted (cờ xóa
+  mềm, 0=hiện/1=đã xóa), IsHide (cờ ẩn version cũ, 0=hiện/1=đã ẩn), người tạo, ngày tạo, người cập
+  nhật, ngày cập nhật.
   Khi tạo mới, VersionId = 1. Khi edit: nếu bản ghi được tạo cách đây TRÊN 24 giờ (so với
   CreatedDate), tạo dòng mới với VersionId tự tăng (VersionId cũ + 1) và đánh dấu dòng cũ
   IsHide=1; nếu DƯỚI 24 giờ, cập nhật đè trực tiếp lên dòng hiện tại (giữ nguyên Id, VersionId,
@@ -404,12 +519,22 @@ trong danh sách.
   TakeFrom (PO=0/Upload manual=1), thứ tự hiển thị, người tạo, ngày tạo. Khi edit template,
   toàn bộ cây bước hiện tại (bao gồm step đã chỉnh sửa) được lưu vào TemplateId mới. ParentId
   MUST được lưu chính xác để duy trì cấu trúc cây đệ quy.
-- **EUTR Step** (đã có sẵn): Danh sách các bước EUTR, được sử dụng làm nguồn dữ liệu cho
-  combobox khi Add step.
-- **D365 Vendor (VendorsV3)**: Dữ liệu vendor từ hệ thống D365, chỉ sử dụng 3 cột: dataAreaId,
-  VendorAccountNumber và VendorOrganizationName (endpoint MUST dùng `$select` để giới hạn).
-  Truy cập qua endpoint riêng `GET /api/dynamics/vendors` (DynController, SetEntity("VendorsV3")),
-  được sử dụng cho combobox Vendor và hiển thị Vendor name trong grid.
+- **EUTR Step** (đã có sẵn — feature 001-eutr-steps): Danh sách các bước EUTR, được sử dụng làm
+  nguồn dữ liệu cho combobox khi Add step/Edit step (free-solo). Khi người dùng nhập một tên step
+  mới chưa tồn tại trong danh sách này và Save template, hệ thống MUST tự động tạo bản ghi mới
+  trong bảng eutr_steps (người tạo/ngày tạo ghi nhận tự động như luồng tạo step thông thường của
+  feature 001-eutr-steps), rồi dùng StepId mới cho eutr_template_details.
+- **D365 Vendor (VendorsV3)**: Dữ liệu vendor từ hệ thống D365, sử dụng các cột dataAreaId,
+  VendorAccountNumber và VendorOrganizationName. Truy cập qua API reference chung
+  `POST /api/dynamics/reference` với `refType = 13` (ánh xạ tới D365 VendorsV3 trong cấu hình
+  reference type có sẵn của hệ thống), được sử dụng cho combobox Vendor và hiển thị Vendor name
+  trong grid.
+- **Compl Group Email** (đã có sẵn — bảng `compl_group_email`, quản lý qua
+  `ComplGroupEmailController`): Đại diện cho một nhóm email. Thuộc tính liên quan: Id, Name,
+  GroupType (Responsible=1/Alert=2), IsAddition (nhóm bổ sung/không hoạt động khi true). Combobox
+  Alert for trên màn hình Add/Edit Template MUST lấy dữ liệu từ `GET /api/group-email`, lọc
+  GroupType=Alert(2) và IsAddition=false, hiển thị Name để chọn và lưu Id đã chọn vào cột AlertFor
+  của EUTR Template. Grid EUTR Templates tra cứu Name của group này để hiển thị cột Alert for.
 
 ## Success Criteria *(mandatory)*
 
@@ -418,8 +543,8 @@ trong danh sách.
 - **SC-001**: Người dùng tìm thấy và mở màn hình EUTR Templates trong vòng 10 giây kể từ khi
   vào hệ thống mà không cần hướng dẫn.
 - **SC-002**: Người dùng tạo một template hoàn chỉnh (header + 3 step) trong dưới 2 phút.
-- **SC-003**: Cột Vendor name trong grid hiển thị đúng tên vendor từ API vendors cho 100% bản ghi
-  có Vendor code hợp lệ.
+- **SC-003**: Cột Vendor name trong grid hiển thị đúng tên vendor từ API reference chung
+  (`POST /api/dynamics/reference`, refType=13) cho 100% bản ghi có Vendor code hợp lệ.
 - **SC-004**: 100% thao tác tạo với Name hoặc Alert for trống bị chặn và hiển thị thông báo lỗi
   rõ ràng. Code luôn được hệ thống tự sinh chính xác.
 - **SC-005**: Cây bước hỗ trợ ít nhất 3 cấp lồng nhau mà không bị lỗi hiển thị hay mất dữ liệu.
@@ -430,9 +555,9 @@ trong danh sách.
   được tạo — dữ liệu được cập nhật đè lên dòng hiện có (VersionId và Id không đổi).
 - **SC-008**: Template đã soft delete không bao giờ xuất hiện trên grid, nhưng dữ liệu vẫn có
   thể truy vấn trực tiếp trong database để kiểm tra.
-- **SC-009**: Combobox Vendor trên màn hình Add/Edit hiển thị danh sách vendor từ API riêng
-  `GET /api/dynamics/vendors` cho 100% lần mở. Ở chế độ Edit, vendor hiện tại được chọn sẵn
-  chính xác. KHÔNG sử dụng API reference chung.
+- **SC-009**: Combobox Vendor trên màn hình Add/Edit hiển thị danh sách vendor từ API reference
+  chung `POST /api/dynamics/reference` (refType=13) cho 100% lần mở. Ở chế độ Edit, vendor hiện
+  tại được chọn sẵn chính xác. KHÔNG còn sử dụng endpoint riêng `GET /api/dynamics/vendors`.
 - **SC-010**: 100% step được tạo với step cha (tick chọn trước khi Add step) lưu ParentId chính
   xác vào bảng eutr_template_details. Step gốc lưu ParentId = 0.
 - **SC-011**: Người dùng chỉnh sửa step đã tạo (đổi step, RequirementType, TakeFrom) trong dưới
@@ -448,19 +573,33 @@ trong danh sách.
 - **SC-015**: 100% lượt nhấn Back khi có step chưa lưu (thêm mới hoặc chỉnh sửa) hiển thị cảnh
   báo xác nhận trước khi điều hướng; 100% lượt nhấn Back khi không có thay đổi chưa lưu điều
   hướng ngay lập tức không cảnh báo.
+- **SC-016**: 100% step được nhập tự do (tên chưa có trong danh sách EUTR steps) khi Save template
+  được tự động tạo thành bản ghi mới trong eutr_steps và xuất hiện ngay trong danh sách màn hình
+  EUTR Steps, không yêu cầu người dùng rời khỏi màn hình Add/Edit Template để tạo step trước.
+- **SC-017**: 100% lần mở combobox Alert for trên màn hình Add/Edit hiển thị đúng danh sách Name
+  của các group Alert (`GroupType=2`, `IsAddition=false`) từ `compl_group_email`; ở chế độ Edit,
+  group hiện tại được chọn sẵn chính xác 100% số lần.
+- **SC-018**: 100% template sau khi Save lưu đúng Id của group Alert for đã chọn vào cột
+  `AlertFor`; 100% bản ghi hiển thị trên grid tra cứu và hiển thị đúng Name của group tương ứng
+  (không hiển thị Id thô).
 
 ## Assumptions
 
 - Backend API cho EUTR Templates chưa tồn tại; feature này cần xây dựng cả backend (CRUD cho
   eutr_templates + eutr_template_details) và frontend.
-- D365 VendorsV3 API đã có sẵn trên hệ thống D365 và có thể truy cập qua Dynamics service hiện
-  tại (tương tự RSVNDataAreas, RSVNCustTableEntities). Endpoint riêng `GET /api/dynamics/vendors`
-  được thêm vào DynController theo pattern của `data-area` để query VendorsV3 trực tiếp. Frontend
-  sử dụng endpoint này thay vì API reference chung (`POST /api/dynamics/reference` với refType=13).
-  Domain entity VendorsV3 đã tồn tại tại ComplianceSys.Domain.Dynamics.VendorsV3 với các trường:
-  dataAreaId, VendorAccountNumber, VendorOrganizationName.
+- D365 VendorsV3 đã được cấu hình sẵn dưới `refType = 13` trong API reference chung
+  (`POST /api/dynamics/reference`), theo cùng cách các trường reference khác trong hệ thống sử
+  dụng ReferenceObjectAutocomplete / `useReferenceObjects`. Frontend sử dụng lại API reference
+  chung này cho combobox Vendor và tra cứu Vendor name, thay vì endpoint riêng
+  `GET /api/dynamics/vendors` (đã thêm ở giai đoạn trước — Update 2/3 — nhưng nay không còn dùng
+  cho mục đích này).
 - EUTR Steps (feature 001) đã được triển khai và có API sẵn sàng để cung cấp dữ liệu cho
-  combobox Add step.
+  combobox Add step/Edit step, cũng như API tạo step mới (được tái sử dụng để tự động tạo step khi
+  người dùng nhập tên mới trên màn hình Add/Edit Template).
+- Quy tắc khớp tên step khi kiểm tra tồn tại: so khớp không phân biệt hoa/thường, đã trim khoảng
+  trắng đầu/cuối. Nếu khớp với step đã có, dùng lại StepId đó; nếu không khớp, tạo step mới. Trong
+  cùng một lần Save, các step trùng tên mới (chưa tồn tại) chỉ tạo 1 bản ghi step và dùng chung
+  StepId để tránh trùng lặp dữ liệu trong eutr_steps.
 - Người tạo/ngày tạo do hệ thống ghi tự động dựa trên người dùng đăng nhập.
 - Edit template sử dụng cơ chế versioning có điều kiện theo tuổi bản ghi: nếu bản ghi được tạo
   cách đây TRÊN 24 giờ (so với CreatedDate), không sửa trực tiếp dòng cũ mà tạo dòng mới với
@@ -495,3 +634,17 @@ trong danh sách.
   phù hợp, responsive trên màn hình desktop. Tỷ lệ cụ thể giữa cột trái (header) và cột phải
   (step tree) sẽ được xác định ở bước plan — yêu cầu là cột trái phải rộng hơn tỷ lệ hiện tại và
   cột phải hẹp hơn tương ứng.
+- Combobox Alert for tái sử dụng API/backend đã có sẵn: `GET /api/group-email` (all) từ
+  `ComplGroupEmailController` (bảng `compl_group_email`), và tái sử dụng pattern frontend đã tồn
+  tại cho việc chọn nhóm "Alert" (ví dụ `GetAllGroupEmailUseCase` qua `repositories.groupEmail`,
+  lọc theo `groupEmailType.ALERT` (=2) và `isAddition === false`) tương tự các form khác trong hệ
+  thống (`ComplianceMasterForm`, `MasterDefaultForm`). Khác với các form đó (cho phép chọn nhiều
+  group Alert vào một bảng liên kết), Alert for của EUTR Template là single-select và lưu trực
+  tiếp một Id vào cột `AlertFor` (không dùng bảng liên kết nhiều-nhiều).
+- Cột `AlertFor` trong bảng `eutr_templates` đổi ý nghĩa từ văn bản tự do (free text) thành khóa
+  tham chiếu (Id, kiểu số) đến `compl_group_email.Id`. Cần migration/điều chỉnh kiểu dữ liệu cột
+  này ở bước plan nếu cột hiện tại đang là kiểu văn bản (nvarchar) trong schema đã triển khai.
+- Nếu group đang được chọn làm AlertFor của một template sau đó bị xóa (soft delete) khỏi
+  `compl_group_email`, template vẫn giữ nguyên Id cũ trong AlertFor (không tự động cập nhật);
+  grid hiển thị trống ở cột Alert for cho các bản ghi này cho đến khi người dùng Edit và chọn lại
+  group khác còn hoạt động.

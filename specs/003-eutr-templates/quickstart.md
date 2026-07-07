@@ -7,7 +7,11 @@
 - Backend (`compliance-sys-api`) running on configured port
 - Frontend (`compliance-client`) dev server running (`npm run dev`)
 - MySQL database with EUTR tables created (see [eutr_db.sql](../../docs/design/eutr/eutr_db.sql))
-- D365 VendorsV3 API accessible via configured Dynamics service (exposed as `GET /api/dynamics/vendors`)
+- D365 VendorsV3 accessible via the generic reference API (`POST /api/dynamics/reference` with
+  `refType = 13`)
+- `compl_group_email` has at least 2 active Alert groups (`GroupType = 2`, `IsAddition = false`)
+  seeded — e.g. via the Group Email admin screen or directly through `GET/POST /api/group-email`
+  (Update 7)
 - EUTR Steps feature (001) deployed with at least 3 steps in `eutr_steps` table
 - User account with `EutrTemplates.*` permissions seeded in backend menu/roles
 
@@ -19,7 +23,10 @@
 2. **Expected**: Breadcrumb shows "EUTR system > EUTR templates"
 3. **Expected**: Grid displays columns: Code, Name, Vendor code, Vendor name, Alert for, Is default, Version, Created by, Created date, Action
 4. **Expected**: Grid shows only active templates (IsDeleted=0, IsHide=0)
-5. If templates have valid VendorCode: **Expected** Vendor name column shows vendor name from `GET /api/dynamics/vendors`
+5. If templates have valid VendorCode: **Expected** Vendor name column shows vendor name from
+   `POST /api/dynamics/reference` (refType=13)
+5a. If templates have a valid AlertFor Id: **Expected** Alert for column shows the group's Name
+   (from `compl_group_email`), not the raw Id (Update 7)
 6. Click page 2: **Expected** next page of records loads
 
 ### Scenario 2: Create Template with Step Tree (FR-004, FR-004a, FR-005, FR-005b, FR-006 to FR-010, FR-009a)
@@ -29,8 +36,12 @@
 3. **Expected**: Layout shows **2 columns** — left column (wider): header form (Code, Name, AlertFor, Vendor, Default, **Save button below Default**); right column (narrower): step tree + step actions
 4. **Expected**: Title bar shows only the **Back** button — no Save button next to it
 5. **Expected**: Code field shows auto-generated value (e.g., "Templates-001"), readonly
-6. Fill in: Name = "Test Template", Alert for = "Import"
-7. Open Vendor combobox: **Expected** `GET /api/dynamics/vendors` is called, list shows VendorAccountNumber + VendorOrganizationName
+6. Fill in: Name = "Test Template"
+6a. Open Alert for combobox: **Expected** `GET /api/group-email` is called, list shows only Alert
+   groups (`GroupType=2`, `IsAddition=false`) by Name — no free-text typing allowed (Update 7)
+6b. Select an Alert group (e.g. "Compliance Alerts Group")
+7. Open Vendor combobox: **Expected** `POST /api/dynamics/reference` with `refType=13` is called,
+   list shows VendorAccountNumber + VendorOrganizationName
 8. Select a vendor, check Default
 9. Click **Add step** (no parent selected)
 10. Select a step from combobox, set Required, PO, click Save
@@ -42,8 +53,9 @@
 16. Drag the third step above the first step
 17. **Expected**: DisplayOrder updates, step moves visually
 18. Click **Save** (below Default checkbox, left column)
-19. **Expected**: Redirects to list, new template visible with Code, VersionId=1
-20. **Verify in DB**: eutr_template_details rows have correct ParentId (child step has ParentId = parent step's Id, root steps have ParentId = 0)
+19. **Expected**: Redirects to list, new template visible with Code, VersionId=1, Alert for column
+    shows the selected group's Name
+20. **Verify in DB**: eutr_template_details rows have correct ParentId (child step has ParentId = parent step's Id, root steps have ParentId = 0). `eutr_templates.AlertFor` stores the group's numeric Id (not its Name).
 
 ### Scenario 3: Edit Template with Conditional Versioning (FR-011, FR-012, FR-005b)
 
@@ -52,7 +64,10 @@
 1. Click **Edit** on the template created in Scenario 2 (just created, well under 24h old)
 2. **Expected**: Edit page loads with **2-column layout** (widened header, narrowed steps), all header fields and step tree populated
 3. **Expected**: Code field is readonly
-4. **Expected**: Vendor combobox calls `GET /api/dynamics/vendors`, current vendor is pre-selected
+4. **Expected**: Vendor combobox calls `POST /api/dynamics/reference` with `refType=13`, current
+   vendor is pre-selected
+4a. **Expected**: Alert for combobox calls `GET /api/group-email`, current Alert group is
+   pre-selected (matched by the Id stored in AlertFor)
 5. **Note the current** `Id` and `VersionId` (e.g., via grid or DB query) before saving
 6. Change Name to "Test Template v2"
 7. Delete a child step via the X icon
@@ -134,21 +149,26 @@
 
 ### Scenario 9: Validation (FR-010)
 
-1. Click Add, leave Name empty, fill AlertFor, click Save
+1. Click Add, leave Name empty, select an Alert for group, click Save
 2. **Expected**: Validation error on Name
-3. Clear AlertFor, fill Name, click Save
-4. **Expected**: Validation error on AlertFor
-5. Fill both, click Save
+3. Fill Name, leave Alert for unselected, click Save
+4. **Expected**: Validation error on Alert for ("Alert for is required")
+5. Fill Name and select an Alert for group, click Save
 6. **Expected**: Saves successfully
 
 ### Scenario 10: Import Templates (FR-014)
 
-1. Prepare Excel file with columns: Name, VendorCode, AlertFor, IsDefault
-2. Add 3 rows: 2 valid, 1 missing Name
+1. Prepare Excel file with columns: Name, VendorCode, AlertFor, IsDefault — AlertFor column MUST
+   contain an existing Alert group's **Name** (e.g. "Compliance Alerts Group"), matching a
+   `compl_group_email` row with `GroupType=2` (Update 7)
+2. Add 4 rows: 2 valid, 1 missing Name, 1 with an AlertFor Name that doesn't match any group
+   (e.g. "Nonexistent Group")
 3. Click **Import**, select file
-4. **Expected**: Result dialog shows: Total=3, Success=2, Fail=1
-5. **Expected**: Error details show the failing row and reason
-6. **Verify in grid**: 2 new templates with auto-generated Codes
+4. **Expected**: Result dialog shows: Total=4, Success=2, Fail=2
+5. **Expected**: Error details show the failing rows and reasons — the missing-Name row shows
+   "Name is required", the unmatched-group row shows "Alert for group not found"
+6. **Verify in grid**: 2 new templates with auto-generated Codes, Alert for column shows the
+   correct group Name for each
 
 ### Scenario 12: Back Button — Unsaved Step Changes Warning (FR-015)
 
@@ -163,10 +183,35 @@
 9. **Expected**: Confirmation dialog appears (inline step edit counts as unsaved step change)
 10. Confirm leaving: **Expected** navigates to list; reopening Edit shows the ORIGINAL RequirementType (change was discarded)
 
+### Scenario 14: Free-solo Step Combobox — Auto-create New Step (FR-007, FR-007a, FR-008b)
+
+1. Note the current row count in the **EUTR Steps** (001-eutr-steps) grid
+2. Click **Add** to create a new template, fill Name/AlertFor
+3. In the Step combobox (Add step form), type a name that does NOT exist in the EUTR Steps list
+   (e.g., "Brand New Step XYZ") instead of picking an option
+4. Set Required, PO, click **Save** on the step row
+5. **Expected**: The typed step appears in the tree immediately (client-side, not yet persisted)
+6. Add a second root step, typing the SAME new name ("Brand New Step XYZ") again
+7. Click template **Save**
+8. **Expected**: Template saves successfully
+9. **Verify in DB**: `eutr_steps` has exactly ONE new row named "Brand New Step XYZ" (no
+   duplicates), and both `eutr_template_details` rows reference that same new `StepId`
+10. **Verify in UI**: Open the EUTR Steps screen — the new step count increased by 1 and "Brand
+    New Step XYZ" is listed
+11. Edit the template again, click the Edit icon on one of the steps, type an existing step's name
+    (e.g., "Forest Management") into the Step combobox instead of selecting it from the dropdown,
+    save the inline edit, then Save the template
+12. **Verify in DB**: No duplicate `eutr_steps` row was created for "Forest Management" — the
+    existing StepId was reused
+
 ### Scenario 13: Edge Cases
 
 - Empty grid: **Expected** "No data" message, no errors
 - Invalid VendorCode in template: **Expected** Vendor name column shows blank
+- AlertFor Id no longer found in `compl_group_email` (group deleted after template was saved):
+  **Expected** Alert for column shows blank, no error for the rest of the grid (Update 7)
+- `compl_group_email` has zero Alert groups (`GroupType=2`): **Expected** Alert for combobox shows
+  no options and Save is blocked until at least one Alert group exists (Update 7)
 - Deep nesting (3+ levels): **Expected** tree renders correctly with collapse/expand
 - Back button on Add/Edit page with NO step changes: **Expected** returns to list immediately, no warning
 - Back button on Add/Edit page WITH unsaved step add/edit: **Expected** shows confirmation dialog before leaving
@@ -174,14 +219,25 @@
 - Edit step then Cancel (inline): **Expected** step retains original values
 - Two-column layout on wide screen: **Expected** wider header column on the left, narrower steps column on the right, side by side
 - Edit a template exactly at the 24h boundary: **Expected** behavior follows `(now - CreatedDate) >= 24h` comparison consistently
+- Empty EUTR Steps list: **Expected** Step combobox still accepts free-solo typed input (no longer requires creating a step first)
+- Step combobox typed name matches an existing step differing only by case/whitespace: **Expected** the existing StepId is reused, no duplicate created
+- Step combobox left blank/whitespace-only when saving a step row: **Expected** validation blocks adding the empty step
 
 ## Post-Validation Checks
 
 - [ ] All 9 grid columns render correctly
-- [ ] Vendor lookup works via `GET /api/dynamics/vendors` in combobox (Add and Edit modes) and grid
-- [ ] Vendor combobox calls dedicated vendors endpoint (not reference API)
+- [ ] Alert for combobox loads only Alert groups (`GroupType=2`, `IsAddition=false`) via
+      `GET /api/group-email`, no free-text typing allowed (Update 7)
+- [ ] Alert for pre-selected correctly in Edit mode (Update 7)
+- [ ] Grid's Alert for column shows the group Name, not the raw Id; saved `AlertFor` in DB is the
+      numeric Id (Update 7)
+- [ ] Vendor lookup works via `POST /api/dynamics/reference` (refType=13) in combobox (Add and
+      Edit modes) and grid
+- [ ] Vendor combobox calls the generic reference endpoint (NOT the dedicated
+      `GET /api/dynamics/vendors` endpoint from Update 2/3)
 - [ ] Vendor pre-selected correctly in Edit mode
-- [ ] Vendor API response contains ONLY 3 fields (dataAreaId, VendorAccountNumber, VendorOrganizationName) — verify in DevTools Network tab that no extra VendorsV3 properties are returned
+- [ ] Vendor reference response items expose `id`/`code` = VendorAccountNumber and
+      `name` = VendorOrganizationName — verify in DevTools Network tab
 - [ ] Tree supports 3+ levels of nesting
 - [ ] ParentId saved correctly for all levels (root=0, children=parent's Id)
 - [ ] ParentId correct even for newly-added parent steps (temp ID mapping works)
@@ -191,6 +247,10 @@
 - [ ] Two-column layout displays correctly with WIDER header column (left) and NARROWER steps column (right)
 - [ ] Save button appears below the "Set as default template" checkbox in the left column, NOT in the title bar
 - [ ] Title bar shows only the Back button
+- [ ] Step combobox (Add step and inline Edit step) accepts both selecting an existing option and typing a free-solo name
+- [ ] Typing a new step name and saving the template auto-creates it in `eutr_steps`, visible immediately in the EUTR Steps screen
+- [ ] Multiple steps with the same new typed name in one Save create only ONE `eutr_steps` row (no duplicates)
+- [ ] Typing a name matching an existing step (case-insensitive/trimmed) reuses that step's Id, no duplicate created
 - [ ] Editing a template <24h old updates the row in place (same Id/VersionId/CreatedDate, no new row)
 - [ ] Editing a template ≥24h old creates a new version (new row, VersionId+1, old row IsHide=1)
 - [ ] Back button with no unsaved step changes navigates immediately, no warning

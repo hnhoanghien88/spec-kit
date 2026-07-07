@@ -690,3 +690,323 @@ T085: Build verification (sequential after T084)
 T086, T087 in parallel (after build passes)
 T088 sequentially (end-to-end)
 ```
+
+---
+
+## Update 2026-07-06 — Revert Vendor API to Generic Reference (refType=13)
+
+**Context**: Reverses Update 2/3 (Phases 13-18). Spec Update 5 requires the vendor combobox in
+`EutrTemplatesAddEdit.jsx` (`options={vendors}`) and the grid's Vendor name lookup to switch back
+from the dedicated `GET /api/dynamics/vendors` endpoint to the generic reference API
+(`POST /api/dynamics/reference` with `refType = 13`), via the existing `ReferenceObjectAutocomplete`
+component — reversing the `useVendors` hook approach built in Phase 13-15.
+
+**Changes**: Frontend only. No backend changes — `refType = 13` is already mapped to `VendorsV3`
+in `ComplDynamicsService` (unchanged since before Update 2). The dedicated `GET /api/dynamics/vendors`
+endpoint added in Phase 13 is left in `DynController.cs` (not deleted — out of scope, may have
+undiscovered consumers).
+
+---
+
+## Phase 23: Frontend — Replace Vendor Combobox with Generic Reference API
+
+**Purpose**: Swap the MUI `Autocomplete` + `useVendors` combobox back to `ReferenceObjectAutocomplete` (refType=13)
+
+- [x] T107 [US2] Replace the vendor combobox in compliance-client/src/presentation/pages/eutr-templates/EutrTemplatesAddEdit.jsx — remove the `import useVendors from './hooks/useVendors'` line, the `const { vendors, loading: vendorsLoading, setSearchQuery: setVendorSearch } = useVendors(vendorCode);` hook call, and the entire `<Autocomplete options={vendors} ...>` JSX block for the Vendor field (including its `getOptionLabel`, `isOptionEqualToValue`, `value`, `onChange`, `onInputChange`, and `loading` props). Replace with `import ReferenceObjectAutocomplete from '@presentation/components/common/ReferenceObjectAutocomplete';` and `<ReferenceObjectAutocomplete referenceType={13} label="Vendor" size="small" value={vendorCode} onChange={(_e, newValue) => { setVendorCode(newValue?.code || ''); setVendorName(newValue?.name || ''); }} />`, matching the prop pattern used by other `ReferenceObjectAutocomplete` consumers in the codebase. In Edit mode, the existing `vendorCode` state (already populated from `getUseCase.execute(id)` in the load-template `useEffect`) pre-selects the vendor automatically since it's passed as `value`. **Done**: `value` passed as `{ id, code, name }` object (matching `isOptionEqualToValue`'s `option.id === val?.id` check in the shared component, verified by reading `ReferenceObjectAutocomplete.jsx` and its other consumers e.g. `ComplianceMasterForm.jsx`) rather than a bare string.
+- [x] T108 [P] [US2] Remove compliance-client/src/presentation/pages/eutr-templates/hooks/useVendors.js — no longer used after T107. Grep the repo for other importers of this file first (expected: none, since it was created solely for this feature in Phase 14); if any are found, stop and report instead of deleting. **Done**: grep confirmed no other importers; file deleted.
+- [x] T109 [P] [US1] Verify grid Vendor name column resolution in compliance-client/src/presentation/pages/eutr-templates/ (index.jsx / useEutrTemplatesData.js) — confirm `vendorName` still comes from the backend's `GetPagedWithVendorNameAsync`, which resolves via `ComplDynamicsService`'s existing refType=13 mapping (unchanged by this update). No code change expected; verification-only task. **Done**: traced `EutrTemplatesService.GetPagedAsync` — it resolves `VendorName` via `IComplDynamicsService.GetFromDynamics<VendorsV3>` (a separate direct D365 lookup, not the vendors combobox's reference/vendors endpoint), untouched by this frontend-only change. Grid column is unaffected.
+
+**Checkpoint**: Vendor combobox on Add/Edit calls the generic reference API (refType=13) via `ReferenceObjectAutocomplete`. Grid vendorName column still resolves correctly.
+
+---
+
+## Phase 24: Backend Cleanup Check (verification only, no removal)
+
+**Purpose**: Confirm removing the frontend's dependency on the dedicated vendors endpoint doesn't break other consumers
+
+- [x] T110 [P] Search compliance-client/src and compliance-sys-api/src for any other consumers of `getVendors` (`dynamicsApi.js`, `RestDynamicsRepository.js`, `IDynamicsRepository.js`) and of `[HttpGet("vendors")]` in `DynController.cs`. If none found outside this feature, leave this dead code in place per the plan.md/research.md decision (do not delete the backend endpoint or the frontend `getVendors` methods — deleting them is out of scope for this reversal). Just confirm no other feature depends on them before considering Phase 23 complete. **Done**: grep confirmed `getVendors` (dynamicsApi.js/RestDynamicsRepository.js/IDynamicsRepository.js) and `DynController.cs`'s `[HttpGet("vendors")]` have no other callers — left in place per plan.md, unused.
+
+---
+
+## Phase 25: Validation — Vendor API Reversal
+
+**Purpose**: End-to-end validation that the vendor combobox and grid use the generic reference API
+
+- [ ] T111 [P] Verify Vendor combobox in Add mode: open Add page, click Vendor field — DevTools Network tab must show a `POST /dynamics/reference` request with `refType=13` (NOT `GET /dynamics/vendors`). Dropdown must display vendor list (VendorAccountNumber + VendorOrganizationName, surfaced as `code`/`name` per `ComplDynReferenceResponseDto`).
+- [ ] T112 [P] Verify Vendor combobox in Edit mode: open Edit page for a template with a VendorCode — vendor must be pre-selected in the combobox; opening the dropdown must call `POST /dynamics/reference` with `refType=13`.
+- [ ] T113 [P] Verify grid vendorName column still displays correct vendor names for templates with a valid VendorCode (no regression from the combobox change).
+- [ ] T114 Run quickstart.md validation Scenarios 1, 2, 3 end-to-end (view list with vendor names, create with vendor selection via reference API, edit with vendor pre-selected via reference API).
+
+---
+
+## Update 5 Dependencies
+
+### Phase Dependencies
+
+- **Phase 23 (Replace combobox)**: T107 first (same file as T108's removal target has no code
+  dependency, but T108 should follow T107 to avoid deleting a hook still referenced). T109 is
+  independent verification, `[P]`.
+- **Phase 24 (Cleanup check)**: T110 can run any time after T107 — independent of T108/T109.
+- **Phase 25 (Validation)**: All tasks depend on T107 being complete. T114 depends on T111-T113.
+
+### Execution Order
+
+```
+T107 (Replace combobox with ReferenceObjectAutocomplete) ── T108 (Remove useVendors.js)
+                                                        │
+                                                        ├── T109 (Verify grid) [P]
+                                                        ├── T110 (Cleanup check) [P]
+                                                        └── T111-T113 (Verify combobox) [P] ── T114 (E2E)
+```
+
+### Parallel Opportunities
+
+```
+# Phase 23 — T107 first, then T108/T109 in parallel:
+T107: Replace combobox in EutrTemplatesAddEdit.jsx
+T108: Remove useVendors.js                      [P] (after T107)
+T109: Verify grid vendorName resolution         [P]
+
+# Phase 24 — independent:
+T110: Search for other getVendors/vendors-endpoint consumers [P]
+
+# Phase 25 — all verification tasks [P] except the final E2E:
+T111, T112, T113 in parallel (once T107 is done)
+T114 sequentially (end-to-end)
+```
+
+---
+
+## Update 2026-07-06 — Free-solo Step Combobox + Auto-create Step (FR-007, FR-007a, FR-008b)
+
+**Context**: When adding/editing a step in the template's step tree, the Step combobox currently
+only allows picking from the existing `eutr_steps` list. Per spec Update 6, it must become
+free-solo: the user can also type a step name that isn't in the list. On template Save, any step
+with a typed (unmatched) name is auto-created in `eutr_steps` (case-insensitive/trimmed match
+against existing rows first, to avoid duplicates), and the new step's Id is used for
+`eutr_template_details.StepId`.
+
+**Changes**: Backend — `EutrTemplateDetailsRequestDto` gains `StepName`; validator requires
+`StepId` OR `StepName` per detail; new repository method `ResolveOrCreateStepsByNameAsync`;
+`EutrTemplatesService` resolves/creates steps before building detail entities in `AddAsync` and
+both `UpdateAsync` branches. Frontend — Step `Autocomplete` in `StepFormRow.jsx` and `StepTree.jsx`
+(inline edit) becomes `freeSolo`; `useStepTree.js`'s `flattenForSave` emits `stepName` for every
+detail.
+
+---
+
+## Phase 26: Backend — StepName Field, Validation, Resolve/Auto-create
+
+**Purpose**: Accept a free-solo-typed step name from the frontend and resolve/auto-create it in `eutr_steps` before saving template details
+
+- [X] T115 [US2] Add `public string? StepName { get; set; }` to compliance-sys-api/src/ComplianceSys.Application/Dtos/Request/EutrTemplateDetailsRequestDto.cs — used only when `StepId` is null (the frontend always sends `stepName`, mirroring the combobox's current selected/typed value, but the backend only consults it when `StepId` is absent).
+- [X] T116 [US2] Add a per-detail rule to compliance-sys-api/src/ComplianceSys.Application/Validators/EutrTemplatesRequestDtoValidator.cs — `RuleForEach(x => x.Details).ChildRules(detail => { detail.Must(d => d.StepId.HasValue || !string.IsNullOrWhiteSpace(d.StepName)).WithMessage("Each step requires either an existing step or a step name"); });` (or equivalent FluentValidation syntax matching the existing `BaseValidator` conventions in this file).
+- [X] T117 [US2] Add `Task<Dictionary<string, long>> ResolveOrCreateStepsByNameAsync(IEnumerable<string> names, string userEmail, CancellationToken ct = default);` to compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrTemplatesRepository.cs, with a Vietnamese XML-style comment describing the case-insensitive/trimmed match-then-create behavior.
+- [X] T118 [US2] Implement `ResolveOrCreateStepsByNameAsync` in compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrTemplatesRepository.cs — dedupe input names (`Distinct(StringComparer.OrdinalIgnoreCase)`, trimmed, skip blank); `SELECT Id, Name FROM eutr_steps WHERE Name IN @names` via `Connection.QueryAsync` (within the current `Transaction`) to find existing matches (relies on the DB's default case-insensitive collation, same assumption already implicit in this repository's unqualified `LIKE` filters); for any name with no match, `INSERT INTO eutr_steps (Name, CreatedBy, CreatedDate, UpdatedBy, UpdatedDate) VALUES (...); SELECT LAST_INSERT_ID();` via `Connection.ExecuteScalarAsync<long>`; return a `Dictionary<string, long>` keyed by the trimmed name (`StringComparer.OrdinalIgnoreCase`).
+- [X] T119 [US2] In compliance-sys-api/src/ComplianceSys.Application/Services/EutrTemplatesService.cs, extract a private `Task<List<EutrTemplateDetails>> BuildDetailEntitiesAsync(IEnumerable<EutrTemplateDetailsRequestDto> detailDtos, DateTime now, string userEmail, CancellationToken ct)` helper: collect distinct trimmed `StepName` values from details where `StepId == null && !string.IsNullOrWhiteSpace(StepName)`; if any, call `_repository.ResolveOrCreateStepsByNameAsync(...)` once; map each DTO to an `EutrTemplateDetails` entity via `_mapper.Map`, and for details with `StepId == null`, set `detail.StepId` from the resolved dictionary (lookup by trimmed name); set `CreatedDate`/`CreatedBy`/`UpdatedDate`/`UpdatedBy` as the existing inline code already does. Replace the three near-duplicate detail-building blocks (in `AddAsync`, and both branches of `UpdateAsync`) with calls to this helper.
+
+**Checkpoint**: Saving a template with a step whose `stepId` is null and `stepName` is a brand-new name creates exactly one new `eutr_steps` row and uses its Id; a `stepName` matching an existing step (any case/whitespace) reuses that step's Id with no duplicate row created. Validation rejects a detail with neither `stepId` nor `stepName`.
+
+---
+
+## Phase 27: Frontend — Free-solo Step Combobox
+
+**Purpose**: Let the user pick an existing step or type a new one in the Add step and inline Edit step forms
+
+- [X] T120 [P] [US2] In compliance-client/src/presentation/pages/eutr-templates/components/StepFormRow.jsx, change the Step `Autocomplete` to `freeSolo` (`freeSolo` prop, `options={steps}`, `getOptionLabel` unchanged). Track both `stepId` and a new `stepName` local state: `onChange` — if `newValue` is an object (existing step selected), set `stepId = newValue.id`, `stepName = newValue.name`; if `newValue` is a string (free-solo typed value, e.g. via Enter), set `stepId = null`, `stepName = newValue`. Add `onInputChange` to keep `stepName` in sync while typing when no option is selected (mirrors the `freeSolo` handling already used for the `Alert for` field in `EutrTemplatesAddEdit.jsx`). `handleAdd` now checks `stepName?.trim()` (not `stepId`) before calling `onAdd`, and includes `stepName: stepName.trim()` in the payload passed to `onAdd` alongside `stepId`.
+- [X] T121 [P] [US2] In compliance-client/src/presentation/pages/eutr-templates/components/StepTree.jsx, apply the same `freeSolo` change to the Step `Autocomplete` inside the inline edit mode (`isEditing` branch): `editFormData` gains `stepName`; `onChange` handles both an existing-option object and a raw typed string the same way as T120; `handleSaveEdit` passes `stepName: editFormData.stepName?.trim()` (in addition to the existing `stepId`) to `onEditStep`.
+- [X] T122 [US2] In compliance-client/src/presentation/pages/eutr-templates/hooks/useStepTree.js, update `flattenForSave()` to include `stepName: s.stepName` in every emitted detail object (alongside the existing `stepId`, `parentId`, `requirementType`, `takeFrom`, `displayOrder`) — the backend only reads `stepName` when `stepId` is null, so it's safe to always send it.
+
+**Checkpoint**: Add step form and inline Edit step form both accept typing a name not in the dropdown. The tree displays the typed name immediately (client-side draft, nothing persisted yet).
+
+---
+
+## Phase 28: Validation — Free-solo Step Combobox + Auto-create
+
+**Purpose**: End-to-end validation of the free-solo combobox and auto-create behavior
+
+- [ ] T123 [P] Verify auto-create: on the Add page, type a brand-new step name (not in the dropdown) into the Step combobox, save the step, save the template — check `eutr_steps` in the DB for exactly one new row with that name, and `eutr_template_details.StepId` for that row references it.
+- [ ] T124 [P] Verify dedupe within one Save: add two root steps in the same Add/Edit session using the identical new (not-yet-existing) name, save the template — check `eutr_steps` has only ONE new row for that name, and both `eutr_template_details` rows share the same `StepId`.
+- [ ] T125 [P] Verify case-insensitive/trimmed reuse: type an existing step's name with different casing or extra whitespace (e.g. " forest management ") into the Step combobox, save — check no duplicate `eutr_steps` row was created; the existing step's Id was reused.
+- [ ] T126 [P] Verify inline Edit step free-solo: on an Edit page, click the Edit icon on an existing step, type a brand-new name into the Step combobox (instead of picking from the dropdown), save the inline edit, then save the template — check the new step was created in `eutr_steps` and the detail's `StepId` was updated to it.
+- [ ] T127 [P] Verify validation: attempt to save a step row with a blank/whitespace-only typed name — confirm the UI blocks adding it (Add step / Save inline edit disabled or rejected) before it ever reaches the backend.
+- [ ] T128 Run quickstart.md Scenario 14 end-to-end (auto-create, dedupe-within-save, case-insensitive reuse, inline-edit free-solo).
+
+**Checkpoint**: All Scenario 14 quickstart checks pass; no duplicate `eutr_steps` rows are ever created for names that already exist or repeat within one Save.
+
+---
+
+## Update 6 Dependencies
+
+### Phase Dependencies
+
+- **Phase 26 (Backend)**: T115 (DTO field) → T116 (validator rule, reads `StepId`/`StepName` from
+  the DTO) and T117 (repository interface method signature) can both start once T115 lands, in
+  parallel. T118 (repository implementation) depends on T117 (interface declared first). T119
+  (service helper) depends on T118 (calls `ResolveOrCreateStepsByNameAsync`) and T115 (reads
+  `StepName` off the DTO).
+- **Phase 27 (Frontend)**: T120 and T121 are independent (different files) — `[P]`. T122 has no
+  hard dependency on T120/T121 (different file) but is naturally done alongside them since all
+  three touch the same step-tree data shape — `[P]`.
+- **Phase 28 (Validation)**: All tasks depend on Phase 26 AND Phase 27 being complete (the feature
+  is full-stack — backend resolution logic and frontend free-solo input both must exist).
+
+### Execution Order
+
+```
+T115 (StepName DTO field) ──┬── T116 (validator rule)
+                             └── T117 (repository interface) ── T118 (repository impl) ── T119 (service helper) ──┐
+                                                                                                                    │
+T120 (StepFormRow freeSolo) [P] ──┐                                                                                │
+T121 (StepTree freeSolo) [P] ─────┼── T122 (flattenForSave stepName) ──────────────────────────────────────────────┼── T123-T127 (verification, [P]) ── T128 (E2E)
+                                   ┘                                                                                │
+```
+
+### Parallel Opportunities
+
+```
+# Phase 26 — mostly sequential (DTO → validator/interface → impl → service), T116/T117 in parallel:
+T115 → T116 [P]
+T115 → T117 [P] → T118 → T119
+
+# Phase 27 — all three touch different files, all [P]:
+T120, T121, T122 in parallel
+
+# Phase 28 — all verification tasks [P] except the final E2E:
+T123, T124, T125, T126, T127 in parallel (once Phase 26 + 27 are done)
+T128 sequentially (end-to-end)
+```
+
+---
+
+## Update 2026-07-07 — Alert For Combobox from compl_group_email
+
+**Context**: `AlertFor` is currently a free-text field — a `freeSolo` `Autocomplete` with hardcoded
+placeholder `options={['PO', 'Upload manual']}` (copy-pasted from the TakeFrom field, not real
+data). Per spec Update 7, it must become a single-select combobox sourced from `compl_group_email`
+(`GET /api/group-email`, filtered to `GroupType=Alert(2)` and `IsAddition=false`), reusing the
+frontend's existing `GetAllGroupEmailUseCase`/`repositories.groupEmail` pattern already used by
+`ComplianceMasterForm.jsx`/`MasterDefaultForm.jsx`. On Save, the selected group's Id (not Name) is
+persisted; the grid and Excel export display/write the resolved group Name.
+
+**Changes**: Backend — `AlertFor` changes from `string` to `long?` in the entity/request DTO; a new
+`AlertForName` response field is resolved via `LEFT JOIN compl_group_email` in the repository
+(no external service call — `compl_group_email` is a local table); validator rule becomes numeric;
+a DB migration converts the column type; Import resolves the Excel cell's group Name to an Id
+(exact match, no auto-create); Export writes the resolved Name. Frontend — the Alert for
+`Autocomplete` becomes select-only (no `freeSolo`) backed by `GetAllGroupEmailUseCase`; the grid
+column switches from `alertFor` to `alertForName`. See research.md §18 and plan.md's "Update
+2026-07-07" section for full rationale.
+
+---
+
+## Phase 29: Backend — AlertFor Type Change, Repository JOIN, Validator
+
+**Purpose**: Change `AlertFor` from a free-text string to a numeric reference to
+`compl_group_email.Id`, with the group's Name resolved for display
+
+- [X] T129 [P] [US2] In compliance-sys-api/src/ComplianceSys.Domain/Entities/EutrTemplates.cs, change `public string AlertFor { get; set; }` to `public long? AlertFor { get; set; }`.
+- [X] T130 [P] [US2] In compliance-sys-api/src/ComplianceSys.Application/Dtos/Request/EutrTemplatesRequestDto.cs, change `public string AlertFor { get; set; }` to `public long? AlertFor { get; set; }`.
+- [X] T131 [P] [US1] In compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/EutrTemplatesResponseDto.cs, add `public string? AlertForName { get; set; }` alongside the existing `VendorName` property.
+- [X] T132 [US2] In compliance-sys-api/src/ComplianceSys.Application/Validators/EutrTemplatesRequestDtoValidator.cs, replace `RuleFor(x => x.AlertFor).NotEmpty().WithMessage("Alert for is required");` with `RuleFor(x => x.AlertFor).Must(v => v.HasValue && v.Value > 0).WithMessage("Alert for is required");`.
+- [X] T133 [US1] In compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrTemplatesRepository.cs — in `GetPagedWithVendorNameAsync`'s `dataSql` and `GetByIdWithDetailsAsync`'s `headerSql`, add `LEFT JOIN compl_group_email g ON g.Id = t.AlertFor` and select `g.Name AS AlertForName` alongside the existing `t.AlertFor` column. Change `FilterMap["AlertFor"]` from `"t.AlertFor"` to `"g.Name"` so the existing grid filter searches by group Name (a raw Id is not a meaningful text-search target). Leave `SortMap["AlertFor"]` as `"t.AlertFor"` (sorting by the numeric Id is acceptable; only the text filter needs the Name).
+- [X] T134 [P] [US2] Create compliance-sys-api/src/ComplianceSys.Infrastructure/Sqls/Migration/08_migrate_eutr_templates_alertfor.sql — `UPDATE eutr_templates SET AlertFor = NULL WHERE AlertFor IS NOT NULL AND AlertFor NOT REGEXP '^[0-9]+$';` followed by `ALTER TABLE eutr_templates MODIFY COLUMN AlertFor BIGINT UNSIGNED NULL DEFAULT NULL;`. Run this script against the target MySQL database before deploying the updated entity/DTO (existing placeholder text values like `'PO'`/`'Upload manual'` are cleared first since they cannot cast to BIGINT — there is no production data using real group Ids yet).
+
+**Checkpoint**: Backend compiles with `AlertFor` as `long?`. Paged list and get-by-id responses include `alertForName` resolved from `compl_group_email`. Grid text filter on Alert for matches against group Name. DB column is `BIGINT UNSIGNED NULL`.
+
+---
+
+## Phase 30: Backend — Import/Export AlertFor Name Resolution
+
+**Purpose**: Import resolves the Excel AlertFor cell (a group Name) to an Id; Export writes the resolved Name back
+
+- [X] T135 [US5] Add `Task<long?> ResolveAlertGroupIdByNameAsync(string name, CancellationToken ct = default);` to compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrTemplatesRepository.cs, and implement it in compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrTemplatesRepository.cs — `SELECT Id FROM compl_group_email WHERE Name = @name AND GroupType = 2 AND IsAddition = 0 LIMIT 1` via `Connection.QueryFirstOrDefaultAsync<long?>`, exact match (trimmed) — unlike `ResolveOrCreateStepsByNameAsync`, this method does NOT auto-create a group when no match is found.
+- [X] T136 [US5] In compliance-sys-api/src/ComplianceSys.Application/Services/EutrTemplatesImportService.cs, after reading `alertFor` (the Excel cell, a group Name) and confirming it's non-blank, call `_repository.ResolveAlertGroupIdByNameAsync(alertFor, ct)` (inject `IEutrTemplatesRepository` into the constructor if not already available — check whether `IEutrTemplatesService` already exposes this or add the repository dependency directly). If the result is `null`, record a new failure: `result.FailCount++; result.Errors.Add(new ImportEutrTemplatesRowError { Row = rowNum, Name = name, AlertFor = alertFor, Message = "Alert for group not found" }); continue;`. Otherwise set `dto.AlertFor = resolvedId.Value` before calling `_eutrTemplatesService.AddAsync(dto, userEmail, ct)`.
+- [X] T137 [US5] In compliance-sys-api/src/ComplianceSys.Application/Services/EutrTemplatesExportService.cs, change `sheet.Cell(row, 4).Value = item.AlertFor;` to `sheet.Cell(row, 4).Value = item.AlertForName;` (uses the same `GetPagedWithVendorNameAsync` result, which now includes `AlertForName` per T133).
+
+**Checkpoint**: Importing an Excel file with a valid Alert group Name in column B succeeds and stores the resolved Id. Importing a name with no matching group fails that row with "Alert for group not found". Exported files show the group Name in the AlertFor column, not a raw Id.
+
+---
+
+## Phase 31: Frontend — Alert For Combobox
+
+**Purpose**: Replace the free-text/hardcoded Alert for field with a combobox sourced from `compl_group_email`
+
+- [X] T138 [US2] In compliance-client/src/presentation/pages/eutr-templates/EutrTemplatesAddEdit.jsx — remove the `const ALERT_FOR_OPTIONS = ['PO', 'Upload manual'];` constant and the `Autocomplete` bound to `options={ALERT_FOR_OPTIONS}` / `freeSolo` for the Alert for field. Import `GetAllGroupEmailUseCase` from `@application/usecases/group-email`, `repositories.groupEmail` from `@src/di/repositories`, and `groupEmailType` from `@utils/helpers` (same imports already used in `ComplianceMasterForm.jsx`). On mount (alongside the existing steps-loading `useEffect`), call `new GetAllGroupEmailUseCase(repositories.groupEmail).execute()`, store the result in a new `alertGroups` state, and filter to `g.groupType === groupEmailType.ALERT && g.isAddition === false` before passing to the combobox's `options`. Replace the field with a select-only `Autocomplete` (no `freeSolo`): `options={alertGroups}`, `getOptionLabel={(g) => g.name || ''}`, `isOptionEqualToValue={(opt, val) => opt.id === val?.id}`, `value={alertGroups.find((g) => g.id === alertFor) || null}`, `onChange={(_e, newValue) => setAlertFor(newValue?.id ?? '')}`. Update the Save validation check (`if (!alertFor.trim())`) to `if (!alertFor)` since `alertFor` is now a numeric Id, not a string. In the load-template `useEffect` (Edit mode), keep `setAlertFor(template.alertFor || '')` — it now stores the numeric Id, which the combobox's `value` lookup resolves against `alertGroups` once both have loaded.
+- [X] T139 [P] [US1] In compliance-client/src/domain/entities/EutrTemplates.js, add `alertForName` to the constructor destructuring and assignment (`this.alertForName = alertForName`), alongside the existing `alertFor`, mirroring the `vendorName`/`vendorCode` pair.
+- [X] T140 [P] [US1] In compliance-client/src/presentation/pages/eutr-templates/hooks/useEutrTemplatesColumns.jsx, change the Alert for column's `field` from `"alertFor"` to `"alertForName"` (keep `headerName: "Alert for"`), and update `defaultColumnVisibility`'s key from `alertFor` to `alertForName` to match.
+
+**Checkpoint**: Alert for combobox on Add/Edit shows only Alert-type active groups by Name, no free-text typing allowed. Selecting a group and saving persists its Id. Grid's Alert for column displays the group Name. Edit mode pre-selects the template's current group once both the template and the groups list have loaded.
+
+---
+
+## Phase 32: Validation — Alert For Combobox
+
+**Purpose**: End-to-end validation of the AlertFor combobox, persistence, display, and import/export changes
+
+- [ ] T141 [P] Verify combobox data source: open the Add page, click the Alert for field — DevTools Network tab must show a `GET /group-email` request; the dropdown must list only groups with `GroupType=2` and `IsAddition=false`, by Name, with no way to type a free-text value.
+- [ ] T142 [P] Verify Save persists the Id: select an Alert group, fill Name, save a new template — query `eutr_templates` and confirm `AlertFor` holds the group's numeric Id, not its Name.
+- [ ] T143 [P] Verify grid display: open the list page — the Alert for column must show the group's Name (matching `compl_group_email.Name`) for every template with a valid AlertFor Id, and blank for any template whose AlertFor Id no longer exists in `compl_group_email`.
+- [ ] T144 [P] Verify Edit pre-selection: open Edit on a template with a known AlertFor group — the Alert for combobox must show that group pre-selected as soon as the page finishes loading.
+- [ ] T145 [P] Verify Import/Export: import an Excel file with one row using a valid Alert group Name and one row using a nonexistent group Name — confirm the valid row succeeds (with the correct Id stored) and the invalid row fails with "Alert for group not found". Then export the list and confirm the AlertFor column contains group Names, not Ids.
+- [ ] T146 Run quickstart.md Scenario 1 (step 5a), Scenario 2 (steps 6a/6b), Scenario 3 (step 4a), Scenario 9, and Scenario 10 end-to-end.
+
+**Checkpoint**: All Update 7 quickstart checks pass — combobox, persistence, grid display, Edit pre-selection, and Import/Export all use `compl_group_email` correctly.
+
+---
+
+## Update 7 Dependencies
+
+### Phase Dependencies
+
+- **Phase 29 (Backend type change)**: T129, T130, T131 are independent `[P]` (different files,
+  pure type/property changes). T132 (validator) depends on T130 (reads the DTO's new `long?`
+  type). T133 (repository JOIN) depends on T131 (the SQL projects into `AlertForName`, which must
+  exist on the response DTO first). T134 (migration script) has no code dependency but should be
+  run against the DB before or alongside deploying T129/T130 (the entity/DTO expect a numeric
+  column).
+- **Phase 30 (Import/Export)**: T135 (repository method) has no dependency on Phase 29 completion
+  beyond `AlertFor` being `long?` (T130). T136 (Import) depends on T135. T137 (Export) depends on
+  T133 (needs `AlertForName` in the paged result).
+- **Phase 31 (Frontend combobox)**: T138 has no hard dependency on the backend phases to *write*
+  (it's a separate file), but needs T130/T133 deployed to *work end-to-end* (Save/pre-select rely
+  on the backend accepting/returning a numeric Id). T139 and T140 are independent `[P]`.
+- **Phase 32 (Validation)**: All tasks depend on Phases 29-31 being complete and deployed together
+  (this is a full-stack change — backend numeric type + JOIN, and frontend combobox, must both be
+  in place for any of T141-T145 to pass).
+
+### Execution Order
+
+```
+T129 (entity AlertFor→long?) ─┬── T132 (validator)
+T130 (DTO AlertFor→long?) ────┘
+T131 (AlertForName on ResponseDto) ── T133 (repository LEFT JOIN + FilterMap) ──┬── T137 (Export writes AlertForName)
+T134 (migration script) ── (run against DB) ─────────────────────────────────────┘
+
+T130 ── T135 (ResolveAlertGroupIdByNameAsync) ── T136 (Import resolves Name→Id)
+
+T138 (frontend combobox) ──┐
+T139 (entity alertForName) [P] ──┼── T141-T145 (verification, [P]) ── T146 (E2E)
+T140 (grid column) [P] ────┘
+```
+
+### Parallel Opportunities
+
+```
+# Phase 29 — type changes in parallel, JOIN/validator depend on them:
+T129, T130, T131 in parallel
+T132 (after T130), T133 (after T131) can then run in parallel
+T134 independent (DB script, no code dependency) [P]
+
+# Phase 30 — mostly sequential (repository method → Import consumer), Export is independent:
+T135 → T136
+T137 [P] (depends only on T133, not on T135/T136)
+
+# Phase 31 — frontend combobox + two small independent edits:
+T138
+T139, T140 in parallel [P]
+
+# Phase 32 — all verification tasks [P] except the final E2E:
+T141, T142, T143, T144, T145 in parallel (once Phases 29-31 are deployed)
+T146 sequentially (end-to-end)
+```

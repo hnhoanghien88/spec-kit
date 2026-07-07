@@ -4,40 +4,35 @@
 
 ## 1. VendorsV3 D365 Integration
 
-**Decision**: Add a dedicated `GET /api/dynamics/vendors` endpoint in `DynController` following the
-`data-area` pattern, instead of using the generic reference API.
+**Decision (superseded by Section 16 — Update 5, 2026-07-06)**: ~~Add a dedicated
+`GET /api/dynamics/vendors` endpoint in `DynController` following the `data-area` pattern,
+instead of using the generic reference API.~~ Reverted — see Section 16. This entry is kept for
+historical context only; the dedicated endpoint it describes still exists in `DynController.cs`
+but is no longer the vendor data source for this feature.
 
-**Rationale**: The codebase already integrates with D365 via OData through `IDynamicService` +
-`DynamicsParameterManager`. The `data-area` endpoint pattern (`[HttpGet]` with `skip`, `top`,
-`filter`, `order_by` query params → `SetEntity()` → `ParseAndValidate()` → `QueryAsync()` →
-return raw OData JSON) is the simplest and most consistent approach for dedicated entity lookups.
-The `VendorsV3.cs` domain model already exists in `Domain/Dynamics/` with `VendorAccountNumber`,
-`VendorOrganizationName`, `dataAreaId`. The generic reference API (`POST /api/dynamics/reference`
-with refType=13) already has a `VendorsV3` mapping in `ComplDynamicsService` but introduces
-unnecessary indirection: the frontend `ReferenceObjectAutocomplete` component has an inconsistent
-`referenceType === 13 → refType 4` conversion on initial load, causing the initial dropdown to
-show Products instead of Vendors. A dedicated endpoint eliminates this bug at the architecture
-level.
+**Original rationale (2026-07-03, no longer current)**: The codebase already integrates with
+D365 via OData through `IDynamicService` + `DynamicsParameterManager`. The `data-area` endpoint
+pattern (`[HttpGet]` with `skip`, `top`, `filter`, `order_by` query params → `SetEntity()` →
+`ParseAndValidate()` → `QueryAsync()` → return raw OData JSON) was judged the simplest approach
+for dedicated entity lookups. The generic reference API (`POST /api/dynamics/reference` with
+refType=13) already has a `VendorsV3` mapping in `ComplDynamicsService`, but at the time this was
+seen as introducing unnecessary indirection due to a known `ReferenceObjectAutocomplete`
+`referenceType === 13 → refType 4` quirk on initial load.
 
-**Alternatives considered**:
-- Fix the `ReferenceObjectAutocomplete` referenceType 13→4 conversion bug — rejected: the
-  component is shared and changing its behavior may break other consumers. A dedicated endpoint
-  is cleaner and avoids coupling to the shared reference component.
-- Use the generic reference API with corrected refType — rejected: adds unnecessary abstraction
-  layers (refType mapping, unified DTO) when a direct OData query is simpler and returns richer
-  data (dataAreaId).
+**Alternatives considered (original decision)**:
+- Fix the `ReferenceObjectAutocomplete` referenceType 13→4 conversion bug — rejected at the time:
+  the component is shared and changing its behavior may break other consumers.
+- Use the generic reference API with corrected refType — rejected at the time: judged to add
+  unnecessary abstraction when a direct OData query seemed simpler.
 - Direct D365 OData calls from frontend — rejected: violates the backend-mediated architecture.
 
-**Implementation**:
+**Implementation (historical, from the now-reverted decision)**:
 1. `VendorsV3.cs` already exists in `Domain/Dynamics/` — no changes needed.
-2. Add `[HttpGet("vendors")]` method to `DynController.cs` following `data-area` pattern:
-   `SetEntity("VendorsV3")` → `AddFilter(safeFilter)` → `SetOrderBy(order_by)` →
-   `SetPaging(top, skip)` → `BuildUrl()` → append `$select=dataAreaId,VendorAccountNumber,VendorOrganizationName` to URL → `QueryAsync(url)` → return raw OData JSON.
-3. `DynamicsParameterManager` (from `Res.Shared.ExternalServices` v1.0.11 NuGet package) does NOT
-   have a `SetSelect()` method. The `$select` parameter must be appended manually to the URL string
-   after `BuildUrl()` returns. Use string concatenation: check if URL already contains `?` then
-   append `&$select=...`, otherwise `?$select=...`.
-4. Frontend calls `GET /api/dynamics/vendors` directly (not the reference API).
+2. `[HttpGet("vendors")]` method was added to `DynController.cs` following the `data-area`
+   pattern — still present in the codebase but unused by this feature after Update 5.
+3. `DynamicsParameterManager` (from `Res.Shared.ExternalServices` v1.0.11 NuGet package) does not
+   have a `SetSelect()` method; `$select` was appended manually to the URL string.
+4. See Section 16 for the current (Update 5) approach.
 
 ---
 
@@ -143,34 +138,26 @@ level.
 
 ---
 
-## 9. Vendor Combobox — Dedicated Endpoint
+## 9. Vendor Combobox — Dedicated Endpoint (superseded by Section 16 — Update 5)
 
-**Decision**: Replace the vendor combobox implementation to call the new dedicated
-`GET /api/dynamics/vendors` endpoint instead of the generic reference API.
+**Decision (historical, reverted 2026-07-06)**: ~~Replace the vendor combobox implementation to
+call the new dedicated `GET /api/dynamics/vendors` endpoint instead of the generic reference
+API.~~ See Section 16 for the current approach.
 
-**Rationale**: The previous approach used `ReferenceObjectAutocomplete` with `referenceType={13}`,
-which has a known bug: initial load converts `referenceType 13` to `refType 4` (fetching Products
-instead of Vendors), while subsequent search/pagination operations pass `13` directly (fetching
-Vendors). This inconsistency means the initial dropdown may show product data. The dedicated
-`GET /api/dynamics/vendors` endpoint returns raw OData with `VendorAccountNumber` and
-`VendorOrganizationName` directly — no refType mapping, no shared component coupling.
+**Original rationale**: The previous approach used `ReferenceObjectAutocomplete` with
+`referenceType={13}`, which has a known quirk: initial load calls
+`fetchReferenceObjects(4, ...)` instead of `fetchReferenceObjects(13, ...)`, while subsequent
+search/pagination calls do pass `13` directly. At the time this was judged reason enough to
+introduce a dedicated endpoint.
 
-**Alternatives considered**:
-- Fix `ReferenceObjectAutocomplete` referenceType 13→4 mapping — rejected: the component is
-  shared across features; changing it risks breaking other consumers.
-- Use `ReferenceObjectAutocomplete` with `referenceType={13}` as-is — rejected: initial load
-  bug shows wrong data (Products instead of Vendors).
-
-**Implementation**:
-1. Add `getVendors(skip, top, filter, orderBy)` method to `dynamicsApi.js` calling
-   `GET /dynamics/vendors?skip=...&top=...&filter=...&order_by=...`.
-2. Add `getVendors` method to `RestDynamicsRepository.js` and `IDynamicsRepository.js`.
-3. Create `useVendors.js` hook in `eutr-templates/hooks/` — manages pagination, search
-   debounce, and vendor list state by calling `getVendors`.
-4. In `EutrTemplatesAddEdit.jsx`, replace `ReferenceObjectAutocomplete` with MUI Autocomplete
-   backed by `useVendors` hook. Display `VendorAccountNumber + VendorOrganizationName`.
-   In Edit mode, pre-select the template's current vendor.
-5. For grid `vendorName` column: call the vendors endpoint to resolve VendorCode → name.
+**Historical implementation** (kept for reference, no longer the active approach):
+1. `getVendors(skip, top, filter, orderBy)` was added to `dynamicsApi.js` /
+   `RestDynamicsRepository.js` calling `GET /dynamics/vendors?...` — code may still exist but is
+   unused by this feature after Update 5.
+2. `useVendors.js` hook in `eutr-templates/hooks/` managed pagination/search/vendor list state —
+   removed per Update 5 (Section 16).
+3. `EutrTemplatesAddEdit.jsx` used a plain MUI `Autocomplete` (`options={vendors}`) backed by
+   `useVendors` — replaced per Update 5 with `ReferenceObjectAutocomplete`.
 
 ---
 
@@ -338,3 +325,204 @@ tree is reused elsewhere.
 6. Add local state `const [confirmBackOpen, setConfirmBackOpen] = useState(false)`. Back button
    `onClick`: `if (isDirty) setConfirmBackOpen(true); else navigate('/eutr/templates')`. Render
    `<ConfirmDialog open={confirmBackOpen} onConfirm={() => navigate('/eutr/templates')} onCancel={() => setConfirmBackOpen(false)} message="..." />`.
+
+---
+
+## 16. Vendor Data Source — Revert to Generic Reference API (refType=13)
+
+**Decision**: Revert Sections 1 and 9 — the vendor combobox in `EutrTemplatesAddEdit.jsx`
+(`options={vendors}`) and the grid's Vendor name lookup MUST use the generic reference API
+`POST /api/dynamics/reference` with `refType = 13`, via the existing `ReferenceObjectAutocomplete`
+component (or its underlying `useReferenceObjects` hook), instead of the dedicated
+`GET /api/dynamics/vendors` endpoint introduced in Update 2/3.
+
+**Rationale**: Explicit business decision (spec Update 5, 2026-07-06) to standardize vendor
+lookup on the same generic reference mechanism used by every other reference field in the
+codebase, rather than maintaining a feature-specific vendor endpoint/hook pair. `refType = 13`
+is already mapped to D365 `VendorsV3` in `ComplDynamicsService`, so no backend change is needed
+(Principle III — reuse existing backend).
+
+**Alternatives considered**:
+- Keep the dedicated `GET /api/dynamics/vendors` endpoint — rejected: explicitly reversed by the
+  spec update; the business preference is to consolidate on the generic reference pattern.
+- Fix the `ReferenceObjectAutocomplete` referenceType 13→4 initial-load quirk as part of this
+  change — rejected as in-scope: the spec update only asks for the data-source swap, not a fix to
+  the shared component's pre-existing behavior. If verification during `/speckit-implement` shows
+  this quirk breaks the vendor combobox, flag it as a separate follow-up rather than silently
+  patching a shared component.
+
+**Implementation**:
+1. In `EutrTemplatesAddEdit.jsx`, remove the `Autocomplete` bound to `options={vendors}` /
+   `useVendors` and replace it with `ReferenceObjectAutocomplete` configured with
+   `referenceType={13}`, bound to `vendorCode`/`vendorName` state, mirroring how other reference
+   fields in the codebase are wired (see `ReferenceObjectAutocomplete.jsx` consumers for the
+   established prop pattern: `value`, `onChange`, `label`, `size`).
+2. Remove `compliance-client/src/presentation/pages/eutr-templates/hooks/useVendors.js` — no
+   longer used.
+3. Remove or stop calling `getVendors` from `dynamicsApi.js` / `RestDynamicsRepository.js` for
+   this feature (leave the methods in place if other features might still reference them; verify
+   with a repo-wide search before deleting).
+4. For the grid's Vendor name column, resolve `VendorCode → VendorOrganizationName` via the
+   generic reference lookup (`useReferenceObjects` or an equivalent one-off fetch with
+   `referenceType=13`) instead of `GET /api/dynamics/vendors`.
+5. In Edit mode, pre-select the template's current vendor the same way other
+   `ReferenceObjectAutocomplete` consumers pre-select an existing value (pass the current
+   `vendorCode` as `value` on mount).
+6. Leave `DynController.cs`'s `GET /api/dynamics/vendors` endpoint in place (unused by this
+   feature) rather than deleting it, since removing a backend endpoint is outside this update's
+   scope and could affect other undiscovered consumers.
+
+---
+
+## 17. Free-solo Step Combobox + Auto-create Step in eutr_steps
+
+**Decision**: The Step `Autocomplete` in `StepFormRow.jsx` (Add step) and the inline edit form in
+`StepTree.jsx` (Edit step) become `freeSolo`. A step in the tree carries both `stepId` (nullable)
+and `stepName` (always set). Selecting an existing option sets both; typing free text sets
+`stepId = null` and `stepName = <typed text>`. On template Save, the backend resolves each
+`stepId: null` detail against `eutr_steps` by name (trimmed, case-insensitive); if no match, it
+inserts a new `eutr_steps` row and uses the new Id. Multiple details sharing the same new name in
+one Save reuse a single created row.
+
+**Rationale**: The user should not have to leave the Add/Edit Template screen, go create the step
+in the separate EUTR Steps screen (001-eutr-steps), then come back — that round trip is the exact
+friction this change removes. Resolving on Save (not on blur/immediately when typed) keeps the
+step tree a pure client-side draft until the user commits, consistent with how the rest of the
+tree already behaves (nothing is persisted until template Save).
+
+**Alternatives considered**:
+- Create the step immediately when the user finishes typing it into the combobox (on blur) —
+  rejected: would create orphan `eutr_steps` rows if the user cancels out of Add/Edit without
+  saving the template (Back → discard), or if they retype/correct the name before saving.
+- Call `POST api/eutr-steps` (the existing create endpoint from `EutrStepService`/`BaseService`)
+  from `EutrTemplatesService` for each unresolved name — rejected: pulls a cross-feature service
+  dependency into `EutrTemplatesService` for what is a single-table insert; matching the existing
+  pattern of `EutrTemplatesRepository` already doing direct SQL against `eutr_steps` (it already
+  `LEFT JOIN eutr_steps` in `GetByIdWithDetailsAsync`) is simpler and keeps `eutr_steps` writes
+  colocated with the one method that needs them.
+- Exact (case-sensitive) name matching only — rejected: would create duplicate steps differing
+  only by casing/whitespace (e.g., "forest " vs "Forest"), cluttering `eutr_steps` for users who
+  don't retype names exactly.
+- Client-side pre-check (call a "does this step name exist" endpoint before Save) — rejected:
+  adds a network round trip and a TOCTOU race between check and Save; resolving atomically inside
+  the same Save transaction is simpler and race-free.
+
+**Implementation**:
+1. `EutrTemplateDetailsRequestDto`: add `public string? StepName { get; set; }`.
+2. `EutrTemplatesRequestDtoValidator`: add a rule that each `Details[i]` has `StepId != null` OR
+   `!string.IsNullOrWhiteSpace(StepName)`.
+3. `IEutrTemplatesRepository` / `EutrTemplatesRepository`: add
+   `Task<Dictionary<string, long>> ResolveOrCreateStepsByNameAsync(IEnumerable<string> names, string userEmail, CancellationToken ct)`.
+   Dedupe input names (`Distinct(StringComparer.OrdinalIgnoreCase)`, trimmed), `SELECT Id, Name
+   FROM eutr_steps WHERE Name IN @names` for existing matches (relies on the DB's default
+   case-insensitive collation, consistent with the rest of the codebase's unqualified `LIKE`
+   filters), then `INSERT INTO eutr_steps (Name, CreatedBy, CreatedDate, UpdatedBy, UpdatedDate)`
+   for any name with no match. Runs inside the same transaction as the rest of the Save.
+4. `EutrTemplatesService`: extract a private `BuildDetailEntitiesAsync(details, now, userEmail,
+   ct)` helper used by `AddAsync` and both `UpdateAsync` branches — collects distinct typed names
+   (`StepId == null && !string.IsNullOrWhiteSpace(StepName)`), calls
+   `ResolveOrCreateStepsByNameAsync` once, then maps each DTO to an `EutrTemplateDetails` entity,
+   substituting the resolved Id for unresolved details before setting audit fields.
+5. Frontend `useStepTree.js`: `flattenForSave()` includes `stepName` on every emitted item (not
+   only for unresolved ones) — simplest to always send it since the backend only reads it when
+   `stepId` is null.
+6. Frontend `StepFormRow.jsx` / `StepTree.jsx` inline edit: `Autocomplete freeSolo`, `onChange`
+   handles both an option object (existing step) and a raw string (typed value, when the user
+   presses Enter/blurs without selecting an option) — mirrors the existing `freeSolo` handling
+   already used for the `Alert for` field in `EutrTemplatesAddEdit.jsx`.
+7. New step names created this way appear immediately in the `001-eutr-steps` grid on next load —
+   no change needed there since it queries the same `eutr_steps` table.
+
+---
+
+## 18. Alert For — Combobox Sourced from compl_group_email
+
+**Decision**: Change `AlertFor` from a free-text/hardcoded-options field (currently a `freeSolo`
+`Autocomplete` in `EutrTemplatesAddEdit.jsx` with `options={['PO', 'Upload manual']}` — a copy-paste
+placeholder, not real data) to a single-select combobox backed by `compl_group_email`
+(`ComplGroupEmailController`), reusing the frontend's existing `GetAllGroupEmailUseCase` /
+`repositories.groupEmail` (already used by `ComplianceMasterForm.jsx` / `MasterDefaultForm.jsx` for
+their "Alert" group pickers). The combobox shows each group's `Name`; on Save, the selected group's
+`Id` is what gets persisted — not the Name. `AlertFor` changes from a `string` column/property to a
+numeric reference (`long?`) to `compl_group_email.Id`. Display resolution (Id → Name) happens via a
+SQL `LEFT JOIN compl_group_email` directly in the existing repository queries, not a separate
+service call — `compl_group_email` is a local table (unlike D365 VendorsV3), so no external lookup
+service is needed; this mirrors how `StepName` is already resolved via `LEFT JOIN eutr_steps` in
+`GetByIdWithDetailsAsync`.
+
+**Rationale**: `GetAllGroupEmailUseCase`/`repositories.groupEmail` and the
+`groupEmailType.ALERT`/`isAddition` filtering convention already exist and are proven in two other
+forms — reusing them is a direct application of Principle II (reference-pattern reuse) and adds zero
+new frontend files. On the backend, a `LEFT JOIN` is strictly simpler than the D365 vendor pattern
+(which needs `IComplDynamicsService` because VendorsV3 is external/OData) — `compl_group_email` is
+queryable with a plain SQL join in the same query that already builds the paged/detail response.
+
+**Alternatives considered**:
+- Inject `IComplGroupService` into `EutrTemplatesService` and resolve names in C# (mirroring the
+  `GetPagedAsync` VendorName resolution loop) — rejected: adds an unnecessary service dependency and
+  a second query when a `LEFT JOIN` in the existing SQL does it in one round trip, since
+  `compl_group_email` is a local table (no OData/external round trip to shield against).
+- Multi-select (many-to-many via a join table), like `ComplianceMasterForm`'s Responsible/Alert
+  group pickers — rejected: the spec explicitly stores a single Id in a single `AlertFor` column,
+  not an array; `eutr_templates` has no supporting join table and adding one is out of scope for
+  this change.
+- Validate the selected Id exists in `compl_group_email` server-side before Save (extra query) —
+  rejected for consistency with the existing `VendorCode` field, which is also unvalidated
+  server-side (any string is accepted, trusting the frontend combobox); adding asymmetric validation
+  only for `AlertFor` would be inconsistent with the established pattern in this same entity.
+- Auto-create a new group (like the free-solo Step combobox does for `eutr_steps`) when the user
+  types a name not in the list — rejected: `compl_group_email` groups are a managed, cross-feature
+  resource (used by compliance notifications elsewhere in the app, see `ComplNotificationService`);
+  silently creating one from the Templates screen would pollute that shared list. The combobox is
+  select-only (no `freeSolo`), unlike the Step combobox.
+
+**Implementation**:
+1. **Backend entity/DTOs**: `EutrTemplates.AlertFor` (`Domain/Entities/EutrTemplates.cs`),
+   `EutrTemplatesRequestDto.AlertFor` change type from `string` to `long?`.
+   `EutrTemplatesResponseDto` gains `AlertForName` (`string?`), parallel to the existing
+   `VendorName`.
+2. **Validator**: `EutrTemplatesRequestDtoValidator` — replace
+   `RuleFor(x => x.AlertFor).NotEmpty()` with a rule requiring a positive value, e.g.
+   `RuleFor(x => x.AlertFor).Must(v => v.HasValue && v.Value > 0).WithMessage("Alert for is required")`.
+3. **Repository**: In `EutrTemplatesRepository.GetPagedWithVendorNameAsync` and
+   `GetByIdWithDetailsAsync`, add `LEFT JOIN compl_group_email g ON g.Id = t.AlertFor` and select
+   `g.Name AS AlertForName` alongside the existing `t.AlertFor` column. `FilterMap["AlertFor"]`
+   changes from `t.AlertFor` to `g.Name` so the existing grid filter searches by group Name (a raw
+   numeric Id is not a meaningful text-search target for end users) — mirrors how Vendor is only
+   filterable by `VendorCode`, the human-facing identifier.
+4. **Migration**: `eutr_templates.AlertFor` changes from `VARCHAR` to `BIGINT UNSIGNED NULL`. Any
+   existing rows hold placeholder text (`'PO'` / `'Upload manual'` from the current hardcoded
+   options, not real business data — this feature has no production usage yet). Migration script:
+   ```sql
+   UPDATE eutr_templates SET AlertFor = NULL
+     WHERE AlertFor IS NOT NULL AND AlertFor NOT REGEXP '^[0-9]+$';
+   ALTER TABLE eutr_templates MODIFY COLUMN AlertFor BIGINT UNSIGNED NULL DEFAULT NULL;
+   ```
+   No DB-level `FOREIGN KEY` constraint is added from `AlertFor` to `compl_group_email.Id` — same
+   treatment as `VendorCode` (no FK to the external vendor source). This avoids coupling
+   `compl_group_email`'s delete behavior (`ComplGroupEmailController.Delete`, currently a hard
+   delete with no reference check) to this feature; a deleted group simply resolves to a blank
+   `AlertForName` on the grid (see spec Edge Cases).
+5. **Import** (`EutrTemplatesImportService`): column B in the Excel template now holds the Alert
+   group's **Name** (text), not a raw Id. The service resolves it via a new repository lookup
+   (`SELECT Id FROM compl_group_email WHERE Name = @name AND GroupType = 2 AND IsAddition = 0`,
+   exact match — no auto-create, unlike the Step free-solo resolution). If no match, the row fails
+   with `"Alert for group not found"` (new error case, added alongside the existing "Alert for is
+   required" for a blank cell).
+6. **Export** (`EutrTemplatesExportService`): column D writes `item.AlertForName` (resolved Name)
+   instead of the raw `item.AlertFor` Id, so round-tripping an exported file back through Import
+   continues to work (Import expects a Name, Export now produces one).
+7. **Frontend** (`EutrTemplatesAddEdit.jsx`): replace the `Autocomplete` bound to
+   `options={ALERT_FOR_OPTIONS}` (`freeSolo`, hardcoded `['PO', 'Upload manual']`) with one backed
+   by `GetAllGroupEmailUseCase.execute()` (via `repositories.groupEmail`, same import already used
+   in `ComplianceMasterForm.jsx`), filtered client-side to
+   `g.groupType === groupEmailType.ALERT && g.isAddition === false`, `getOptionLabel={g => g.name}`,
+   **not** `freeSolo`. State changes from a single `alertFor` string to storing the selected group's
+   `id` (submitted as `alertFor`) with the option object kept for display; in Edit mode, the current
+   `template.alertFor` Id is matched against the loaded groups list to pre-select the option.
+8. **Frontend grid** (`useEutrTemplatesColumns.jsx`): the `alertFor` column's `field` changes to
+   `alertForName` (display), matching the `vendorCode`/`vendorName` split — the raw Id remains
+   available on the row (as `alertFor`) for populating the Edit form but is not itself a grid
+   column.
+9. **Frontend entity** (`EutrTemplates.js`): constructor gains `alertForName` alongside the existing
+   `alertFor`, mirroring `vendorName`/`vendorCode`.

@@ -38,7 +38,8 @@ POST api/eutr-templates/get-all
         "name": "Template A",
         "vendorCode": "V001",
         "vendorName": "Vendor Corp",
-        "alertFor": "Import",
+        "alertFor": 3,
+        "alertForName": "Compliance Alerts Group",
         "isDefault": 1,
         "versionId": 2,
         "createdBy": "user@email.com",
@@ -55,8 +56,13 @@ POST api/eutr-templates/get-all
 **Notes**:
 - Filters implicitly include `WHERE IsDeleted = 0 AND IsHide = 0`
 - `vendorName` is resolved from D365 VendorsV3 by `VendorCode`
+- **Update 7 (2026-07-07)**: `alertFor` is now the numeric Id of a row in `compl_group_email`
+  (was a free-text string). `alertForName` (new field) is resolved via `LEFT JOIN compl_group_email`
+  on `alertFor` and is what the grid displays.
 - Sortable columns: Code, Name, VendorCode, AlertFor, IsDefault, VersionId, CreatedBy, CreatedDate
-- Filterable columns: Code, Name, VendorCode, AlertFor
+- Filterable columns: Code, Name, VendorCode, AlertFor (Update 7: the `AlertFor` filter now matches
+  against the joined `compl_group_email.Name`, not the raw Id, since a numeric Id isn't a
+  meaningful text-search target)
 
 ---
 
@@ -76,7 +82,8 @@ GET api/eutr-templates/{id}
     "name": "Template A",
     "vendorCode": "V001",
     "vendorName": "Vendor Corp",
-    "alertFor": "Import",
+    "alertFor": 3,
+    "alertForName": "Compliance Alerts Group",
     "isDefault": 1,
     "versionId": 2,
     "createdBy": "user@email.com",
@@ -124,19 +131,21 @@ POST api/eutr-templates
 {
   "name": "Template A",
   "vendorCode": "V001",
-  "alertFor": "Import",
+  "alertFor": 3,
   "isDefault": 1,
   "details": [
     {
       "parentId": 0,
       "stepId": 5,
+      "stepName": "Forest Management",
       "requirementType": 1,
       "takeFrom": 0,
       "displayOrder": 0
     },
     {
       "parentId": 0,
-      "stepId": 8,
+      "stepId": null,
+      "stepName": "New Custom Step",
       "requirementType": 0,
       "takeFrom": 1,
       "displayOrder": 1
@@ -160,7 +169,16 @@ POST api/eutr-templates
 - `IsDeleted = 0`, `IsHide = 0`
 - If `IsDefault = 1`: clears existing default for same VendorCode
 - `parentId` in details: 0 = root; for child steps, use a temporary client-side ID scheme — backend resolves parent references after inserting root steps first
-- Validation: Name and AlertFor required
+- Validation: Name required; AlertFor required (must be a positive Id — **Update 7**: no longer a
+  free-text string, not validated for existence in `compl_group_email`); each detail requires
+  `stepId` OR a non-blank `stepName`
+- **Free-solo step resolution (Update 6)**: `stepName` is always sent by the frontend (mirrors the
+  selected/typed Step combobox value); the backend only consults it when `stepId` is `null`. For
+  such details, the backend matches `stepName` (trimmed, case-insensitive) against `eutr_steps`;
+  if found, that step's Id is used; if not found, a new `eutr_steps` row is created and its Id is
+  used. Multiple unresolved details sharing the same new name in one request resolve to a single
+  created row (no duplicates). The newly-created step is immediately visible in the
+  001-eutr-steps screen.
 
 ---
 
@@ -201,6 +219,7 @@ Note: `id` and `versionId` are unchanged from before the update in this case.
     re-inserted); returns the same ID and version.
 - If `IsDefault = 1`: clears existing default for same VendorCode (applies in both branches,
   using the current effective ID)
+- Free-solo step resolution (see Create Template, Update 6) applies identically in both branches
 
 ---
 
@@ -262,6 +281,9 @@ Content-Type: multipart/form-data
 |---|---|---|---|
 | Name | VendorCode | AlertFor | IsDefault |
 
+**Update 7 (2026-07-07)**: Column C (AlertFor) now expects the Alert group's **Name** (text,
+matched against `compl_group_email` where `GroupType = 2`) instead of arbitrary free text.
+
 **Response**:
 ```json
 {
@@ -272,7 +294,8 @@ Content-Type: multipart/form-data
     "failCount": 2,
     "errors": [
       { "row": 3, "message": "Name is required." },
-      { "row": 7, "message": "AlertFor is required." }
+      { "row": 7, "message": "Alert for is required." },
+      { "row": 9, "message": "Alert for group not found." }
     ]
   }
 }
@@ -281,7 +304,9 @@ Content-Type: multipart/form-data
 **Behavior**:
 - Code auto-generated per row
 - VersionId = 1 for all imported records
-- Validation: Name and AlertFor required
+- Validation: Name required; AlertFor required and MUST match an existing Alert group's Name
+  (exact match against `compl_group_email.Name` where `GroupType = 2`) — unlike the free-solo Step
+  combobox, unmatched names are NOT auto-created; the row fails with "Alert for group not found."
 - Partial import: valid rows succeed, invalid rows reported
 
 ---
@@ -296,46 +321,109 @@ GET api/eutr-templates/export
 
 **Excel columns**: Code, Name, VendorCode, AlertFor, IsDefault, Version
 
+**Update 7 (2026-07-07)**: The "AlertFor" column now writes the resolved group **Name**
+(`AlertForName`, via the same `LEFT JOIN compl_group_email` used by the list endpoint) instead of
+the raw Id, so a re-imported export file continues to match Import's expected Name format.
+
 ---
 
 ## D365 Vendor Lookup
 
-Dedicated endpoint in DynController (same pattern as `data-area`). Uses OData `$select` to return
-only 3 columns (`dataAreaId`, `VendorAccountNumber`, `VendorOrganizationName`) — not all VendorsV3 fields:
+**Update 5 (2026-07-06)**: Vendor lookup MUST use the generic reference endpoint below with
+`refType = 13`. The dedicated `GET api/dynamics/vendors` endpoint from Update 2/3 still exists in
+`DynController` but is superseded for this feature — see the "Superseded" subsection at the end
+for historical reference.
 
 ```
-GET api/dynamics/vendors?skip=0&top=50&filter=&order_by=
+POST api/dynamics/reference?page=1&pageSize=50&sortColumn=&sortOrder=asc&refType=13
+Content-Type: application/json
+
+[]
 ```
 
 **Query Parameters**:
 
-| Param    | Type   | Default | Description                          |
-|----------|--------|---------|--------------------------------------|
-| skip     | int    | 0       | Number of records to skip            |
-| top      | int    | 50      | Number of records to return          |
-| filter   | string | ""      | OData filter expression              |
-| order_by | string | ""      | OData orderby expression             |
+| Param      | Type   | Default | Description                                   |
+|------------|--------|---------|------------------------------------------------|
+| page       | int    | 1       | 1-based page number                            |
+| pageSize   | int    | 10      | Records per page                               |
+| sortColumn | string | null    | Column to sort by                              |
+| sortOrder  | string | "asc"   | `asc` or `desc`                                |
+| refType    | int    | 1       | Reference type — `13` = D365 VendorsV3         |
 
-**Response** (raw OData from D365 VendorsV3):
+**Body**: `List<FilterRequest>` (search filters, e.g. by vendor code/name) — may be an empty array.
+
+**Response** (`ComplDynReferenceResponseDto`, mapped from D365 `VendorsV3` when `refType=13`):
 ```json
 {
-  "@odata.context": "...",
-  "value": [
-    {
-      "dataAreaId": "rsvn",
-      "VendorAccountNumber": "V001",
-      "VendorOrganizationName": "Vendor Corp"
-    },
-    {
-      "dataAreaId": "rsvn",
-      "VendorAccountNumber": "V002",
-      "VendorOrganizationName": "Supplier Inc"
-    }
+  "success": true,
+  "message": "Retrieved page 1 of categories successfully. Total records: 2",
+  "data": {
+    "items": [
+      { "id": "V001", "code": "V001", "name": "Vendor Corp" },
+      { "id": "V002", "code": "V002", "name": "Supplier Inc" }
+    ],
+    "totalCount": 2
+  }
+}
+```
+
+**Notes**:
+- `Id` and `Code` are both `VendorAccountNumber`; `Name` is `VendorOrganizationName`
+  (`ComplDynamicsService`, `case 13` mapping — already implemented, no backend change needed).
+- Frontend consumes this via `ReferenceObjectAutocomplete` (`referenceType={13}`) or the
+  underlying `useReferenceObjects` hook — the same components used by other reference fields in
+  the codebase.
+
+## Alert For Group Lookup (Update 7, 2026-07-07)
+
+The Alert for combobox on Add/Edit and the grid's `alertForName` column are backed by the existing
+group-email feature — no new backend endpoint is introduced.
+
+```
+GET api/group-email
+```
+
+**Response** (`ComplGroupEmail[]`, from `ComplGroupEmailController.GetAll`):
+```json
+{
+  "success": true,
+  "message": "Get all groups successfully",
+  "data": [
+    { "id": 3, "name": "Compliance Alerts Group", "groupType": 2, "isDefault": false, "isAddition": false },
+    { "id": 5, "name": "Responsible Team", "groupType": 1, "isDefault": true, "isAddition": false },
+    { "id": 7, "name": "Extra Alert Addresses", "groupType": 2, "isDefault": false, "isAddition": true }
   ]
 }
 ```
 
 **Notes**:
-- Backend appends `$select=dataAreaId,VendorAccountNumber,VendorOrganizationName` to the OData URL
-- Response ONLY contains these 3 fields per vendor — no other VendorsV3 properties are returned
-- `DynamicsParameterManager` does not support `$select` natively; it is appended to the URL after `BuildUrl()`
+- The frontend calls this once (via `GetAllGroupEmailUseCase.execute()` /
+  `repositories.groupEmail`, already used by `ComplianceMasterForm.jsx` / `MasterDefaultForm.jsx`)
+  and filters client-side to `groupType === 2` (Alert) and `isAddition === false` — same convention
+  those forms already use. In the example above, only `{ id: 3, name: "Compliance Alerts Group" }`
+  would appear in the combobox.
+- On Save, the frontend submits the selected group's `id` as `alertFor`.
+- The grid's `alertForName` column is resolved server-side via
+  `LEFT JOIN compl_group_email g ON g.Id = t.AlertFor` in `EutrTemplatesRepository` — the frontend
+  does not need to re-fetch group-email data to render the grid.
+- No new backend endpoint, controller, or policy is added; `GET /api/group-email` already exists
+  and is authorized under the `GroupEmail.ReadAll` policy — a **different** policy family than
+  `EutrTemplates.*`. **Open dependency to verify during implementation**: users who have
+  `EutrTemplates.Create`/`Update` but not `GroupEmail.ReadAll` would get a 403 when the Add/Edit
+  screen tries to load the Alert for combobox. `ComplianceMasterForm`/`MasterDefaultForm` already
+  call this same endpoint successfully, but their user base may not be identical to EUTR Templates
+  users — confirm `GroupEmail.ReadAll` is included in the roles that get `EutrTemplates.*` policies
+  (same menu/role-seeding step called out in plan.md Principle V), or request a policy grant if not.
+
+### Superseded: Dedicated Vendors Endpoint (Update 2/3, no longer used)
+
+Historical contract, kept for reference only. Still present in `DynController` but not called by
+this feature after Update 5:
+
+```
+GET api/dynamics/vendors?skip=0&top=50&filter=&order_by=
+```
+
+Returned raw OData from D365 VendorsV3 with `$select=dataAreaId,VendorAccountNumber,VendorOrganizationName`
+applied (3 columns only): `{ "value": [{ "dataAreaId", "VendorAccountNumber", "VendorOrganizationName" }] }`.

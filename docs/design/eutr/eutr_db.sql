@@ -26,7 +26,7 @@ CREATE TABLE `eutr_templates`(
     `CreatedDate` DATETIME NULL,
     `UpdatedBy` VARCHAR(50) NULL,
     `UpdatedDate` DATETIME NULL,
-    `AlertFor` VARCHAR(50) NOT NULL,
+    `AlertFor` TINYINT NULL DEFAULT NULL,
     `IsDeleted` TINYINT NULL DEFAULT 0,
     `IsHide` TINYINT NULL DEFAULT 0
 );
@@ -76,3 +76,16 @@ ALTER TABLE
     `eutr_references` ADD CONSTRAINT `eutr_references_refid_foreign` FOREIGN KEY(`RefId`) REFERENCES `eutr_template_details`(`Id`);
 ALTER TABLE
     `eutr_master_documents` ADD CONSTRAINT `eutr_master_documents_stepid_foreign` FOREIGN KEY(`StepId`) REFERENCES `eutr_steps`(`Id`);
+
+CREATE TABLE `compl_group_email` (
+  `Id` bigint NOT NULL AUTO_INCREMENT,
+  `Name` varchar(255) DEFAULT NULL,
+  `GroupType` tinyint DEFAULT NULL,
+  `IsDefault` tinyint(1) DEFAULT NULL,
+  `IsAddition` tinyint(1) DEFAULT '0',
+  `CreatedDate` datetime DEFAULT CURRENT_TIMESTAMP,
+  `CreatedBy` varchar(50) DEFAULT NULL,
+  `UpdatedDate` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `UpdatedBy` varchar(50) DEFAULT NULL,
+  PRIMARY KEY (`Id`)
+) ENGINE=InnoDB AUTO_INCREMENT=24 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
