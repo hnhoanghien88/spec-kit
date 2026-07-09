@@ -1010,3 +1010,110 @@ T139, T140 in parallel [P]
 T141, T142, T143, T144, T145 in parallel (once Phases 29-31 are deployed)
 T146 sequentially (end-to-end)
 ```
+
+---
+
+## Update 2026-07-07 — Shared RequirementType/TakeFrom Constants (frontend refactor)
+
+**Context**: `StepTree.jsx` declares `REQUIREMENT_LABELS`, `TAKE_FROM_LABELS`, `REQUIREMENT_TYPES`,
+and `TAKE_FROM_OPTIONS` locally; `StepFormRow.jsx` (same folder) separately declares a
+byte-for-byte duplicate of `REQUIREMENT_TYPES`/`TAKE_FROM_OPTIONS`. Per spec Update 8, all four
+constants move to `compliance-client/src/utils/helpers.js` — the codebase's established shared
+location for cross-feature frontend constants (`ObjectType`, `groupEmailType`) — so both files (and
+any future feature) import a single source instead of duplicating it.
+
+**Changes**: Frontend-only, no backend/DB/contract changes. Values, shapes, and names are
+unchanged — pure relocation. See research.md §19 and plan.md's "Update 2026-07-07 — Shared
+RequirementType/TakeFrom Constants" section for full rationale.
+
+---
+
+## Phase 33: Frontend — Move Shared Constants to utils/helpers.js
+
+**Purpose**: Centralize `REQUIREMENT_TYPES`, `TAKE_FROM_OPTIONS`, `REQUIREMENT_LABELS`,
+`TAKE_FROM_LABELS` in `utils/helpers.js` and remove the duplicate/local declarations
+
+- [X] T147 [US2] In compliance-client/src/utils/helpers.js, add and export (verbatim values,
+      copied from `StepTree.jsx`): `export const REQUIREMENT_TYPES = [{ value: 0, label:
+      'Optional' }, { value: 1, label: 'Required' }];`, `export const TAKE_FROM_OPTIONS = [{
+      value: 0, label: 'PO' }, { value: 1, label: 'Upload manual' }];`, `export const
+      REQUIREMENT_LABELS = { 0: 'Optional', 1: 'Required' };`, `export const TAKE_FROM_LABELS = {
+      0: 'PO', 1: 'Upload manual' };`. Place them near the other standalone exported constants
+      (e.g. after `groupEmailType`), each as its own `export const` statement (no `Object.freeze`
+      wrapper — keep the existing plain array/object shape so `options={REQUIREMENT_TYPES}` and
+      `.find(...)` call sites need no changes). **Done**: added after `groupEmailType` in
+      compliance-client/src/utils/helpers.js.
+- [X] T148 [P] [US2] In compliance-client/src/presentation/pages/eutr-templates/components/StepTree.jsx,
+      delete the local `REQUIREMENT_LABELS`, `TAKE_FROM_LABELS`, `REQUIREMENT_TYPES`,
+      `TAKE_FROM_OPTIONS` declarations (lines currently defining them near the top of the file) and
+      import all four from `@utils/helpers` (or the relative path already used by this file's other
+      imports) instead. Leave every usage (`options={REQUIREMENT_TYPES}`,
+      `REQUIREMENT_TYPES.find(...)`, `TAKE_FROM_LABELS[...]`, etc.) unchanged. **Done**: local
+      declarations removed, single import added from `@utils/helpers`.
+- [X] T149 [P] [US2] In compliance-client/src/presentation/pages/eutr-templates/components/StepFormRow.jsx,
+      delete the local `REQUIREMENT_TYPES`, `TAKE_FROM_OPTIONS` declarations and import both from
+      `@utils/helpers` (same import path used in T148) instead. Leave every usage
+      (`options={REQUIREMENT_TYPES}`, `.find(...)`) unchanged. **Done**: local declarations removed,
+      import added from `@utils/helpers`.
+
+**Checkpoint**: `helpers.js` exports all four constants; `StepTree.jsx` and `StepFormRow.jsx` have
+no local declarations of them and import from `utils/helpers.js` instead; no duplicate
+declarations remain anywhere in `eutr-templates/components/`.
+
+---
+
+## Phase 34: Validation — Shared RequirementType/TakeFrom Constants
+
+**Purpose**: Confirm the relocation introduced no behavior/visual regression and no dead imports
+
+- [ ] T150 [P] Verify Add step form (`StepFormRow.jsx`): open the Add/Edit template page, use "Add
+      step" — the RequirementType combobox must still show "Optional"/"Required" and the TakeFrom
+      combobox must still show "PO"/"Upload manual", both selectable and saved correctly.
+- [ ] T151 [P] Verify inline Edit step (`StepTree.jsx`): click the Edit icon on an existing step —
+      the RequirementType/TakeFrom comboboxes must still pre-select the step's current values from
+      the shared constants, and the tree row's label text (via `REQUIREMENT_LABELS`/
+      `TAKE_FROM_LABELS`) must still render "Optional"/"Required"/"PO"/"Upload manual" correctly.
+- [ ] T152 Run a frontend build/lint (e.g. `npm run build` or `npm run lint` in
+      `compliance-client/`) to confirm no unused-import or unresolved-import errors remain in
+      `StepTree.jsx`/`StepFormRow.jsx` after removing the local declarations, then run the
+      quickstart.md Post-Validation Checks item added for Update 8 end-to-end. **Partially done**:
+      `npm run build` in compliance-client/ succeeded with no import/unused errors (confirmed
+      `REQUIREMENT_TYPES`/`TAKE_FROM_OPTIONS`/`REQUIREMENT_LABELS`/`TAKE_FROM_LABELS` are used only
+      via the `@utils/helpers` import in both files). The quickstart.md end-to-end browser check
+      still requires manual verification (T150/T151) — not run in this session (no dev server/UI
+      driven).
+
+**Checkpoint**: Both comboboxes and tree label rendering behave identically to before the move; no
+build/lint errors; only one source of truth remains for these four constants.
+
+---
+
+## Update 8 Dependencies
+
+### Phase Dependencies
+
+- **Phase 33 (Move constants)**: T147 (add exports to `helpers.js`) MUST complete before T148 and
+  T149 (both import from `helpers.js`). T148 and T149 are independent `[P]` — different files, no
+  shared state.
+- **Phase 34 (Validation)**: Depends on all of Phase 33 (T147-T149) being complete. T150 and T151
+  are independent `[P]` (different components/screens). T152 (build/lint + quickstart check) runs
+  last, after T150/T151 confirm behavior is unchanged.
+
+### Execution Order
+
+```
+T147 (helpers.js exports) ──┬── T148 (StepTree.jsx imports) ──┐
+                             └── T149 (StepFormRow.jsx imports) ──┴── T150, T151 ([P]) ── T152 (E2E)
+```
+
+### Parallel Opportunities
+
+```
+# Phase 33 — one shared-file edit, then two independent consumer edits:
+T147 first (blocking)
+T148, T149 in parallel [P] (after T147)
+
+# Phase 34 — both manual checks in parallel, build/lint + quickstart last:
+T150, T151 in parallel [P]
+T152 sequentially (after T150/T151)
+```

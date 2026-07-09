@@ -133,6 +133,17 @@ Frontend: React/MUI SPA — paginated grid, full-page Add/Edit form with **2-col
   mirroring the existing `vendorCode`/`vendorName` split.
 - See research.md Section 18 for full rationale and alternatives considered.
 
+### Update 2026-07-07 — Shared RequirementType/TakeFrom Constants (frontend refactor)
+
+- **Change**: Move `REQUIREMENT_TYPES`, `TAKE_FROM_OPTIONS`, `REQUIREMENT_LABELS`,
+  `TAKE_FROM_LABELS` from `StepTree.jsx` into `compliance-client/src/utils/helpers.js` as named
+  exports (verbatim values/shapes — no reshaping). Delete `StepFormRow.jsx`'s duplicate local
+  `REQUIREMENT_TYPES`/`TAKE_FROM_OPTIONS` declaration; both files import from `utils/helpers.js`.
+- **Scope**: Frontend-only, no backend/DB/contract changes. Pure presentation-layer internal
+  reorganization — call sites (`options={REQUIREMENT_TYPES}`, `.find(...)`,
+  `REQUIREMENT_LABELS[value]`) are unchanged.
+- See research.md Section 19 for full rationale and alternatives considered.
+
 ## Technical Context
 
 **Language/Version**: .NET 8 (backend), JavaScript/React 18 + Vite 7 (frontend)
@@ -199,6 +210,14 @@ reuse existing backend), though it sits under a different policy (`GroupEmail.Re
 `EutrTemplates.*`; this is flagged as an access-control dependency to verify during
 `/speckit-implement`, not a layering or architecture concern. No new dependencies or layer
 violations.
+
+**Post-design re-check (2026-07-07 update 8)**: All principles still PASS. Moving
+`REQUIREMENT_TYPES`/`TAKE_FROM_OPTIONS`/`REQUIREMENT_LABELS`/`TAKE_FROM_LABELS` into the existing
+shared `compliance-client/src/utils/helpers.js` (already the established home for cross-feature
+frontend constants such as `ObjectType`/`groupEmailType` — Principle II, reference-pattern reuse)
+is a presentation-layer-internal move with no new files, no backend change (Principle III), and no
+layer boundary crossed (Principle I — `utils/` is a shared cross-cutting module already consumed
+across features, not feature-specific). No new dependencies or layer violations.
 
 ## Project Structure
 
@@ -303,14 +322,16 @@ compliance-client/src/
 │           ├── EutrTemplatesAddEdit.jsx          # MODIFY — 2-column layout (widened header/narrowed steps), vendor via ReferenceObjectAutocomplete (refType=13) (Update 5), Save button moved below Default checkbox, Back dirty-check confirm dialog; (Update 7) Alert for `Autocomplete` switches from `freeSolo`/hardcoded `ALERT_FOR_OPTIONS` to `GetAllGroupEmailUseCase`-backed, select-only, filtered to `groupType===2 && isAddition===false`, storing the selected group's `id`
 │           ├── components/
 │           │   ├── EutrTemplatesActionCell.jsx   # NEW — row action buttons
-│           │   ├── StepTree.jsx                  # MODIFY — add inline Edit step mode; (Update 6) inline-edit Step combobox becomes freeSolo
-│           │   ├── StepFormRow.jsx               # NEW — add step form; (Update 6) Step combobox becomes freeSolo (pick existing or type new name)
+│           │   ├── StepTree.jsx                  # MODIFY — add inline Edit step mode; (Update 6) inline-edit Step combobox becomes freeSolo; (Update 8) delete local REQUIREMENT_TYPES/TAKE_FROM_OPTIONS/REQUIREMENT_LABELS/TAKE_FROM_LABELS, import from utils/helpers.js
+│           │   ├── StepFormRow.jsx               # NEW — add step form; (Update 6) Step combobox becomes freeSolo (pick existing or type new name); (Update 8) delete local REQUIREMENT_TYPES/TAKE_FROM_OPTIONS duplicate, import from utils/helpers.js
 │           │   └── ImportResultDialog.jsx        # NEW — import result display
 │           └── hooks/
 │               ├── useEutrTemplatesColumns.jsx   # NEW — grid column definitions; (Update 7) `alertFor` column field → `alertForName`
 │               ├── useEutrTemplatesData.js       # NEW — list data hook
 │               ├── useVendors.js                 # REMOVE (Update 5) — superseded by shared useReferenceObjects/ReferenceObjectAutocomplete
 │               └── useStepTree.js                # MODIFY — fix flattenForSave ParentId + add editStep + isDirty tracking for Back warning; (Update 6) flattenForSave also emits stepName for every detail
+├── utils/
+│   └── helpers.js                                 # MODIFY (Update 8) — add REQUIREMENT_TYPES, TAKE_FROM_OPTIONS, REQUIREMENT_LABELS, TAKE_FROM_LABELS exports (moved from StepTree.jsx)
 ├── di/
 │   └── repositories.js                           # MODIFY — add eutrTemplates repo; repositories.groupEmail EXISTS already (Update 7 reuses it)
 └── app/

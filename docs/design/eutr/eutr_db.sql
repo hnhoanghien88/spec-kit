@@ -47,6 +47,7 @@ CREATE TABLE `eutr_template_details`(
 CREATE TABLE `eutr_references`(
     `Id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     `RefId` BIGINT UNSIGNED NULL,
+    `StepId` BIGINT UNSIGNED NULL,
     `DocumentId` BIGINT UNSIGNED NULL,
     `RefType` TINYINT NULL DEFAULT 0,
     `RefValue` VARCHAR(255) NULL,
@@ -57,7 +58,7 @@ CREATE TABLE `eutr_references`(
 );
 CREATE TABLE `eutr_documents`(
     `Id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    `Name` BIGINT NULL,
+    `Name` VARCHAR(255) NULL,
     `FileId` VARCHAR(255) NULL,
     `ValidFrom` DATE NULL,
     `ValidTo` DATE NULL,
@@ -76,6 +77,8 @@ ALTER TABLE
     `eutr_references` ADD CONSTRAINT `eutr_references_refid_foreign` FOREIGN KEY(`RefId`) REFERENCES `eutr_template_details`(`Id`);
 ALTER TABLE
     `eutr_master_documents` ADD CONSTRAINT `eutr_master_documents_stepid_foreign` FOREIGN KEY(`StepId`) REFERENCES `eutr_steps`(`Id`);
+ALTER TABLE
+    `eutr_references` ADD CONSTRAINT `eutr_references_stepid_foreign` FOREIGN KEY(`StepId`) REFERENCES `eutr_steps`(`Id`);
 
 CREATE TABLE `compl_group_email` (
   `Id` bigint NOT NULL AUTO_INCREMENT,

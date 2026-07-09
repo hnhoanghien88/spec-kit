@@ -62,6 +62,26 @@
   ReferenceObjectAutocomplete hoặc hook `useReferenceObjects` tương đương) với refType=13, theo
   đúng pattern các trường reference khác trong hệ thống.
 
+### Session 2026-07-07 (Update 8)
+
+- Q: StepFormRow.jsx (cùng thư mục components) hiện đang có một bản sao trùng lặp y hệt của
+  REQUIREMENT_TYPES và TAKE_FROM_OPTIONS. Khi di chuyển 2 hằng số này sang helpers.js,
+  StepFormRow.jsx có nên được cập nhật để import từ helpers.js luôn không? → A: Có — cả
+  StepTree.jsx và StepFormRow.jsx đều xóa bản khai báo local, cùng import từ helpers.js.
+- Q: StepTree.jsx còn có REQUIREMENT_LABELS và TAKE_FROM_LABELS (map tra cứu label dạng
+  {0: 'Optional', 1: 'Required'}) — biểu diễn khác của cùng dữ liệu enum. Có di chuyển luôn 2 map
+  này sang helpers.js cùng đợt không? → A: Có — di chuyển luôn cả REQUIREMENT_LABELS và
+  TAKE_FROM_LABELS sang helpers.js cùng với REQUIREMENT_TYPES/TAKE_FROM_OPTIONS.
+- Change: Di chuyển 4 hằng số dùng chung cho RequirementType/TakeFrom — REQUIREMENT_TYPES,
+  TAKE_FROM_OPTIONS (mảng `{value, label}[]` dùng làm `options` cho Autocomplete), REQUIREMENT_LABELS,
+  TAKE_FROM_LABELS (map tra cứu label theo value) — từ
+  `compliance-client/src/presentation/pages/eutr-templates/components/StepTree.jsx` sang
+  `compliance-client/src/utils/helpers.js`, export để tái sử dụng. Xóa bản khai báo local trùng lặp
+  ở cả `StepTree.jsx` và `StepFormRow.jsx` (đang có cùng REQUIREMENT_TYPES/TAKE_FROM_OPTIONS trùng
+  y hệt); cả hai file MUST import 4 hằng số này từ `utils/helpers.js` thay vì tự khai báo. Giữ
+  nguyên tên hằng số và cấu trúc dữ liệu hiện tại (không đổi shape) để không phải sửa logic sử dụng
+  tại nơi gọi.
+
 ### Session 2026-07-06 (Update 6)
 
 - Feature: Combobox chọn Step trong form Add step / Edit step MUST hỗ trợ vừa chọn step có sẵn
@@ -518,7 +538,11 @@ trong danh sách.
   (liên kết đến step cha hoặc 0 nếu gốc), RequirementType (Required=1/Optional=0),
   TakeFrom (PO=0/Upload manual=1), thứ tự hiển thị, người tạo, ngày tạo. Khi edit template,
   toàn bộ cây bước hiện tại (bao gồm step đã chỉnh sửa) được lưu vào TemplateId mới. ParentId
-  MUST được lưu chính xác để duy trì cấu trúc cây đệ quy.
+  MUST được lưu chính xác để duy trì cấu trúc cây đệ quy. Trên frontend, các hằng số biểu diễn
+  RequirementType/TakeFrom (mảng options `{value, label}[]` cho combobox và map tra cứu label
+  theo value) MUST được khai báo dùng chung tại `compliance-client/src/utils/helpers.js` (không
+  khai báo cục bộ, trùng lặp trong từng component) để `StepTree.jsx`, `StepFormRow.jsx` và các
+  chức năng khác trong hệ thống có thể tái sử dụng.
 - **EUTR Step** (đã có sẵn — feature 001-eutr-steps): Danh sách các bước EUTR, được sử dụng làm
   nguồn dữ liệu cho combobox khi Add step/Edit step (free-solo). Khi người dùng nhập một tên step
   mới chưa tồn tại trong danh sách này và Save template, hệ thống MUST tự động tạo bản ghi mới

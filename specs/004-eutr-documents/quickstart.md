@@ -1,0 +1,223 @@
+# Quickstart / Validation: EUTR Documents
+
+Hướng dẫn chạy và kiểm thử thủ công feature EUTR Documents end-to-end.
+
+## Tiền đề
+
+- Bảng `eutr_documents` tồn tại trong DB (theo `docs/design/eutr/eutr_db.sql`); migration
+  `09_migrate_eutr_documents_name.sql` đã chạy để cột `Name` là `VARCHAR(255)` (không còn
+  `BIGINT`).
+- Backend đã build được với controller mới `api/eutr-documents` (CRUD, không có import/export).
+- **Menu + quyền được tạo động & phân quyền trong DB** (không seed bằng code): tạo menu code
+  `eutr-documents` (url `/eutr/documents`) và các quyền `EutrDocuments.ReadAll / ReadOne / Create
+  / Update / Delete`, rồi gán cho role/user đăng nhập (routing backend-driven — nếu thiếu
+  menu/quyền trong DB, màn hình sẽ không truy cập được).
+- **(Update 6)** Cấu hình `SharePointEutrPath` đã được thêm vào `appsettings.json`/
+  `appsettings.Development.json` (khóa mới, cạnh `SharePointCompPath`); nếu thiếu, endpoint
+  `POST /api/sharepoint/eutr-upload-multi` sẽ báo lỗi cấu hình khi gọi. Backend đã có quyền truy cập
+  SharePoint hợp lệ (cùng cấu hình Graph API dùng chung cho các endpoint `api/sharepoint/*` khác).
+- **(Update 7)** Migration `10_add_stepid_to_eutr_references.sql` đã chạy để bảng `eutr_references`
+  có cột `StepId` (BIGINT UNSIGNED NULL, FK tới `eutr_steps.Id`). Có ít nhất vài bản ghi trong
+  `eutr_master_documents` (feature `002-eutr-masters`) với `Prefix` đã biết trước (ví dụ `Prefix =
+  "INV"` gắn `StepId = 5`) để dùng làm tên file test (vd. `INV_test.pdf`) khớp đúng prefix.
+- **(Update 8)** Không cần thêm tiền đề DB/cấu hình nào — chỉ cần đã có ít nhất 1 document được tạo
+  qua nút Upload (kèm bản ghi `eutr_references` tương ứng, xem tiền đề Update 7) để quan sát được
+  Step name/Type (danh sách) và File name/Step name (List PO) hiển thị dữ liệu thật thay vì trống.
+
+## Chạy
+
+```bash
+# Backend
+cd compliance-sys-api
+dotnet run --project src/ComplianceSys.Api
+
+# Frontend
+cd compliance-client
+npm install   # nếu chưa cài
+npm run dev
+```
+
+Mở SPA, đăng nhập, vào menu **EUTR documents** (đường dẫn `/eutr/documents`).
+
+## Kịch bản kiểm thử (ánh xạ Acceptance Scenarios trong spec)
+
+1. **Xem danh sách (US1)**: Mở `/eutr/documents` → thấy breadcrumb "EUTR > EUTR documents" và
+   bảng với cột File name, Step name, Conditions, Type, Valid from, Valid to, Created by, Created
+   date, Action. Cột **Conditions luôn trống** cho mọi dòng (không có liên kết "[View detail]"
+   nào — không đổi). Dữ liệu tải từ `POST /eutr-documents/get-all`. Danh sách rỗng → hiển thị
+   "No data".
+1a. **Step name/Type nạp dữ liệu thật (US1, Update 8, FR-034/FR-035)**: Với một document được tạo
+   qua nút Upload (có bản ghi `eutr_references` liên kết, xem tiền đề Update 7) → cột **Step name**
+   hiển thị đúng tên Step tương ứng (không trống) và cột **Type** hiển thị đúng nhãn "PO" (khớp
+   `RefType = 0`, vì khu Upload chỉ tồn tại ở Screen1/Type=PO). Với một document tạo qua form Save
+   nhập tay (không qua Upload, không có `eutr_references` nào) → cột Step name/Type vẫn hiển thị
+   trống như trước Update 8. Nếu file đã upload khớp Prefix của nhiều `StepId` (xem kịch bản 9n) →
+   cột Step name của document đó hiển thị **nhiều** Step name (dạng chip, có "+N more"/tooltip khi
+   vượt quá số lượng hiển thị trực tiếp).
+2. **Thêm mới (US2)**: Nhấn nút **Add** trên toolbar → điều hướng sang **trang riêng**
+   `/eutr/documents/add` (không phải popup, không có control chọn/upload file). Nhập File name,
+   Valid from/to (tùy chọn) → Save → quay về danh sách, dòng mới xuất hiện đúng thông tin, Created
+   by/date có giá trị. Để trống File name → bị chặn, hiện lỗi, không tạo bản ghi.
+3. **Back trên trang Add (US2/FR-006a)**: Đang ở trang Add, nhập một số thông tin nhưng CHƯA Save
+   → nhấn **Back** → điều hướng thẳng về danh sách, KHÔNG tạo bản ghi, KHÔNG hiện cảnh báo xác
+   nhận.
+4. **Sửa (US3)**: Trên 1 dòng, nhấn **Edit** → mở **popup** (không phải trang riêng) cho phép sửa
+   File name, Valid from, Valid to → Save → giá trị cập nhật trong bảng. Để trống File name → bị
+   chặn, không lưu. Nhấn Cancel → đóng popup, không thay đổi gì.
+5. **Xóa (US4)**: Delete trên 1 dòng → xác nhận → dòng biến mất (hard delete). Chọn nhiều dòng →
+   xóa nhiều → tất cả biến mất. Hủy ở hộp xác nhận → không xóa dòng nào.
+6. **Icon View placeholder (US5)**: Trên mỗi dòng, cột Action hiển thị icon **View** cạnh
+   Edit/Delete với giao diện active bình thường (không mờ, không disable). Nhấn vào icon → KHÔNG
+   có trang/popup nào mở ra, KHÔNG có request nào gửi lên server (kiểm tra tab Network của
+   DevTools — không có API call phát sinh khi click View).
+7. **Trùng File name (Edge Case)**: Tạo hoặc sửa một document thành File name trùng với document
+   khác đã có → hệ thống **vẫn cho phép lưu bình thường** (không cảnh báo trùng).
+8. **Quyền**: Đăng nhập user thiếu quyền Create/Update/Delete → nút tương ứng ẩn/disable.
+9. **Type = PO trên trang Add — PO name nối API thật (US2, Update 4)**: Trên trang Add, thấy thêm
+   trường **Type** (mặc định "PO"). Với Type = "PO" → hiển thị bảng **List PO** (cột PO name, File
+   name, Step name, Action: View/Delete) và nút **Upload** (thay khu "Drag and drop files to upload"
+   từ Update 6). Kiểm tra tab Network của DevTools: có 1 request `POST /api/dynamics/reference?...&refType=15`
+   khi bảng render — cột **PO name** hiển thị đúng danh sách trả về từ D365 entity
+   `RSVNEutrPurchOrders`. Cột **File name**/**Step name** hiển thị theo PO đang được chọn — xem kịch
+   bản 9p (Update 8); trước khi chọn dòng PO nào, bảng chi tiết này trống.
+9a. **List PO rỗng/lỗi (Update 4, FR-017, SC-010)**: Nếu D365 trả về danh sách rỗng cho `refType =
+    15`, bảng List PO hiển thị trạng thái trống ("No data") thay vì lỗi. Nếu request `refType = 15`
+    thất bại (ví dụ ngắt kết nối D365), bảng List PO hiển thị thông báo lỗi thân thiện; các trường
+    File name/Valid from/Valid to và nút Save/Back trên trang Add vẫn hoạt động bình thường (không
+    bị khoá bởi lỗi này).
+9b. **refType = 16 chỉ tồn tại ở backend (Update 4, FR-022)**: Gọi trực tiếp
+    `POST /api/dynamics/reference` với `refType = 16` (qua Postman/DevTools, không qua UI) → xác
+    nhận trả về đúng dữ liệu `RSVNEutrSalesOrderPurchases` theo `ComplDynReferenceResponseDto`.
+    Xác nhận không có màn hình nào trong `EutrDocumentsAdd.jsx` gọi refType này (kiểm tra tab
+    Network khi thao tác toàn bộ trang Add — không thấy request nào với `refType=16`).
+9c. **Ô tìm kiếm PO lọc qua API (US2, Update 5, FR-023)**: Với Type = "PO", gõ một từ khóa khớp
+    tên/mã một PO thật vào ô tìm kiếm phía trên List PO → sau khoảng debounce ngắn (~500ms), tab
+    Network hiện thêm 1 request `POST /api/dynamics/reference?...&refType=15` kèm body filter
+    `Name`/`Code` chứa từ khóa đó; danh sách PO cập nhật đúng theo kết quả trả về từ server (không
+    chỉ số PO đã tải trước đó). Xóa hết từ khóa → danh sách tải lại đầy đủ (request `refType=15`
+    không kèm filter).
+9d. **Tìm kiếm PO không khớp / lỗi (Update 5, FR-023)**: Nhập từ khóa không khớp PO nào → danh sách
+    hiển thị "No data" (không phải lỗi). Nếu request tìm kiếm thất bại (lỗi mạng/máy chủ) → hiển
+    thị thông báo lỗi thân thiện, các trường/nút khác trên trang Add vẫn hoạt động bình thường.
+9e. **Nút Upload vô hiệu hóa khi chưa chọn PO (Update 6, FR-024)**: Mở trang Add với Type = "PO",
+    chưa click dòng PO nào → nút **Upload** ở trạng thái disabled (không thể nhấn).
+9f. **Chọn PO kích hoạt Upload (Update 6, FR-024)**: Click một dòng bất kỳ trong List PO → dòng đó
+    được tô nổi bật (đang chọn) và nút Upload chuyển sang trạng thái khả dụng. Click dòng PO khác →
+    lựa chọn chuyển sang dòng mới (chỉ 1 dòng được chọn tại một thời điểm).
+9g. **Upload nhiều file hợp lệ thành công (Update 6, FR-025/FR-027/FR-028/FR-029; Update 7,
+    FR-032/FR-033)**: Với một PO đã chọn, nhấn Upload → hộp thoại chọn file mở ra, chọn 2-3 file
+    hợp lệ (PDF/DOC/DOCX/XLS/XLSX/JPG/PNG, mỗi file < 10MB, VÀ tên file có prefix khớp một bản ghi
+    trong `eutr_master_documents`, vd. `INV_test.pdf` nếu `Prefix = "INV"` đã tồn tại) → xác nhận.
+    Kiểm tra tab Network: có 1 request `POST /api/sharepoint/eutr-upload-multi` (multipart, field
+    `files` + `poCode`). Sau khi hoàn tất, mở lại danh sách EUTR documents (`/eutr/documents`) →
+    xác nhận có thêm đúng số document mới tương ứng, mỗi document có File name = tên file đã chọn,
+    Valid from = ngày hôm nay, Valid to = ngày rất xa trong tương lai (`9999-12-31`), Created
+    by/date có giá trị. Snackbar hiển thị kết quả thành công. Kiểm tra trực tiếp DB: bảng
+    `eutr_references` có đúng 1 dòng mới cho mỗi file (`DocumentId` = id document vừa tạo, `StepId`
+    = StepId của bản ghi `eutr_master_documents` đã khớp, `RefType = 0`, `RefValue` = mã PO đã
+    chọn).
+9h. **File sai định dạng/quá 10MB bị loại (Update 6, FR-026, FR-030)**: Nhấn Upload, chọn kèm 1 file
+    sai định dạng (vd. `.zip`) hoặc 1 file > 10MB lẫn cùng các file hợp lệ khác → xác nhận: file
+    không hợp lệ bị loại kèm thông báo lỗi rõ ràng (liệt kê tên file + lý do), các file hợp lệ còn
+    lại vẫn được upload và tạo document bình thường (kiểm tra danh sách EUTR documents).
+9i. **Lỗi một phần trong batch không làm mất các file thành công (Update 6, FR-030)**: (Kiểm thử
+    thủ công/khó mô phỏng lỗi mạng giữa chừng — có thể bỏ qua nếu không dựng được môi trường lỗi
+    SharePoint tạm thời) Nếu một file trong batch thất bại do lỗi SharePoint trong khi các file khác
+    thành công, xác nhận các document của file thành công vẫn xuất hiện trong danh sách, và response/
+    snackbar liệt kê rõ file nào lỗi.
+9j. **Thư mục SharePoint theo PO được tái sử dụng (Update 6, FR-028)**: Upload file cho cùng một PO
+    lần thứ hai (PO đã có thư mục từ lần upload trước ở 9g) → xác nhận request vẫn thành công (không
+    lỗi do trùng thư mục), file mới được thêm vào cùng thư mục PO đó trên SharePoint (kiểm tra qua
+    Graph Explorer/SharePoint UI nếu có quyền truy cập, hoặc qua log backend).
+9k. **Giao diện khu Upload theo mẫu `upload.png` (Update 7, FR-031)**: Với một PO đã chọn, quan sát
+    khu Upload — thấy tiêu đề "Upload File", khung viền nét đứt lớn với icon đám mây và chữ "Drop
+    file here or click to browse", một dòng phụ và hàng chip nhỏ bên dưới liệt kê đúng định dạng/
+    kích thước **thật** đang áp dụng (PDF, DOC/DOCX, XLS/XLSX, JPG/PNG, Max 10MB) — KHÔNG phải "PDF,
+    DOCX, XLSX, max 50MB" như trong ảnh mẫu gốc. Khi chưa chọn PO, toàn bộ khu vực này hiển thị mờ
+    (disabled) và không phản hồi click/thả file.
+9l. **Kéo-thả file thật hoạt động giống click (Update 7, FR-031)**: Với một PO đã chọn, kéo 1 file
+    hợp lệ (đúng định dạng/kích thước và có prefix khớp) từ File Explorer/Finder và thả vào khung
+    Upload (không click) → xác nhận hệ thống xử lý y hệt như khi click chọn file qua hộp thoại: có
+    request `POST /api/sharepoint/eutr-upload-multi`, document mới xuất hiện đúng trong danh sách,
+    kèm bản ghi `eutr_references` tương ứng.
+9m. **File không khớp prefix nào bị chặn (Update 7, FR-032)**: Chọn/thả một file có tên KHÔNG bắt
+    đầu bằng bất kỳ `Prefix` nào tồn tại trong `eutr_master_documents` (vd. `random-name.pdf`) →
+    xác nhận: file đó bị loại, thông báo lỗi liệt kê rõ tên file (vd. "No matching prefix found"),
+    KHÔNG có file mới nào xuất hiện trên SharePoint (không gọi upload), KHÔNG có document/eutr_references
+    nào được tạo cho file này.
+9n. **Prefix khớp nhiều Step → nhiều dòng `eutr_references` (Update 7, FR-032/FR-033)**: Chuẩn bị
+    (qua DB hoặc màn `002-eutr-masters`) 2 bản ghi `eutr_master_documents` có `Prefix` đều là tiền
+    tố hợp lệ của cùng một tên file test nhưng khác `StepId` (vd. `Prefix = "INV"` → `StepId = 5` và
+    `Prefix = "INV2026"` → `StepId = 7`, file test tên `INV2026_report.pdf`) → upload file đó →
+    xác nhận upload thành công (không bị chặn), document được tạo bình thường, và bảng
+    `eutr_references` có **2 dòng mới** cùng `DocumentId` nhưng khác `StepId` (5 và 7), cùng
+    `RefType = 0` và cùng `RefValue` (mã PO đã chọn).
+9o. **Ghi `eutr_references` thất bại → rollback cả document (Update 7, FR-033)**: (Khó mô phỏng thủ
+    công — có thể bỏ qua nếu không dựng được lỗi DB tạm thời khi ghi `eutr_references`, ví dụ tạm
+    thời xóa cột `StepId` hoặc ngắt kết nối DB giữa 2 bước ghi) Nếu bước ghi `eutr_references` thất
+    bại ngay sau khi bước ghi `eutr_documents` (trong cùng transaction) thành công, xác nhận: file
+    đó được báo `success: false` trong response, và **không có** document mồ côi nào xuất hiện
+    trong danh sách EUTR documents cho file này (transaction đã rollback toàn bộ, không chỉ phần
+    `eutr_references`).
+9p. **File name/Step name ở List PO nạp dữ liệu thật (US2, Update 8, FR-037/FR-038)**: Sau khi
+    upload thành công cho một PO (kịch bản 9g), click chọn lại đúng PO đó trong List PO → kiểm tra
+    tab Network: có 1 request `POST /api/eutr-documents/list-po-references` (body
+    `{ "poCodes": ["<mã PO đó>"] }`) → bảng chi tiết (cạnh danh sách PO) hiển thị đúng 1 dòng cho
+    mỗi file đã upload cho PO này, với **File name** = tên file gốc và **Step name** = tên Step đã
+    khớp Prefix (không còn placeholder tĩnh "File name"/"Step Name" như trước Update 8). Click chọn
+    một PO khác **chưa từng** được upload file nào → bảng chi tiết hiển thị "No data" (không phải
+    lỗi, không còn 1 dòng placeholder tĩnh).
+9q. **Nhiều Step name cho một file (US1 + US2, Update 8)**: Với file test đã tạo ở kịch bản 9n
+    (khớp Prefix của 2 `StepId` khác nhau) → cả 2 nơi cùng hiển thị đúng: (a) trong bảng chi tiết
+    List PO (trang Add, PO tương ứng đang chọn), dòng của file đó hiển thị **2** Step name; (b)
+    trong danh sách EUTR documents (`/eutr/documents`), dòng của document đó cũng hiển thị đúng
+    **2** Step name — cả hai nơi dùng cùng cách hiển thị nhiều giá trị (chip + "+N more"/tooltip khi
+    vượt quá số lượng hiển thị trực tiếp).
+10. **Type = Upload manual trên trang Add (US2, chỉ giao diện)**: Chuyển Type sang "Upload manual" → layout đổi
+    ngay lập tức sang: khu "Drag and drop files to upload" ở trên cùng, nút "Assign condition", và
+    bảng danh sách file (checkbox, File name, Action: View/Delete) với 8 dòng dữ liệu mẫu (File
+    1..File 8).
+11. **Tương tác không chức năng (US2, chỉ giao diện, Screen2)**: Ở layout Screen2 (Manual), thử
+    kéo-thả một file vào khu upload, nhấn "Assign condition", nhấn View/Delete/checkbox trong bảng
+    demo → xác nhận KHÔNG có request nào gửi lên server (tab Network trống cho các thao tác này),
+    KHÔNG có điều hướng/popup nào mở ra. Sau đó vẫn nhập File name + Valid from/to (không quan tâm
+    Type đang chọn gì) và nhấn Save → xác nhận document mới vẫn được tạo bình thường (chỉ theo File
+    name, Valid from, Valid to — Type không được lưu). (Lưu ý: Screen1 KHÔNG còn no-op hoàn toàn —
+    khu vực Upload là control thật, xem 9e-9o.)
+
+## Tiêu chí đạt
+
+- Tất cả 11 kịch bản trên (cùng các kịch bản phụ 9a-9q, 1a) hoạt động đúng.
+- Không có lỗi console; gọi đúng các endpoint trong
+  [contracts/eutr-documents-api.md](./contracts/eutr-documents-api.md).
+- Add luôn là trang riêng (`/eutr/documents/add`); Edit luôn là popup — không lẫn lộn hai luồng.
+- Cột Conditions luôn trống, không gây lỗi hiển thị hay lỗi console (không đổi bởi Update 8).
+- **(Update 8)** Cột Step name/Type (danh sách) và File name/Step name (List PO) hiển thị đúng dữ
+  liệu thật khi có bản ghi `eutr_references` liên kết, và hiển thị trống (không lỗi) khi không có —
+  xem SC-019/SC-020.
+- Icon View không kích hoạt bất kỳ điều hướng/popup/API call nào.
+- Trường Type + layout List PO (Screen1)/Upload manual (Screen2) trên trang Add hiển thị đúng theo
+  `docs/design/eutr/eutr_documents_overview.md`; Screen2 và cột File name/Action của Screen1 vẫn
+  dùng dữ liệu mẫu tĩnh/no-op như Update 3; Save vẫn hoạt động như cũ (chỉ File name, Valid from,
+  Valid to).
+- Cột **PO name** trong List PO (Screen1) tải đúng dữ liệu thật từ `POST /api/dynamics/reference`
+  (`refType = 15`); trạng thái trống/lỗi của bảng này hiển thị đúng khi API trả về rỗng/thất bại
+  (Update 4).
+- **(Update 6)** Nút Upload ở Screen1 chỉ khả dụng khi đã chọn 1 PO; upload file hợp lệ tạo đúng
+  document trong `eutr_documents` (File name, Valid from = hôm nay, Valid to = `9999-12-31`, FileId
+  từ SharePoint); file sai định dạng/quá 10MB bị loại kèm lỗi rõ ràng mà không chặn các file hợp lệ
+  khác; lỗi một phần batch không làm mất các file đã upload/lưu thành công; List PO's File name vẫn
+  hiển thị trống sau upload (không lưu liên kết PO trong DB, theo clarify Update 6).
+- `refType = 16` trả về đúng dữ liệu khi gọi trực tiếp nhưng không có UI nào trong feature này gọi
+  tới (Update 4).
+- Ô tìm kiếm PO gọi lại API (`refType = 15` kèm từ khóa) thay vì chỉ lọc dữ liệu đã tải; xóa từ
+  khóa khôi phục danh sách mặc định; từ khóa không khớp hiển thị "No data" (Update 5).
+- Toàn bộ văn bản hiển thị (label cột, nút Add/Edit/Delete/View/Save/Back/Cancel, breadcrumb,
+  thông báo lỗi/thành công, trạng thái rỗng "No data", hộp thoại xác nhận xóa) đều bằng **tiếng
+  Anh** (FR-015).
+- **(Update 7)** Khu Upload hiển thị đúng theo mẫu `upload.png` (tiêu đề, khung kéo-thả, icon, hàng
+  chip) với nội dung định dạng/kích thước **thật** (không theo số liệu trong ảnh mẫu); hỗ trợ cả
+  kéo-thả thật lẫn click. File không khớp prefix nào trong `eutr_master_documents` bị chặn upload
+  kèm cảnh báo rõ ràng. File khớp nhiều `StepId` tạo đúng nhiều dòng `eutr_references` (cùng
+  `DocumentId`, khác `StepId`). Không có document "mồ côi" nào (document tồn tại mà không có
+  `eutr_references` tương ứng) xuất hiện trong danh sách EUTR documents sau bất kỳ lượt upload nào.

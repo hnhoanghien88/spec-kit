@@ -526,3 +526,48 @@ queryable with a plain SQL join in the same query that already builds the paged/
    column.
 9. **Frontend entity** (`EutrTemplates.js`): constructor gains `alertForName` alongside the existing
    `alertFor`, mirroring `vendorName`/`vendorCode`.
+
+## 19. Shared RequirementType/TakeFrom Constants — Move to utils/helpers.js
+
+**Decision**: Move `REQUIREMENT_TYPES`, `TAKE_FROM_OPTIONS` (both `{value, label}[]` arrays used as
+Autocomplete `options`), and `REQUIREMENT_LABELS`, `TAKE_FROM_LABELS` (both `{0: label, 1: label}`
+lookup maps) out of `StepTree.jsx` and into `compliance-client/src/utils/helpers.js` as named
+exports. `StepFormRow.jsx`'s identical duplicate local declaration of `REQUIREMENT_TYPES`/
+`TAKE_FROM_OPTIONS` is deleted; both components import the shared exports instead. No change to
+constant names, shapes, or values — pure relocation.
+
+**Rationale**: `StepTree.jsx` and `StepFormRow.jsx` already carry byte-for-byte duplicate
+declarations of `REQUIREMENT_TYPES`/`TAKE_FROM_OPTIONS`, which is exactly the kind of divergence
+risk `helpers.js` already exists to prevent (it already centralizes cross-feature constants such as
+`ObjectType`/`ObjectTypeLabelMap`/`getObjectTypeLabel` and `groupEmailType`). Centralizing lets any
+future EUTR (or other) screen that needs to render/label a Required/Optional or PO/Upload-manual
+value reuse the same source instead of re-declaring it a third time.
+
+**Alternatives considered**:
+- Extract into a new dedicated file (e.g. `eutr-templates/constants.js`) — rejected: the enums are
+  generic (Requirement type, document take-from source), not specific to the templates feature, and
+  the spec explicitly asks to centralize them "để tận dụng cho các chức năng khác" (for reuse by
+  other features); `helpers.js` is the established shared location others already reuse from
+  (`ObjectType`, `groupEmailType`).
+- Refactor into the `Object.freeze` constant + separate `LabelMap` + `getXLabel(value)` accessor
+  pattern used by `ObjectType`/`ObjectTypeLabelMap`/`getObjectTypeLabel` — rejected for this change:
+  `REQUIREMENT_TYPES`/`TAKE_FROM_OPTIONS` are consumed directly as MUI `Autocomplete` `options` props
+  (array of `{value, label}`), so reshaping them into a frozen value-only object plus a separate
+  label map would require rewriting every call site's `options={...}` and `.find(...)` usage for no
+  behavioral gain. Kept as plain arrays/objects to minimize diff and risk, per the clarified scope
+  (no shape change).
+- Leave `StepFormRow.jsx`'s duplicate as-is and only update `StepTree.jsx` — rejected per
+  clarification: the spec explicitly resolved this to update both files, since leaving the
+  duplicate defeats the stated reuse goal.
+
+**Implementation**:
+1. **`compliance-client/src/utils/helpers.js`**: add and export `REQUIREMENT_TYPES`,
+   `TAKE_FROM_OPTIONS`, `REQUIREMENT_LABELS`, `TAKE_FROM_LABELS` (values copied verbatim from
+   `StepTree.jsx`).
+2. **`StepTree.jsx`**: delete the local `REQUIREMENT_LABELS`, `TAKE_FROM_LABELS`,
+   `REQUIREMENT_TYPES`, `TAKE_FROM_OPTIONS` declarations; import all four from `utils/helpers.js`.
+3. **`StepFormRow.jsx`**: delete the local `REQUIREMENT_TYPES`, `TAKE_FROM_OPTIONS` declarations;
+   import both from `utils/helpers.js`.
+4. No backend, database, or API contract changes. No new dependency. Purely a frontend
+   presentation-layer internal reorganization — call-site usage (`options={REQUIREMENT_TYPES}`,
+   `REQUIREMENT_TYPES.find(...)`, `REQUIREMENT_LABELS[value]`, etc.) is unchanged.

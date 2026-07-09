@@ -259,3 +259,8 @@
 - [ ] Import handles valid/invalid rows correctly
 - [ ] All UI text is in English (per FR-017)
 - [ ] Navigation menu entry visible and routable
+- [ ] After moving REQUIREMENT_TYPES/TAKE_FROM_OPTIONS/REQUIREMENT_LABELS/TAKE_FROM_LABELS to
+      `utils/helpers.js`: RequirementType and TakeFrom comboboxes (Add step, inline Edit step, in
+      both `StepFormRow.jsx` and `StepTree.jsx`) still show the same "Optional"/"Required" and
+      "PO"/"Upload manual" options and render the same label text on the tree — no visual/behavior
+      change (Update 8)

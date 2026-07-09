@@ -174,3 +174,14 @@
 - No new [NEEDS CLARIFICATION] markers — GroupType=Alert filtering and single-select behavior are
   reasonable defaults derived from the existing codebase convention (Content Quality and
   Requirement Completeness items above remain unaffected).
+
+### Update 2026-07-07 — Shared RequirementType/TakeFrom Constants (frontend refactor)
+
+- **Change**: REQUIREMENT_TYPES, TAKE_FROM_OPTIONS, REQUIREMENT_LABELS, TAKE_FROM_LABELS moved
+  from `StepTree.jsx` to `compliance-client/src/utils/helpers.js` for reuse. `StepFormRow.jsx`'s
+  duplicate local declaration of REQUIREMENT_TYPES/TAKE_FROM_OPTIONS is also removed in favor of
+  the shared helpers.js export.
+- Key Entities: EUTR Template Detail updated with a note on the shared frontend constant location.
+- No functional/UI behavior change — same constant names, shapes, and values; pure code
+  organization change. No new [NEEDS CLARIFICATION] markers; all checkbox items above remain
+  passing, no regressions.
