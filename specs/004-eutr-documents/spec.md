@@ -78,7 +78,9 @@
   là silent no-op — theo cùng phạm vi "chưa có chức năng upload file thật" đã thống nhất ở Update 1).
   *(Superseded by Update 8: sau khi có dữ liệu upload thật (Update 6/7), cột File name — và thêm cột
   Step name mới — được nạp dữ liệu thật từ `eutr_references`, xem FR-037/FR-038; các thao tác View/
-  Delete trên List PO vẫn giữ nguyên silent no-op, không đổi.)*
+  Delete trên List PO vẫn giữ nguyên silent no-op, không đổi. Superseded further by Update 10: các
+  thao tác View/Delete cấp-dòng này không còn là silent no-op — được thay bằng icon View/Delete
+  theo từng file riêng lẻ, xem FR-043/FR-044.)*
 - Q: `refType = 16` (`RSVNEutrSalesOrderPurchases`) dùng để làm gì trong feature này? → A: **Chỉ
   đăng ký ở backend, chưa dùng ở giao diện nào trong phạm vi feature này** — refType này dành cho
   một màn hình sẽ được phát triển ở một tính năng sau; feature `004-eutr-documents` chỉ yêu cầu
@@ -220,6 +222,71 @@ Step name ở List PO (Screen1)
   `RefType` (theo FR-033/Update 7). Nếu dữ liệu ngoại lệ này tồn tại, hệ thống hiển thị nhãn của
   `RefType` của bản ghi `eutr_references` đầu tiên tìm được cho document đó, không coi là lỗi.
 
+### Session 2026-07-09 (Update 9) — Xóa document (Delete) MUST xóa kèm mọi bản ghi `eutr_references` liên quan
+
+- Change: Chức năng **Delete** (User Story 4, đơn hoặc nhiều document) hiện tại chỉ xóa bản ghi
+  trong `eutr_documents`, để lại các bản ghi `eutr_references` mồ côi (orphan) trỏ tới
+  `DocumentId` đã bị xóa (các bản ghi này được ghi bởi luồng Upload ở Screen1, xem Update 7/FR-033).
+  Backend MUST bổ sung bước xóa toàn bộ bản ghi `eutr_references` có `DocumentId` = `Id` của mỗi
+  document bị xóa, thực hiện **cùng lúc** với việc xóa document đó (không chỉ xóa document rồi để
+  lại references cũ). Áp dụng cho cả xóa một document (FR-011) và xóa nhiều document cùng lúc
+  (FR-012) — với xóa nhiều, mỗi document trong lượt xóa đều được dọn `eutr_references` tương ứng
+  theo đúng `DocumentId` của nó.
+- Q: Nếu việc xóa `eutr_references` thất bại (lỗi DB) trong khi document vẫn có thể xóa được, hệ
+  thống xử lý thế nào? → A: **Coi là một giao dịch (transaction) duy nhất theo từng document** —
+  nếu xóa `eutr_references` của một document thất bại thì document đó **KHÔNG** bị xóa (rollback),
+  hệ thống báo lỗi rõ ràng cho document đó; với xóa nhiều document, lỗi ở một document **KHÔNG**
+  chặn việc xóa các document khác trong cùng lượt (theo đúng ngữ nghĩa per-item đã dùng ở nơi khác
+  trong feature này, ví dụ FR-030 khi upload nhiều file).
+- Q: Document không có bản ghi `eutr_references` nào (tạo qua form Save nhập tay, chưa từng qua
+  Upload) khi bị xóa có cần xử lý gì khác không? → A: **Không** — bước xóa `eutr_references` theo
+  `DocumentId` chạy bình thường và không xóa gì (0 bản ghi bị ảnh hưởng), document vẫn bị xóa như
+  hành vi hiện tại; đây không phải lỗi.
+
+### Session 2026-07-09 (Update 10) — Icon View mở xem file thật (tham khảo `ComplCompliancesController.GetFileByIds`/`compliance-detail`) + Delete từng file trong List PO
+
+- Change: Icon **View** trên cột Action của danh sách EUTR documents (User Story 1, trước đây là
+  placeholder silent no-op theo FR-013) MUST trở thành chức năng thật: nhấn vào mở một **popup xem
+  trước file** (inline preview) cho document đó, theo đúng mẫu giao diện/luồng đã có ở
+  `compliance-client/src/presentation/pages/compliance-detail` (`FilePreviewer.jsx` +
+  `DialogFilePreviewer.jsx` — hiển thị PDF/DOCX/XLSX/ảnh trực tiếp trong popup kèm nút Download).
+  Backend MUST bổ sung endpoint **`GET /api/eutr-documents/get-file-by-idref`** trong
+  `EutrDocumentsController` hiện có, nhận `idRef` = `FileId` của document (query string), tham khảo
+  đúng mẫu hàm `[HttpGet("get-file-by-idref")] GetFileByIds` trong
+  `ComplCompliancesController.cs` — cùng gọi `_sharepointService.ReadFileWithMetaAsync(idRef)` và
+  trả về nội dung file dạng base64 kèm content type, file name (`SharepointFileContent`) — KHÔNG tạo
+  service đọc file mới.
+- Change: Với document KHÔNG có file thật (`FileId = null`, tạo qua form Save nhập tay ở trang Add,
+  chưa từng qua khu vực Upload), icon View trên danh sách chính MUST hiển thị ở trạng thái **vô hiệu
+  hóa (disabled)** kèm tooltip **"No file to view"** — khác với hành vi active-nhưng-no-op trước đây
+  (FR-013 cũ).
+- Change: Trên trang Add (Screen1, Type = PO), mỗi **file riêng lẻ** hiển thị trong cột File name/
+  Step name của bảng List PO (mỗi chip tương ứng một document/Step đã liên kết với PO đó, xem Update
+  8/FR-037/FR-038) MUST có icon **View** và icon **Delete** riêng — KHÔNG dùng chung một icon View/
+  Delete cho cả dòng PO, vì một dòng PO có thể liên kết nhiều file khác nhau. Icon View trên mỗi file
+  mở đúng popup xem trước file đó (theo cùng cơ chế ở trên, dùng `FileId` của document ứng với file
+  đó). Icon **Delete** trên mỗi file, sau khi xác nhận, MUST xóa bản ghi `eutr_documents` và toàn bộ
+  bản ghi `eutr_references` liên quan tới document đó (cùng giao dịch, cùng ngữ nghĩa với
+  FR-039/FR-040) — dùng lại nguyên vẹn API xóa document đơn đã có (`DELETE /api/eutr-documents/{id}`,
+  FR-011), KHÔNG cần endpoint xóa mới. Việc xóa này KHÔNG xóa file thật trên SharePoint (file vẫn còn
+  trên SharePoint, chỉ không còn bản ghi nào trong hệ thống trỏ tới nó). Sau khi xóa, file đó biến
+  mất khỏi cả List PO (trang Add) và danh sách EUTR documents chính (User Story 1), vì cùng là một
+  document.
+- Change: Icon View/Delete cấp-dòng trước đây trên cột Action của bảng List PO (silent no-op, theo
+  FR-017/FR-019 cũ) bị **thay thế hoàn toàn** bởi các icon View/Delete theo từng file ở trên — cột
+  Action cấp-dòng của List PO không còn icon View/Delete riêng biệt nữa. Dòng PO chưa có file nào
+  liên kết tiếp tục hiển thị File name/Step name trống và không có icon nào để xem/xóa (không có gì
+  để thao tác).
+- Q: Một dòng PO có thể liên kết nhiều file (nhiều chip) — chức năng View/Delete mới nên gắn ở đâu?
+  → A: **Theo từng file** — mỗi chip (mỗi file/Step liên kết) có icon View và Delete riêng, thay cho
+  một icon View/Delete chung áp dụng mơ hồ cho cả dòng có nhiều file.
+- Q: Khi document không có `FileId` (tạo tay qua Save, không qua Upload), nhấn View trên danh sách
+  chính xử lý thế nào? → A: **Vô hiệu hóa icon View** (mờ đi, không click được) kèm tooltip "No file
+  to view" — không hiển thị thông báo lỗi khi nhấn vì nút đã bị disable.
+- Q: Xóa một file ở khu vực này nên xóa gì? → A: **Chỉ xóa bản ghi trong `eutr_documents` và
+  `eutr_references`** liên quan — KHÔNG gọi thêm API xóa file thật trên SharePoint (file vẫn còn tồn
+  tại trên SharePoint, chỉ không còn được hệ thống tham chiếu tới nữa).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Xem danh sách EUTR documents (Priority: P1)
@@ -232,7 +299,10 @@ dữ liệu nên luôn hiển thị trống. **Kể từ Update 8**, cột **Ste
 trống — hệ thống tra cứu bảng `eutr_references` theo `DocumentId` của mỗi document (JOIN `StepId`
 với `eutr_steps.Name` để lấy Step name; lấy nhãn `TAKE_FROM_OPTIONS` ứng với `RefType` để hiển thị
 Type); document chưa có bản ghi `eutr_references` nào (chưa từng upload file) vẫn hiển thị hai cột
-này ở trạng thái trống. Người dùng có thể chuyển trang khi danh sách dài.
+này ở trạng thái trống. Người dùng có thể chuyển trang khi danh sách dài. **Kể từ Update 10**, icon
+**View** trên cột Action không còn là placeholder — nhấn vào mở popup xem trước file thật của
+document đó (nếu document có `FileId`); document không có `FileId` (tạo tay qua Save, chưa qua
+Upload) hiển thị icon View ở trạng thái vô hiệu hóa kèm tooltip "No file to view".
 
 **Why this priority**: Đây là giá trị cốt lõi — xem danh sách document hiện có là thao tác đầu
 tiên người dùng cần trước khi thêm mới, sửa, xóa hay xem chi tiết bất kỳ document nào.
@@ -263,6 +333,17 @@ cột Conditions hiển thị trống, cột Step name/Type hiển thị đúng 
    bản ghi của trang đó.
 4. **Given** danh sách document rỗng, **When** mở màn hình, **Then** bảng hiển thị trạng thái
    trống ("No data") thay vì lỗi.
+5. **(Update 10) Given** một document có `FileId` (đã upload file thật qua Screen1, xem Update 6/7),
+   **When** nhấn icon View trên dòng đó, **Then** hệ thống mở popup xem trước file (PDF/DOCX/XLSX/
+   ảnh hiển thị trực tiếp trong popup, kèm nút Download), lấy dữ liệu qua
+   `GET /api/eutr-documents/get-file-by-idref?idRef={FileId}`.
+6. **(Update 10) Given** một document KHÔNG có `FileId` (tạo qua form Save nhập tay, chưa từng qua
+   Upload), **When** bảng hiển thị dòng đó, **Then** icon View hiển thị ở trạng thái vô hiệu hóa kèm
+   tooltip "No file to view" — không thể nhấn.
+7. **(Update 10) Given** popup xem trước file đang mở, **When** gọi
+   `get-file-by-idref` thất bại (lỗi mạng/máy chủ) hoặc file có định dạng không hỗ trợ xem trước,
+   **Then** popup hiển thị thông báo lỗi/cảnh báo thân thiện thay vì treo giao diện, người dùng vẫn
+   có thể đóng popup.
 
 ---
 
@@ -281,7 +362,7 @@ thật**: một trường **Type** dạng dropdown với 2 lựa chọn **"PO"**
 dụng hằng số `TAKE_FROM_OPTIONS` có sẵn trong codebase — xem Assumptions).
 
 - Khi chọn Type = **"PO"**: hiển thị layout Screen1 — một bảng **List PO** (cột PO name, File
-  name, Step name, Action: View/Delete) cùng một khu vực upload. Kể từ Update 4,
+  name, Step name) cùng một khu vực upload. Kể từ Update 4,
   cột **PO name** MUST lấy dữ liệu thật bằng cách gọi API tham chiếu dùng chung
   `POST /api/dynamics/reference` với `refType = 15` (D365 entity `RSVNEutrPurchOrders`, xem
   FR-021), thay cho dữ liệu mẫu tĩnh trước đây. **Kể từ Update 8**, cột **File name** và **Step
@@ -290,9 +371,16 @@ dụng hằng số `TAKE_FROM_OPTIONS` có sẵn trong codebase — xem Assumpti
   `DocumentId` với `eutr_documents.Name`) và Step name (JOIN `StepId` với `eutr_steps.Name`) của
   các bản ghi khớp; một PO có thể liên kết nhiều document/Step (mỗi lượt upload thành công tạo
   thêm một bộ liên kết mới, xem Update 6/7) nên hai cột này có thể hiển thị nhiều giá trị. Dòng PO
-  chưa từng có file nào được upload tiếp tục hiển thị hai cột này ở trạng thái trống. Các thao tác
-  View/Delete trên mỗi dòng vẫn là silent no-op, giữ nguyên hành vi trước Update 4/8. Phía trên
-  danh sách PO có một **ô tìm kiếm PO** — kể từ Update 5, ô này MUST lọc bằng cách gọi lại API
+  chưa từng có file nào được upload tiếp tục hiển thị hai cột này ở trạng thái trống. **Kể từ Update
+  10**, cột Action cấp-dòng với icon View/Delete silent no-op (áp dụng từ Update 4 đến trước Update
+  10) bị **thay thế hoàn toàn** — mỗi **file riêng lẻ** hiển thị trong cột File name (mỗi chip ứng
+  với một document/Step liên kết, xem Update 8) MUST có icon **View** và icon **Delete** riêng: View
+  mở popup xem trước file thật đó (cùng cơ chế ở User Story 1/FR-042, dùng `FileId` của document
+  tương ứng); Delete (sau khi xác nhận) xóa document đó khỏi `eutr_documents` cùng toàn bộ bản ghi
+  `eutr_references` liên quan (cùng giao dịch, cùng ngữ nghĩa với FR-039/FR-040), KHÔNG xóa file
+  thật trên SharePoint — file đó biến mất khỏi cả List PO và danh sách EUTR documents chính (User
+  Story 1). Dòng PO chưa có file nào liên kết tiếp tục không có icon View/Delete nào để thao tác.
+  Phía trên danh sách PO có một **ô tìm kiếm PO** — kể từ Update 5, ô này MUST lọc bằng cách gọi lại API
   tham chiếu (`refType = 15`)
   với từ khóa người dùng nhập (khớp theo tên/mã PO), thay vì chỉ lọc trên dữ liệu đã tải sẵn ở
   client (xem FR-023). Kể từ Update 6, khu vực upload KHÔNG còn là "Drag and drop files to upload"
@@ -317,9 +405,10 @@ dụng hằng số `TAKE_FROM_OPTIONS` có sẵn trong codebase — xem Assumpti
   chọn dòng, File name, Action: View/Delete) hiển thị **dữ liệu mẫu tĩnh (demo)** giống thiết kế
   (File 1..File 8).
 - Mọi tương tác trong các khu vực mới này — **NGOẠI TRỪ nút Upload thật ở Screen1 (Type = PO, xem
-  Update 6)** — (kéo-thả file ở Screen2, nhấn Assign condition, nhấn View/Delete/checkbox trong
-  bảng demo) **KHÔNG thực hiện hành động thật nào** (không tải file, không gọi API, không điều
-  hướng) — silent no-op, cùng mẫu với icon View ở User Story 5.
+  Update 6) và icon View/Delete theo từng file trong cột File name của List PO (Update 10, xem
+  trên)** — (kéo-thả file ở Screen2, nhấn Assign condition, nhấn View/Delete/checkbox trong bảng
+  demo) **KHÔNG thực hiện hành động thật nào** (không tải file, không gọi API, không điều hướng) —
+  silent no-op, cùng mẫu với icon View ở User Story 5 (trước Update 10).
 - Trường Type và khu vực List PO (cột PO name/File name, ô tìm kiếm PO) và Manual upload **KHÔNG
   được lưu vào bảng `eutr_documents`** (bảng không có cột lưu Type hay liên kết PO ở phạm vi này) —
   việc Save trên form chính vẫn hoạt động như hiện tại, chỉ lưu một document duy nhất dựa trên File
@@ -371,7 +460,7 @@ các file hợp lệ khác vẫn được upload.
 7. **Given** đang ở trang Add, **When** trang hiển thị, **Then** thấy thêm trường Type dạng
    dropdown với 2 lựa chọn "PO" và "Upload manual".
 8. **Given** đang ở trang Add, **When** chọn Type = "PO", **Then** hệ thống hiển thị bảng List PO
-   (cột PO name, File name, Step name, Action: View/Delete) — cột PO name lấy dữ liệu thật bằng cách
+   (cột PO name, File name, Step name) — cột PO name lấy dữ liệu thật bằng cách
    gọi `POST /api/dynamics/reference` với `refType = 15`; cột File name và Step name lấy dữ liệu
    bằng cách tra cứu `eutr_references` theo `RefType = 0`/`RefValue` = mã PO của dòng đó (Update 8,
    xem FR-037/FR-038), hiển thị trống nếu dòng PO chưa có bản ghi khớp — cùng khu vực
@@ -379,9 +468,22 @@ các file hợp lệ khác vẫn được upload.
    FR-033), khu vực này ở trạng thái vô hiệu hóa khi chưa chọn dòng PO nào.
 8r. **Given** đang ở trang Add với Type = "PO", **When** một dòng PO có một hoặc nhiều document đã
    được upload thành công (có bản ghi `eutr_references` với `RefType = 0` và `RefValue` = mã PO đó),
-   **Then** cột File name hiển thị đúng tên (các) file đã upload cho PO này và cột Step name hiển
-   thị đúng tên (các) Step tương ứng — nếu có nhiều document/Step liên kết, hiển thị đầy đủ nhiều
-   giá trị (Update 8).
+   **Then** cột File name hiển thị đúng tên (các) file đã upload cho PO này (mỗi file kèm icon View
+   và Delete riêng, Update 10) và cột Step name hiển thị đúng tên (các) Step tương ứng — nếu có
+   nhiều document/Step liên kết, hiển thị đầy đủ nhiều giá trị (Update 8).
+8s. **(Update 10) Given** một dòng PO có ít nhất một file liên kết trong cột File name, **When**
+   nhấn icon View trên một file cụ thể, **Then** hệ thống mở popup xem trước đúng file đó (dùng
+   `FileId` của document tương ứng), theo cùng cơ chế đã dùng ở User Story 1 (FR-042).
+8t. **(Update 10) Given** một dòng PO có nhiều file liên kết, **When** nhấn icon Delete trên một
+   file cụ thể và xác nhận, **Then** hệ thống xóa đúng document đó khỏi `eutr_documents` cùng toàn
+   bộ bản ghi `eutr_references` liên quan (cùng giao dịch, FR-039/FR-040), KHÔNG xóa file thật trên
+   SharePoint, và chỉ file đó biến mất khỏi cột File name/Step name của dòng PO — các file khác của
+   cùng dòng PO (nếu có) không bị ảnh hưởng.
+8u. **(Update 10) Given** một file vừa bị xóa qua icon Delete ở List PO, **When** người dùng quay
+   lại danh sách EUTR documents chính (User Story 1), **Then** document tương ứng KHÔNG còn xuất
+   hiện trong danh sách đó (vì cùng là một bản ghi `eutr_documents`).
+8v. **(Update 10) Given** một dòng PO chưa có file nào liên kết (File name/Step name trống), **Then**
+   không có icon View/Delete nào hiển thị trên dòng đó (không có gì để xem/xóa).
 8a. **Given** đang ở trang Add với Type = "PO", **When** API reference (`refType = 15`) trả về
    danh sách rỗng, **Then** bảng List PO hiển thị trạng thái trống ("No data") thay vì lỗi.
 8b. **Given** đang ở trang Add với Type = "PO", **When** gọi API reference (`refType = 15`) thất
@@ -488,12 +590,19 @@ lưu, và xác nhận giá trị mới hiển thị trong bảng.
 ### User Story 4 - Xóa document (Priority: P2)
 
 Người dùng nhấn **Delete** trên một dòng, xác nhận, và document bị loại khỏi danh sách. Hệ thống
-cũng hỗ trợ xóa nhiều document cùng lúc.
+cũng hỗ trợ xóa nhiều document cùng lúc. **Kể từ Update 9**, khi xóa một document, hệ thống MUST
+xóa kèm toàn bộ bản ghi `eutr_references` có `DocumentId` trỏ tới document đó (các bản ghi này
+được ghi khi upload file qua Screen1, xem Update 7), để không còn bản ghi tham chiếu mồ côi sau khi
+document bị xóa. Việc xóa document và xóa các bản ghi `eutr_references` liên quan được coi là một
+giao dịch — nếu bước xóa `eutr_references` thất bại, document đó không bị xóa.
 
 **Why this priority**: Dọn dẹp các document không còn dùng là cần thiết nhưng ít rủi ro nếu triển
 khai sau xem, thêm mới và sửa.
 
-**Independent Test**: Nhấn Delete trên một dòng, xác nhận, và kiểm tra dòng đó biến mất khỏi bảng.
+**Independent Test**: Tạo một document có ít nhất một bản ghi `eutr_references` liên kết (qua
+Upload ở Screen1), nhấn Delete trên dòng đó, xác nhận, và kiểm tra: (a) dòng đó biến mất khỏi bảng,
+(b) document không còn tồn tại trong `eutr_documents`, (c) không còn bản ghi nào trong
+`eutr_references` có `DocumentId` = Id của document đã xóa.
 
 **Acceptance Scenarios**:
 
@@ -503,30 +612,51 @@ khai sau xem, thêm mới và sửa.
    chọn biến mất khỏi bảng.
 3. **Given** hộp thoại xác nhận xóa hiện ra, **When** người dùng hủy, **Then** không có document
    nào bị xóa.
+4. **Given** một document có một hoặc nhiều bản ghi `eutr_references` liên kết (`DocumentId` trỏ
+   tới document đó), **When** nhấn Delete trên document đó và xác nhận, **Then** document bị xóa
+   khỏi `eutr_documents` VÀ toàn bộ bản ghi `eutr_references` có `DocumentId` tương ứng cũng bị xóa
+   (không còn bản ghi mồ côi nào tham chiếu tới document đã xóa).
+5. **Given** đã chọn nhiều document để xóa cùng lúc, trong đó có document có bản ghi
+   `eutr_references` liên kết và document không có, **When** thực hiện xóa nhiều, **Then** mọi
+   document đã chọn đều bị xóa và toàn bộ bản ghi `eutr_references` (nếu có) ứng với `DocumentId`
+   của từng document đó cũng bị xóa hết — document không có `eutr_references` nào vẫn bị xóa bình
+   thường (không có gì để xóa thêm).
+6. **Given** một document có bản ghi `eutr_references` liên kết, **When** nhấn Delete nhưng bước
+   xóa `eutr_references` thất bại (lỗi hệ thống/DB), **Then** document đó KHÔNG bị xóa (rollback),
+   hệ thống báo lỗi rõ ràng; nếu đang xóa nhiều document cùng lúc, lỗi này không chặn việc xóa các
+   document khác trong cùng lượt.
 
 ---
 
-### User Story 5 - Icon View trên cột Action (placeholder, chưa xử lý) (Priority: P3)
+### User Story 5 - Xem file thật qua icon View (Update 10 — thay thế placeholder) (Priority: P2)
 
-Cột Action trên mỗi dòng hiển thị một icon **View** cùng với Edit và Delete, với giao diện bình
-thường giống hệt Edit/Delete (KHÔNG bị làm mờ/disable). Ở phạm vi hiện tại, icon View CHỈ mang
-tính hiển thị — nhấn vào icon này KHÔNG thực hiện hành động nào (không mở trang, không mở popup,
-không có phản hồi nào khác — silent no-op). Hành vi xem chi tiết document sẽ được xây dựng ở một
-tính năng sau.
+Cột Action trên mỗi dòng hiển thị một icon **View** cùng với Edit và Delete. **Kể từ Update 10**,
+icon này không còn là placeholder: với document có file thật (`FileId` khác null, được upload qua
+khu vực Upload ở Screen1, xem Update 6/7), nhấn View MUST mở một popup xem trước file (inline
+preview cho PDF/DOCX/XLSX/ảnh, kèm nút Download) — tham khảo đúng mẫu giao diện/luồng đã dùng ở
+`compliance-client/src/presentation/pages/compliance-detail` (`FilePreviewer.jsx`/
+`DialogFilePreviewer.jsx`) và endpoint backend đã dùng ở đó
+(`ComplCompliancesController.GetFileByIds`, `[HttpGet("get-file-by-idref")]`). Với document KHÔNG có
+file thật (`FileId = null`, tạo qua form Save nhập tay), icon View MUST hiển thị ở trạng thái vô
+hiệu hóa kèm tooltip "No file to view" — không còn hiển thị active-nhưng-no-op như trước.
 
-**Why this priority**: Đây là phần giao diện đã có mặt trên grid nhưng hành vi thực tế chưa cần
-thiết cho MVP — ưu tiên thấp nhất, không chặn các nghiệp vụ chính (xem danh sách, thêm, sửa, xóa).
+**Why this priority**: Xem lại file đã upload là nhu cầu thực tế phát sinh ngay sau khi chức năng
+Upload (Update 6/7) đưa file thật vào hệ thống — ưu tiên cao hơn giai đoạn placeholder trước đây
+nhưng vẫn đứng sau các nghiệp vụ CRUD chính (xem danh sách, thêm, sửa, xóa).
 
-**Independent Test**: Mở danh sách, xác nhận icon View hiển thị trên cột Action của mỗi dòng, nhấn
-vào icon và xác nhận không có trang/popup/hành động nào được kích hoạt.
+**Independent Test**: Tạo một document có file thật qua khu vực Upload, mở danh sách, nhấn icon
+View trên dòng đó và xác nhận popup xem trước hiển thị đúng nội dung file (hoặc thông báo lỗi thân
+thiện nếu không xem trước được); riêng biệt, xác nhận một document không có file thật (tạo qua Save)
+hiển thị icon View ở trạng thái vô hiệu hóa.
 
 **Acceptance Scenarios**:
 
-1. **Given** một document tồn tại trong danh sách, **When** bảng hiển thị dòng đó, **Then** cột
-   Action hiển thị icon View bên cạnh Edit và Delete, với giao diện active bình thường (không mờ,
-   không disable).
-2. **Given** đang ở danh sách, **When** nhấn vào icon View, **Then** hệ thống KHÔNG thực hiện hành
-   động nào (không điều hướng, không mở popup, không gọi API, không hiển thị thông báo).
+1. **Given** một document có `FileId`, **When** bảng hiển thị dòng đó, **Then** cột Action hiển thị
+   icon View ở trạng thái active bình thường bên cạnh Edit và Delete.
+2. **Given** một document có `FileId`, **When** nhấn vào icon View, **Then** hệ thống mở popup xem
+   trước file thật của document đó (gọi `GET /api/eutr-documents/get-file-by-idref?idRef={FileId}`).
+3. **Given** một document KHÔNG có `FileId`, **When** bảng hiển thị dòng đó, **Then** icon View
+   hiển thị ở trạng thái vô hiệu hóa kèm tooltip "No file to view" và không thể nhấn.
 
 ---
 
@@ -535,6 +665,16 @@ vào icon và xác nhận không có trang/popup/hành động nào được kí
 - Khi danh sách rỗng, bảng hiển thị trạng thái trống thân thiện thay vì lỗi.
 - Vì cột Conditions không có trong bảng `eutr_documents` hay `eutr_references`, cột này luôn hiển
   thị trống cho mọi dòng (không có liên kết "[View detail]" nào được hiển thị trong feature này).
+- **(Update 9)** Khi xóa một document không có bản ghi `eutr_references` nào liên kết (tạo qua form
+  Save nhập tay, chưa từng upload file), bước xóa `eutr_references` theo `DocumentId` chạy bình
+  thường và không xóa gì (0 bản ghi bị ảnh hưởng) — không phải lỗi, document vẫn bị xóa như hành vi
+  hiện tại.
+- **(Update 9)** Khi xóa một document có nhiều bản ghi `eutr_references` liên kết (nhiều `StepId`
+  khác nhau từ nhiều lượt upload, xem Update 7/FR-032/FR-033), toàn bộ các bản ghi đó đều bị xóa
+  cùng lúc với document, không chỉ bản ghi đầu tiên tìm được.
+- **(Update 9)** Khi xóa nhiều document cùng lúc, việc xóa `eutr_references` được xử lý theo từng
+  document độc lập (theo `DocumentId` riêng của mỗi document) — lỗi khi xóa `eutr_references` của
+  một document không chặn việc xóa document khác trong cùng lượt.
 - **(Update 8)** Cột Step name và Type không còn luôn trống — chúng được tra cứu từ bảng
   `eutr_references` theo `DocumentId`. Document chưa từng có bản ghi `eutr_references` nào (tạo qua
   form Save nhập tay, chưa từng upload file) tiếp tục hiển thị hai cột này ở trạng thái trống, không
@@ -629,6 +769,22 @@ vào icon và xác nhận không có trang/popup/hành động nào được kí
 - So với Update 6, khu vực Upload giờ hỗ trợ kéo-thả file thật (ngoài click chọn file) — kéo một
   file không hợp lệ (sai định dạng/kích thước hoặc sai prefix) vào khung vẫn bị validate và loại bỏ
   giống hệt khi chọn qua hộp thoại file, không có ngoại lệ nào cho luồng kéo-thả (Update 7).
+- **(Update 10)** Khi gọi `get-file-by-idref` thất bại (lỗi mạng/máy chủ) hoặc file có định dạng
+  không được popup xem trước hỗ trợ (khác PDF/DOCX/XLSX/ảnh), popup MUST hiển thị thông báo lỗi/
+  cảnh báo thân thiện thay vì treo giao diện; người dùng vẫn đóng được popup và các thao tác khác
+  trên trang không bị ảnh hưởng.
+- **(Update 10)** Icon View trên một document không có `FileId` luôn ở trạng thái vô hiệu hóa —
+  không có trường hợp nào nhấn được vào icon này để kích hoạt gọi API hoặc mở popup rỗng.
+- **(Update 10)** Khi xóa file cuối cùng còn liên kết với một PO trong List PO, cột File name/Step
+  name của dòng PO đó trở về trạng thái trống (giống dòng PO chưa từng có file nào được upload),
+  không hiển thị lỗi.
+- **(Update 10)** Khi người dùng nhấn Delete trên một file trong List PO nhưng document đó đã bị
+  xóa trước đó (ví dụ do vừa xóa từ danh sách EUTR documents chính ở một tab khác), hệ thống MUST
+  báo not-found rõ ràng thay vì lỗi hệ thống, theo cùng mẫu xử lý đã có ở nơi khác trong feature này
+  (ví dụ Edit một document đã bị xóa).
+- **(Update 10)** Việc xóa một file trong List PO KHÔNG gọi API xóa file thật trên SharePoint — file
+  đó vẫn còn tồn tại trên SharePoint sau khi xóa, chỉ không còn bản ghi nào trong `eutr_documents`/
+  `eutr_references` trỏ tới nó nữa; đây là hành vi có chủ đích, không phải lỗi hay thiếu sót.
 
 ## Requirements *(mandatory)*
 
@@ -664,41 +820,47 @@ vào icon và xác nhận không có trang/popup/hành động nào được kí
 - **FR-009**: Người dùng MUST có thể nhấn **Edit** trên một dòng để mở popup chỉnh sửa File name,
   Valid from, Valid to của document đó.
 - **FR-010**: Hệ thống MUST yêu cầu File name không được để trống khi sửa.
-- **FR-011**: Người dùng MUST có thể xóa một document, có bước xác nhận trước khi xóa.
-- **FR-012**: Hệ thống MUST hỗ trợ xóa nhiều document cùng lúc.
-- **FR-013**: Cột Action MUST hiển thị một icon **View** bên cạnh Edit và Delete trên mỗi dòng,
-  với giao diện active bình thường (KHÔNG làm mờ/disable). Ở phạm vi hiện tại, nhấn vào icon View
-  MUST KHÔNG kích hoạt bất kỳ hành động nào (không điều hướng, không mở popup, không gọi API) —
-  đây là placeholder cho một tính năng xem chi tiết sẽ được xây dựng sau.
+- **FR-011**: Người dùng MUST có thể xóa một document, có bước xác nhận trước khi xóa. Kể từ
+  Update 9, việc xóa này MUST bao gồm cả bước xóa `eutr_references` liên quan — xem FR-039/FR-040.
+- **FR-012**: Hệ thống MUST hỗ trợ xóa nhiều document cùng lúc. Kể từ Update 9, mỗi document trong
+  lượt xóa nhiều MUST được dọn `eutr_references` liên quan theo đúng `DocumentId` của nó — xem
+  FR-039/FR-040.
+- **FR-013**: Cột Action MUST hiển thị một icon **View** bên cạnh Edit và Delete trên mỗi dòng.
+  *(Superseded by Update 10 — xem FR-042)*: khi document có `FileId`, icon View MUST active và mở
+  popup xem trước file thật; khi document KHÔNG có `FileId`, icon View MUST hiển thị ở trạng thái
+  vô hiệu hóa kèm tooltip "No file to view" — không còn là placeholder silent no-op như trước Update
+  10.
 - **FR-014**: Hệ thống MUST tôn trọng quyền truy cập đã định nghĩa cho từng thao tác (xem, thêm
   mới, sửa, xóa); thao tác không được phép phải bị ngăn chặn.
 - **FR-015**: Toàn bộ văn bản hiển thị cho người dùng trên front-end MUST bằng tiếng Anh, bao gồm:
   nhãn cột (File name, Step name, Conditions, Type, Valid from, Valid to, Created by, Created
-  date, Action), nút (Add, Edit, Delete, View, Save, Back, Cancel, Assign condition), breadcrumb
-  (EUTR > EUTR documents), thông báo kiểm tra/lỗi, thông báo thành công, trạng thái rỗng ("No
-  data"), và hộp thoại xác nhận xóa.
+  date, Action), nút (Add, Edit, Delete, View, Save, Back, Cancel, Assign condition, Download —
+  Update 10), breadcrumb (EUTR > EUTR documents), thông báo kiểm tra/lỗi, thông báo thành công,
+  trạng thái rỗng ("No data"), tooltip "No file to view" (Update 10), và hộp thoại xác nhận xóa.
 - **FR-016**: Trang Add MUST hiển thị thêm trường **Type** dạng dropdown với 2 lựa chọn "PO" và
   "Upload manual" (tái sử dụng hằng số `TAKE_FROM_OPTIONS` có sẵn trong codebase), đặt cùng các
   trường hiện có (File name, Valid from, Valid to). Trường này KHÔNG được lưu vào bảng
   `eutr_documents` ở phạm vi hiện tại (bảng không có cột lưu Type).
 - **FR-017**: Khi Type = "PO", trang Add MUST hiển thị: (a) bảng **List PO** với các cột PO name,
-  File name, Step name, Action (View, Delete); (b) nút **Upload** (thay cho khu vực "Drag and drop
+  File name, Step name; (b) nút **Upload** (thay cho khu vực "Drag and drop
   files to upload" trước đây — xem FR-024 đến FR-030, Update 6). Cột **PO name** MUST lấy dữ liệu
   thật bằng cách gọi API tham chiếu dùng chung `POST /api/dynamics/reference` với `refType = 15`
   (xem FR-021); cột **File name** và **Step name** MUST được tính theo FR-037/FR-038 (Update 8 —
-  thay thế quy tắc "luôn trống" áp dụng từ Update 4 đến trước Update 8) và thao tác View/Delete
-  trên mỗi dòng vẫn là silent no-op (không tải file, không gọi API). Khi API trả về rỗng hoặc lỗi,
-  bảng MUST hiển thị trạng thái trống/lỗi tương ứng thay vì chặn các phần khác của trang.
+  thay thế quy tắc "luôn trống" áp dụng từ Update 4 đến trước Update 8). Khi API trả về rỗng hoặc
+  lỗi, bảng MUST hiển thị trạng thái trống/lỗi tương ứng thay vì chặn các phần khác của trang.
+  *(Superseded by Update 10: cột Action cấp-dòng với View/Delete không còn tồn tại — mỗi file riêng
+  lẻ trong cột File name có icon View/Delete thật riêng, xem FR-043/FR-044.)*
 - **FR-018**: Khi Type = "Upload manual", trang Add MUST hiển thị: (a) khu vực "Drag and drop files to
   upload" ở trên cùng; (b) nút "Assign condition"; (c) bảng danh sách file với checkbox chọn dòng,
   cột File name, Action (View, Delete). Bảng này MUST hiển thị dữ liệu mẫu tĩnh (hard-coded, giống
-  thiết kế: File 1..File 8).
+  thiết kế: File 1..File 8). *(Không thuộc phạm vi Update 10 — bảng demo Screen2 tiếp tục silent
+  no-op, không đổi.)*
 - **FR-019**: Mọi tương tác trong các khu vực Type/Manual upload (kéo-thả file vào khu upload ở
-  Screen2, nhấn "Assign condition", nhấn View/Delete hoặc checkbox trong bảng demo) và thao tác
-  View/Delete trên bảng List PO ở Screen1 MUST KHÔNG thực hiện bất kỳ hành động thật nào (không tải
-  file lên, không gọi API, không điều hướng) — silent no-op, cùng mẫu với FR-013 (icon View). Nút
-  **Upload** ở Screen1 (FR-024 đến FR-030) là ngoại lệ duy nhất — đây là control thật, có gọi API
-  và tạo dữ liệu.
+  Screen2, nhấn "Assign condition", nhấn View/Delete hoặc checkbox trong bảng demo) MUST KHÔNG thực
+  hiện bất kỳ hành động thật nào (không tải file lên, không gọi API, không điều hướng) — silent
+  no-op, cùng mẫu với FR-013 trước Update 10. Nút **Upload** ở Screen1 (FR-024 đến FR-030) và các
+  icon View/Delete theo từng file trong cột File name của List PO (Update 10, FR-043/FR-044) là các
+  ngoại lệ duy nhất — đây là các control thật, có gọi API và thay đổi dữ liệu.
 - **FR-020**: Việc bổ sung Type/List PO/Manual layout MUST KHÔNG làm thay đổi hành vi hiện có của
   File name, Valid from, Valid to, Save, Back (FR-006 đến FR-008, FR-006a) — Save vẫn tạo (chỉ) một
   document mới dựa trên 3 trường này. Việc nút Upload (FR-024 đến FR-030) tạo thêm document khác
@@ -809,6 +971,46 @@ vào icon và xác nhận không có trang/popup/hành động nào được kí
   `eutr_references` khớp `RefType=0`/`RefValue`), cột File name và Step name trong List PO MUST
   hiển thị đầy đủ tất cả giá trị tương ứng, áp dụng cùng cách hiển thị nhiều giá trị đã mô tả ở
   FR-035.
+- **FR-039** *(Update 9)*: Khi xóa một document (FR-011) hoặc xóa nhiều document (FR-012), với mỗi
+  document bị xóa, backend MUST xóa toàn bộ bản ghi `eutr_references` có `DocumentId` = `Id` của
+  document đó — không phân biệt số lượng bản ghi khớp (0, 1, hoặc nhiều bản ghi ứng với nhiều
+  `StepId` khác nhau từ nhiều lượt upload, xem Update 7/FR-032/FR-033) và không phân biệt `RefType`.
+  Việc xóa `eutr_references` MUST hoàn tất trước khi (hoặc trong cùng một đơn vị làm việc với) việc
+  xóa bản ghi `eutr_documents` tương ứng — không để lại bản ghi `eutr_references` mồ côi trỏ tới
+  `DocumentId` đã bị xóa.
+- **FR-040** *(Update 9)*: Việc xóa `eutr_references` và xóa `eutr_documents` của cùng một document
+  MUST được xử lý như một giao dịch (transaction) duy nhất theo từng document: nếu bước xóa
+  `eutr_references` thất bại, document đó KHÔNG bị xóa (rollback) và hệ thống MUST báo lỗi rõ ràng
+  cho document đó. Khi xóa nhiều document cùng lúc (FR-012), lỗi xảy ra ở một document KHÔNG được
+  chặn việc xử lý xóa các document khác trong cùng lượt (per-item, cùng ngữ nghĩa với FR-030).
+- **FR-041** *(Update 10)*: Backend MUST bổ sung endpoint **`GET /api/eutr-documents/get-file-by-idref`**
+  trong `EutrDocumentsController` hiện có, nhận `idRef` (query string) = `FileId` của một
+  `eutr_documents`, tham khảo đúng mẫu hàm `[HttpGet("get-file-by-idref")] GetFileByIds` trong
+  `ComplCompliancesController.cs` — cùng gọi service SharePoint đọc file kèm metadata hiện có
+  (`ReadFileWithMetaAsync`) và trả về nội dung file dạng base64 kèm content type, file name. Endpoint
+  này KHÔNG tạo service đọc file mới, KHÔNG thay đổi dữ liệu (read-only).
+- **FR-042** *(Update 10)*: Icon **View** trên cột Action của danh sách EUTR documents (User Story 1)
+  MUST thay thế hành vi placeholder của FR-013: khi document có `FileId`, nhấn View MUST mở popup
+  xem trước file (inline preview PDF/DOCX/XLSX/ảnh kèm nút Download, theo đúng mẫu giao diện của
+  `compliance-detail`'s `FilePreviewer.jsx`/`DialogFilePreviewer.jsx`), lấy dữ liệu qua FR-041; khi
+  document KHÔNG có `FileId`, icon View MUST hiển thị ở trạng thái vô hiệu hóa kèm tooltip "No file
+  to view".
+- **FR-043** *(Update 10)*: Trên trang Add (Screen1, Type = PO), mỗi file riêng lẻ hiển thị trong cột
+  File name của bảng List PO (mỗi giá trị/chip tương ứng một document liên kết với PO đó, tính theo
+  FR-037/FR-038) MUST có icon **View** riêng; nhấn vào MUST mở popup xem trước đúng file đó, dùng
+  cùng cơ chế ở FR-042 (FR-041) với `FileId` của document tương ứng.
+- **FR-044** *(Update 10)*: Mỗi file riêng lẻ hiển thị trong cột File name của bảng List PO (cùng
+  phạm vi với FR-043) MUST có icon **Delete** riêng; sau khi người dùng xác nhận, hệ thống MUST xóa
+  document đó khỏi `eutr_documents` và toàn bộ bản ghi `eutr_references` có `DocumentId` tương ứng
+  (dùng lại API xóa document đơn hiện có, `DELETE /api/eutr-documents/{id}`, cùng giao dịch và ngữ
+  nghĩa với FR-039/FR-040) — KHÔNG gọi thêm bất kỳ API xóa file thật trên SharePoint (file vẫn còn
+  tồn tại trên SharePoint sau khi xóa). Sau khi xóa, file đó MUST biến mất khỏi cả cột File name/Step
+  name của dòng PO tương ứng trong List PO VÀ khỏi danh sách EUTR documents chính (User Story 1), vì
+  cùng là một bản ghi `eutr_documents`.
+- **FR-045** *(Update 10)*: Icon View/Delete cấp-dòng trước đây trên cột Action của bảng List PO
+  (silent no-op theo FR-017/FR-019 trước Update 10) MUST được gỡ bỏ hoàn toàn, thay thế bằng các icon
+  View/Delete theo từng file ở FR-043/FR-044. Dòng PO chưa có file nào liên kết (File name/Step name
+  trống) MUST tiếp tục không hiển thị icon View/Delete nào (không có gì để thao tác).
 
 ### Key Entities *(include if feature involves data)*
 
@@ -823,6 +1025,11 @@ vào icon và xác nhận không có trang/popup/hành động nào được kí
   `eutr_documents` **KHÔNG có cột lưu liên kết PO** — nhưng kể từ Update 7, mỗi document tạo qua
   khu vực Upload có thêm một bản ghi `eutr_references` tương ứng (xem entity **EUTR Reference (liên
   kết Document ↔ Step/PO)** bên dưới) cho phép truy vấn ngược lại Step và PO đã dùng để upload nó.
+  **Kể từ Update 10**, `FileId` còn dùng làm khóa để đọc lại nội dung file thật từ SharePoint (xem
+  entity **SharePoint File Content (xem trước, Update 10)** bên dưới) khi người dùng nhấn icon View;
+  document có `FileId = null` không có nội dung nào để xem trước (icon View bị vô hiệu hóa).
+  `eutr_documents` bị xóa qua icon Delete theo từng file ở List PO (FR-044) dùng đúng API xóa đơn đã
+  có (FR-011) — không có luồng xóa mới nào được thêm vào entity này.
 - **EUTR Master Document (Prefix/Step) — nguồn tham chiếu, KHÔNG thuộc phạm vi CRUD feature này**:
   Bảng `eutr_master_documents` (Id, StepId, Prefix), quản lý bởi feature `002-eutr-masters`. Kể từ
   Update 7, feature `004-eutr-documents` **đọc (read-only)** bảng này để validate tên file khi
@@ -847,7 +1054,11 @@ vào icon và xác nhận không có trang/popup/hành động nào được kí
   **đọc** bảng `eutr_references` (JOIN với `eutr_steps`/`eutr_documents`) để hiển thị Step name/Type
   trên danh sách EUTR documents (User Story 1, FR-034/FR-035) và File name/Step name trên bảng List
   PO ở trang Add (User Story 2, FR-037/FR-038) — đây là các luồng đọc (read-only) bổ sung, không làm
-  thay đổi cách bảng này được ghi (vẫn theo đúng FR-033).
+  thay đổi cách bảng này được ghi (vẫn theo đúng FR-033). **Kể từ Update 9**, đây cũng là luồng
+  **xóa (delete)** duy nhất của feature này trên bảng `eutr_references` — khi một document
+  `eutr_documents` bị xóa (User Story 4, FR-011/FR-012), toàn bộ bản ghi `eutr_references` có
+  `DocumentId` trỏ tới document đó bị xóa theo, trong cùng một giao dịch với việc xóa document
+  (FR-039/FR-040), không phân biệt số lượng bản ghi hay `RefType`.
 - **Type (PO/Manual), danh sách file demo (Screen2)**: Chỉ là trạng thái/nội dung hiển thị trên
   giao diện trang Add ở phạm vi feature này — KHÔNG có entity hay cột dữ liệu tương ứng trên bảng
   `eutr_documents`. Danh sách file demo (File 1-8) trên Screen2 là dữ liệu mẫu tĩnh, hard-coded
@@ -867,6 +1078,12 @@ vào icon và xác nhận không có trang/popup/hành động nào được kí
   mục đã tồn tại ứng với PO đó để upload tiếp, hoặc tạo mới thư mục này nếu chưa có (FR-028). Không
   có bảng lưu trữ cục bộ ánh xạ PO ↔ thư mục — việc tìm/tạo thư mục thực hiện trực tiếp trên
   SharePoint mỗi lượt upload.
+- **SharePoint File Content (xem trước, Update 10)**: Nội dung file thật (base64) kèm content type,
+  file name, đọc trực tiếp từ SharePoint qua `FileId` của một `eutr_documents` mỗi khi người dùng
+  nhấn icon View (FR-041/FR-042/FR-043) — tương đương DTO `SharepointFileContent` đã dùng bởi
+  `ComplCompliancesController.GetFileByIds`. Đây là dữ liệu **tạm thời, không lưu trữ** ở phía
+  backend hay frontend ngoài phạm vi hiển thị popup xem trước — không có bảng hay cache cục bộ nào
+  lưu lại nội dung này.
 
 ## Success Criteria *(mandatory)*
 
@@ -880,15 +1097,19 @@ vào icon và xác nhận không có trang/popup/hành động nào được kí
 - **SC-004**: Mọi thao tác xóa đều yêu cầu xác nhận, không có trường hợp xóa nhầm do một cú nhấp.
 - **SC-005**: Người dùng sửa File name hoặc Valid from/to của một document hiện có trong dưới 20
   giây thông qua popup Edit.
-- **SC-006**: 100% lượt nhấn icon View không kích hoạt bất kỳ điều hướng, popup hay lời gọi API
-  nào, đúng theo phạm vi placeholder hiện tại; icon vẫn hiển thị active bình thường.
+- **SC-006** *(revised by Update 10)*: 100% lượt nhấn icon View trên một document có `FileId` mở
+  đúng popup xem trước file thật của document đó; 100% document không có `FileId` hiển thị icon
+  View ở trạng thái vô hiệu hóa (không thể nhấn) kèm tooltip "No file to view" — không còn là
+  placeholder silent no-op như trước Update 10.
 - **SC-007**: 100% lượt nhấn Back trên trang Add điều hướng ngay về danh sách mà không tạo bản ghi
   và không cần xác nhận thêm.
 - **SC-008**: 100% lượt chuyển đổi Type giữa "PO" và "Upload manual" trên trang Add hiển thị đúng layout
   và dữ liệu mẫu tương ứng ngay lập tức (không cần tải lại trang).
-- **SC-009**: 100% lượt tương tác với khu vực Manual upload demo ở Screen2 (kéo-thả, Assign
-  condition, View/Delete, checkbox) và thao tác View/Delete trên bảng List PO không kích hoạt bất
-  kỳ lời gọi API, điều hướng hay thay đổi dữ liệu nào, đúng theo phạm vi chỉ giao diện hiện tại.
+- **SC-009** *(revised by Update 10 — bỏ phần List PO)*: 100% lượt tương tác với khu vực Manual
+  upload demo ở Screen2 (kéo-thả, Assign condition, View/Delete, checkbox) không kích hoạt bất kỳ
+  lời gọi API, điều hướng hay thay đổi dữ liệu nào, đúng theo phạm vi chỉ giao diện hiện tại. Thao
+  tác View/Delete theo từng file trên List PO KHÔNG còn thuộc phạm vi tiêu chí này kể từ Update 10 —
+  xem SC-023/SC-024 (đây MUST là các thao tác thật, có gọi API và thay đổi dữ liệu).
 - **SC-010**: 100% lượt chọn Type = "PO" tải đúng danh sách PO name thật từ API reference
   (`refType = 15`); khi API trả về rỗng hoặc lỗi, bảng List PO hiển thị đúng trạng thái tương ứng
   (trống/lỗi) thay vì treo giao diện hoặc hiển thị dữ liệu sai.
@@ -926,6 +1147,21 @@ vào icon và xác nhận không có trang/popup/hành động nào được kí
 - **SC-020** *(Update 8)*: 100% dòng PO trong bảng List PO có ít nhất một document liên kết (qua
   `eutr_references` với `RefType=0`/`RefValue`=mã PO) hiển thị đúng đầy đủ File name và Step name
   tương ứng; dòng PO chưa từng có file nào được upload hiển thị hai cột này ở trạng thái trống.
+- **SC-021** *(Update 9)*: 100% document bị xóa (đơn hoặc nhiều) không còn để lại bản ghi
+  `eutr_references` nào có `DocumentId` trỏ tới document đó — kiểm tra ngay sau khi xóa, số bản ghi
+  `eutr_references` khớp `DocumentId` đã xóa luôn bằng 0, không phân biệt document có 0, 1 hay
+  nhiều bản ghi liên kết trước khi xóa.
+- **SC-022** *(Update 9)*: Khi bước xóa `eutr_references` của một document thất bại, 100% trường
+  hợp document đó vẫn còn tồn tại trong `eutr_documents` (không có document nào bị xóa mà
+  `eutr_references` liên quan còn sót lại một phần); trong lượt xóa nhiều, lỗi ở một document không
+  làm giảm tỷ lệ xóa thành công của các document khác trong cùng lượt.
+- **SC-023** *(Update 10)*: 100% lượt nhấn icon View trên một file cụ thể (danh sách chính hoặc
+  List PO) mở đúng nội dung file đó trong popup xem trước, hoặc hiển thị lỗi/cảnh báo thân thiện
+  thay vì treo giao diện khi không xem trước được (lỗi mạng, định dạng không hỗ trợ).
+- **SC-024** *(Update 10)*: 100% lượt xóa một file trong List PO xóa đúng và chỉ đúng document đó
+  khỏi `eutr_documents` và mọi `eutr_references` liên quan (không ảnh hưởng các file khác của cùng
+  PO), file đó biến mất đồng thời khỏi List PO và danh sách EUTR documents chính, và file thật trên
+  SharePoint vẫn còn tồn tại sau khi xóa.
 
 ## Assumptions
 
@@ -941,6 +1177,12 @@ vào icon và xác nhận không có trang/popup/hành động nào được kí
   Clarifications).
 - Xóa là xóa thật (hard delete) — bảng `eutr_documents` không có cờ soft-delete, khác với
   `eutr_templates` (spec `003-eutr-templates`); theo cùng mẫu xóa của `eutr_master_documents`.
+- **(Update 9)** Khóa ngoại `eutr_references_documentid_foreign` (`eutr_references.DocumentId` →
+  `eutr_documents.Id`, xem `docs/design/eutr/eutr_db.sql`) hiện KHÔNG có `ON DELETE CASCADE` — vì
+  vậy việc dọn `eutr_references` khi xóa document (FR-039/FR-040) MUST được xử lý ở tầng ứng dụng
+  (application-level, ví dụ xóa `eutr_references` trước rồi xóa `eutr_documents` trong cùng một
+  transaction), không phụ thuộc vào cascade delete của database. Feature này KHÔNG yêu cầu đổi
+  định nghĩa khóa ngoại trong `eutr_db.sql`.
 - Cột Conditions trên grid (tham chiếu tới `eutr_template_details` qua cột `TakeFrom`) KHÔNG được
   nạp dữ liệu trong feature này — không có nguồn dữ liệu nào được yêu cầu bổ sung cho cột này; việc
   liên kết dữ liệu này (nếu cần) thuộc phạm vi một feature khác trong tương lai. **Kể từ Update 8**,
@@ -956,9 +1198,23 @@ vào icon và xác nhận không có trang/popup/hành động nào được kí
   **được áp dụng lại kể từ Update 6** cho riêng nút Upload thật ở Screen1 (Type = PO, xem FR-026).
   Nút Upload thật cho Screen2 (Type = Upload manual) vẫn chưa được xây dựng — sẽ bổ sung ở một tính
   năng sau.
-- Icon View trên cột Action là placeholder hiển thị cho một tính năng xem chi tiết sẽ hoàn thiện
-  sau; ở phạm vi hiện tại nó không gắn hành vi xử lý nào, nhưng vẫn hiển thị active bình thường
-  giống Edit/Delete (không làm mờ/disable, không tooltip đặc biệt).
+- *(Superseded by Update 10)* Icon View trên cột Action từng là placeholder không gắn hành vi xử lý
+  nào; kể từ Update 10, icon này mở popup xem trước file thật (khi có `FileId`) hoặc hiển thị vô
+  hiệu hóa kèm tooltip "No file to view" (khi không có `FileId`) — xem FR-042.
+- **(Update 10)** Front-end tái sử dụng đúng mẫu component/luồng xem trước file đã có ở
+  `compliance-client/src/presentation/pages/compliance-detail` — `FilePreviewer.jsx` (render PDF qua
+  `<object>`, DOCX qua `docx-preview`, XLSX qua LuckyExcel/SheetJS fallback, ảnh qua `<img>`) và
+  `DialogFilePreviewer.jsx` (popup bọc ngoài, kèm nút Download) — KHÔNG xây dựng component xem trước
+  mới từ đầu. Đây là chi tiết tham chiếu mẫu giao diện được người dùng chỉ định trực tiếp trong yêu
+  cầu (tương tự cách các entity D365/route SharePoint được tham chiếu ở Update 4/6/7), không phải vi
+  phạm nguyên tắc spec không chứa chi tiết triển khai.
+- **(Update 10)** Endpoint mới `GET /api/eutr-documents/get-file-by-idref` là read-only, chỉ đọc lại
+  nội dung file qua `FileId` đã lưu sẵn trên `eutr_documents` — KHÔNG cần thêm cột/bảng dữ liệu mới,
+  không cần migration DB.
+- **(Update 10)** Việc xóa một file ở List PO (FR-044) chỉ xóa bản ghi trong `eutr_documents`/
+  `eutr_references` (dùng lại API xóa đơn hiện có, FR-011) — KHÔNG gọi endpoint xóa file thật trên
+  SharePoint (endpoint `POST /api/sharepoint/delete-file` đã tồn tại nhưng KHÔNG được dùng ở luồng
+  này); file thật trên SharePoint được giữ lại, chỉ không còn bản ghi nào trong hệ thống trỏ tới nó.
 - Người tạo/ngày tạo do hệ thống ghi tự động dựa trên người dùng đăng nhập; người dùng không nhập
   tay các giá trị này.
 - Quyền truy cập từng thao tác được định nghĩa theo policy của API theo cùng mẫu EUTR Masters

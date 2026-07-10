@@ -30,6 +30,81 @@ tổng thể, nhưng **không được liên kết** trong phạm vi feature `00
 Assumptions trong `spec.md`. Step name/Type **đã được liên kết** kể từ Update 8 (xem mục "Nạp Step
 name/Type..." bên dưới) — không còn thuộc nhóm "luôn trống" này.
 
+## Xem file thật qua icon View (spec Update 10, FR-041/FR-042) — endpoint MỚI trong `EutrDocumentsController`
+
+### `GET /api/eutr-documents/get-file-by-idref` (request)
+
+Query string: `idRef` = `FileId` của một `eutr_documents` (ví dụ `?idRef=01ABCXYZ...`). Clone
+nguyên vẹn logic của `ComplCompliancesController.GetFileByIds` (`[HttpGet("get-file-by-idref")]`)
+— cùng gọi `ISharepointService.ReadFileWithMetaAsync(idRef)`, cùng retry 1 lần khi gặp
+`HttpRequestException(ServiceUnavailable)`, cùng `500`/`503` khi lỗi. `EutrDocumentsController`
+nhận thêm `ISharepointService _sharepointService` qua constructor (không qua Application service
+trung gian — cùng cách `ComplCompliancesController`/`SharePointController` đã làm, xem research
+Quyết định 25).
+
+### `SharepointFileContent` (response, kiểu có sẵn từ `Shared.ExternalServices.Models.Sharepoint`)
+
+```json
+{
+  "success": true,
+  "message": "Get file detail successfully",
+  "data": {
+    "content": "<base64>",
+    "contentType": "application/pdf",
+    "fileName": "INV2026_hop-dong-po123.pdf"
+  }
+}
+```
+
+- Document không có `FileId` (`null`) — frontend KHÔNG gọi endpoint này (icon View đã bị vô hiệu
+  hóa từ trước, xem FR-042), nên không có kịch bản `idRef = null`/rỗng cần xử lý ở backend cho
+  luồng UI này.
+- Đây là lời gọi **read-only**, không ghi/đổi dữ liệu nào trên `eutr_documents`/SharePoint.
+- Policy: `EutrDocuments.ReadOne` (dùng chung với `GET get-by-id/{id}` — cùng ngữ nghĩa "xem 1
+  document", không thêm policy mới).
+
+### Bổ sung `FileId` vào chuỗi dữ liệu List PO (spec Update 10, FR-043/FR-044)
+
+Để icon View/Delete theo từng file ở bảng List PO (trang Add) hoạt động, `FileId` (đã tồn tại trên
+`eutr_documents`, xem bảng entity ở trên) MUST được nạp thêm vào 2 nơi hiện có (không migration DB
+mới — cột đã tồn tại từ đầu):
+
+- `EutrReferencePoDocumentInfo` (projection, `ComplianceSys.Application/Dtos/Response/`): thêm
+  `public string? FileId { get; set; }`.
+- SQL trong `EutrReferencesRepository.GetDocumentsByPoCodesAsync` (xem mục
+  `EutrReferencesRepository` dưới): thêm `d.FileId AS FileId` vào `SELECT`.
+- `EutrDocumentsPoReferenceItemDto` (response item của `list-po-references`): thêm
+  `public string? FileId { get; set; }`; `EutrDocumentsService.GetPoReferencesAsync` gán
+  `FileId = g.First().FileId` khi dựng từng item (giống nhau trên mọi bản ghi cùng `DocumentId`,
+  vì `FileId` thuộc về document, không thuộc về từng dòng `eutr_references`).
+- Ví dụ response `list-po-references` sau khi bổ sung:
+  ```json
+  { "documentId": 501, "fileId": "01ABCXYZ...", "fileName": "INV2026_hop-dong-po123.pdf", "stepNames": ["Bước kiểm tra hóa đơn"] }
+  ```
+- Document tạo qua Upload (Update 6/7) luôn có `FileId` — mọi dòng trong `poReferenceDocuments` (đến
+  từ `eutr_references` với `RefType=0`, chỉ được ghi bởi luồng Upload) MUST có `fileId` khác `null`;
+  không có kịch bản `fileId = null` cần xử lý riêng ở bảng List PO (khác với danh sách chính, nơi
+  document tạo qua Save/không upload vẫn xuất hiện và cần disable icon View).
+
+### Frontend: tái dùng cấu trúc "1 dòng = 1 document" đã có (research Quyết định 28) — không đổi cấu trúc UI
+
+Bảng chi tiết List PO (`EutrDocumentsAdd.jsx`, Grid size=5) từ Update 8 đã render 1 `TableRow` cho
+mỗi `doc` trong `poReferenceDocuments` — đúng granularity "theo từng file" mà clarify Update 10 chọn
+(xem Clarifications trong `spec.md`). Update 10 chỉ đổi hành vi 2 icon đã có sẵn trên mỗi dòng,
+không thêm/xóa dòng hay cột nào:
+
+- Icon **View**: `onClick` mở `EutrFileViewerDialog` với `{ fileId: doc.fileId, fileName:
+  doc.fileName }` (thay `onClick={() => {}}`); `disabled` không cần thiết vì mọi `doc` ở đây luôn
+  có `fileId` (xem trên).
+- Icon **Delete**: `onClick` mở `ConfirmDialog`, xác nhận thì gọi
+  `deleteEutrDocumentsUseCase.execute(doc.documentId)` (dùng lại `DeleteEutrDocumentsUseCase` đã có
+  — chính là API đã xử lý dọn `eutr_references` từ Update 9), sau đó refetch
+  `poReferenceDocuments` của PO đang chọn (gọi lại logic ở `useEffect` theo `selectedPoId`, research
+  Quyết định 22) để dòng vừa xóa biến mất khỏi bảng ngay lập tức.
+- KHÔNG gọi bất kỳ API xóa file SharePoint nào (ví dụ `POST /api/sharepoint/delete-file` đã tồn tại
+  sẵn cho mục đích khác) — file thật trên SharePoint được giữ lại nguyên vẹn, đúng quyết định đã
+  chốt ở clarify Update 10.
+
 ## Nạp Step name/Type cho danh sách EUTR documents (spec Update 8, FR-034/FR-035)
 
 Mở rộng `EutrDocumentsResponseDto` (2 field mới, không đổi entity `EutrDocuments`/bảng
@@ -77,12 +152,16 @@ Mở rộng `EutrDocumentsResponseDto` (2 field mới, không đổi entity `Eut
   {
     "poCode": "PO000123",
     "documents": [
-      { "documentId": 501, "fileName": "INV2026_hop-dong-po123.pdf", "stepNames": ["Bước kiểm tra hóa đơn"] },
-      { "documentId": 508, "fileName": "packing-list-po123.pdf", "stepNames": ["Bước xác minh nguồn gốc", "Bước đóng gói"] }
+      { "documentId": 501, "fileId": "01ABCXYZ...", "fileName": "INV2026_hop-dong-po123.pdf", "stepNames": ["Bước kiểm tra hóa đơn"] },
+      { "documentId": 508, "fileId": "01ABCDEF...", "fileName": "packing-list-po123.pdf", "stepNames": ["Bước xác minh nguồn gốc", "Bước đóng gói"] }
     ]
   }
 ]
 ```
+
+> **Update 10**: field `fileId` được thêm vào mỗi item (xem mục "Xem file thật qua icon View" ở
+> trên) — dùng để mở popup xem trước file (icon View) và xác định document cần xóa (icon Delete)
+> ngay trên bảng List PO, không cần gọi thêm API nào để lấy `fileId` riêng.
 
 - Trả về `ApiResponse<List<EutrDocumentsPoReferenceDto>>` qua
   `POST /api/eutr-documents/list-po-references` (policy `EutrDocuments.ReadAll` — dùng chung, không
@@ -117,14 +196,119 @@ public interface IEutrReferencesRepository
 
 - `EutrReferenceStepInfo { long DocumentId; string? StepName; byte? RefType; }` — projection phẳng,
   không phải entity `EutrReferences` đầy đủ (không cần `Id`/`RefId`/`RefValue` cho mục đích này).
-- `EutrReferencePoDocumentInfo { string PoCode; long DocumentId; string? FileName; string? StepName; }`
-  — projection phẳng tương tự, service group thành cấu trúc lồng nhau ở trên.
+- `EutrReferencePoDocumentInfo { string PoCode; long DocumentId; string? FileId; string? FileName; string? StepName; }`
+  — projection phẳng tương tự, service group thành cấu trúc lồng nhau ở trên. **(Update 10)**: thêm
+  `FileId` (JOIN cùng `d.FileId` như `d.Name`/`FileName`) để icon View/Delete theo từng file ở List
+  PO có đủ dữ liệu, không cần lời gọi API riêng.
 - Đăng ký DI: `services.AddScoped<IEutrReferencesRepository, EutrReferencesRepository>();` trong
   `ComplianceSys.Infrastructure/DependencyInjection.cs` (cạnh dòng đăng ký `IEutrMastersRepository`
   đã có). Không ảnh hưởng đường ghi hiện có (`IRepository<EutrReferences,long>` generic vẫn hoạt
   động độc lập, không đổi).
 - Không có migration DB mới — mọi cột cần (`DocumentId`, `StepId`, `RefType`, `RefValue` trên
   `eutr_references`; `Name` trên `eutr_steps`/`eutr_documents`) đã tồn tại từ Update 7.
+
+## Xóa `eutr_references` khi xóa document (spec Update 9, FR-039/FR-040)
+
+`eutr_references` từ Update 7 chỉ có đường **ghi thêm** (`AddAsync` qua
+`IRepository<EutrReferences,long>` generic trong `EutrUploadService`) và từ Update 8 có đường
+**đọc** (`EutrReferencesRepository`, 2 method JOIN). Update 9 bổ sung đường **xóa** — 1 method mới
+trên `IEutrReferencesRepository` (cạnh 2 method đọc hiện có, xem mục trên):
+
+```csharp
+Task DeleteByDocumentIdAsync(long documentId, CancellationToken ct = default);
+```
+
+Implement trong `EutrReferencesRepository` (raw SQL, cùng style `Connection.ExecuteAsync` +
+`CommandDefinition` đã dùng ở 2 method đọc):
+
+```sql
+DELETE FROM eutr_references WHERE DocumentId = @DocumentId;
+```
+
+- Xóa **toàn bộ** dòng khớp `DocumentId`, không phân biệt số lượng (0, 1, hoặc nhiều `StepId` khác
+  nhau) hay `RefType`.
+- Vì `EutrReferencesRepository` nhận cùng `IUnitOfWork` (scoped) với `EutrDocumentsService`, câu
+  `DELETE` này tự động chạy trong transaction mà `EutrDocumentsService` đã mở qua
+  `_unitOfWork.BeginTransactionAsync(...)` — không cần tham số transaction riêng.
+
+### `EutrDocumentsService.DeleteAsync`/`DeleteMultiAsync` — override, KHÔNG sửa `IBaseService` (research Quyết định 24)
+
+`EutrDocumentsService` hiện dùng nguyên `DeleteAsync`/`DeleteMultiAsync` của
+`BaseService<EutrDocuments,long,EutrDocumentsRequestDto>` (không override). Update 9 thêm override
+cho cả hai, trong cùng file `EutrDocumentsService.cs`:
+
+```csharp
+public override async Task DeleteAsync(long id, string userEmail, CancellationToken ct = default)
+{
+    ArgumentException.ThrowIfNullOrWhiteSpace(userEmail);
+
+    var existing = await _repository.GetByIdAsync(id, ct);
+    if (existing == null)
+        throw new KeyNotFoundException($"EutrDocuments with id {id} not found.");
+
+    try
+    {
+        await _unitOfWork.BeginTransactionAsync(IsolationLevel.ReadCommitted);
+
+        // Update 9 (FR-039): xoa het eutr_references lien quan truoc, cung transaction voi
+        // viec xoa eutr_documents - khong de lai ban ghi mo coi.
+        await _referencesRepository.DeleteByDocumentIdAsync(id, ct);
+        await _repository.DeleteAsync(id, ct);
+
+        await _unitOfWork.CommitAsync();
+    }
+    catch (Exception)
+    {
+        await _unitOfWork.RollbackAsync();
+        throw;
+    }
+}
+
+public override async Task DeleteMultiAsync(IEnumerable<long> ids, CancellationToken ct = default)
+{
+    var idList = ids?.ToList() ?? [];
+    if (idList.Count == 0)
+        throw new ArgumentException("Ids cannot be null or empty", nameof(ids));
+
+    // Update 9 (FR-040): moi document 1 transaction rieng (KHAC BaseService.DeleteMultiAsync
+    // dung 1 transaction chung ca batch) - loi o 1 document khong chan cac document khac.
+    var failures = new List<string>();
+    foreach (var id in idList)
+    {
+        try
+        {
+            await _unitOfWork.BeginTransactionAsync(IsolationLevel.ReadCommitted);
+            await _referencesRepository.DeleteByDocumentIdAsync(id, ct);
+            await _repository.DeleteAsync(id, ct);
+            await _unitOfWork.CommitAsync();
+        }
+        catch (Exception ex)
+        {
+            await _unitOfWork.RollbackAsync();
+            failures.Add($"Id={id}: {ex.Message}");
+        }
+    }
+
+    if (failures.Count > 0)
+        throw new InvalidOperationException(
+            $"Failed to delete {failures.Count} document(s): {string.Join("; ", failures)}");
+}
+```
+
+- `EutrDocumentsService` cần thêm 1 field riêng `private readonly IUnitOfWork _unitOfWork;` (constructor
+  đã nhận `unitOfWork` từ trước — trước Update 9 chỉ truyền cho `base(...)`, không giữ lại).
+- Document không có `eutr_references` nào liên kết: `DeleteByDocumentIdAsync` chạy, xóa 0 dòng,
+  không phải lỗi — `DeleteAsync`/`DeleteMultiAsync` tiếp tục xóa `eutr_documents` như bình thường.
+- `DeleteMultiAsync`: các id xóa thành công **trước** id gặp lỗi vẫn giữ trạng thái đã xóa (mỗi vòng
+  lặp `CommitAsync()` độc lập) — exception tổng hợp ném ra **sau** vòng lặp chỉ báo lỗi cho client,
+  không rollback các transaction đã commit trước đó.
+- Không đổi `IBaseService`/`IEutrDocumentsService` — chữ ký `DeleteAsync`/`DeleteMultiAsync` giữ
+  nguyên (`Task`, không trả kết quả per-item); không đổi `EutrDocumentsController`,
+  `DELETE /api/eutr-documents/{id}`, `POST /api/eutr-documents/delete-multi` (path/request/response
+  không đổi — chỉ hành vi nội bộ thay đổi). Lỗi (kể cả `InvalidOperationException` tổng hợp của
+  `DeleteMultiAsync`) tiếp tục được middleware xử lý exception hiện có của hệ thống chuyển thành
+  `ApiResponse.Fail(...)`, cùng cơ chế đã áp dụng cho `KeyNotFoundException` ở `Delete` đơn từ
+  trước — không cần thêm xử lý riêng ở Controller.
 
 ## Quy tắc nghiệp vụ (validation)
 
@@ -144,6 +328,8 @@ public interface IEutrReferencesRepository
   chung (User Story 1/3/4) vì cùng nằm trên bảng `eutr_documents`.
 - `Id` không sửa được; Update gửi qua URL `PUT /eutr-documents/{id}`.
 - Xóa là **hard delete** thật (không có cờ `IsDeleted`/`IsHide` trong schema `eutr_documents`).
+  **(Update 9)** Xóa MUST kèm dọn toàn bộ `eutr_references` có `DocumentId` = document bị xóa —
+  xem mục "Xóa `eutr_references` khi xóa document" dưới đây.
 
 ## Đối tượng truyền (frontend ↔ backend)
 

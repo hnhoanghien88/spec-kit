@@ -614,3 +614,186 @@ Phase 0 — chốt các quyết định kỹ thuật. Các điểm nghiệp vụ
   lặp không cần thiết trong cùng phạm vi thay đổi; (b) Sửa luôn `useCountryGroupColumns.jsx` để dùng
   `MultiValueChips` — bị loại (phạm vi), là một cải tiến hợp lý nhưng thuộc feature `country-groups`,
   không nên gộp vào diff của `004-eutr-documents`.
+
+## Quyết định 24 — Backend: override `DeleteAsync`/`DeleteMultiAsync` trong `EutrDocumentsService` để dọn `eutr_references`, không sửa `IBaseService` (spec Update 9, FR-039/FR-040)
+
+- **Decision**: `EutrDocumentsService` hiện thừa hưởng `DeleteAsync`/`DeleteMultiAsync` thuần từ
+  `BaseService<EutrDocuments,long,EutrDocumentsRequestDto>` (không override — xem
+  `BaseService.cs` dòng 229-345). Để dọn `eutr_references` khi xóa document, **override** cả hai
+  method này trực tiếp trong `EutrDocumentsService`, KHÔNG sửa `IBaseService`/`BaseService` (dùng
+  chung cho mọi service CRUD khác trong hệ thống — `EutrStep`, `EutrMasters`, `EutrTemplates`, v.v.,
+  ngoài phạm vi feature này) và KHÔNG sửa `IEutrDocumentsService` (chữ ký `DeleteAsync`/
+  `DeleteMultiAsync` vẫn kế thừa nguyên vẹn từ `IBaseService`, chỉ đổi phần **implementation**).
+  - `DeleteAsync(long id, string userEmail, ct)`: giữ nguyên bước kiểm tra tồn tại
+    (`_repository.GetByIdAsync`) như base, nhưng trong khối transaction, thêm 1 dòng
+    `await _referencesRepository.DeleteByDocumentIdAsync(id, ct);` **trước** dòng
+    `await _repository.DeleteAsync(id, ct);`, cùng `BeginTransactionAsync`/`CommitAsync`/
+    `RollbackAsync` — clone đúng cấu trúc override đã có ở
+    `ComplJobScheduleConfigService.DeleteAsync` (dòng 82-112: override base, dọn 1 resource liên
+    quan trước khi ghi DB, wrap `_unitOfWork`, rollback cả 2 khi lỗi).
+  - `DeleteMultiAsync(IEnumerable<long> ids, ct)`: **không** gọi `base.DeleteMultiAsync` (vì
+    `BaseService.DeleteMultiAsync` mở 1 transaction DUY NHẤT cho cả batch — 1 id lỗi làm rollback
+    toàn bộ batch, xem `BaseService.cs` dòng 283-345) — override hoàn toàn bằng vòng lặp
+    `foreach (var id in ids)`, mỗi vòng lặp có `BeginTransactionAsync`/`CommitAsync`/`RollbackAsync`
+    **riêng** (mẫu per-item try/catch của `EutrUploadService.UploadMultipleToSharePointAndSaveDataAsync`,
+    Quyết định 14/18 — 1 file/item lỗi không rollback các item khác đã commit). Lỗi của mỗi id được
+    gom vào 1 danh sách; sau vòng lặp, nếu danh sách lỗi không rỗng thì `throw` 1
+    `InvalidOperationException` liệt kê id + lý do của mọi id lỗi — các id đã xóa thành công trước
+    đó **vẫn giữ trạng thái đã xóa** (transaction của chúng đã `CommitAsync` độc lập, không bị ảnh
+    hưởng bởi exception ném ra sau đó cho các id khác).
+  - Thêm method mới `Task DeleteByDocumentIdAsync(long documentId, CancellationToken ct = default)`
+    vào `IEutrReferencesRepository`, implement trong `EutrReferencesRepository` bằng raw SQL
+    (`DELETE FROM eutr_references WHERE DocumentId = @DocumentId`, qua `Connection.ExecuteAsync(new
+    CommandDefinition(...))` — cùng style 2 method đọc hiện có, xem `EutrReferencesRepository.cs`
+    dòng 19-58); vì `EutrReferencesRepository` đã inject cùng `IUnitOfWork` với `EutrDocumentsService`
+    (đăng ký scoped), câu `DELETE` này tự động tham gia đúng transaction mà `EutrDocumentsService`
+    vừa mở qua `_unitOfWork.BeginTransactionAsync` — không cần truyền transaction qua tham số nào
+    khác, đúng cơ chế `Connection`/`Transaction` protected sẵn có của `DapperRepository<,>`.
+- **Rationale**: `IBaseService<,,>`/`BaseService<,,>` là interface/class dùng chung cho **toàn bộ**
+  service CRUD trong hệ thống (không chỉ `004-eutr-documents`) — sửa chữ ký hoặc hành vi mặc định
+  của nó để phục vụ riêng 1 feature vi phạm trực tiếp Nguyên tắc III (Reuse Existing Backend) và có
+  thể phá vỡ hành vi Delete/DeleteMulti của mọi feature khác đang dùng `BaseService` nguyên trạng.
+  Override tại chỗ (`EutrDocumentsService`) là cách nhỏ nhất, cách ly đúng đủ để đạt yêu cầu
+  FR-039/FR-040 mà không ảnh hưởng service nào khác — đúng tinh thần đã áp dụng nhất quán ở các
+  Update trước (chỉ mở rộng/override tại điểm cần, không sửa hạ tầng dùng chung). Việc đổi ngữ nghĩa
+  transaction của `DeleteMultiAsync` (per-item thay vì per-batch) là bắt buộc về mặt kỹ thuật để
+  thỏa FR-040 ("lỗi ở 1 document không được chặn xóa các document khác trong cùng lượt") — ngữ
+  nghĩa per-batch hiện tại của `BaseService` (all-or-nothing) không thể đáp ứng yêu cầu này dù có
+  hay không có bước dọn `eutr_references`.
+- **Alternatives considered**: (a) Sửa `BaseService.DeleteMultiAsync` để hỗ trợ tham số callback
+  "cleanup trước khi xóa mỗi entity" dùng chung cho mọi feature — bị loại, mở rộng phạm vi thay đổi
+  ra ngoài feature `004-eutr-documents` và thêm độ phức tạp cho 1 class dùng chung chỉ để phục vụ 1
+  nhu cầu hiện tại của 1 feature (vi phạm YAGNI, đi ngược tinh thần đơn giản hóa đã chọn từ Quyết
+  định 1/2); (b) Đổi chữ ký `IBaseService.DeleteMultiAsync` để trả về danh sách kết quả per-item
+  (giống `EutrUploadFileResultDto`) thay vì `Task` — bị loại vì đây là interface dùng chung, đổi chữ
+  ký ảnh hưởng mọi implementation khác (`EutrStepService`, `EutrMastersService`,
+  `EutrTemplatesService`, ...), không cần thiết khi throw 1 exception tổng hợp đã đủ để controller/
+  middleware hiện có (exception → `ApiResponse.Fail`, cùng cơ chế đang dùng cho `KeyNotFoundException`
+  ở `Delete` đơn) surface lỗi rõ ràng cho client mà không đổi contract; (c) Dùng
+  `IRepository<EutrReferences,long>` generic (như `EutrUploadService`) thay vì thêm method vào
+  `IEutrReferencesRepository` — bị loại vì repository generic không có "delete theo cột không phải
+  khóa chính" (`DocumentId` ≠ `Id` của `EutrReferences`), cần SQL tùy biến; thêm vào
+  `IEutrReferencesRepository` (đã tồn tại từ Update 8, cùng mục đích "truy vấn tùy biến trên
+  `eutr_references`") hợp lý hơn tạo thêm 1 repository/interface mới.
+
+## Quyết định 25 — Backend: endpoint `get-file-by-idref` clone trực tiếp `ComplCompliancesController.GetFileByIds`, controller inject `ISharepointService` (spec Update 10, FR-041/FR-042)
+
+- **Decision**: Thêm `[HttpGet("get-file-by-idref")]` vào **`EutrDocumentsController.cs` hiện có**
+  (route gốc `api/eutr-documents`, KHÔNG tạo controller mới), nhận `idRef` (query string) = `FileId`
+  của một `eutr_documents`, trả về `ApiResponse<SharepointFileContent>` — sao chép **nguyên vẹn**
+  logic của `ComplCompliancesController.GetFileByIds` (`_sharepointService.ReadFileWithMetaAsync(idRef)`,
+  cùng retry 1 lần khi gặp `HttpRequestException` với `HttpStatusCode.ServiceUnavailable`, cùng
+  `try/catch` trả `500`/`503`). Để gọi được `_sharepointService`, `EutrDocumentsController` MUST
+  nhận thêm `ISharepointService sharepointService` (namespace `Shared.ExternalServices.Interfaces`,
+  package đã cài sẵn) qua constructor — **giống đúng cách** `ComplCompliancesController` và
+  `SharePointController` đã inject interface này **trực tiếp vào controller** (không qua một
+  Application service trung gian). Không cần đăng ký DI mới — `ISharepointService` đã được đăng ký
+  sẵn (dùng chung bởi 2 controller kia).
+- **Rationale**: Người dùng chỉ rõ tham chiếu chính xác hàm `[HttpGet("get-file-by-idref")]
+  GetFileByIds` trong `ComplCompliancesController.cs` làm mẫu — sao chép đúng logic đảm bảo hành vi
+  nhất quán (cùng cơ chế retry/lỗi) với endpoint đã có, tránh phát minh lại (Nguyên tắc II). Việc
+  controller inject `ISharepointService` trực tiếp (bỏ qua tầng Application service) là một tiền lệ
+  **đã tồn tại 2 lần** trong codebase (`ComplCompliancesController`, `SharePointController`) cho
+  đúng loại thao tác "proxy đọc/ghi file SharePoint mỏng, không có business logic" — tuân theo tiền
+  lệ này (Nguyên tắc II) hợp lý hơn là tạo một Application service mới chỉ để bọc 1 lời gọi
+  `ReadFileWithMetaAsync` duy nhất (Nguyên tắc I không bị vi phạm mới, vì đây là mẫu proxy mỏng đã
+  được chấp nhận từ trước trong 2 controller khác, không phải ngoại lệ riêng của feature này).
+- **Alternatives considered**: (a) Tạo `IEutrDocumentsService.GetFileByIdRefAsync` bọc quanh
+  `ISharepointService` rồi gọi qua service — bị loại, thêm 1 lớp gián tiếp không cần thiết cho 1 lời
+  gọi pass-through duy nhất, không nhất quán với 2 tiền lệ đã có (cả hai đều inject thẳng vào
+  controller); (b) Đặt endpoint trong `SharePointController` (cạnh `eutr-upload-multi`) — bị loại,
+  dữ liệu trả về (nội dung file của một `eutr_documents` cụ thể) thuộc đúng domain "eutr-documents",
+  và người dùng yêu cầu rõ tham chiếu theo tên hàm ở `ComplCompliancesController` (đặt trong
+  controller CRUD của resource, không đặt trong `SharePointController` chung); (c) Tạo endpoint mới
+  cho từng entity khác nhau — không áp dụng, chỉ có 1 entity (`eutr_documents`) cần xem file trong
+  phạm vi feature này.
+
+## Quyết định 26 — Frontend: tổng quát hoá `FilePreviewer.jsx` bằng 2 prop tùy chọn, KHÔNG nhân bản logic render (spec Update 10, FR-042/FR-043)
+
+- **Decision**: `FilePreviewer.jsx` (`compliance-client/src/presentation/components/`, đang dùng
+  riêng cho `compliance-detail`) được sửa **tối thiểu**: thêm 2 prop tùy chọn —
+  `fetchFile = (idRef) => getFileByIdRefUseCase.execute(idRef)` (giữ đúng hành vi mặc định hiện tại
+  khi không truyền prop) và `onLoaded = () => {}` (gọi kèm `{ content, contentType, fileName }` ngay
+  sau khi tải thành công). `loadFileData` đổi từ gọi cứng `getFileByIdRefUseCase.execute(idFile)`
+  sang gọi `fetchFile(idFile)`; mọi logic render PDF/DOCX/XLSX/ảnh (LuckyExcel, docx-preview,
+  sanitizeFormatString, v.v.) **giữ nguyên 100%, không sao chép sang file khác**. `compliance-detail`
+  (caller hiện tại) không đổi — không truyền 2 prop mới nên hành vi y hệt trước Update 10.
+  `compliance-client/src/presentation/pages/eutr-documents/components/EutrFileViewerDialog.jsx`
+  (component **mới**, phạm vi riêng của feature này — không đặt trong `presentation/components/`
+  dùng chung) render `<FilePreviewer idFile={fileId} fetchFile={getEutrDocumentsFileByIdRefUseCase.execute}
+  onLoaded={setLoadedFile} />` trong một `Dialog` MUI riêng (tiêu đề = fileName, nút Close + Download).
+- **Rationale**: `FilePreviewer.jsx` đã có sẵn toàn bộ logic render 4 loại file (PDF/DOCX/XLSX/ảnh)
+  hoạt động đúng cho `compliance-detail` — nhân bản ~500 dòng logic này sang một file mới chỉ để đổi
+  nguồn fetch là vi phạm trực tiếp Nguyên tắc II (tái dùng, không phát minh lại) và tạo rủi ro lệch
+  hành vi giữa 2 bản sao theo thời gian. Thêm 2 prop tùy chọn với giá trị mặc định giữ nguyên hành vi
+  cũ là cách tổng quát hoá nhỏ nhất, an toàn nhất (không ảnh hưởng `compliance-detail`). Endpoint mới
+  của Update 10 nằm ở `EutrDocumentsController` (`api/eutr-documents/get-file-by-idref`, Quyết định
+  25), khác hẳn `api/compliances/get-file-by-idref` mà `FilePreviewer.jsx` gọi mặc định — nên bắt
+  buộc phải tham số hoá nguồn fetch, không thể dùng thẳng use case cũ.
+- **Alternatives considered**: (a) Clone `FilePreviewer.jsx`/`DialogFilePreviewer.jsx` thành cặp file
+  mới trong `presentation/pages/eutr-documents/` — bị loại, nhân bản lớn không cần thiết (vi phạm
+  Nguyên tắc II) khi chỉ cần đổi 1 lời gọi fetch; (b) Sửa `FilePreviewer.jsx` để nhận thẳng
+  `IEutrDocumentsRepository`/`ICompliancesRepository` qua prop rồi tự chọn use case theo `type` — bị
+  loại, phức tạp hơn cần thiết so với việc chỉ cần 1 hàm fetch chung hình dạng `(idRef) => Promise`;
+  (c) Tái dùng `DialogFilePreviewer.jsx` nguyên vẹn cho cả Download — bị loại (xem Quyết định 27).
+
+## Quyết định 27 — Frontend: Download trong `EutrFileViewerDialog` dựng Blob từ dữ liệu đã tải cho preview, KHÔNG tái dùng luồng zip/progress-dialog của `DialogFilePreviewer.jsx` (spec Update 10)
+
+- **Decision**: `EutrFileViewerDialog.jsx` **không** tái dùng `DialogFilePreviewer.jsx` (dù giao diện
+  tương tự) vì nút Download của `DialogFilePreviewer.jsx` gọi `DownloadCompliancesUseCase` — một
+  luồng xuất/nén file bất đồng bộ có `ExportProgressDialog`/polling riêng cho `all-compliances`,
+  không tồn tại tương đương cho `eutr-documents` và không cần thiết cho việc tải xuống **một file
+  đã có sẵn trong tay** (dữ liệu base64 đã được `FilePreviewer` tải xong cho phần xem trước). Thay
+  vào đó, `EutrFileViewerDialog` giữ lại `{ content, contentType, fileName }` nhận được qua callback
+  `onLoaded` (Quyết định 26), và nút Download chỉ decode base64 → `Uint8Array` → `new Blob([...],
+  { type: contentType })` → `URL.createObjectURL` → click một `<a download>` tạm rồi
+  `URL.revokeObjectURL` — không gọi thêm API nào.
+- **Rationale**: Tránh phát minh/tái dùng sai một luồng vốn được thiết kế cho xuất **nhiều** file
+  dạng zip có tiến trình dài (Nguyên tắc II áp dụng đúng hướng — không ép một tình huống đơn giản
+  vào một cơ chế phức tạp hơn cần thiết). Việc decode base64 thành Blob là đúng 4 dòng logic đã tồn
+  tại sẵn trong `FilePreviewer.renderPdf` (dùng để tạo object URL cho `<object>`) — sao chép lại đúng
+  đoạn nhỏ này ở nơi thứ 2 (Download) là chấp nhận được theo tinh thần YAGNI đã áp dụng nhất quán ở
+  các Update trước (ví dụ Quyết định 13 với `GetUniqueFileName`) — không tách thành 1 hàm dùng chung
+  vì chỉ 2 lần dùng, mỗi lần mục đích khác nhau (object URL để hiển thị vs. tải xuống).
+- **Alternatives considered**: (a) Gọi lại `fetchFile(idRef)` một lần nữa khi nhấn Download (không
+  lưu `onLoaded`) — bị loại, gọi API 2 lần cho cùng 1 file không cần thiết khi dữ liệu đã có sẵn từ
+  lượt tải cho preview; (b) Thêm endpoint `GET /api/sharepoint/download/{fileId}` (đã tồn tại sẵn,
+  trả về file stream trực tiếp) làm nguồn cho nút Download — cân nhắc nhưng bị loại vì thêm 1 lệnh
+  gọi mạng thứ 2 không cần thiết khi nội dung đã có trong bộ nhớ trình duyệt; (c) Sao chép nguyên
+  `DialogFilePreviewer.jsx` + `ExportProgressDialog`/`useDownloadProgress` — bị loại theo Decision
+  chính ở trên.
+
+## Quyết định 28 — Backend/Frontend: View/Delete theo từng file ở List PO tái dùng đúng cấu trúc "1 dòng = 1 document" đã có sẵn, chỉ thêm `FileId` vào response (spec Update 10, FR-043/FR-044/FR-045)
+
+- **Decision**: Khảo sát `EutrDocumentsAdd.jsx` hiện tại (triển khai Update 8) cho thấy bảng chi
+  tiết List PO (Grid size=5) đã render **1 `TableRow` cho mỗi document** trong
+  `poReferenceDocuments` (`.map(doc => <TableRow key={doc.documentId}>...)`) — nghĩa là kiến trúc
+  "mỗi file một dòng, có Action riêng" mà clarify Update 10 chọn (theo từng file, không theo từng
+  dòng PO) **đã tồn tại sẵn từ Update 8**, chỉ có icon View/Delete trên mỗi dòng đang là silent
+  no-op (`onClick={() => {}}`). Do đó Update 10 **không cần dựng lại UI** — chỉ cần: (1) thêm
+  `FileId` vào chuỗi dữ liệu trả về cho mỗi `doc` (backend: thêm `d.FileId AS FileId` vào SQL
+  `GetDocumentsByPoCodesAsync`, thêm field `FileId` vào `EutrReferencePoDocumentInfo` và
+  `EutrDocumentsPoReferenceItemDto`, gán trong `EutrDocumentsService.GetPoReferencesAsync`); (2) đổi
+  `onClick` của icon View trên mỗi dòng thành mở `EutrFileViewerDialog` với `doc.fileId`/`doc.fileName`
+  (disabled khi `!doc.fileId` — nhất quán với FR-042 cho danh sách chính); (3) đổi `onClick` của icon
+  Delete thành gọi lại `DeleteEutrDocumentsUseCase.execute(doc.documentId)` (dùng lại nguyên vẹn use
+  case đã có từ CÁC file mới, không tạo mới) sau khi xác nhận qua `ConfirmDialog`, rồi refetch lại
+  `poReferenceDocuments` của PO đang chọn (gọi lại đúng effect đã có ở Quyết định 22).
+- **Rationale**: Vì cấu trúc dữ liệu/UI cần cho "per-file" đã tồn tại sẵn (một hệ quả tự nhiên của
+  quyết định thiết kế Update 8 — mỗi document là 1 hàng riêng), việc chọn "theo từng file" ở
+  clarify Update 10 không phát sinh thay đổi cấu trúc bảng nào — chỉ cần nạp thêm 1 field
+  (`FileId`) và gắn hành vi thật cho 2 icon đã có vị trí sẵn. Dùng lại
+  `DeleteEutrDocumentsUseCase`/`DELETE /api/eutr-documents/{id}` hiện có (đã xử lý dọn
+  `eutr_references` từ Update 9) cho Delete — không cần endpoint xóa mới, không cần thay đổi hành vi
+  backend nào cho việc xóa (đúng theo quyết định "chỉ xóa bản ghi DB, giữ file trên SharePoint" đã
+  chốt ở clarify Update 10 — hành vi đó đã đúng sẵn với API xóa hiện tại, không gọi bất kỳ API xóa
+  file SharePoint nào).
+- **Alternatives considered**: (a) Thiết kế lại cột File name thành nhiều `Chip` trong 1 dòng PO duy
+  nhất (giống cột Step name ở danh sách chính) rồi gắn icon View/Delete vào từng chip — bị loại sau
+  khi khảo sát code thực tế cho thấy List PO KHÔNG dùng cấu trúc chip-trong-1-dòng cho File name (chỉ
+  Step name mới dùng `MultiValueChips`, và chỉ trong phạm vi 1 document/1 dòng) — áp đặt lại kiến
+  trúc chip sẽ là thay đổi không cần thiết, đi ngược Nguyên tắc II (đổi cấu trúc đã hoạt động đúng
+  chỉ vì mô tả spec dùng từ "chip" mang tính minh họa, không phải yêu cầu kỹ thuật bắt buộc); (b) Tạo
+  endpoint xóa file mới riêng cho luồng List PO — bị loại, trùng lặp hoàn toàn với
+  `DELETE /api/eutr-documents/{id}` đã xử lý đúng yêu cầu (xóa document + `eutr_references`, giữ
+  file SharePoint).

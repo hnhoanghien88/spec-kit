@@ -13,6 +13,7 @@
 | 4 | PUT | `/api/eutr-documents/{id}` | `EutrDocuments.Update` | `EutrDocumentsRequestDto { name, validFrom, validTo }` | message |
 | 5 | DELETE | `/api/eutr-documents/{id}` | `EutrDocuments.Delete` | — | message |
 | 6 | POST | `/api/eutr-documents/delete-multi` | `EutrDocuments.Delete` | `IEnumerable<long> ids` | message |
+| 7 | GET | `/api/eutr-documents/get-file-by-idref` | `EutrDocuments.ReadOne` | query: `idRef` (= `FileId`) | `SharepointFileContent` (`{ content, contentType, fileName }`) |
 
 > Không có endpoint import/export/upload file ở phạm vi feature này (FR-006 — Add chưa có bước
 > chọn/upload file thật).
@@ -53,6 +54,58 @@
 > endpoint mới** `POST /api/eutr-documents/list-po-references` (cùng controller, route gốc không
 > đổi) để tra cứu File name/Step name cho bảng List PO ở trang Add. Không đổi 6 endpoint hiện có ở
 > bảng trên (request/response shape giữ nguyên, chỉ endpoint #2 có thêm field response).
+>
+> **Update 9** (Delete xóa kèm `eutr_references` — spec FR-039/FR-040): endpoint #5
+> (`DELETE /api/eutr-documents/{id}`) và #6 (`POST /api/eutr-documents/delete-multi`) **KHÔNG đổi**
+> path/request/response — chỉ đổi **hành vi nội bộ**: mỗi document bị xóa nay kèm xóa toàn bộ dòng
+> `eutr_references` có `DocumentId` tương ứng, trong cùng transaction với việc xóa
+> `eutr_documents` (xem `data-model.md`, research Quyết định 24). Endpoint #5 (thành công): trả về
+> message thành công như hiện tại; (thất bại — kể cả lỗi ở bước xóa `eutr_references`): document
+> KHÔNG bị xóa (transaction rollback), lỗi được trả về theo cùng cơ chế hiện có (exception →
+> `ApiResponse.Fail`), không có field mới trong response. Endpoint #6 (bulk): mỗi document trong
+> `ids` được xóa qua 1 transaction **độc lập** — nếu tất cả thành công, response message không đổi;
+> nếu 1 hoặc nhiều id lỗi, các id còn lại **vẫn bị xóa thành công** (không rollback lẫn nhau), và
+> response trả về lỗi (qua middleware exception hiện có) liệt kê id/lý do của (các) id thất bại —
+> client (frontend) cần tải lại danh sách để biết chính xác id nào đã xóa thành công nếu response
+> báo lỗi một phần (không có field "per-item result" mới trong response ở phạm vi Update 9).
+>
+> **Update 10** (icon View mở xem file thật + Delete từng file ở List PO — spec FR-041 đến
+> FR-045): thêm **1 endpoint mới** #7 (`GET /api/eutr-documents/get-file-by-idref`, xem chi tiết
+> ngay dưới) — clone nguyên vẹn `ComplCompliancesController.GetFileByIds`. Endpoint #2
+> (`POST /api/eutr-documents/list-po-references`) **mở rộng response**: mỗi item trong
+> `documents[]` có thêm field `fileId` (không đổi request/path). Endpoint #5/#6 (Delete đơn/nhiều)
+> **không đổi** — được tái sử dụng nguyên vẹn làm cơ chế xóa cho icon Delete theo từng file ở List
+> PO (không có API xóa mới nào cho luồng này). Không có endpoint xóa file SharePoint nào được gọi
+> bởi Update 10 (file thật trên SharePoint không bị xóa).
+
+### API mới — `GET /api/eutr-documents/get-file-by-idref` (spec Update 10, FR-041/FR-042)
+
+| Method | Path | Policy | Query | Trả về |
+|---|---|---|---|---|
+| GET | `/api/eutr-documents/get-file-by-idref` | `EutrDocuments.ReadOne` | `idRef` (= `FileId` của 1 `eutr_documents`) | `ApiResponse<SharepointFileContent>` |
+
+- Clone nguyên vẹn logic của `ComplCompliancesController.GetFileByIds`
+  (`[HttpGet("get-file-by-idref")]`) — cùng gọi `ISharepointService.ReadFileWithMetaAsync(idRef)`,
+  cùng retry 1 lần khi gặp lỗi `503`, cùng trả `500`/`503` khi lỗi (xem research Quyết định 25).
+- `EutrDocumentsController` nhận thêm `ISharepointService` qua constructor — không đăng ký DI mới
+  (interface đã đăng ký sẵn, dùng chung với `ComplCompliancesController`/`SharePointController`).
+- Response ví dụ:
+  ```json
+  {
+    "success": true,
+    "message": "Get file detail successfully",
+    "data": {
+      "content": "<base64>",
+      "contentType": "application/pdf",
+      "fileName": "INV2026_hop-dong-po123.pdf"
+    }
+  }
+  ```
+- Dùng để hiển thị popup xem trước file (frontend gọi qua `EutrFileViewerDialog`, xem
+  `data-model.md`) cho icon **View** trên danh sách EUTR documents (User Story 1) và trên mỗi dòng
+  của bảng List PO (trang Add, User Story 2). Không ghi/đổi dữ liệu nào — read-only.
+- Frontend chỉ gọi endpoint này khi document có `FileId` khác `null` (icon View bị vô hiệu hóa khi
+  `FileId = null`, không có kịch bản gọi `idRef` rỗng từ UI).
 
 ### API mới — `POST /api/sharepoint/eutr-upload-multi` (spec Update 6, FR-024 đến FR-030)
 
@@ -160,7 +213,7 @@
       {
         "poCode": "PO000123",
         "documents": [
-          { "documentId": 501, "fileName": "INV2026_hop-dong-po123.pdf", "stepNames": ["Bước kiểm tra hóa đơn"] }
+          { "documentId": 501, "fileId": "01ABCXYZ...", "fileName": "INV2026_hop-dong-po123.pdf", "stepNames": ["Bước kiểm tra hóa đơn"] }
         ]
       }
     ]
@@ -168,8 +221,11 @@
   ```
 - `documents: []` khi PO đó chưa có bản ghi `eutr_references` nào — frontend hiển thị "No data",
   không phải lỗi.
+- **(Update 10)** Field `fileId` được thêm vào mỗi item của `documents[]` — dùng cho icon View
+  (mở popup xem trước qua `GET get-file-by-idref?idRef={fileId}`) và icon Delete (xóa qua
+  `DELETE /eutr-documents/{documentId}` hiện có) theo từng file trên bảng List PO, xem FR-043/FR-044.
 - Nguồn dữ liệu và cấu trúc DTO chi tiết: xem `data-model.md` (mục "Nạp File name/Step name cho
-  List PO...") và research Quyết định 21.
+  List PO...") và research Quyết định 21/28.
 
 ## FilterRequest (cho get-all)
 
@@ -193,3 +249,4 @@
 | DeleteEutrDocuments | `delete(id)` | DELETE `/eutr-documents/{id}` |
 | DeleteMultiEutrDocuments | `deleteMulti(ids)` | POST `/eutr-documents/delete-multi` |
 | (Update 8) GetEutrDocumentsPoReferences | `getPoReferences(poCodes)` | POST `/eutr-documents/list-po-references` |
+| (Update 10) GetEutrDocumentsFileByIdRef | `getFileByIdRef(fileId)` | GET `/eutr-documents/get-file-by-idref?idRef={fileId}` |

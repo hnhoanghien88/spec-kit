@@ -23,6 +23,11 @@ Hướng dẫn chạy và kiểm thử thủ công feature EUTR Documents end-to
 - **(Update 8)** Không cần thêm tiền đề DB/cấu hình nào — chỉ cần đã có ít nhất 1 document được tạo
   qua nút Upload (kèm bản ghi `eutr_references` tương ứng, xem tiền đề Update 7) để quan sát được
   Step name/Type (danh sách) và File name/Step name (List PO) hiển thị dữ liệu thật thay vì trống.
+- **(Update 10)** Không cần thêm tiền đề DB/cấu hình nào — chỉ cần backend có quyền truy cập
+  SharePoint hợp lệ (đã có sẵn từ Update 6/7) để đọc lại nội dung file qua `FileId`. Cần ít nhất 1
+  document có `FileId` (tạo qua nút Upload, xem tiền đề Update 7) để kiểm thử icon View mở được
+  popup xem trước; và ít nhất 1 document KHÔNG có `FileId` (tạo qua form Save nhập tay) để kiểm thử
+  icon View bị vô hiệu hóa.
 
 ## Chạy
 
@@ -66,20 +71,50 @@ Mở SPA, đăng nhập, vào menu **EUTR documents** (đường dẫn `/eutr/do
    chặn, không lưu. Nhấn Cancel → đóng popup, không thay đổi gì.
 5. **Xóa (US4)**: Delete trên 1 dòng → xác nhận → dòng biến mất (hard delete). Chọn nhiều dòng →
    xóa nhiều → tất cả biến mất. Hủy ở hộp xác nhận → không xóa dòng nào.
-6. **Icon View placeholder (US5)**: Trên mỗi dòng, cột Action hiển thị icon **View** cạnh
-   Edit/Delete với giao diện active bình thường (không mờ, không disable). Nhấn vào icon → KHÔNG
-   có trang/popup nào mở ra, KHÔNG có request nào gửi lên server (kiểm tra tab Network của
-   DevTools — không có API call phát sinh khi click View).
+5a. **Xóa document kèm dọn `eutr_references` (US4, Update 9, FR-039)**: Chuẩn bị 1 document có ít
+   nhất 1 bản ghi `eutr_references` liên kết (upload 1 file qua Screen1 — xem kịch bản 9g, kiểm tra
+   DB có dòng `eutr_references` với `DocumentId` = id document đó). Trên danh sách EUTR documents,
+   nhấn Delete trên đúng document đó → xác nhận → dòng biến mất khỏi bảng. Kiểm tra trực tiếp DB:
+   (a) document đó không còn trong `eutr_documents`; (b) **không còn dòng nào** trong
+   `eutr_references` có `DocumentId` = id đã xóa (kể cả khi document có nhiều dòng `eutr_references`
+   do khớp nhiều `StepId` — xem kịch bản 9n).
+5b. **Xóa nhiều document, một số có `eutr_references`, một số không (US4, Update 9, FR-040)**:
+   Chọn nhiều document để xóa cùng lúc, trong đó ít nhất 1 document có `eutr_references` liên kết và
+   1 document không có (tạo qua form Save nhập tay) → xác nhận xóa nhiều → tất cả document đã chọn
+   biến mất khỏi bảng. Kiểm tra DB: mọi document đã chọn không còn trong `eutr_documents`, và không
+   còn dòng `eutr_references` nào trỏ tới bất kỳ `DocumentId` đã xóa. Document không có
+   `eutr_references` nào bị xóa bình thường (không lỗi, không có gì để dọn thêm).
+5c. **Rollback khi dọn `eutr_references` thất bại (US4, Update 9, FR-040)**: (Khó mô phỏng thủ
+   công — có thể bỏ qua nếu không dựng được lỗi DB tạm thời, ví dụ tạm khóa quyền DELETE trên bảng
+   `eutr_references` hoặc ngắt kết nối DB giữa 2 bước xóa) Nếu bước xóa `eutr_references` thất bại
+   trong khi xóa 1 document, xác nhận: document đó **KHÔNG** bị xóa (vẫn còn trong `eutr_documents`
+   và vẫn hiển thị trong danh sách), hệ thống báo lỗi rõ ràng (không phải xóa "âm thầm" thất bại).
+   Nếu lỗi này xảy ra trong lượt xóa nhiều document, xác nhận các document khác trong cùng lượt
+   (không gặp lỗi) vẫn bị xóa thành công — không bị rollback theo document lỗi.
+6. **Icon View mở xem file thật (US5, Update 10, FR-042)**: Trên dòng của một document **có**
+   `FileId` (tạo qua nút Upload — xem tiền đề Update 7), cột Action hiển thị icon **View** ở trạng
+   thái active; nhấn vào → mở popup xem trước file (kiểm tra tab Network: có request
+   `GET /api/eutr-documents/get-file-by-idref?idRef=<fileId>`), nội dung file hiển thị đúng theo
+   loại file (PDF/DOCX/XLSX/ảnh), có nút Download hoạt động (file tải xuống đúng tên/nội dung) và
+   nút Close đóng popup. Trên dòng của một document **KHÔNG có** `FileId` (tạo qua form Save nhập
+   tay) → icon View hiển thị ở trạng thái vô hiệu hóa (mờ, không click được) kèm tooltip "No file
+   to view" khi hover.
+6a. **Popup xem trước lỗi/không hỗ trợ (Update 10, FR-041)**: (Khó mô phỏng thủ công — có thể bỏ
+   qua nếu không dựng được lỗi mạng/máy chủ tạm thời cho SharePoint) Nếu request
+   `get-file-by-idref` thất bại, popup hiển thị thông báo lỗi thân thiện thay vì treo giao diện;
+   người dùng vẫn đóng được popup bằng nút Close.
 7. **Trùng File name (Edge Case)**: Tạo hoặc sửa một document thành File name trùng với document
    khác đã có → hệ thống **vẫn cho phép lưu bình thường** (không cảnh báo trùng).
 8. **Quyền**: Đăng nhập user thiếu quyền Create/Update/Delete → nút tương ứng ẩn/disable.
 9. **Type = PO trên trang Add — PO name nối API thật (US2, Update 4)**: Trên trang Add, thấy thêm
    trường **Type** (mặc định "PO"). Với Type = "PO" → hiển thị bảng **List PO** (cột PO name, File
-   name, Step name, Action: View/Delete) và nút **Upload** (thay khu "Drag and drop files to upload"
-   từ Update 6). Kiểm tra tab Network của DevTools: có 1 request `POST /api/dynamics/reference?...&refType=15`
-   khi bảng render — cột **PO name** hiển thị đúng danh sách trả về từ D365 entity
+   name, Step name) và nút **Upload** (thay khu "Drag and drop files to upload" từ Update 6). Kiểm
+   tra tab Network của DevTools: có 1 request `POST /api/dynamics/reference?...&refType=15` khi
+   bảng render — cột **PO name** hiển thị đúng danh sách trả về từ D365 entity
    `RSVNEutrPurchOrders`. Cột **File name**/**Step name** hiển thị theo PO đang được chọn — xem kịch
-   bản 9p (Update 8); trước khi chọn dòng PO nào, bảng chi tiết này trống.
+   bản 9p (Update 8); trước khi chọn dòng PO nào, bảng chi tiết này trống. **(Update 10)** Mỗi dòng
+   trong bảng chi tiết này (= 1 file đã upload cho PO đang chọn) có icon View/Delete riêng — xem
+   kịch bản 9r/9s.
 9a. **List PO rỗng/lỗi (Update 4, FR-017, SC-010)**: Nếu D365 trả về danh sách rỗng cho `refType =
     15`, bảng List PO hiển thị trạng thái trống ("No data") thay vì lỗi. Nếu request `refType = 15`
     thất bại (ví dụ ngắt kết nối D365), bảng List PO hiển thị thông báo lỗi thân thiện; các trường
@@ -173,6 +208,22 @@ Mở SPA, đăng nhập, vào menu **EUTR documents** (đường dẫn `/eutr/do
     trong danh sách EUTR documents (`/eutr/documents`), dòng của document đó cũng hiển thị đúng
     **2** Step name — cả hai nơi dùng cùng cách hiển thị nhiều giá trị (chip + "+N more"/tooltip khi
     vượt quá số lượng hiển thị trực tiếp).
+9r. **View từng file ở List PO (US2, Update 10, FR-043)**: Click chọn lại đúng PO đã upload file ở
+   kịch bản 9g → bảng chi tiết hiển thị 1 dòng cho mỗi file đã upload. Nhấn icon **View** trên một
+   dòng bất kỳ → mở popup xem trước đúng file đó (kiểm tra tab Network: request
+   `GET /api/eutr-documents/get-file-by-idref?idRef=<fileId của document đó>`), nội dung hiển thị
+   đúng, có nút Download/Close hoạt động — giống hành vi ở kịch bản 6.
+9s. **Delete từng file ở List PO (US2, Update 10, FR-044/FR-045)**: Trên cùng bảng chi tiết (PO có
+   ≥ 2 file đã upload), nhấn icon **Delete** trên một dòng cụ thể → hộp thoại xác nhận hiện ra →
+   xác nhận → kiểm tra: (a) dòng đó biến mất khỏi bảng chi tiết List PO ngay lập tức, các dòng khác
+   (file khác của cùng PO) KHÔNG bị ảnh hưởng; (b) mở lại danh sách EUTR documents chính
+   (`/eutr/documents`) → document tương ứng KHÔNG còn xuất hiện; (c) kiểm tra trực tiếp DB: document
+   đó không còn trong `eutr_documents`, không còn dòng nào trong `eutr_references` có `DocumentId`
+   tương ứng (giống hành vi Delete đã kiểm ở kịch bản 5a); (d) file đó **vẫn còn tồn tại** trên
+   SharePoint (kiểm tra qua Graph Explorer/SharePoint UI hoặc log backend nếu có quyền truy cập) —
+   xác nhận không có request nào xóa file SharePoint được gọi (tab Network không có request tới
+   `POST /api/sharepoint/delete-file` hay tương đương).
+
 10. **Type = Upload manual trên trang Add (US2, chỉ giao diện)**: Chuyển Type sang "Upload manual" → layout đổi
     ngay lập tức sang: khu "Drag and drop files to upload" ở trên cùng, nút "Assign condition", và
     bảng danh sách file (checkbox, File name, Action: View/Delete) với 8 dòng dữ liệu mẫu (File
@@ -187,7 +238,11 @@ Mở SPA, đăng nhập, vào menu **EUTR documents** (đường dẫn `/eutr/do
 
 ## Tiêu chí đạt
 
-- Tất cả 11 kịch bản trên (cùng các kịch bản phụ 9a-9q, 1a) hoạt động đúng.
+- Tất cả 11 kịch bản trên (cùng các kịch bản phụ 9a-9s, 1a, 5a-5c, 6a) hoạt động đúng.
+- **(Update 9)** Sau khi xóa 1 hoặc nhiều document (đơn hoặc bulk), không còn dòng `eutr_references`
+  nào có `DocumentId` trỏ tới document đã xóa — xem SC-021. Nếu bước dọn `eutr_references` thất bại,
+  document đó không bị xóa; lỗi ở 1 document không chặn việc xóa các document khác trong cùng lượt
+  xóa nhiều — xem SC-022.
 - Không có lỗi console; gọi đúng các endpoint trong
   [contracts/eutr-documents-api.md](./contracts/eutr-documents-api.md).
 - Add luôn là trang riêng (`/eutr/documents/add`); Edit luôn là popup — không lẫn lộn hai luồng.
@@ -195,7 +250,12 @@ Mở SPA, đăng nhập, vào menu **EUTR documents** (đường dẫn `/eutr/do
 - **(Update 8)** Cột Step name/Type (danh sách) và File name/Step name (List PO) hiển thị đúng dữ
   liệu thật khi có bản ghi `eutr_references` liên kết, và hiển thị trống (không lỗi) khi không có —
   xem SC-019/SC-020.
-- Icon View không kích hoạt bất kỳ điều hướng/popup/API call nào.
+- **(Update 10)** Icon View trên danh sách chính và trên mỗi dòng của List PO mở đúng popup xem
+  trước file thật khi document có `FileId` (gọi `GET /eutr-documents/get-file-by-idref`); hiển thị
+  vô hiệu hóa kèm tooltip "No file to view" khi không có `FileId` — không còn là placeholder
+  silent no-op như trước Update 10 — xem SC-006/SC-023. Icon Delete trên mỗi dòng của List PO xóa
+  đúng và chỉ đúng document đó (kèm `eutr_references` liên quan) mà KHÔNG xóa file thật trên
+  SharePoint — xem SC-024.
 - Trường Type + layout List PO (Screen1)/Upload manual (Screen2) trên trang Add hiển thị đúng theo
   `docs/design/eutr/eutr_documents_overview.md`; Screen2 và cột File name/Action của Screen1 vẫn
   dùng dữ liệu mẫu tĩnh/no-op như Update 3; Save vẫn hoạt động như cũ (chỉ File name, Valid from,

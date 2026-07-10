@@ -147,3 +147,42 @@
   (narrative + updated scenario 8, new 8r, revised 8l), revised FR-003/FR-017, new FR-034 to FR-038,
   revised Key Entities (`EUTR Reference`), new SC-019/SC-020, revised/new Edge Cases, and revised/
   new Assumptions notes. All checklist items remain passing after this update.
+- 2026-07-09 `/speckit-specify` update 9: the Delete function (User Story 4, single or bulk) MUST
+  now also delete every `eutr_references` row whose `DocumentId` points to the deleted document —
+  these rows are written by the Screen1 Upload flow (Update 7) and were previously left as orphans
+  after a document delete. Resolved 2 clarifications interactively (informed defaults, no
+  ambiguity requiring user input): (1) the document delete and its `eutr_references` cleanup are
+  treated as a single per-document transaction — if the `eutr_references` deletion fails, that
+  document is not deleted (rollback), but in a bulk delete this does not block deleting other
+  documents in the same batch (per-item semantics, same pattern as FR-030's per-file upload
+  handling); (2) documents with zero linked `eutr_references` rows are unaffected — the cleanup
+  step simply deletes 0 rows, not an error. Also noted as an Assumption that
+  `eutr_references_documentid_foreign` has no `ON DELETE CASCADE`, so this MUST be handled at the
+  application level, not left to the database. Reflected in a new Clarifications Update 9 session,
+  User Story 4 (narrative + new acceptance scenarios 4/5/6), revised FR-011/FR-012, new
+  FR-039/FR-040, revised `EUTR Reference` Key Entity, new SC-021/SC-022, new Edge Cases, and a new
+  Assumptions note. All checklist items remain passing after this update.
+- 2026-07-09 `/speckit-specify` update 10: the View icon on the Action column (EUTR documents list,
+  User Story 1) stops being a no-op placeholder — clicking it now opens an inline file-preview
+  popup for the document's uploaded file, mirroring the exact pattern already built in
+  `compliance-client/src/presentation/pages/compliance-detail` (`FilePreviewer.jsx`/
+  `DialogFilePreviewer.jsx`) and its backend endpoint
+  `ComplCompliancesController.GetFileByIds` (`[HttpGet("get-file-by-idref")]`) — a new mirrored
+  endpoint `GET /api/eutr-documents/get-file-by-idref` is added to the existing
+  `EutrDocumentsController`, reusing the same SharePoint read-with-metadata service (no new file
+  service). On the Add page's List PO grid (Screen1, Type = PO), the File name column can show
+  multiple linked files per PO row since Update 8 — the old row-level Action column View/Delete
+  icons (silent no-op) are retired and replaced with a View and a Delete icon on each individual
+  file entry. Resolved 3 clarifications interactively (asked directly to the user, given real UX/
+  scope impact): (1) View/Delete apply per individual file entry, not per PO row, since a row can
+  have multiple linked files; (2) a document with no `FileId` (created via the manual Save form,
+  never uploaded) shows a disabled View icon with a "No file to view" tooltip rather than a
+  friendly no-op message; (3) deleting a file only removes its `eutr_documents`/`eutr_references`
+  rows (reusing the existing single-delete API, FR-011/FR-039/FR-040) and does NOT call any
+  SharePoint file-delete API — the physical file stays on SharePoint. Reflected in a new
+  Clarifications Update 10 session, User Story 1 (narrative + new acceptance scenarios 5/6/7),
+  User Story 2 (narrative + new acceptance scenarios 8s-8v), a rewritten User Story 5 (no longer a
+  placeholder), revised FR-013/FR-017/FR-019, new FR-041 to FR-045, revised Key Entities
+  (`EUTR Document`, new `SharePoint File Content`), revised SC-006/SC-009, new SC-023/SC-024, new
+  Edge Cases, revised FR-015, and new Assumptions notes. All checklist items remain passing after
+  this update.

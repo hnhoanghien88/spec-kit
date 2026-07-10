@@ -501,6 +501,97 @@ US1-US5 và các phần khác của trang Add (Update 3-7) không đổi.
 
 ---
 
+## Phase 15: Update 9 - Xóa document (Delete) MUST xóa kèm mọi bản ghi `eutr_references` liên quan
+
+**Goal**: Chức năng Delete (US4, đơn hoặc nhiều document) hiện chỉ xóa `eutr_documents`, để lại các
+dòng `eutr_references` mồ côi (ghi bởi luồng Upload ở Screen1, Update 7). Backend MUST xóa toàn bộ
+dòng `eutr_references` có `DocumentId` = document bị xóa, cùng transaction với việc xóa
+`eutr_documents` — nếu bước xóa `eutr_references` thất bại, document đó KHÔNG bị xóa (rollback);
+với xóa nhiều document, lỗi ở 1 document KHÔNG chặn việc xóa các document khác trong cùng lượt (spec
+FR-039/FR-040, research Quyết định 24). **Không migration DB mới, không đổi route/DTO/controller.**
+
+**Independent Test**: Tạo 1 document có ít nhất 1 bản ghi `eutr_references` liên kết (upload qua
+Screen1) → Delete document đó → xác nhận document không còn trong `eutr_documents` VÀ không còn
+dòng `eutr_references` nào có `DocumentId` tương ứng. Chọn xóa nhiều document (một số có, một số
+không có `eutr_references`) → tất cả bị xóa đúng, mọi `eutr_references` liên quan cũng bị xóa hết.
+
+### Backend (thêm method mới vào `IEutrReferencesRepository`/`EutrReferencesRepository` đã có từ Update 8; override Delete/DeleteMulti trong `EutrDocumentsService` — KHÔNG sửa `IBaseService`/`IEutrDocumentsService`)
+
+- [X] T118 [US4] Sửa `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrReferencesRepository.cs`: thêm `Task DeleteByDocumentIdAsync(long documentId, CancellationToken ct = default);` (cạnh 2 method đọc hiện có).
+- [X] T119 [US4] Sửa `compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrReferencesRepository.cs`: implement `DeleteByDocumentIdAsync` bằng raw SQL `DELETE FROM eutr_references WHERE DocumentId = @DocumentId;` qua `Connection.ExecuteAsync(new CommandDefinition(sql, new { DocumentId = documentId }, transaction: Transaction, cancellationToken: ct))` — cùng style `CommandDefinition` đã dùng ở 2 method đọc hiện có (phải sau T118).
+- [X] T120 [US4] Sửa `compliance-sys-api/src/ComplianceSys.Application/Services/EutrDocumentsService.cs`: thêm field riêng `private readonly IUnitOfWork _unitOfWork;` (gán từ tham số `unitOfWork` của constructor — trước đây chỉ truyền cho `base(...)`, không giữ lại); thêm `public override async Task DeleteAsync(long id, string userEmail, CancellationToken ct = default)`: kiểm tra tồn tại qua `_repository.GetByIdAsync(id, ct)` (throw `KeyNotFoundException` nếu `null`), sau đó trong khối `try { BeginTransactionAsync(IsolationLevel.ReadCommitted); await _referencesRepository.DeleteByDocumentIdAsync(id, ct); await _repository.DeleteAsync(id, ct); await _unitOfWork.CommitAsync(); } catch { await _unitOfWork.RollbackAsync(); throw; }` — mẫu override `ComplJobScheduleConfigService.DeleteAsync` (research Quyết định 24, FR-039; phải sau T119).
+- [X] T121 [US4] Trong cùng file `EutrDocumentsService.cs`, thêm `public override async Task DeleteMultiAsync(IEnumerable<long> ids, CancellationToken ct = default)`: **KHÔNG gọi `base.DeleteMultiAsync`** (dùng 1 transaction chung cho cả batch, all-or-nothing) — thay bằng vòng lặp `foreach (var id in ids)`, mỗi lần lặp mở 1 transaction riêng (`BeginTransactionAsync`/`_referencesRepository.DeleteByDocumentIdAsync(id, ct)`/`_repository.DeleteAsync(id, ct)`/`CommitAsync`), lỗi của từng id được `catch` riêng (`RollbackAsync` rồi gom vào `List<string> failures`, KHÔNG rethrow ngay — tiếp tục vòng lặp với id kế tiếp); sau vòng lặp, nếu `failures.Count > 0` thì `throw new InvalidOperationException(...)` liệt kê id/lý do của mọi id lỗi (các id đã xóa thành công trước đó vẫn giữ trạng thái đã xóa vì transaction của chúng đã `CommitAsync` độc lập) — mẫu per-item try/catch của `EutrUploadService.UploadMultipleToSharePointAndSaveDataAsync` (research Quyết định 14/18/24, FR-040; phải sau T120, cùng file). **Đã xác minh tĩnh**: `dotnet build` trên từng project `ComplianceSys.Domain`/`ComplianceSys.Application`/`ComplianceSys.Infrastructure` (0 lỗi mỗi project) — build toàn `ComplianceSys.sln` bị khóa file do tiến trình `ComplianceSys.Api` đang chạy sẵn trên máy (không phải lỗi biên dịch, cùng tình trạng đã ghi ở T085).
+
+### Kiểm thử
+
+- [ ] T122 [US4] Kiểm thử thủ công theo [quickstart.md](./quickstart.md) kịch bản 5a-5c (xóa 1
+  document kèm dọn `eutr_references`, xóa nhiều document hỗn hợp có/không có `eutr_references`,
+  rollback khi bước xóa `eutr_references` thất bại — có thể bỏ qua nếu không dựng được lỗi DB tạm
+  thời) trên `/eutr/documents`. Cần backend build lại (T118-T121) và có sẵn ít nhất 1 document tạo
+  qua nút Upload (Phase 12/13) kèm `eutr_references` liên kết, giống dữ liệu test đã dùng ở T116.
+  **CHƯA chạy trong trình duyệt** — cần môi trường chạy đầy đủ (backend + DB), cùng điều kiện với
+  T044/T052/T059/T062/T078/T089/T116/T117.
+
+**Checkpoint**: Xóa 1 hoặc nhiều document không còn để lại bản ghi `eutr_references` mồ côi nào;
+lỗi ở bước dọn `eutr_references` khiến document đó không bị xóa (rollback) và không chặn việc xóa
+các document khác trong cùng lượt xóa nhiều; toàn bộ CRUD US1-US3, US5 và các phần khác của trang
+Add (Update 3-8) không đổi.
+
+---
+
+## Phase 16: Update 10 - Icon View mở xem file thật + Delete từng file ở List PO
+
+**Goal**: Icon **View** trên cột Action của danh sách chính (trước đây placeholder silent no-op,
+US5) và trên mỗi dòng của bảng chi tiết List PO (trang Add, US2) nay mở một **popup xem trước file
+thật** — tham khảo đúng hàm `[HttpGet("get-file-by-idref")] GetFileByIds` trong
+`ComplCompliancesController.cs` và giao diện `compliance-detail`
+(`FilePreviewer.jsx`/`DialogFilePreviewer.jsx`). Document không có `FileId` → icon View bị vô hiệu
+hóa (tooltip "No file to view"). Mỗi file riêng lẻ trên bảng chi tiết List PO (đã có sẵn cấu trúc
+"1 dòng = 1 document" từ Update 8) có icon **Delete** riêng — xóa qua API xóa đơn hiện có (`DELETE
+/api/eutr-documents/{id}`, đã dọn `eutr_references` từ Update 9), KHÔNG gọi API xóa file
+SharePoint nào (spec FR-041 đến FR-045, research Quyết định 25-28). **Không migration DB mới.**
+
+**Independent Test**: Trên danh sách chính, dòng của document có `FileId` → icon View active, nhấn
+vào mở popup xem trước đúng nội dung file (tab Network có request
+`GET /api/eutr-documents/get-file-by-idref?idRef=<fileId>`), có nút Download/Close hoạt động; dòng
+của document không có `FileId` → icon View vô hiệu hóa kèm tooltip. Trên trang Add, chọn lại 1 PO
+đã upload nhiều file → mỗi dòng trong bảng chi tiết có icon View riêng (mở đúng file của dòng đó) và
+icon Delete riêng (xác nhận rồi xóa đúng và chỉ đúng document đó — dòng biến mất khỏi List PO VÀ
+khỏi danh sách chính, các dòng/file khác của cùng PO không bị ảnh hưởng, file vẫn còn trên
+SharePoint sau khi xóa).
+
+### Backend (endpoint mới trong `EutrDocumentsController` hiện có, thêm `FileId` vào 1 truy vấn JOIN đã có — KHÔNG migration DB mới, KHÔNG endpoint xóa mới)
+
+- [X] T123 [P] [US5] Sửa `compliance-sys-api/src/ComplianceSys.Api/Controllers/EutrDocumentsController.cs`: thêm `using Shared.ExternalServices.Interfaces;` + `using Shared.ExternalServices.Models.Sharepoint;`; thêm constructor param `ISharepointService sharepointService` (giữ field `_sharepointService`, KHÔNG đăng ký DI mới — interface đã đăng ký sẵn, dùng chung với `ComplCompliancesController`/`SharePointController`); thêm action `[Authorize(Policy = "EutrDocuments.ReadOne")] [HttpGet("get-file-by-idref")] GetFileByIdRef([FromQuery] string idRef, CancellationToken ct = default)` — clone nguyên vẹn logic của `ComplCompliancesController.GetFileByIds` (`BadRequest` nếu `idRef` rỗng; gọi `_sharepointService.ReadFileWithMetaAsync(idRef)`; retry 1 lần khi gặp `HttpRequestException` với `StatusCode == HttpStatusCode.ServiceUnavailable`; `catch` khác trả `StatusCode(500, ApiResponse<string>.Fail(...))`; hết retry trả `StatusCode(503, ...)`), trả `Ok(ApiResponse<SharepointFileContent>.Ok(files, "Get file detail successfully"))` khi thành công (research Quyết định 25, FR-041).
+- [X] T124 [P] [US2] Sửa `compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/EutrReferencePoDocumentInfo.cs`: thêm `public string? FileId { get; set; }`.
+- [X] T125 [P] [US2] Sửa `compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/EutrDocumentsPoReferenceItemDto.cs`: thêm `public string? FileId { get; set; }`.
+- [X] T126 [US2] Sửa `compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrReferencesRepository.cs`: trong `GetDocumentsByPoCodesAsync`, thêm `d.FileId AS FileId` vào `SELECT` (cạnh `d.Name AS FileName` hiện có) — phải sau T124 (cần field `FileId` tồn tại trên `EutrReferencePoDocumentInfo` để Dapper map đúng).
+- [X] T127 [US2] Sửa `compliance-sys-api/src/ComplianceSys.Application/Services/EutrDocumentsService.cs`: trong `GetPoReferencesAsync`, khi dựng từng `EutrDocumentsPoReferenceItemDto`, gán thêm `FileId = g.First().FileId` (cạnh `DocumentId`/`FileName`/`StepNames` hiện có) — phải sau T125, T126.
+
+### Frontend (tổng quát hoá `FilePreviewer.jsx` bằng 2 prop tùy chọn — KHÔNG nhân bản logic render; component mới scoped riêng cho `eutr-documents`)
+
+- [X] T128 [P] [US5] Sửa `compliance-client/src/presentation/components/FilePreviewer.jsx`: đổi signature thành `({ idFile, fetchFile = (idRef) => getFileByIdRefUseCase.execute(idRef), onLoaded = () => {} })` (2 prop tùy chọn mới, giá trị mặc định giữ đúng hành vi hiện tại cho `compliance-detail`); trong `loadFileData`, đổi `const response = await getFileByIdRefUseCase.execute(idFile);` thành `const response = await fetchFile(idFile);`; ngay sau `setFileData({ content, contentType, fileName })`, gọi thêm `onLoaded({ content, contentType, fileName })` — KHÔNG đổi bất kỳ logic render PDF/DOCX/XLSX/ảnh nào (research Quyết định 26).
+- [X] T129 [P] [US5] Thêm hàm `getFileByIdRef: (fileId) => axiosInstance.get('/eutr-documents/get-file-by-idref', { params: { idRef: fileId } })` vào `compliance-client/src/infrastructure/api/eutrDocumentsApi.js`.
+- [X] T130 [P] [US5] Thêm khai báo `async getFileByIdRef(_fileId) { throw new Error('Not implemented') }` vào `compliance-client/src/domain/interfaces/IEutrDocumentsRepository.js`.
+- [X] T131 [US5] Implement `async getFileByIdRef(fileId) { const res = await eutrDocumentsApi.getFileByIdRef(fileId); return res.data; }` trong `compliance-client/src/infrastructure/repositories/RestEutrDocumentsRepository.js` (phải sau T129, T130).
+- [X] T132 [P] [US5] Tạo `compliance-client/src/application/usecases/eutr-documents/GetEutrDocumentsFileByIdRefUseCase.js`: `execute(fileId) { return this.repository.getFileByIdRef(fileId); }` (mẫu `GetFileByIdRefUseCase` của compliances).
+- [X] T133 [US5] Tạo `compliance-client/src/presentation/pages/eutr-documents/components/EutrFileViewerDialog.jsx`: `Dialog` MUI (`maxWidth="lg" fullWidth`, tiêu đề = prop `fileName`, nút Close) bọc `<FilePreviewer idFile={fileId} fetchFile={getEutrDocumentsFileByIdRefUseCase.execute} onLoaded={setLoadedFile} />`; nút **Download** (`disabled={!loadedFile}`) decode `loadedFile.content` (base64 → `Uint8Array`, cùng cách `FilePreviewer.renderPdf` đã làm) → `new Blob([...], { type: loadedFile.contentType })` → `URL.createObjectURL` → click 1 `<a download={loadedFile.fileName}>` tạm → `URL.revokeObjectURL` — KHÔNG gọi thêm API nào, KHÔNG tái dùng `DialogFilePreviewer.jsx`/`DownloadCompliancesUseCase` (research Quyết định 27; phải sau T128, T131, T132).
+- [X] T134 [P] [US5] Sửa `compliance-client/src/presentation/pages/eutr-documents/components/EutrDocumentsActionCell.jsx`: icon View đổi từ `onClick={() => {}}` (silent no-op) thành nhận thêm prop `onView`, `onClick={() => onView(row)}`, `disabled={!row.fileId}`, `title={row.fileId ? 'View' : 'No file to view'}` (FR-042).
+- [X] T135 [US5] Sửa `compliance-client/src/presentation/pages/eutr-documents/hooks/useEutrDocumentsColumns.jsx`: nhận thêm prop `onView` ở tham số hook, truyền xuống `<EutrDocumentsActionCell onView={onView} ... />` (phải sau T134).
+- [X] T136 [US5] Sửa `compliance-client/src/presentation/pages/eutr-documents/index.jsx`: thêm state `viewerFile` (`{ open: false, fileId: null, fileName: '' }`); truyền `onView: (row) => setViewerFile({ open: true, fileId: row.fileId, fileName: row.name })` vào `useEutrDocumentsColumns`; render `<EutrFileViewerDialog open={viewerFile.open} fileId={viewerFile.fileId} fileName={viewerFile.fileName} onClose={() => setViewerFile((prev) => ({ ...prev, open: false }))} />` (phải sau T133, T135).
+- [X] T137 [US2] Sửa `compliance-client/src/presentation/pages/eutr-documents/EutrDocumentsAdd.jsx`: thêm state `viewerFile` (giống T136); icon View trên mỗi dòng của bảng chi tiết List PO đổi từ `onClick={() => {}}` thành `onClick={() => setViewerFile({ open: true, fileId: doc.fileId, fileName: doc.fileName })}`; render `<EutrFileViewerDialog ... />` cạnh `CustomSnackbar` hiện có (phải sau T133, T127 — cần `doc.fileId` có giá trị thật từ backend).
+- [X] T138 [US2] Trong cùng file `EutrDocumentsAdd.jsx`, thêm state `confirmDeleteDoc`/`confirmDeleteOpen`; icon Delete trên mỗi dòng của bảng chi tiết List PO đổi từ `onClick={() => {}}` thành mở `ConfirmDialog` xác nhận xóa (`content` nêu rõ tên file `doc.fileName`); khi xác nhận, gọi `deleteEutrDocumentsUseCase.execute(doc.documentId)` (dùng lại `DeleteEutrDocumentsUseCase`, khởi tạo cạnh các use case khác ở đầu file — KHÔNG tạo use case mới), sau đó refetch `poReferenceDocuments` của `selectedPo` hiện tại (gọi lại đúng logic đã có trong `useEffect` theo `selectedPoId`, ví dụ tách thành hàm `refreshPoReferenceDocuments` dùng lại ở cả hai nơi) — KHÔNG gọi bất kỳ API xóa file SharePoint nào (research Quyết định 28, FR-044; phải sau T137, cùng file).
+- [X] T139 [P] [US5] Rà soát toàn bộ văn bản mới bằng tiếng Anh (FR-015): tooltip "No file to view", tiêu đề popup/nút "Download"/"Close" trong `EutrFileViewerDialog.jsx`, nội dung `ConfirmDialog` xóa file mới ở `EutrDocumentsAdd.jsx`. **Đã xác minh tĩnh**: `dotnet build` trên từng project `ComplianceSys.Domain`/`ComplianceSys.Application`/`ComplianceSys.Infrastructure` (0 lỗi mỗi project — build toàn `ComplianceSys.sln` bị khóa file do tiến trình `ComplianceSys.Api` đang chạy sẵn trên máy, không phải lỗi biên dịch, cùng tình trạng đã ghi ở T085/T121); `npx eslint` trên toàn bộ file mới/đã sửa (0 lỗi mới — 2 lỗi `no-unused-vars` còn lại trong `FilePreviewer.jsx` đã tồn tại từ trước, thuộc đoạn code Excel không liên quan tới thay đổi của Update 10); `npx vite build` (thành công, chunk `EutrDocumentsAdd` build đúng).
+- [ ] T140 [US5] Kiểm thử thủ công theo [quickstart.md](./quickstart.md) kịch bản 6, 6a (icon View mở popup xem trước file thật khi có `FileId`, vô hiệu hóa khi không có `FileId`, popup xử lý lỗi thân thiện) trên `/eutr/documents`. Cần backend build lại (T123) và có sẵn ít nhất 1 document có `FileId` (Phase 12/13) lẫn 1 document không có `FileId` (tạo qua Save). **CHƯA chạy trong trình duyệt** — cần môi trường chạy đầy đủ (backend + DB + SharePoint), cùng điều kiện với T044/T052/T059/T062/T078/T089/T116/T117/T122.
+- [ ] T141 [US2] Kiểm thử thủ công theo [quickstart.md](./quickstart.md) kịch bản 9r, 9s (View/Delete theo từng file trên bảng chi tiết List PO; xác nhận file KHÔNG bị xóa khỏi SharePoint sau Delete) trên `compliance-client/src/presentation/pages/eutr-documents/EutrDocumentsAdd.jsx`. Cần backend build lại (T123-T127), frontend build lại (T128-T138), và dữ liệu test giống T117 (PO có ≥ 2 file đã upload). **CHƯA chạy trong trình duyệt** — cùng điều kiện với T140.
+
+**Checkpoint**: Icon View trên danh sách chính và trên bảng chi tiết List PO mở đúng popup xem
+trước file thật (hoặc vô hiệu hóa khi không có file); Delete từng file trên List PO xóa đúng document
+(kèm `eutr_references`) mà không xóa file thật trên SharePoint; toàn bộ CRUD US1-US4 và các phần
+khác của trang Add (Update 3-9) không đổi.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -558,16 +649,50 @@ US1-US5 và các phần khác của trang Add (Update 3-7) không đổi.
   `selectedPo` đã có) và Phase 6-7 nếu tính theo lịch sử file (thực tế chỉ cần T029/T047-T050/T074
   đã tồn tại). T116/T117 (kiểm thử) cần toàn bộ Backend + Frontend của Phase 14 hoàn tất, cùng dữ
   liệu test đã dùng ở Phase 12/13 (T078/T089).
+- **Update 9 (Phase 15)**: T118 (thêm khai báo vào `IEutrReferencesRepository.cs`) → T119 (implement
+  trong `EutrReferencesRepository.cs`), tuần tự vì là cặp interface/impl của cùng method mới — sau
+  Phase 14 (T095/T096, file đã tồn tại), độc lập với mọi phase khác. T120 (override `DeleteAsync` +
+  thêm field `_unitOfWork`) → T121 (override `DeleteMultiAsync`), tuần tự vì cùng file
+  `EutrDocumentsService.cs` — sau T119 (cần `DeleteByDocumentIdAsync` tồn tại) **và** sau Phase 2
+  (T010, service đã tồn tại) **và** sau Phase 14 (T100/T102, cùng file — tránh conflict khi chỉnh
+  song song, không có phụ thuộc logic thật giữa các method). T122 (kiểm thử) cần T118-T121 hoàn tất
+  và dữ liệu test giống T116/T117 (document có `eutr_references` từ Phase 12/13).
+- **Update 10 (Phase 16)**: T123 (endpoint mới `EutrDocumentsController.cs`) **độc lập** với mọi
+  phase khác (chỉ thêm constructor param + 1 action mới, không đụng 7 action hiện có) — có thể làm
+  bất kỳ lúc nào sau Phase 2 (T011, controller đã tồn tại). T124 → T125 (thêm field `FileId` vào 2
+  DTO khác file, có thể song song với nhau) → T126 (sửa SQL, sau T124 để field tồn tại) → T127 (gán
+  field, sau T125/T126) — cả 4 task này sửa các file đã tạo ở Phase 14 (Update 8), độc lập với
+  Phase 5-13/15. T128 (tổng quát hoá `FilePreviewer.jsx`) **độc lập hoàn toàn** — file này không
+  thuộc feature `004-eutr-documents`, có thể làm bất kỳ lúc nào (chỉ cần không phá vỡ
+  `compliance-detail`, không phụ thuộc phase nào của feature này). T129/T130 (API/interface, file
+  khác nhau) song song, độc lập. T131 (implement repository) sau T129/T130. T132 (use case) độc lập,
+  có thể làm sớm. T133 (`EutrFileViewerDialog.jsx`) sau T128, T131, T132. T134 (sửa
+  `EutrDocumentsActionCell.jsx`) sau Phase 7 (T040, file đã tồn tại). T135 (sửa
+  `useEutrDocumentsColumns.jsx`) sau T134 — và sau Phase 3 (T025, file đã tồn tại). T136 (sửa
+  `index.jsx`) sau T133, T135 — và sau Phase 3/6 (T026/T039, file đã tồn tại). T137 → T138 (sửa
+  `EutrDocumentsAdd.jsx`, tuần tự vì cùng file) sau T133 (dialog tồn tại), T127 (cần `doc.fileId`
+  thật), và sau Phase 14 (T112/T113, bảng chi tiết List PO đã tồn tại) — T138 còn cần Phase 6 (T037,
+  `DeleteEutrDocumentsUseCase` đã tồn tại). T139 (rà soát text) sau T133, T138. T140/T141 (kiểm thử)
+  cần toàn bộ Backend + Frontend của Phase 16 hoàn tất, cùng dữ liệu test đã dùng ở Phase 12/13/14.
 
 ### Điểm chia sẻ file (tránh sửa song song)
 
 - `EutrDocumentsController.cs`: T011 (skeleton) → T022 (US1: get-all/get-by-id) → T027 (US2:
-  create) → T031 (US3: update) → T036 (US4: delete/delete-multi). US5 không đụng file này.
+  create) → T031 (US3: update) → T036 (US4: delete/delete-multi). US5 không đụng file này ở lần đầu
+  — **Update 10 (Phase 16)**: T123 (thêm constructor param `ISharepointService` + action mới
+  `get-file-by-idref`), sau T036 (không đụng lại 7 action hiện có).
 - `eutr-documents/index.jsx`: T021 (shell) → T026 (US1: grid) → T030 (US2: nút Add navigate) →
-  T035 (US3: wiring Edit) → T039 (US4: wiring Delete).
-- `EutrDocumentsActionCell.jsx`: T034 (US3: Edit/Delete) → T040 (US5: thêm icon View).
-- `EutrDocumentsService.cs`: chỉ tạo một lần ở T010 (Foundational) — **không cần override** ở bất
-  kỳ story nào (khác `eutr-masters` phải override `AddAsync`/`UpdateAsync` để chống trùng).
+  T035 (US3: wiring Edit) → T039 (US4: wiring Delete) → **Update 10 (Phase 16)**: T136 (state +
+  wiring popup xem trước file, sau T039).
+- `EutrDocumentsActionCell.jsx`: T034 (US3: Edit/Delete) → T040 (US5: thêm icon View) →
+  **Update 10 (Phase 16)**: T134 (đổi icon View từ silent no-op sang control thật, sau T040).
+- `useEutrDocumentsColumns.jsx`: T025 (US1: khai báo cột) → T105 (Update 8: renderCell Step
+  name/Type) → **Update 10 (Phase 16)**: T135 (thêm prop `onView`, sau T105 và sau T134).
+- `EutrDocumentsService.cs`: tạo ở T010 (Foundational) — không override ở US1-US5/Update 3-8 (khác
+  `eutr-masters` phải override `AddAsync`/`UpdateAsync` để chống trùng); **Update 9 (Phase 15)**:
+  T120 (override `DeleteAsync` + field `_unitOfWork`) → T121 (override `DeleteMultiAsync`), tuần tự
+  vì cùng file, sau T119; **Update 10 (Phase 16)**: T127 (gán thêm `FileId` trong
+  `GetPoReferencesAsync`), sau T121 (khác đoạn code với Update 9, không phụ thuộc logic).
 - `EutrDocumentsAdd.jsx`: T029 (US2: tạo trang) → T047 → T049 → T050 (Update 3: Type + Screen1 +
   Screen2, tuần tự vì cùng file); T048 (hằng số demo) có thể làm song song với T047 trước khi T049/
   T050 cần dùng tới, T051 (rà soát text) làm sau T050 → T057 → T058 (Update 4: List PO nối API
@@ -576,26 +701,42 @@ US1-US5 và các phần khác của trang Add (Update 3-7) không đổi.
   chọn PO đơn + nút Upload thay khu kéo-thả, tuần tự vì cùng file, sau T057 để có cột `code` thật)
   → T086 → T087 (Update 7: gộp logic click/kéo-thả + thiết kế lại card Upload, tuần tự vì cùng
   file, sau T076) → T112 → T113 (Update 8: state + effect tra cứu reference, đổi bảng chi tiết
-  sang dữ liệu thật, tuần tự vì cùng file, sau T074 để có `selectedPoId`/`selectedPo`).
+  sang dữ liệu thật, tuần tự vì cùng file, sau T074 để có `selectedPoId`/`selectedPo`) → T137 →
+  T138 (Update 10: gắn View/Delete thật cho mỗi dòng bảng chi tiết List PO, tuần tự vì cùng file,
+  sau T113).
 - `EutrDocumentsService.cs` (Update 8): T100 (mở rộng `GetPagedAsync` cho Step name/Type) và
   T101→T102 (thêm `GetPoReferencesAsync`) đều sửa cùng file đã tạo ở T010 (Foundational) — làm tuần
   tự với nhau nếu cùng người/agent chỉnh sửa (khác đoạn code, không bắt buộc thứ tự giữa 2 nhóm này
   nhưng tránh conflict khi chỉnh song song).
 - `EutrDocumentsResponseDto.cs`/`IEutrDocumentsService.cs`/`EutrDocumentsController.cs` (Update 8):
   chỉ 1 task sửa mỗi file (T099, T101, T103) — không đụng lại các action/field đã có từ Phase 2-13.
-- `EutrReferencesRepository.cs` (Update 8, file MỚI): T096 (tạo file + method 1) → T097 (thêm
-  method 2), tuần tự vì cùng file — độc lập hoàn toàn với `EutrUploadService.cs` (Update 6/7, chỉ
-  ghi qua `IRepository<EutrReferences,long>` generic, không dùng repository mới này).
+- `EutrReferencePoDocumentInfo.cs`/`EutrDocumentsPoReferenceItemDto.cs` (Update 8 → 10): T091/T093
+  (tạo, Update 8) → T124/T125 (thêm field `FileId`, Update 10), mỗi file 1 task nối tiếp — 2 file
+  khác nhau, có thể làm song song với nhau ở Update 10.
+- `EutrReferencesRepository.cs` (Update 8 → 9 → 10, file tạo ở Update 8): T096 (tạo file + method
+  1) → T097 (thêm method 2, Update 8) → T119 (thêm method 3 `DeleteByDocumentIdAsync`, Update 9) →
+  T126 (thêm `FileId` vào `SELECT` của method 2, Update 10), tuần tự vì cùng file — độc lập hoàn
+  toàn với `EutrUploadService.cs` (Update 6/7, chỉ ghi qua `IRepository<EutrReferences,long>`
+  generic, không dùng repository này).
+- `IEutrReferencesRepository.cs` (Update 8 → 9): T095 (tạo, 2 method đọc) → T118 (thêm method
+  `DeleteByDocumentIdAsync`, Update 9), tuần tự vì cùng file. Update 10 không sửa file này (chỉ đổi
+  field trên DTO/SQL, không thêm method mới).
 - `ComplDynamicsService.cs` (Update 4): T053 (EntityMappings) → T054 (case 15) → T055 (case 16),
   tuần tự vì cùng file (không đụng gì của Phase 1-9).
 - `SharePointController.cs` (Update 6): chỉ 1 task sửa file này (T067, sau T066) — action mới
   `eutr-upload-multi` không đụng các action `upload`/`upload-multi` hiện có trong cùng file. Update
   7 KHÔNG sửa file này (chỉ sửa `EutrUploadService.cs` bên trong, không đổi controller/contract).
+  Update 10 KHÔNG sửa file này (endpoint xem file mới đặt trong `EutrDocumentsController.cs`, không
+  phải `SharePointController.cs`).
 - `EutrUploadService.cs` (Update 6 → 7): T066 (tạo mới, Update 6) → T084 → T085 (mở rộng validate
-  prefix + ghi `eutr_references`, Update 7, tuần tự vì cùng file, sau T066).
+  prefix + ghi `eutr_references`, Update 7, tuần tự vì cùng file, sau T066). Update 10 không sửa
+  file này (Delete từng file ở List PO dùng lại API xóa đơn hiện có, không đụng luồng Upload).
 - `IEutrMastersRepository.cs`/`EutrMastersRepository.cs` (Update 7): T082 (thêm khai báo interface)
   → T083 (implement), tuần tự vì là cặp interface/impl của cùng method mới — không đụng các method
   hiện có của feature `002-eutr-masters` (`GetPagedWithStepNameAsync`, `ExistsStepPrefixAsync`).
+- `FilePreviewer.jsx` (Update 10, file KHÔNG thuộc feature `004-eutr-documents` — dùng chung với
+  `compliance-detail`): chỉ 1 task sửa file này (T128) — thêm 2 prop tùy chọn, KHÔNG đổi logic
+  render hiện có, không ảnh hưởng caller `compliance-detail`.
 
 ### Parallel Opportunities
 
@@ -628,6 +769,19 @@ US1-US5 và các phần khác của trang Add (Update 3-7) không đổi.
   T114/T115 (rà soát text) có thể làm song song với T116/T117 (kiểm thử) sau khi T105/T113 xong.
   Toàn bộ backend (T090-T103) có thể làm song song với phần lớn frontend (T104, T106-T110) — chỉ
   T112/T113 cần chờ cả T108/T111 (frontend) lẫn T103 (backend, để endpoint hoạt động khi test).
+- Update 9 (Phase 15): Không có task `[P]` — chỉ 3 file, mỗi file 1-2 task tuần tự (T118→T119,
+  T120→T121); T122 (kiểm thử) làm sau cùng. Toàn bộ Phase 15 chỉ đụng
+  `IEutrReferencesRepository.cs`/`EutrReferencesRepository.cs`/`EutrDocumentsService.cs` — độc lập
+  hoàn toàn với Phase 3, 5, 7-13 (không đụng US1/US3/US5/Update 3-7); chỉ dùng chung file với Phase
+  6 (US4, không sửa lại) và Phase 14 (Update 8, cùng `EutrDocumentsService.cs`/
+  `EutrReferencesRepository.cs` nhưng khác method).
+- Update 10 (Phase 16): T124, T125 (thêm field `FileId` vào 2 DTO khác file) song song; T129, T130
+  (api/interface frontend, file khác nhau) song song; T132 (use case mới) độc lập, có thể làm sớm;
+  T139 (rà soát text) có thể làm song song với T140/T141 (kiểm thử) sau khi T133/T138 xong. T123
+  (endpoint backend) và T128 (tổng quát hoá `FilePreviewer.jsx`) **hoàn toàn độc lập** với nhau và
+  với mọi phase khác — có thể làm song song với Phase 5-15 ngay từ đầu (không đụng file chung nào
+  ngoài `EutrDocumentsController.cs`/`FilePreviewer.jsx`, cả hai chưa từng bị Update nào khác sửa
+  cho mục đích tương tự).
 
 ---
 
@@ -669,8 +823,17 @@ validate prefix + ghi `eutr_references`; migration/entity/repository độc lậ
 **Update 8** (nạp Step name/Type ở danh sách + File name/Step name ở List PO qua `eutr_references`
 read-only; repository mới + DTO mới độc lập ngay từ đầu, phần sửa `EutrDocumentsService.cs`/
 `EutrDocumentsController.cs`/`EutrDocumentsAdd.jsx` cần Foundational (Phase 2) và Update 6/Phase 12
-(T074, cho `selectedPoId`) đã xong; không migration DB mới). Mỗi story test độc lập theo quickstart
-trước khi sang story kế.
+(T074, cho `selectedPoId`) đã xong; không migration DB mới) → **Update 9** (Delete/DeleteMulti MUST
+xóa kèm `eutr_references` liên quan qua `DocumentId`, mỗi document 1 transaction độc lập; chỉ backend
+— thêm 1 method vào `IEutrReferencesRepository`/`EutrReferencesRepository` đã có từ Update 8, override
+`DeleteAsync`/`DeleteMultiAsync` trong `EutrDocumentsService.cs`; không migration DB mới, không đổi
+route/DTO/controller; cần Update 8/Phase 14 đã tồn tại vì cùng 2 file backend) → **Update 10** (icon
+View mở popup xem file thật trên danh sách chính (US5) và trên bảng chi tiết List PO (US2); endpoint
+mới `get-file-by-idref` clone `ComplCompliancesController.GetFileByIds`, tổng quát hoá
+`FilePreviewer.jsx` bằng 2 prop tùy chọn; Delete từng file ở List PO dùng lại API xóa đơn hiện có
+(không endpoint mới, không migration DB mới); cần Phase 7 (US5, icon View đã tồn tại), Phase 14
+(Update 8, bảng chi tiết List PO đã tồn tại) và Phase 6 (US4, `DeleteEutrDocumentsUseCase` đã tồn
+tại)). Mỗi story test độc lập theo quickstart trước khi sang story kế.
 
 ### Lưu ý
 
@@ -725,3 +888,28 @@ trước khi sang story kế.
   case mới tra cứu theo PO đang chọn (không tải trước cho toàn trang, xem research Quyết định 22).
   Cột Conditions không đổi (vẫn luôn trống). Backend/Frontend phần lớn độc lập với nhau và với
   Phase 5-11; chỉ phần sửa `EutrDocumentsAdd.jsx` (T112-T113) cần Phase 12 (T074) đã xong.
+- Phase 15 (T118-T122) là phần bổ sung cho spec Session Update 9 — Delete (US4, đơn hoặc nhiều) MUST
+  xóa kèm toàn bộ `eutr_references` có `DocumentId` tương ứng, cùng transaction với việc xóa
+  `eutr_documents`; lỗi ở bước dọn `eutr_references` khiến document đó không bị xóa (rollback),
+  nhưng KHÔNG chặn việc xóa các document khác trong cùng lượt xóa nhiều (khác hẳn
+  `BaseService.DeleteMultiAsync` hiện tại — dùng 1 transaction chung cho cả batch). **Chỉ backend,
+  không migration DB mới, không đổi route/DTO/controller**: thêm 1 method
+  `DeleteByDocumentIdAsync` vào `IEutrReferencesRepository`/`EutrReferencesRepository` (đã tồn tại
+  từ Phase 14), và override `DeleteAsync`/`DeleteMultiAsync` trực tiếp trong `EutrDocumentsService.cs`
+  — KHÔNG sửa `IBaseService`/`BaseService`/`IEutrDocumentsService` (dùng chung cho mọi feature CRUD
+  khác, research Quyết định 24). Độc lập với Phase 3, 5, 7-13 (không đụng US1/US3/US5/Update 3-7).
+- Phase 16 (T123-T141) là phần bổ sung cho spec Session Update 10 — icon View trên danh sách chính
+  (US5) và trên bảng chi tiết List PO (US2) không còn là placeholder/silent no-op — mở popup xem
+  trước file thật qua endpoint mới `GET /api/eutr-documents/get-file-by-idref` (clone nguyên vẹn
+  `ComplCompliancesController.GetFileByIds`, controller inject thẳng `ISharepointService`, cùng
+  tiền lệ `SharePointController`). Frontend tổng quát hoá `FilePreviewer.jsx` (component dùng chung
+  của `compliance-detail`) bằng 2 prop tùy chọn `fetchFile`/`onLoaded` — KHÔNG nhân bản logic render
+  PDF/DOCX/XLSX/ảnh, không ảnh hưởng caller hiện có; component mới `EutrFileViewerDialog.jsx` (scoped
+  riêng `eutr-documents`) bọc `FilePreviewer` + nút Download dựng Blob từ dữ liệu đã tải (không tái
+  dùng luồng zip/progress-dialog của `DialogFilePreviewer.jsx`). Bảng chi tiết List PO (đã có sẵn
+  cấu trúc "1 dòng = 1 document" từ Phase 14/Update 8) chỉ cần nạp thêm field `FileId` (không
+  migration DB mới) và gắn hành vi thật cho 2 icon View/Delete đã có sẵn — Delete dùng lại nguyên
+  vẹn API xóa đơn hiện có (`DELETE /api/eutr-documents/{id}`, đã dọn `eutr_references` từ Phase 15/
+  Update 9), KHÔNG gọi API xóa file SharePoint nào. Độc lập với Phase 3-6, 9-13 (không đụng US1-US4/
+  Update 3-7); phụ thuộc Phase 7 (US5), Phase 14 (Update 8) và Phase 15 (Update 9, gián tiếp qua
+  hành vi Delete đã đúng sẵn).
