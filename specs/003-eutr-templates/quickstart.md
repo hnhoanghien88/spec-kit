@@ -2,22 +2,38 @@
 
 **Feature**: 003-eutr-templates | **Date**: 2026-07-03
 
+**Update 13 (2026-07-13) note**: `eutr_templates` no longer has a `VendorCode` field at all — every
+scenario below that references a Vendor combobox on the Create dialog or TemplateBuilderPage is
+superseded; Vendor now only appears on the new **ApplyCustomerPage** (Scenario 17). `IsDefault`'s
+uniqueness constraint (Scenario 5) is now global, not per-VendorCode. See Scenario 16
+(VendorCode-removal verification), Scenario 17 (Apply to Customer), and Scenario 18 (Steps-count
+investigation) for the new/changed coverage.
+
 ## Prerequisites
 
 - Backend (`compliance-sys-api`) running on configured port
 - Frontend (`compliance-client`) dev server running (`npm run dev`)
-- MySQL database with EUTR tables created (see [eutr_db.sql](../../docs/design/eutr/eutr_db.sql))
+- MySQL database with EUTR tables created (see [eutr_db.sql](../../docs/design/eutr/eutr_db.sql)),
+  including the new `eutr_template_references` table (Update 13 — see
+  `Sqls/Migration/11_create_eutr_template_references.sql`)
 - D365 VendorsV3 accessible via the generic reference API (`POST /api/dynamics/reference` with
-  `refType = 13`)
+  `refType = 13`) — **Update 13**: now used by ApplyCustomerPage's Vendor combobox, not by
+  TemplateBuilderPage (Vendor field removed from the template itself)
 - `compl_group_email` has at least 2 active Alert groups (`GroupType = 2`, `IsAddition = false`)
   seeded — e.g. via the Group Email admin screen or directly through `GET/POST /api/group-email`
   (Update 7)
 - EUTR Steps feature (001) deployed with at least 3 steps in `eutr_steps` table
-- User account with `EutrTemplates.*` permissions seeded in backend menu/roles
+- User account with `EutrTemplates.*` permissions seeded in backend menu/roles; **Update 13**: also
+  needs the new `EutrTemplateReferences.*` policies (verify wiring — see plan.md)
 
 ## Validation Scenarios
 
-### Scenario 1: View Template List (FR-001, FR-002, FR-003)
+### Scenario 1: View Template List (superseded in part by Scenario 1' below — Update 10/11)
+
+> **Update 10/11 note**: TemplateListPage no longer renders the 9-column DataGrid described below
+> — see **Scenario 1'** for the current Table-layout behavior. This scenario is kept for reference
+> against `TemplateListPageOld.jsx`, which still exists (unrouted) and still behaves exactly as
+> described here.
 
 1. Navigate to **EUTR system > EUTR templates** in left menu
 2. **Expected**: Breadcrumb shows "EUTR system > EUTR templates"
@@ -29,45 +45,133 @@
    (from `compl_group_email`), not the raw Id (Update 7)
 6. Click page 2: **Expected** next page of records loads
 
-### Scenario 2: Create Template with Step Tree (FR-004, FR-004a, FR-005, FR-005b, FR-006 to FR-010, FR-009a)
+### Scenario 1': View Template List — Table Layout, Search, Bulk Delete (FR-021, FR-021a, FR-021b, FR-021c, FR-022, FR-026)
 
-1. Click **Add** on toolbar
-2. **Expected**: Full page opens with breadcrumb "EUTR system > EUTR templates > Add"
-3. **Expected**: Layout shows **2 columns** — left column (wider): header form (Code, Name, AlertFor, Vendor, Default, **Save button below Default**); right column (narrower): step tree + step actions
-4. **Expected**: Title bar shows only the **Back** button — no Save button next to it
-5. **Expected**: Code field shows auto-generated value (e.g., "Templates-001"), readonly
-6. Fill in: Name = "Test Template"
-6a. Open Alert for combobox: **Expected** `GET /api/group-email` is called, list shows only Alert
+1. Navigate to **EUTR system > EUTR templates** in left menu
+2. **Expected**: TemplateListPage renders — a Table (not a multi-column DataGrid) with a search
+   box above it, and no Import/Export buttons or column-visibility toggle
+3. **Expected**: Each row's name cell shows two lines: the template's **Code** in bold on top, its
+   **Name** as a smaller caption underneath (FR-021)
+4. **Expected**: Each row shows a Version chip (e.g. "V1"), a Default chip only when
+   `isDefault = 1`, and a Steps count reflecting the real number of steps in that template's tree
+   (FR-021c) — not 0 for a template that actually has steps
+5. **Expected**: Each row's Actions column shows 4 icons — Edit, Clone, Apply to Customer, Delete.
+   Clone and Apply to Customer are visibly disabled (cannot be clicked) (FR-026)
+6. Type a partial Code (e.g. the first few characters of an existing template's Code) into the
+   search box
+7. **Expected** (DevTools Network tab): a request to the list endpoint fires with a `filters`
+   entry `{ field: "Keyword", ... }`, debounced (not one request per keystroke), and the visible
+   page resets to the first page
+8. **Expected**: only templates whose Code or Name contains the typed text (case-insensitive)
+   appear, including templates that were on a different page before searching
+9. Clear the search box: **Expected** the full list returns
+10. Tick the checkbox on 2+ rows: **Expected** a bulk-delete button becomes enabled on the toolbar
+    (previously disabled with none selected)
+11. Click the bulk-delete button: **Expected** a confirmation dialog names the number of selected
+    templates
+12. Confirm: **Expected** all selected templates disappear from the list, selection clears, and a
+    success snackbar appears
+13. **Verify in DB**: all selected templates now have `IsDeleted = 1`
+14. Click the Delete icon on a single row (not via checkbox): **Expected** behaves identically to
+    `TemplateListPageOld.jsx`'s single-delete flow (confirmation naming that template's Name and
+    Code, then soft delete + success snackbar) (FR-022)
+
+### Scenario 2: Quick-Create Template via Dialog (FR-004, FR-005, FR-005c, FR-009, FR-010)
+
+1. On **TemplateListPage**, click **Create Template** on toolbar
+2. **Expected**: A dialog/modal opens (no page navigation) with ONLY 3 fields: Name, Alert for
+   (combobox), Set as default (checkbox) — **no Vendor field, no step tree**
+3. Try clicking Save with Name empty: **Expected** validation error, dialog stays open
+4. Fill in: Name = "Test Template"
+5. Open Alert for combobox: **Expected** `GET /api/group-email` is called, list shows only Alert
    groups (`GroupType=2`, `IsAddition=false`) by Name — no free-text typing allowed (Update 7)
-6b. Select an Alert group (e.g. "Compliance Alerts Group")
-7. Open Vendor combobox: **Expected** `POST /api/dynamics/reference` with `refType=13` is called,
-   list shows VendorAccountNumber + VendorOrganizationName
-8. Select a vendor, check Default
-9. Click **Add step** (no parent selected)
-10. Select a step from combobox, set Required, PO, click Save
-11. **Expected**: Step appears at root level in tree
-12. Check the root step, click **Add step** again
-13. Select another step, set Optional, Upload manual, click Save
-14. **Expected**: New step appears as child of the checked step
-15. Add a third step at root level
-16. Drag the third step above the first step
-17. **Expected**: DisplayOrder updates, step moves visually
-18. Click **Save** (below Default checkbox, left column)
-19. **Expected**: Redirects to list, new template visible with Code, VersionId=1, Alert for column
-    shows the selected group's Name
-20. **Verify in DB**: eutr_template_details rows have correct ParentId (child step has ParentId = parent step's Id, root steps have ParentId = 0). `eutr_templates.AlertFor` stores the group's numeric Id (not its Name).
+6. Select an Alert group (e.g. "Compliance Alerts Group"), check Set as default
+7. Click **Save** (dialog action)
+8. **Expected**: Dialog closes, list refreshes automatically (no navigation), new template row
+   appears with an auto-generated Code (e.g. "Templates-001"), Version=1, Alert for column showing
+   the selected group's Name
+9. **Verify in DB**: `eutr_templates` row created (**Update 13**: no `VendorCode` column exists on
+   this table at all anymore); `eutr_template_details` has ZERO rows for this `TemplateId` (Update 9
+   — step tree is no longer built at Create time)
+
+### Scenario 2b: Build the Step Tree via Edit (superseded by Scenario 2b' — Update 10)
+
+> **Update 10 note**: clicking Edit no longer opens the 2-column form/list layout described below
+> — it opens **TemplateBuilderPage** (tree-view + side panel). See **Scenario 2b'**. This scenario
+> is kept for reference against `EutrTemplatesAddEdit.jsx`, which still exists (unrouted) and still
+> behaves exactly as described here if opened directly for manual comparison.
+
+1. Click **Edit** on the template created in Scenario 2 (0 steps, no Vendor)
+2. **Expected**: Full Edit page opens with breadcrumb "EUTR system > EUTR templates > Edit",
+   **2-column layout** — left column (wider): header form (Code readonly, Name, AlertFor, Vendor,
+   Default, **Save button below Default**); right column (narrower): step tree + step actions,
+   currently showing an empty-tree state
+3. **Expected**: Title bar shows only the **Back** button — no Save button next to it
+4. Open Vendor combobox: **Expected** `POST /api/dynamics/reference` with `refType=13` is called,
+   list shows VendorAccountNumber + VendorOrganizationName, nothing pre-selected (template has no
+   Vendor yet); select a vendor
+5. Click **Add step** (no parent selected)
+6. Select a step from combobox, set Required, PO, click Save
+7. **Expected**: Step appears at root level in tree (this is the template's FIRST step)
+8. Check the root step, click **Add step** again
+9. Select another step, set Optional, Upload manual, click Save
+10. **Expected**: New step appears as child of the checked step
+11. Add a third step at root level
+12. Drag the third step above the first step
+13. **Expected**: DisplayOrder updates, step moves visually
+14. Click **Save** (below Default checkbox, left column)
+15. **Expected**: Redirects to list; since this template was created moments ago (well under 24h),
+    this Save updates the SAME row in place — Version stays 1, Vendor code/name now populated
+16. **Verify in DB**: `eutr_templates.VendorCode` now set; `eutr_template_details` rows have
+    correct ParentId (child step has ParentId = parent step's Id, root steps have ParentId = 0);
+    the row's `Id`/`VersionId`/`CreatedDate` are unchanged from Scenario 2 (in-place update, not a
+    new version)
+
+### Scenario 2b': Build the Step Tree via Edit — TemplateBuilderPage (FR-023, FR-024, FR-025, FR-006 to FR-011)
+
+> **Update 13 note**: steps 4 and 15 below (Vendor combobox on this screen) are **removed** — the
+> Vendor field no longer exists on `eutr_templates`/TemplateBuilderPage at all (FR-041). Vendor is
+> now set up separately via ApplyCustomerPage (Scenario 17). The rest of this scenario (step tree
+> building) is unaffected.
+
+1. Click **Edit** on the template created in Scenario 2 (0 steps)
+2. **Expected**: browser navigates to `/eutr/templates/edit/:id`, which renders
+   **TemplateBuilderPage** — a tree-view panel (left) + "Step Configuration" panel (right) +
+   toolbar (Add Root Group / Add Child Step / Move Up / Move Down / Delete / Expand / Collapse),
+   with real data loaded (not the mock `EUTR_TEMPLATES`/`EUTR_TEMPLATE_DETAILS_MAP`)
+3. **Expected**: tree shows an empty-tree state (this template has 0 steps); right panel — since no
+   step is selected — shows the **header form**: Code (readonly), Name, Alert for combobox,
+   Set-as-default checkbox, Save button (FR-024) — **Update 13: no Vendor combobox here anymore**
+4. Click **Add Root Group**: **Expected** a dialog opens with a free-solo Step Autocomplete (not a
+   fixed dropdown of mock steps), RequirementType, TakeFrom — no Type or FSC fields (FR-025)
+5. Pick an existing step, set Required, PO, confirm
+6. **Expected**: Step appears at root level in the tree (this is the template's FIRST step)
+7. Select the root step, click **Add Child Step**, pick another step, set Optional, Upload manual,
+   confirm
+8. **Expected**: New step appears as a child of the selected step
+9. Add a third root-level step
+10. Select the third step, click **Move Up** twice
+11. **Expected**: the step moves above the first step in the tree, `DisplayOrder` updates
+    accordingly (via `reorderSiblings` — no drag gesture on this screen, buttons only) (FR-006)
+12. Click **Save** (in the header form panel)
+13. **Expected**: navigates back to `/eutr/templates`; since this template was created moments ago
+    (well under 24h), this Save updates the SAME row in place — Version stays 1
+14. **Verify in DB**: `eutr_template_details` rows have correct ParentId; the row's
+    `Id`/`VersionId`/`CreatedDate` are unchanged from Scenario 2 (in-place update, not a new version)
+15. Re-open Edit on the same template, select the middle step in the tree: **Expected** the right
+    panel switches to that step's detail (Step Master via free-solo, RequirementType, TakeFrom —
+    no Type/FSC fields), with Save/Delete actions
 
 ### Scenario 3: Edit Template with Conditional Versioning (FR-011, FR-012, FR-005b)
 
 **3a. Edit within 24h of creation (in-place update)**
 
-1. Click **Edit** on the template created in Scenario 2 (just created, well under 24h old)
-2. **Expected**: Edit page loads with **2-column layout** (widened header, narrowed steps), all header fields and step tree populated
+1. Click **Edit** on the template from Scenario 2b' (now has steps, still under 24h old)
+2. **Expected**: Edit page loads with all header fields and step tree populated
 3. **Expected**: Code field is readonly
-4. **Expected**: Vendor combobox calls `POST /api/dynamics/reference` with `refType=13`, current
-   vendor is pre-selected
 4a. **Expected**: Alert for combobox calls `GET /api/group-email`, current Alert group is
-   pre-selected (matched by the Id stored in AlertFor)
+   pre-selected (matched by the Id stored in AlertFor). **Update 13**: there is no Vendor combobox
+   on this screen anymore — see Scenario 17 for Vendor-related coverage.
 5. **Note the current** `Id` and `VersionId` (e.g., via grid or DB query) before saving
 6. Change Name to "Test Template v2"
 7. Delete a child step via the X icon
@@ -100,12 +204,14 @@
 5. **Expected**: Template disappears from grid
 6. **Verify in DB**: Row has IsDeleted=1, not physically deleted
 
-### Scenario 5: IsDefault Constraint (FR-005a)
+### Scenario 5: IsDefault Constraint (FR-040, Update 13 — now global, was per-VendorCode/FR-005a)
 
-1. Create Template A with VendorCode="V001", IsDefault=checked
-2. Create Template B with VendorCode="V001", IsDefault=checked
+1. Create Template A (via the Create Template dialog), IsDefault=checked
+2. Create Template B (a completely separate template — **Update 13**: no longer needs to share a
+   VendorCode with A, since Vendor no longer exists on templates at all), IsDefault=checked
 3. **Expected**: Template B is now default, Template A's IsDefault is automatically cleared
-4. **Verify in grid**: Only Template B shows IsDefault=true for V001
+4. **Verify in grid**: Only Template B shows IsDefault=true, across the ENTIRE list (not scoped to
+   any vendor)
 
 ### Scenario 6: Step Deletion Methods (FR-008a)
 
@@ -137,28 +243,30 @@
 
 ### Scenario 8: ParentId Correctness for New Steps (FR-009, FR-008)
 
-1. Click **Add** to create a new template
-2. Add step "Forest" at root level (no parent selected)
-3. Check "Forest", click **Add step**, add "Certification" as child
-4. Check "Certification", click **Add step**, add "Document" as grandchild (3 levels deep)
-5. Click **Save**
-6. **Verify in DB**: "Forest" has ParentId = 0, "Certification" has ParentId = Forest's Id, "Document" has ParentId = Certification's Id
-7. Edit the template, add a new child step under "Forest"
-8. Click **Save**
-9. **Verify in DB**: New child has ParentId = Forest's server Id (not 0)
+1. Click **Create Template**, fill Name + Alert for, Save (dialog) to create a bare template
+2. Click **Edit** on that template
+3. Add step "Forest" at root level (no parent selected)
+4. Check "Forest", click **Add step**, add "Certification" as child
+5. Check "Certification", click **Add step**, add "Document" as grandchild (3 levels deep)
+6. Click **Save**
+7. **Verify in DB**: "Forest" has ParentId = 0, "Certification" has ParentId = Forest's Id, "Document" has ParentId = Certification's Id
+8. Edit the template again, add a new child step under "Forest"
+9. Click **Save**
+10. **Verify in DB**: New child has ParentId = Forest's server Id (not 0)
 
 ### Scenario 9: Validation (FR-010)
 
-1. Click Add, leave Name empty, select an Alert for group, click Save
-2. **Expected**: Validation error on Name
+1. Click **Create Template**, leave Name empty, select an Alert for group, click Save (dialog)
+2. **Expected**: Validation error on Name, dialog stays open
 3. Fill Name, leave Alert for unselected, click Save
-4. **Expected**: Validation error on Alert for ("Alert for is required")
+4. **Expected**: Validation error on Alert for ("Alert for is required"), dialog stays open
 5. Fill Name and select an Alert for group, click Save
-6. **Expected**: Saves successfully
+6. **Expected**: Saves successfully, dialog closes, list refreshes
 
 ### Scenario 10: Import Templates (FR-014)
 
-1. Prepare Excel file with columns: Name, VendorCode, AlertFor, IsDefault — AlertFor column MUST
+1. Prepare Excel file with columns: Name, AlertFor, IsDefault (**Update 13**: `VendorCode` column
+   removed — was `Name, AlertFor, VendorCode, IsDefault` before Update 13) — AlertFor column MUST
    contain an existing Alert group's **Name** (e.g. "Compliance Alerts Group"), matching a
    `compl_group_email` row with `GroupType=2` (Update 7)
 2. Add 4 rows: 2 valid, 1 missing Name, 1 with an AlertFor Name that doesn't match any group
@@ -172,21 +280,23 @@
 
 ### Scenario 12: Back Button — Unsaved Step Changes Warning (FR-015)
 
-1. Click **Add** to create a new template
-2. Fill in Name/AlertFor only, do NOT add any steps, click **Back**
+1. Click **Create Template**, fill Name/AlertFor, Save (dialog) — **Expected**: no Back button, no
+   warning applies to the dialog itself (only 3 simple fields, no step tree at this stage)
+2. Click **Edit** on that template, do NOT add any steps, click **Back**
 3. **Expected**: Navigates directly to the list, no warning dialog (no step changes made)
-4. Click **Add** again, click **Add step**, save a step into the tree, then click **Back** (without saving the template)
+4. Click **Edit** again, click **Add step**, save a step into the tree, then click **Back** (without saving the template)
 5. **Expected**: A confirmation dialog appears warning about unsaved changes
-6. Click **Cancel** on the dialog: **Expected** stays on the Add page, step still in tree
+6. Click **Cancel** on the dialog: **Expected** stays on the Edit page, step still in tree
 7. Click **Back** again, then confirm/**Leave** on the dialog: **Expected** navigates to the list; the step that was added is NOT persisted (verify it doesn't appear if you check the template — it was never saved)
-8. Repeat with **Edit** mode: open Edit on an existing template, click the Edit icon on a step and change its RequirementType (inline edit save, not template Save), then click **Back**
+8. Repeat on a template that already has steps: open Edit, click the Edit icon on a step and change its RequirementType (inline edit save, not template Save), then click **Back**
 9. **Expected**: Confirmation dialog appears (inline step edit counts as unsaved step change)
 10. Confirm leaving: **Expected** navigates to list; reopening Edit shows the ORIGINAL RequirementType (change was discarded)
 
 ### Scenario 14: Free-solo Step Combobox — Auto-create New Step (FR-007, FR-007a, FR-008b)
 
 1. Note the current row count in the **EUTR Steps** (001-eutr-steps) grid
-2. Click **Add** to create a new template, fill Name/AlertFor
+2. Click **Create Template**, fill Name/AlertFor, Save (dialog) to create a bare template, then
+   click **Edit** on it
 3. In the Step combobox (Add step form), type a name that does NOT exist in the EUTR Steps list
    (e.g., "Brand New Step XYZ") instead of picking an option
 4. Set Required, PO, click **Save** on the step row
@@ -204,49 +314,216 @@
 12. **Verify in DB**: No duplicate `eutr_steps` row was created for "Forest Management" — the
     existing StepId was reused
 
+### Scenario 15: Bulk-Select Add Root Group / Add Child Step (FR-027 to FR-031)
+
+1. Click **Edit** on a template with an empty (or non-empty) step tree
+2. Click **Root Group** (or **Add Root Group** if the tree is empty)
+3. **Expected**: a dialog opens showing a checkbox table listing the available EUTR steps (from
+   the real `eutr_steps` list), each row with a Requirement Type and Take From dropdown that are
+   both disabled/greyed out; a footer reads "{N} step available - 0 selected"; the **Add** button
+   is disabled (FR-027)
+4. Tick 3 different step rows: **Expected** each ticked row's Requirement Type/Take From dropdowns
+   become editable (default Optional/PO), the footer counter updates to "... - 3 selected", and
+   **Add** becomes enabled
+5. Change Requirement Type to Required and Take From to Upload manual on one of the 3 ticked rows
+6. In the separate **"Add new step"** area, type a brand-new name not present in the steps list,
+   and set its Requirement Type/Take From
+7. **Expected**: the footer counter increases to "... - 4 selected" (3 ticked + 1 free-solo)
+8. Click **Add**
+9. **Expected**: all 4 steps appear immediately as **root-level** nodes in the tree (ParentId = 0),
+   each showing the Requirement Type/Take From configured per row in step 5-6; the dialog closes
+10. Select one of the newly added root steps, click **Child Step**
+11. **Expected**: the bulk-select dialog reopens; the step just used as the parent's own master
+    entry (if it was one of the ticked master rows) still appears in the list (it's now a sibling,
+    not a child, of the target parent) — but any step that is ALREADY a direct child of this
+    selected parent does NOT appear in the list (FR-029)
+12. Tick 2 steps, click **Add**
+13. **Expected**: both appear as children of the selected step (ParentId = selected step's Id)
+14. Reopen **Add Child Step** on the SAME parent again: **Expected** the 2 steps just added in step
+    12 are now excluded from the "available" list (already direct children of this parent)
+15. Open the bulk-select dialog again, tick a step and type a free-solo name, then click **Cancel**
+    (not Add)
+16. **Expected**: dialog closes, nothing was added to the tree — reopening the dialog shows the
+    previously-ticked step unticked and the free-solo entry area empty again
+17. Click template **Save**
+18. **Verify in DB**: the free-solo step name typed in step 6 was auto-created in `eutr_steps`
+    (FR-030/FR-007a — same mechanism as Scenario 14), and all bulk-added `eutr_template_details`
+    rows have the correct `ParentId`/`RequirementType`/`TakeFrom` per row
+19. Select an existing step, click the **Edit** icon (pencil) on it (not Root Group/Child Step):
+    **Expected** this still opens the single-step edit form in the right-hand panel (Step,
+    Requirement Type, Take From, Save/Delete) — unchanged single-step behavior, not the bulk table
+    (FR-031)
+
+### Scenario 16: VendorCode Removal Verification (FR-039, Update 13)
+
+1. Open TemplateBuilderPage (Edit) on any template: **Expected** no Vendor field/combobox appears
+   anywhere on the page (header panel only shows Code, Name, Alert for, Set as default, Save)
+2. Open the Create Template dialog: **Expected** no Vendor field (unchanged from Update 9 — this
+   confirms nothing regressed by adding one)
+3. Export templates to Excel (`GET api/eutr-templates/export`): **Expected** columns are exactly
+   Code, Name, Alert for, IsDefault, Version — no "Vendor code" column
+4. Import a template file using the OLD 4-column layout (Name, VendorCode, AlertFor, IsDefault):
+   **Expected** the import either fails clearly or silently ignores the extra column depending on
+   how `/speckit-tasks` implements column-count handling — verify actual behavior here and record it
+5. **Verify in DB**: `DESCRIBE eutr_templates;` shows no `VendorCode` column
+6. **Verify in DB**: existing rows that had a non-null `VendorCode` before this update's migration
+   was applied have that data gone (no migration was performed, per the confirmed decision) — this
+   is expected, not a bug
+
+### Scenario 17: Apply to Customer (FR-032 to FR-038, Update 13)
+
+1. On TemplateListPage, click the **Apply to Customer** icon on a template row (no longer disabled)
+2. **Expected**: navigates to `/eutr/templates/apply/:id`, rendering **ApplyCustomerPage** with a
+   breadcrumb showing the template's Code, and a table of existing Vendor mappings (empty state if
+   none exist yet)
+3. Click **Apply Vendor**: **Expected** a popup dialog opens with a Vendor combobox (calls
+   `POST /api/dynamics/reference` with `refType=13`), From date (required), To date (optional)
+4. Try Save with Vendor or From date empty: **Expected** validation error, dialog stays open
+5. Select a Vendor, set From date = today, leave To date blank, Save
+6. **Expected**: dialog closes, new mapping row appears in the table with the Vendor's name, From
+   date, and To date shown as unlimited/blank
+7. **Verify in DB**: `eutr_template_references` has a new row with the correct `TemplateId`,
+   `VendorCode`, `FromDate`
+8. Click **Apply Vendor** again, select the SAME Vendor with a From/To date range that overlaps the
+   mapping from step 5-7
+9. **Expected**: Save is rejected with an overlap error message
+10. Apply the SAME Vendor to a DIFFERENT template with an overlapping date range
+11. **Expected**: Save succeeds (overlap is only blocked within the same template, per FR-036)
+12. Click the **Edit** icon on the mapping from step 5-7, change the To date, Save
+13. **Expected**: the row updates in place (same mapping Id); **Verify in DB**: same `id`, updated
+    `ToDate`, `UpdatedBy`/`UpdatedDate` changed
+14. Click the **Delete** icon on a mapping row: **Expected** a confirmation dialog appears; confirm
+15. **Expected**: the row disappears from the table; **Verify in DB**: the row is genuinely GONE
+    from `eutr_template_references` (hard delete — no `IsDeleted` flag exists on this table)
+
+### Scenario 18: Steps-Count Investigation (FR-042, Update 13 — verify-first)
+
+1. Open DevTools Network tab, navigate to TemplateListPage
+2. Find the `POST api/eutr-templates/get-all` request/response in the Network tab
+3. **Expected/Check**: the raw JSON response includes a `stepsCount` field per item; compare its
+   value against the actual number of `eutr_template_details` rows for that `TemplateId` (query the
+   DB directly to confirm)
+4. Repeat for a template that has gone through a version bump (Scenario 3b) — confirm the CURRENTLY
+   DISPLAYED row's `stepsCount` reflects the steps copied to its (new) `TemplateId`, not the old
+   hidden version's count
+5. **If `stepsCount` is correct in the raw response but the UI shows 0/blank**: the bug is in
+   `TemplateListPage.jsx`'s rendering — re-check the exact JSX binding (`tmpl.stepsCount ?? 0`) and
+   whether the deployed frontend build is stale
+6. **If `stepsCount` is already wrong/missing in the raw response**: the bug is server-side —
+   escalate to checking whether the deployed backend build matches `EutrTemplatesRepository`'s
+   current source (stale deploy is the most likely explanation, since the source code was verified
+   correct during planning)
+7. **Record the outcome here** (update this file) once verified: either "confirmed working as of
+   [date]" with evidence, or "reproduced — root cause: [finding]" with the fix tracked as a task
+
+**Outcome (2026-07-13, `/speckit-implement`)**: **Confirmed working — not a code defect.** Executed
+the exact `GetPagedAsync` SQL (the query behind `POST api/eutr-templates/get-all`) directly against
+the live dev database (`compliance_sys_db_260601`) and compared it to a ground-truth
+`COUNT(*) FROM eutr_template_details` per template:
+
+| Id | Code | VersionId | IsHide | Real detail count | `StepsCount` from the query |
+|----|------|-----------|--------|--------------------|------------------------------|
+| 7  | Templates-001 | 1 | 1 (hidden, old version) | 7  | — (not in grid result, IsHide=1) |
+| 8  | Templates-002 | 1 | 1 (hidden, old version) | 26 | — (not in grid result, IsHide=1) |
+| 9  | Templates-003 | 1 | 0 | 3  | 3  ✅ |
+| 10 | Templates-001 | 2 | 0 (current version) | 7  | 7  ✅ |
+| 11 | Templates-002 | 2 | 0 (current version) | 26 | 26 ✅ |
+
+Every currently-visible row (`IsHide=0, IsDeleted=0`) returns a `StepsCount` that exactly matches
+its real detail count — including two templates that had gone through a version bump (Id 10/11,
+copied from the hidden Id 7/8), ruling out the "stale count carried over from the old version"
+hypothesis too. Combined with the earlier static trace (repository SQL → DTO → JSON camelCase →
+`TemplateListPage.jsx`'s `tmpl.stepsCount ?? 0` binding, all verified correct), there is no
+reproducible defect in the current source against real data. **If the original bug report still
+reproduces in the running application, the most likely explanation is a stale deployed
+frontend/backend build** (the currently-running dev API process, PID-locked during this session,
+could not be rebuilt/restarted to serve the latest binaries) — recommend restarting both the API
+and frontend dev servers with a fresh build and re-checking before investigating further. FR-042/
+SC-035 are marked resolved on this evidence; no code change was made for this item.
+
 ### Scenario 13: Edge Cases
 
 - Empty grid: **Expected** "No data" message, no errors
-- Invalid VendorCode in template: **Expected** Vendor name column shows blank
+- ~~Invalid VendorCode in template: Expected Vendor name column shows blank~~ — **removed (Update
+  13)**: no Vendor field exists on templates anymore, nothing to validate here
 - AlertFor Id no longer found in `compl_group_email` (group deleted after template was saved):
   **Expected** Alert for column shows blank, no error for the rest of the grid (Update 7)
 - `compl_group_email` has zero Alert groups (`GroupType=2`): **Expected** Alert for combobox shows
   no options and Save is blocked until at least one Alert group exists (Update 7)
 - Deep nesting (3+ levels): **Expected** tree renders correctly with collapse/expand
-- Back button on Add/Edit page with NO step changes: **Expected** returns to list immediately, no warning
-- Back button on Add/Edit page WITH unsaved step add/edit: **Expected** shows confirmation dialog before leaving
+- Back button on Edit page with NO step changes: **Expected** returns to list immediately, no warning
+- Back button on Edit page WITH unsaved step add/edit: **Expected** shows confirmation dialog before leaving
 - Edit step then Save template: **Expected** edited step values persist in DB
 - Edit step then Cancel (inline): **Expected** step retains original values
-- Two-column layout on wide screen: **Expected** wider header column on the left, narrower steps column on the right, side by side
+- Two-column layout on wide screen (Edit page only): **Expected** wider header column on the left, narrower steps column on the right, side by side
 - Edit a template exactly at the 24h boundary: **Expected** behavior follows `(now - CreatedDate) >= 24h` comparison consistently
 - Empty EUTR Steps list: **Expected** Step combobox still accepts free-solo typed input (no longer requires creating a step first)
 - Step combobox typed name matches an existing step differing only by case/whitespace: **Expected** the existing StepId is reused, no duplicate created
 - Step combobox left blank/whitespace-only when saving a step row: **Expected** validation blocks adding the empty step
+- Closing the Create Template dialog without clicking Save (Update 9): **Expected** no
+  `eutr_templates` row created, list unchanged
+- Opening Edit on a template that was just quick-created (0 steps, no Vendor) (Update 9):
+  **Expected** step tree shows an empty state (not an error), Vendor combobox shows unselected
+- After the Create Template dialog's Save succeeds (Update 9): **Expected** the app stays on
+  TemplateListPage — it does NOT auto-navigate to the Edit screen
+- Bulk-select dialog (Update 12) with all master steps already used as direct children of the
+  target parent: **Expected** the table shows an empty "available" list, but the "Add new step"
+  area remains usable
+- Tick-all via the header checkbox then untick one row (Update 12): **Expected** the "selected"
+  counter decreases by exactly 1, matching the remaining ticked rows
+- Free-solo name typed in "Add new step" matches (case-insensitive, trimmed) a step already ticked
+  from the master table, or another free-solo entry from a prior Add in the same session (Update
+  12): **Expected** the existing dedupe-by-name rule (FR-007a) applies on Save — only one
+  `eutr_steps` row is created/reused, no duplicates
+- Clicking **Root Group** while a tree node is currently selected (Update 12): **Expected** the
+  bulk-added steps still land at the tree **root** (ParentId=0) — the current selection only
+  affects the **Child Step** button, not Root Group
+- (Update 13) Opening ApplyCustomerPage for a template with zero mappings: **Expected** an empty
+  table state, but "Apply Vendor" remains clickable
+- (Update 13) Leaving To date blank when applying a Vendor: **Expected** treated as unlimited
+  validity (no end date), shown as "∞"/blank in the mapping table
+- (Update 13) Editing a mapping and NOT changing the Vendor/dates, just clicking Save: **Expected**
+  the overlap check excludes the record being edited from comparison — Save succeeds
+- (Update 13) Deleting a mapping: **Expected** a real DB row removal, not a flag update — confirmed
+  by querying `eutr_template_references` directly after delete
 
 ## Post-Validation Checks
 
-- [ ] All 9 grid columns render correctly
+- [ ] TemplateListPage renders the Table + search-box layout (not a 9-column DataGrid) — see
+      Scenario 1' (Update 10). (`TemplateListPageOld.jsx`'s 9-column DataGrid is checked separately,
+      only if manually opened for reference — it is not part of the routed app)
 - [ ] Alert for combobox loads only Alert groups (`GroupType=2`, `IsAddition=false`) via
       `GET /api/group-email`, no free-text typing allowed (Update 7)
 - [ ] Alert for pre-selected correctly in Edit mode (Update 7)
 - [ ] Grid's Alert for column shows the group Name, not the raw Id; saved `AlertFor` in DB is the
       numeric Id (Update 7)
-- [ ] Vendor lookup works via `POST /api/dynamics/reference` (refType=13) in combobox (Add and
-      Edit modes) and grid
-- [ ] Vendor combobox calls the generic reference endpoint (NOT the dedicated
-      `GET /api/dynamics/vendors` endpoint from Update 2/3)
-- [ ] Vendor pre-selected correctly in Edit mode
+- [ ] (Update 13 — supersedes the 4 checks below for TemplateBuilderPage) No Vendor field/combobox
+      appears anywhere on TemplateBuilderPage or the Create Template dialog — Vendor no longer
+      exists on `eutr_templates` at all
+- [ ] ~~Vendor lookup works via `POST /api/dynamics/reference` (refType=13) in combobox (Edit mode
+      only — no Vendor field on Create, Update 9) and grid~~ — moved to ApplyCustomerPage (Update 13)
+- [ ] ~~Vendor combobox calls the generic reference endpoint (NOT the dedicated
+      `GET /api/dynamics/vendors` endpoint from Update 2/3)~~ — now applies to ApplyCustomerPage
+      (Update 13), see below
+- [ ] ~~Vendor pre-selected correctly in Edit mode~~ — no longer applicable (Update 13)
+- [ ] ApplyCustomerPage's Vendor combobox calls `POST /api/dynamics/reference` (refType=13), NOT the
+      dedicated `GET /api/dynamics/vendors` endpoint (Update 13)
 - [ ] Vendor reference response items expose `id`/`code` = VendorAccountNumber and
-      `name` = VendorOrganizationName — verify in DevTools Network tab
+      `name` = VendorOrganizationName — verify in DevTools Network tab (now checked against
+      ApplyCustomerPage, Update 13)
 - [ ] Tree supports 3+ levels of nesting
 - [ ] ParentId saved correctly for all levels (root=0, children=parent's Id)
 - [ ] ParentId correct even for newly-added parent steps (temp ID mapping works)
 - [ ] Drag-and-drop reorders steps and updates DisplayOrder
 - [ ] Inline Edit step changes Step, RequirementType, TakeFrom correctly
 - [ ] Only one step in edit mode at a time (auto-cancel previous)
-- [ ] Two-column layout displays correctly with WIDER header column (left) and NARROWER steps column (right)
-- [ ] Save button appears below the "Set as default template" checkbox in the left column, NOT in the title bar
-- [ ] Title bar shows only the Back button
+- [ ] Two-column layout displays correctly with WIDER header column (left) and NARROWER steps column (right) — Edit page only
+- [ ] Save button appears below the "Set as default template" checkbox in the left column, NOT in the title bar (Edit page)
+- [ ] Title bar shows only the Back button (Edit page)
+- [ ] Create Template dialog shows ONLY Name, Alert for, Set as default — no Vendor field, no step tree (Update 9)
+- [ ] Create Template dialog's Save creates a template with 0 steps and `VendorCode = NULL`; dialog closes and the list refreshes without navigating to Edit (Update 9)
+- [ ] Editing a freshly quick-created template (0 steps) lets the user add the first step and select a Vendor without errors (Update 9)
+- [ ] The `/eutr/templates/add` route no longer exists / is no longer reachable from the list's Create button (Update 9)
 - [ ] Step combobox (Add step and inline Edit step) accepts both selecting an existing option and typing a free-solo name
 - [ ] Typing a new step name and saving the template auto-creates it in `eutr_steps`, visible immediately in the EUTR Steps screen
 - [ ] Multiple steps with the same new typed name in one Save create only ONE `eutr_steps` row (no duplicates)
@@ -264,3 +541,57 @@
       both `StepFormRow.jsx` and `StepTree.jsx`) still show the same "Optional"/"Required" and
       "PO"/"Upload manual" options and render the same label text on the tree — no visual/behavior
       change (Update 8)
+- [ ] TemplateListPage's Code/Name mapping is correct for every row: Code bold on top, Name as
+      caption below (Update 10)
+- [ ] TemplateListPage's Steps count matches the real number of steps in each template's tree, not
+      a placeholder 0 (Update 11)
+- [ ] TemplateListPage search box queries the server (visible in DevTools Network as a `Keyword`
+      filter entry), debounced, resets to page 1, and matches across the full dataset — not just
+      the currently loaded page (Update 11)
+- [ ] TemplateListPage has a working pagination control (new — the prior mock had none) (Update 10)
+- [ ] TemplateListPage's per-row checkbox + bulk-delete toolbar button work identically to
+      `TemplateListPageOld.jsx`'s bulk delete (confirmation naming the count, soft delete, success
+      snackbar) (Update 10)
+- [ ] TemplateListPage's Clone and Apply-to-Customer icons are visibly disabled and unclickable —
+      no mock Clone dialog, no navigation to a customers route (Update 10)
+- [ ] Clicking Edit navigates to TemplateBuilderPage (not `EutrTemplatesAddEdit.jsx`'s 2-column
+      layout) with real data loaded for that template (Update 10)
+- [ ] TemplateBuilderPage's Add Root Group / Add Child Step dialogs use a free-solo Autocomplete
+      over the real EUTR steps list (not the mock `Select`), and have no Type or FSC fields
+      (Update 10)
+- [ ] TemplateBuilderPage's Move Up / Move Down buttons correctly update DisplayOrder via
+      `reorderSiblings` (Update 10)
+- [ ] TemplateBuilderPage's right-hand panel shows the header form (Code/Name/AlertFor/Vendor/
+      Default/Save) when no step is selected, and step detail (real RequirementType/TakeFrom, no
+      Type/FSC) when a step is selected (Update 10)
+- [ ] TemplateBuilderPage's Save persists via the real Update endpoint (conditional versioning
+      still applies) and navigates back to the list on success (Update 10)
+- [ ] TemplateBuilderPage's Back button shows the same unsaved-changes confirmation as
+      `EutrTemplatesAddEdit.jsx` when step changes are unsaved (Update 10)
+- [ ] `EutrTemplatesAddEdit.jsx` is no longer reachable via any route in the app (Update 10)
+- [ ] Add Root Group / Add Child Step dialogs show a checkbox table of available master steps with
+      "{N} step available - {M} selected" counter and disabled Add button at 0 selected (Update 12)
+- [ ] Ticking multiple master steps + optionally typing one free-solo new name, then clicking Add,
+      inserts all of them into the tree in a single action with the correct ParentId (root or
+      selected parent) and per-row Requirement Type/Take From (Update 12)
+- [ ] A master step already a direct child of the target parent is excluded from that dialog's
+      "available" list, but reappears when adding to a different parent (Update 12)
+- [ ] Canceling the bulk-select dialog discards all ticked rows and any typed free-solo entry —
+      nothing is added to the tree (Update 12)
+- [ ] Free-solo names typed via the bulk-select dialog's "Add new step" area are auto-created in
+      `eutr_steps` on template Save, same as the existing single-add free-solo mechanism (Update 12)
+- [ ] Edit (pencil icon) on an existing tree node still opens the single-step edit form — unaffected
+      by the bulk-select dialog (Update 12, FR-031)
+- [ ] `DESCRIBE eutr_templates;` confirms no `VendorCode` column exists (Update 13, FR-039)
+- [ ] Export/Import Excel column layouts match the new 5-column/3-column shapes with no "Vendor
+      code" column (Update 13)
+- [ ] IsDefault uniqueness is verified GLOBAL (not per-vendor) — Scenario 5 (Update 13, FR-040)
+- [ ] TemplateListPage's Apply to Customer icon is enabled and navigates to
+      `/eutr/templates/apply/:id` (Update 13, FR-032)
+- [ ] ApplyCustomerPage's Add/Edit dialog validates Vendor + From date required, To date ≥ From
+      date when present, and blocks same-template/same-vendor date overlaps while allowing overlaps
+      across different templates (Update 13, FR-036)
+- [ ] ApplyCustomerPage's Delete performs a genuine hard delete on `eutr_template_references`
+      (Update 13, FR-037)
+- [ ] Steps-count investigation (Scenario 18) outcome recorded — either confirmed working with
+      evidence, or a root cause identified and tracked as a follow-up task (Update 13, FR-042)

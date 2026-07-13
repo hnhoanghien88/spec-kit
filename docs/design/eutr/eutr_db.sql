@@ -19,16 +19,15 @@ CREATE TABLE `eutr_templates`(
     `Id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     `Code` VARCHAR(255) NOT NULL,
     `Name` VARCHAR(255) NULL,
-    `VendorCode` VARCHAR(50) NULL,
     `IsDefault` TINYINT NULL DEFAULT 0,
-    `VersionId` TINYINT NOT NULL DEFAULT 1,
+    `AlertFor` TINYINT NOT NULL,
+    `IsDeleted` TINYINT NOT NULL,
+    `IsHide` TINYINT NOT NULL,
+    `VersionId` TINYINT NULL DEFAULT 0,
     `CreatedBy` VARCHAR(50) NULL,
     `CreatedDate` DATETIME NULL,
     `UpdatedBy` VARCHAR(50) NULL,
-    `UpdatedDate` DATETIME NULL,
-    `AlertFor` TINYINT NULL DEFAULT NULL,
-    `IsDeleted` TINYINT NULL DEFAULT 0,
-    `IsHide` TINYINT NULL DEFAULT 0
+    `UpdatedDate` DATETIME NULL
 );
 CREATE TABLE `eutr_template_details`(
     `Id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -104,3 +103,18 @@ CREATE TABLE `eutr_reference_details`(
 );
 ALTER TABLE
     `eutr_reference_details` ADD CONSTRAINT `eutr_reference_details_refid_foreign` FOREIGN KEY(`RefId`) REFERENCES `eutr_references`(`Id`);
+
+
+CREATE TABLE `eutr_template_references`(
+    `Id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    `TemplateId` BIGINT UNSIGNED NOT NULL,
+    `VendorCode` VARCHAR(50) NOT NULL,
+    `FromDate` DATE NOT NULL,
+    `ToDate` DATE NOT NULL,
+    `CreatedBy` VARCHAR(50) NOT NULL,
+    `CreatedDate` DATETIME NOT NULL,
+    `UpdatedBy` VARCHAR(50) NOT NULL,
+    `UpdatedDate` DATETIME NOT NULL
+);
+ALTER TABLE
+    `eutr_template_references` ADD CONSTRAINT `eutr_template_references_templateid_foreign` FOREIGN KEY(`TemplateId`) REFERENCES `eutr_templates`(`Id`);    

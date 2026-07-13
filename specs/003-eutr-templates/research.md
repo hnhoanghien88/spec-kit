@@ -287,6 +287,10 @@ acceptable since the tree itself scrolls vertically and doesn't need maximum wid
 3. Update `<Grid item xs={12} md={5}>` → `md={7}` for the header column and
    `<Grid item xs={12} md={7}>` → `md={5}` for the step tree column.
 
+> **Scope narrowed by Section 20** (2026-07-13 update 9): this 2-column layout, and the Save
+> button position, now apply ONLY to `EutrTemplatesAddEdit.jsx` in its Edit-only role — Create is
+> a separate 3-field `Dialog` (`CreateTemplateDialog.jsx`) that does not use this layout at all.
+
 ---
 
 ## 15. Back Button — Unsaved Step Changes Warning
@@ -571,3 +575,534 @@ value reuse the same source instead of re-declaring it a third time.
 4. No backend, database, or API contract changes. No new dependency. Purely a frontend
    presentation-layer internal reorganization — call-site usage (`options={REQUIREMENT_TYPES}`,
    `REQUIREMENT_TYPES.find(...)`, `REQUIREMENT_LABELS[value]`, etc.) is unchanged.
+
+---
+
+## 20. Two-Step Create/Edit Split — TemplateListPage + CreateTemplateDialog
+
+**Decision**: Split template creation away from the step-tree builder. The list page (renamed
+`index.jsx` → `TemplateListPage.jsx`) renders a new `CreateTemplateDialog.jsx` (MUI `Dialog`) with
+only 3 fields — Name, Alert for (combobox), Set as default (checkbox) — instead of navigating to
+`EutrTemplatesAddEdit.jsx`. Saving the dialog calls the existing `CreateEutrTemplatesUseCase` with
+`{ name, alertFor, isDefault, vendorCode: null, details: [] }`, closes the dialog, and refreshes the
+list — no navigation to Edit. `EutrTemplatesAddEdit.jsx` keeps its current 2-column layout (Code,
+Name, Alert for, Vendor, Default, Save left; step tree right) unchanged, but is now reached only via
+`/eutr/templates/edit/:id` — the `/eutr/templates/add` route is removed and the component's
+`isEdit` branch is simplified away (always true).
+
+**Rationale**: Per explicit request (following the design reference at
+`E:\Working\design\eutr\pages\TemplateListPage.jsx`, which uses a `Dialog` for quick create),
+creating a template should be a fast, minimal action — Vendor assignment and step-tree
+construction are deferred to a deliberate follow-up Edit action. This also means a freshly created
+template legitimately has 0 steps and no Vendor; `EutrTemplatesAddEdit.jsx` already renders an
+empty-tree state (`treeData.length === 0` case, per the design reference's `TemplateBuilderPage`
+pattern) so no new empty-state UI is needed — the Edit screen already tolerates this.
+
+**Alternatives considered**:
+- Keep a single Add/Edit page, just hide the step tree and Vendor fields when `!isEdit` — rejected:
+  still requires a page navigation + breadcrumb for what the request describes as a fast, 3-field
+  action; a `Dialog` matches the design reference and other quick-create patterns already in the
+  codebase (e.g. `ImportResultDialog.jsx`'s modal shape, `ConfirmDialog` usage elsewhere).
+- Auto-navigate to Edit immediately after the dialog's Save — rejected per the request's explicit
+  two-step wording ("lần 2 khi nhấn vào Edit mới thêm sửa steps"): the user must deliberately click
+  Edit to continue, so the dialog closes back to the list instead.
+- Send `vendorCode` as an optional field in the dialog (kept present but empty) instead of removing
+  it outright — rejected: the request's literal 3-field list (Name, Alert for, Set as default)
+  excludes Vendor; keeping it (even optionally) would contradict "chỉ cần hiện thông tin Name,
+  alert for, set as default".
+- Keep `index.jsx` as the file name and only rename the exported component to `TemplateListPage` —
+  rejected: `EutrTemplatesAddEdit.jsx` in the same folder is already a named file (not
+  `index.jsx`), so renaming the file itself to `TemplateListPage.jsx` is more consistent with the
+  folder's existing convention and makes FR-019 (page naming) visible at the file level, not just
+  in-code.
+
+**Implementation**:
+1. Rename `presentation/pages/eutr-templates/index.jsx` → `TemplateListPage.jsx`; rename the
+   exported function `EutrTemplatesPage` → `TemplateListPage`.
+2. Update `RouteResolver.jsx`'s lazy import path accordingly (`@presentation/pages/eutr-templates`
+   → `@presentation/pages/eutr-templates/TemplateListPage`).
+3. Add `components/CreateTemplateDialog.jsx`: MUI `Dialog` with `TextField` (Name), the existing
+   Alert-for `Autocomplete` pattern from `EutrTemplatesAddEdit.jsx` (reused, not reinvented — same
+   `GetAllGroupEmailUseCase`/`groupEmailType.ALERT` filtering), and a `Checkbox` (Set as default).
+   Props: `open`, `onClose`, `onCreated` (callback to refresh the list). Internally instantiates
+   `CreateEutrTemplatesUseCase` exactly as `EutrTemplatesAddEdit.jsx` currently does.
+4. In `TemplateListPage.jsx`, replace the toolbar's `onClick={() => navigate('/eutr/templates/add')}`
+   with local dialog-open state; on the dialog's `onCreated`, call the existing `fetchData()`.
+5. In `EutrTemplatesAddEdit.jsx`, remove the `isEdit` ternary (title, breadcrumb, Code field
+   visibility) since the component is now only reached with an `id` param; keep all Vendor/step-tree
+   logic unchanged.
+6. Remove the `{ path: "/eutr/templates/add", ... }` entry from `MainRoutes.jsx`; keep
+   `/eutr/templates/edit/:id` unchanged.
+7. No backend change: `POST api/eutr-templates` already accepts `vendorCode: null` and
+   `details: []` (both already nullable/optional per the existing contract and validator — Name and
+   AlertFor are the only required fields, matching FR-010 unchanged).
+
+> **Reversed in part by Section 22** (2026-07-13, spec Update 10): `/eutr/templates/edit/:id` is
+> repointed from `EutrTemplatesAddEdit.jsx` to `TemplateBuilderPage.jsx` — see Section 22. Steps 1–4
+> and 6–7 above (rename, dialog, list-page wiring, no backend change) remain current; only the
+> Edit-screen target changes.
+
+---
+
+## 21. TemplateListPage — Table-Layout Real-Data Wiring, Bulk Delete, Disabled Clone/Apply (spec Update 10)
+
+**Decision**: `TemplateListPage.jsx` already contains a Table + search-box + chip (Version/Default)
++ Steps-count + 4-icon-Action-column layout — but it runs entirely on local mock arrays
+(`mock/eutrTemplates.js`, `mock/eutrTemplateDetails.js`) with client-side `Array.filter`/`useState`
+mutations. Reverse Update 9's decision to keep the DataGrid instead: keep this Table layout exactly
+as it looks today, and rewire its data layer to the same working pieces
+`TemplateListPageOld.jsx` already uses: `useEutrTemplatesData` (server pagination/filter/sort),
+`permissionList` (via `getMenuDataFromStorage`, matched against menu code `eutr-templates`),
+`DeleteEutrTemplatesUseCase` + `DeleteMultiEutrTemplatesUseCase` + `ConfirmDialog` (single + new
+bulk delete), and `CreateTemplateDialog` (already exists, already correct per Update 9 — no
+change). Clone and Apply-to-Customer stay visible but `disabled`.
+
+**Rationale**: The two competing designs (DataGrid-with-filters vs. Table-with-chips) each already
+exist in full as separate files; picking one to keep and wiring it to real data is far less risky
+than merging their features into a new third design. The user explicitly asked to keep the Table
+layout (2026-07-13 clarifying question), so `TemplateListPageOld.jsx`'s DataGrid becomes a
+reference/backup file only — its logic is copied over, the file itself is untouched.
+
+**Alternatives considered**:
+- Merge DataGrid features (column visibility, per-column filter, Import/Export) into the Table
+  layout — rejected: spec Update 10 (FR-021b) explicitly defers these; the Table layout has no
+  natural slot for them without a redesign the user didn't ask for.
+- Keep the DataGrid and only change 2 cells' data-binding (Code/Name mapping) — rejected: this is
+  exactly what Update 9 already decided and Update 10 explicitly reverses.
+- Add row selection via MUI's `Checkbox` inside a plain array of selected ids (matching
+  `TemplateListPageOld.jsx`'s own `selectionModel` state shape) — chosen over introducing a
+  dedicated selection library; the existing pattern is already proven and needs no new dependency.
+
+**Implementation**:
+1. Remove `mock/eutrTemplates.js`/`mock/eutrTemplateDetails.js` imports and the local
+   `templates`/`setTemplates` state from `TemplateListPage.jsx`.
+2. Add `useEutrTemplatesData()` (unchanged hook) for `data`, `total`, `loading`, `error`,
+   `paginationModel`/`setPaginationModel`, `filterModel`/`setFilterModel`, `sortModel`/
+   `setSortModel`, `fetchData` — call `fetchData()` in a mount `useEffect`, same as
+   `TemplateListPageOld.jsx`.
+3. Compute `permissionList` via `getMenuDataFromStorage().find(m => m.code === 'eutr-templates')`
+   (same as `TemplateListPageOld.jsx`); gate Create/Delete-related UI on
+   `permissionList.includes('Create'|'Delete')`, Edit on `.includes('Update')` (matches
+   `useEutrTemplatesColumns.jsx`'s existing `canEdit` convention).
+4. Replace the `filtered = templates.filter(...)` client-side search with the search box calling
+   (debounced ~300ms) `setFilterModel({ items: value ? [{ field: 'keyword', operator: 'contains',
+   value }] : [], logicOperator: 'and' })` and `setPaginationModel(prev => ({ ...prev, page: 0 }))`;
+   render `data` directly (already the current page's server-filtered rows).
+5. In each row: bold text binds to `tmpl.code`, caption text binds to `tmpl.name` (FR-021), Version
+   chip to `tmpl.versionId`, Default chip visibility to `tmpl.isDefault === 1`, Steps count to
+   `tmpl.stepsCount` (Section 24) instead of the `EUTR_TEMPLATE_DETAILS_MAP` lookup.
+6. Replace the ad-hoc Create dialog (`createOpen`/`form`/`handleCreate`, only mutating local mock
+   state) with the existing `CreateTemplateDialog` component, `onCreated={fetchData}`.
+7. Remove `cloneOpen`/`cloneTarget`/`handleClone` state and the Clone confirmation `<Dialog>` JSX
+   entirely; render the Clone `IconButton` with `disabled` and no `onClick`. Same for the "Apply to
+   Customer" `IconButton` (remove its `navigate(...)` call, render `disabled`).
+8. Wire the Delete `IconButton` (currently has no `onClick` in the mock) to
+   `setRowToDelete(tmpl); setConfirmOpen(true)`, then a `ConfirmDialog` calling
+   `DeleteEutrTemplatesUseCase.execute(rowToDelete.id)` → `fetchData()` → `CustomSnackbar`, matching
+   `TemplateListPageOld.jsx`'s message text exactly ("Are you sure you want to delete the template
+   \"{name}\" ({code})?").
+9. Add a per-row `Checkbox` (new — the mock had none) bound to a `selectionModel` array of ids, plus
+   a header/toolbar "select all" checkbox for the current page and a bulk-delete `IconButton`
+   (disabled when `selectionModel.length === 0` or the user lacks Delete permission) opening a
+   second `ConfirmDialog` calling `DeleteMultiEutrTemplatesUseCase.execute(selectionModel)` →
+   `fetchData()` → clear selection → `CustomSnackbar`.
+10. Add a `TablePagination` (new — the mock rendered the full unpaginated array with no page
+    control) bound to `paginationModel.page`/`paginationModel.pageSize`/`total`, calling
+    `setPaginationModel`.
+11. Add a `CustomSnackbar` (new — the mock had no success/error feedback) for delete/bulk-delete
+    results, matching `TemplateListPageOld.jsx`.
+
+---
+
+## 22. TemplateBuilderPage — Real-Data Wiring via the Existing `useStepTree`/EutrTemplatesAddEdit Logic (spec Update 10)
+
+**Decision**: `TemplateBuilderPage.jsx` already renders a tree-view (left) + "Step Configuration"
+side panel (right) + toolbar (Add Root Group / Add Child Step / Move Up / Move Down / Delete /
+Expand / Collapse) — but against mock data (`mock/eutrTemplates.js`, `mock/eutrTemplateDetails.js`,
+`mock/eutrSteps.js`) and its own hand-rolled flat-tree state + `utils/treeUtils.js` helpers
+(`flatToTree`, `generateId`, `removeNodeAndDescendants`, `getDescendantIds`). `/eutr/templates/edit/:id`
+in `MainRoutes.jsx` already routes here (this was never actually reverted back to
+`EutrTemplatesAddEdit.jsx`), so wiring it to real data makes it the feature's actual Edit screen.
+Reuse the existing `useStepTree` hook (already implements everything `treeUtils.js` reinvents, plus
+`editStep`/`isDirty` which `treeUtils.js` doesn't have) and the same use cases/components
+`EutrTemplatesAddEdit.jsx` already uses (`GetEutrTemplatesUseCase`, `UpdateEutrTemplatesUseCase`,
+`GetEutrStepsUseCase`, `GetAllGroupEmailUseCase`, `ReferenceObjectAutocomplete` refType=13). Keep
+`TemplateBuilderPage.jsx`'s own visual shell — do not swap in `StepTree.jsx`'s different UI
+(per-row inline add forms + checkbox multi-select), per FR-024's explicit "keep the current
+bố cục" instruction.
+
+**Rationale**: `useStepTree` is the single already-tested source of truth for step-tree mutation
+semantics (cascade delete, ParentId-preserving flatten-for-save, dirty tracking) — re-deriving the
+same behavior a second time in `treeUtils.js`/local state would create two divergent
+implementations of the same business rules (FR-006 through FR-008b) that could drift apart on the
+next change. Keeping the visual shell separate from the data layer is exactly what "reuse existing
+logic, not rewrite" (Principle II/III) means when two different UI designs both need to manage the
+same underlying tree.
+
+**Alternatives considered**:
+- Replace `TemplateBuilderPage.jsx`'s tree rendering with `StepTree.jsx` wholesale — rejected: FR-024
+  explicitly preserves the tree-view + side-panel + toolbar shell; `StepTree.jsx`'s per-row
+  inline-add-form UI is a different interaction model the user didn't ask to adopt here.
+- Keep `treeUtils.js` and only swap the data source (mock arrays → real API responses) — rejected:
+  `treeUtils.js` duplicates logic `useStepTree` already has (and lacks `editStep`/`isDirty`), so
+  keeping it means maintaining two parallel tree implementations for no benefit.
+- Add real drag-and-drop (`@dnd-kit`) to `TemplateBuilderPage.jsx` to fully match `StepTree.jsx`'s
+  reordering UX — rejected: the existing Move Up/Down buttons already update `DisplayOrder`
+  correctly once wired to `reorderSiblings`; FR-024 asks to keep the current toolbar, and adding a
+  drag interaction is a UI addition beyond what was requested.
+- Keep the Type/FSC mock fields as inert display-only remnants instead of removing them — rejected:
+  they don't exist in `EutrTemplateDetails` (Section on data-model), so keeping them either silently
+  discards user input or requires fabricating backend support nobody asked for; removing them is the
+  only option consistent with the real schema.
+
+**Implementation**:
+1. Remove `mock/eutrTemplates.js`, `mock/eutrTemplateDetails.js`, `mock/eutrSteps.js`, and
+   `utils/treeUtils.js` imports; remove local `flatDetails`/`setFlatDetails` state.
+2. Add `useState` for header fields (`code`, `name`, `vendorCode`, `vendorName`, `alertFor`,
+   `isDefault`) plus `loading`/`saving`/`snackbar`, mirroring `EutrTemplatesAddEdit.jsx`.
+3. On mount: `GetEutrTemplatesUseCase.execute(id)` → populate header state, call
+   `useStepTree().loadFromServer(template.details)`; `GetEutrStepsUseCase.execute()` → steps list
+   for the free-solo comboboxes; `GetAllGroupEmailUseCase.execute()` (filtered to
+   `groupType === groupEmailType.ALERT && !isAddition`) → Alert-for combobox options.
+4. Replace `treeData = useMemo(() => flatToTree(flatDetails), ...)` with `useStepTree`'s own
+   `buildTree(0)`; replace `allIds`/expand-all/collapse-all logic to walk this same tree shape
+   (unchanged behavior, different data source).
+5. `moveNode('up'|'down')`: keep the existing sibling-lookup logic to compute `fromIndex`/`toIndex`,
+   but call `reorderSiblings(parentId, fromIndex, toIndex)` from the hook instead of manually
+   swapping two items' `displayOrder` fields.
+6. `handleDeleteNode`/`doDelete`: call the hook's `removeStep(selectedId)` (already cascade-aware)
+   instead of `removeNodeAndDescendants` from `treeUtils.js`; keep the existing
+   "N descendants, confirm?" dialog UX as-is (client-side count still computed the same way, just
+   reading from `useStepTree`'s `items` instead of `flatDetails`).
+7. Add Root Group / Add Child Steps dialogs: replace the `Select` (bound to `EUTR_STEPS` mock) with
+   a free-solo `Autocomplete` bound to the real steps list (same pattern as `StepFormRow.jsx` —
+   selecting an option sets `{stepId, stepName}`, typing sets `{stepId: null, stepName: <text>}`);
+   remove the 8-option mock `TAKE_FROM_OPTIONS`/`CHIP_COLORS` and the Type/FSC `RadioGroup`s
+   entirely; import `REQUIREMENT_TYPES`/`TAKE_FROM_OPTIONS`/`REQUIREMENT_LABELS`/`TAKE_FROM_LABELS`
+   from `utils/helpers.js`. On confirm, call the hook's `addStep(...)` instead of pushing directly
+   into `flatDetails`.
+8. Right-hand "Step Configuration" panel: when `selectedId === null`, render the header form (Code
+   readonly, Name `TextField`, Alert-for `Autocomplete` — select-only, sourced from
+   `GetAllGroupEmailUseCase` — Vendor `ReferenceObjectAutocomplete` with `referenceType={13}`,
+   Set-as-default `Checkbox`, Save `Button`) instead of the current "Chọn một step..." placeholder.
+   When a step is selected, keep the existing step-detail panel shape but bind Step Master to the
+   real steps list (free-solo, not the mock `Select`), RequirementType/TakeFrom to the shared
+   `utils/helpers.js` constants, and drop the Type/FSC `RadioGroup`s; Save calls the hook's
+   `editStep(selectedId, {...})` (client-side only, matching FR-008b — no template Save needed for
+   this), Delete calls `removeStep`/opens the existing descendant-count confirm dialog.
+9. `handleSaveDraft` → `handleSave`: build
+   `{ name, vendorCode, alertFor: alertFor, isDefault: isDefault ? 1 : 0, details:
+   flattenForSave() }`, call `UpdateEutrTemplatesUseCase.execute(id, payload)`; on success,
+   `navigate('/eutr/templates')` (matching `EutrTemplatesAddEdit.jsx`'s existing redirect — the
+   mock's "stay on page, show a message" behavior is replaced); on failure, show an error
+   `CustomSnackbar` and stay on the page.
+10. Back button: add the same `isDirty` (from `useStepTree`) + `ConfirmDialog` wiring already
+    implemented for `EutrTemplatesAddEdit.jsx` (Section 15) — no new pattern, just applied here too.
+11. Replace the `if (!template) return <Typography>Template không tồn tại</Typography>` guard with
+    a loading spinner while the initial fetch is in flight, and a proper not-found state if the
+    fetch resolves with no data (matching `EutrTemplatesAddEdit.jsx`'s existing loading pattern).
+12. Breadcrumb text changes from `{template.name} — {template.versionId}` to the feature's
+    established wording, "EUTR system > EUTR templates > Edit" (matches the wording already used by
+    `EutrTemplatesAddEdit.jsx` per FR-011).
+13. `EutrTemplatesAddEdit.jsx` is left in place, unreferenced by any route after this change — not
+    deleted (Principle III precedent from Update 5's unused vendors endpoint). `mock/eutrTemplates.js`,
+    `mock/eutrTemplateDetails.js`, `mock/eutrSteps.js`, and `utils/treeUtils.js` become fully
+    orphaned (verified: no other file in the repo imports them) and are likewise left in place.
+
+---
+
+## 23. Server-Side Keyword Search — Code OR Name (spec Update 11)
+
+**Decision**: Reuse the existing filter pipeline end-to-end on the frontend
+(`useEutrTemplatesData`'s `filterModel` → `useFilterPayload` → `getPagingUseCase.execute(...,
+filterPayload)`, all unchanged) by sending one filter item with `field: 'keyword'`. The only new
+code is on the backend: inside `EutrTemplatesRepository`'s WHERE-clause builder for
+`GetPagedWithVendorNameAsync`, special-case a `Keyword` column (after `useFilterPayload` title-cases
+`keyword` → `Keyword`) into `(Code LIKE @p OR Name LIKE @p)` instead of mapping it to one SQL
+column, the same way `AlertFor` was special-cased to the joined `g.Name` column in Update 7.
+
+**Rationale**: The existing filter payload shape is a flat list of independent
+`{column, operator, value}` entries that the repository's WHERE builder combines with AND — it has
+no way to express "Code OR Name" as two separate entries. Special-casing one pseudo-column name is
+the smallest change that fits inside the existing contract: no new endpoint, no new request/response
+shape, no frontend hook change (verified: `useFilterPayload` already produces `column: "Keyword"`
+for a `field: 'keyword'` input via its existing `.charAt(0).toUpperCase() + field.slice(1)` logic).
+
+**Alternatives considered**:
+- Add a dedicated `keyword` query parameter to a new/separate search endpoint — rejected: duplicates
+  the paging/sorting logic `get-all` already has, and the existing filter-list contract already has
+  room for one more entry without a breaking change.
+- Send two filter entries (`Code contains X`, `Name contains X`) and change the WHERE builder to
+  support a mixed AND/OR combination via `filterModel.logicOperator` — rejected: bigger blast radius
+  (every other filter consumer of this builder would need to reason about a new OR-grouping
+  behavior); a single special-cased pseudo-column is scoped to exactly this one need.
+- Perform the Code/Name matching entirely client-side against the currently loaded page — rejected
+  per the Update 11 clarification: pagination is server-driven, so a client-side filter would miss
+  matches on pages not currently loaded.
+
+**Implementation**:
+1. Frontend: no hook/component change beyond what Section 21 already describes — the search box's
+   debounced `setFilterModel({ items: [{ field: 'keyword', operator: 'contains', value: term }] })`
+   is exactly the same call shape `useEutrTemplatesData` already accepts for any other column.
+2. Backend (`EutrTemplatesRepository`, wherever the dynamic WHERE clause is assembled from the
+   incoming filter list — the same place `FilterMap["AlertFor"] = "g.Name"` already lives): add a
+   branch that recognizes `column == "Keyword"` and appends
+   `(Code LIKE @pN OR Name LIKE @pN)` (parameterized, same `%value%` wrapping already used for
+   other `like` operators) instead of looking it up in `FilterMap` as a single-column rename.
+3. No DTO or contract shape change — the request body still sends a `filters` array; this one entry
+   just has `field: "Keyword"` instead of a real column name.
+
+---
+
+## 24. Real Steps Count on the List (spec Update 11)
+
+**Decision**: Add `(SELECT COUNT(*) FROM eutr_template_details d WHERE d.TemplateId = t.Id) AS
+StepsCount` to the same `SELECT` list `GetPagedWithVendorNameAsync` already builds (alongside the
+existing `VendorName`/`AlertForName` resolution), and add a matching `StepsCount` (int) property to
+`EutrTemplatesResponseDto`.
+
+**Rationale**: The clarification (spec Update 11) resolved a direct contradiction — FR-021 required
+the Steps column to show real data, but an earlier Assumption said 0/blank was an acceptable
+permanent placeholder. A correlated subquery is the simplest way to get an accurate per-row count in
+the same query that already returns one row per template, with no new round trip and no N+1 query
+risk (a separate per-template count call, once per row, would not scale with page size the way this
+does).
+
+**Alternatives considered**:
+- Fetch counts in a second batched query (`WHERE TemplateId IN (@ids)` after the main page query,
+  then merge in C#) — rejected: adds a second round trip and merge step for no benefit over a
+  correlated subquery MySQL can already optimize reasonably well at this data volume (hundreds of
+  templates, tens of steps each, per the spec's stated Scale/Scope).
+- Compute the count client-side by having the frontend call `GET /eutr-templates/{id}` per row —
+  rejected: exactly the N+1 pattern the correlated subquery avoids, and would need one request per
+  visible row on every page load.
+- Store a denormalized `StepsCount` column on `eutr_templates`, updated whenever
+  `eutr_template_details` changes — rejected: adds a new write-path invariant to keep in sync across
+  every insert/delete/replace path (Create, in-place Update, versioned Update) for a value that's
+  cheap to compute on read; the correlated subquery has no write-side risk of drifting out of sync.
+
+**Implementation**:
+1. `EutrTemplatesResponseDto`: add `public int StepsCount { get; set; }`.
+2. `EutrTemplatesRepository.GetPagedWithVendorNameAsync`: add the correlated-subquery column to the
+   existing `SELECT` (same statement that already adds `VendorName`/`AlertForName`).
+3. Frontend: `TemplateListPage.jsx`'s Steps column reads `tmpl.stepsCount` directly from the list
+   response — no separate fetch, no client-side count derivation.
+
+---
+
+## 25. Bulk-Select Add Root Group / Add Child Step (spec Update 12)
+
+**Decision**: Replace the `StepFormRow`-based single-step-at-a-time Dialog content in
+`TemplateBuilderPage.jsx`'s Add Root Group/Add Child Step modal with a new
+`BulkAddStepsDialog.jsx` component: a checkbox table of the real EUTR steps list (same
+`GetEutrStepsUseCase` data already used), one row per step (Step Master label, per-row
+Requirement Type/Take From `Autocomplete`s enabled only once that row is ticked), a header
+select-all checkbox, a footer "{N} step available - {M} selected" counter, and a dedicated
+"Add new step" input row (free-solo name entry, its own Requirement Type/Take From) that folds
+its single pending entry into the same batch. Clicking **Add** calls one new `useStepTree`
+function, `addSteps(stepsArray)`, that appends every ticked/typed step to the tree in a single
+state update — instead of the dialog calling `onAdd` once per step (which existing `addStep`
+already supports, but only one row at a time via `StepFormRow`).
+
+**Rationale**: The design reference makes this a batch-selection interaction, not N repetitions of
+the existing single-add flow — reusing `addStep` in a loop from the dialog's Add handler would
+work functionally (each call reads the latest `prev` via the functional `setItems` updater), but
+folds several intents ("add these 5 steps together") into N separate state transitions and N
+`isDirty` flips for what the user experiences as one action; a single `addSteps` call keeps the
+existing "one mutation → one dirty flip" shape `useStepTree`'s other bulk method
+(`removeMultiSteps`) already established for its own multi-select delete. Building the table itself
+from plain `@mui/material` (`Table`/`TableRow`/`Checkbox`) needs no new dependency — the same
+package already renders every other list surface in this feature.
+
+**Alternatives considered**:
+- Keep calling `addStep` once per ticked row in a `for` loop inside the dialog's Add handler —
+  rejected: works, but produces N intermediate tree states and N `isDirty` sets for a single user
+  gesture; a dedicated `addSteps` batching function is a small addition that keeps the mutation
+  atomic and matches the existing `removeMultiSteps` precedent for batch operations.
+- Reuse `StepTree.jsx`'s per-row inline-form UI (checkbox multi-select + per-row inline edit) for
+  this dialog instead of a new component — rejected: `StepTree.jsx`'s multi-select checkboxes exist
+  for *deleting* already-added tree nodes, a different data shape (existing tree items, not the
+  master steps list) and a different visual context (inline in the tree) than a modal listing
+  available master steps to add; forcing it to serve both roles would tangle two independent
+  concerns into one component.
+- Support multiple simultaneous free-solo "Add new step" rows (an add/remove list of pending new
+  names) — rejected as unnecessary for this update: the design reference and FR-030 describe a
+  single dedicated entry area; a user who needs several brand-new step names can still invoke this
+  dialog again per name, or (more commonly) type new names one at a time and click Add per batch.
+  Kept as a documented default rather than a blocking clarification since a single-entry area is
+  the literal, simplest reading of "một khu vực/hàng riêng biệt" (a separate area/row, singular).
+- Auto-select all available steps by default when the dialog opens (assuming the common case is
+  "add most of them") — rejected: FR-027 explicitly requires the footer counter to start at
+  "0 đã chọn" and the Add button disabled until the user ticks something, matching the attached
+  design image's initial (unticked) state exactly.
+
+**Implementation**:
+1. **`useStepTree.js`** — add `addSteps(newSteps)`: a single `setItems` call that, for each entry in
+   `newSteps` (in array order), computes `displayOrder` continuing from the current count of
+   siblings under that entry's `parentId` (recomputed as each entry is appended within the same
+   updater pass, so entries sharing a `parentId` in one call still get sequential, non-colliding
+   `displayOrder` values), assigns a fresh temp `_id` via the existing `nextTempId()`, and appends
+   all resulting items in one array spread; sets `isDirty(true)` once. Exported alongside `addStep`
+   (kept as-is — still used by `EutrTemplatesAddEdit.jsx`'s existing single-add flow, which stays
+   out of scope per Update 10's decision to leave that file unrouted/unmodified).
+2. **New `components/BulkAddStepsDialog.jsx`**: props `steps` (full master list from
+   `GetEutrStepsUseCase`), `existingChildStepIds` (array/Set of `stepId`s already present as direct
+   children of the target parent — computed by the caller per FR-029), `onAdd(stepsArray)`,
+   `onClose`. Internal state: `checked` (Map: stepId → `{requirementType, takeFrom}` for ticked
+   master rows, defaults `{0, 0}` applied the moment a row is ticked, per FR-027), `newStepDraft`
+   (`{name, requirementType, takeFrom}` for the single "Add new step" area, `null` when empty).
+   `available = steps.filter(s => !existingChildStepIds.includes(s.id))`. Renders a `Table` with a
+   header row (`Checkbox` indeterminate/checked bound to `checked.size === available.length`), one
+   `TableRow` per `available` step (row `Checkbox`, Step Master `TableCell`, Requirement
+   Type/Take From `Autocomplete`s `disabled` until that row's `Checkbox` is ticked), then a final
+   non-table "Add new step" row (`TextField`/`Autocomplete freeSolo` for the name, its own
+   Requirement Type/Take From). Footer: `Typography` showing
+   `` `${available.length} step available - ${checked.size + (newStepDraft ? 1 : 0)} selected` ``,
+   `Button` Cancel (`onClose`, discards all local state), `Button` Add (`disabled` when
+   `checked.size === 0 && !newStepDraft`) that builds the final array — `[...available.filter(s =>
+   checked.has(s.id)).map(s => ({ stepId: s.id, stepName: s.name, parentId, ...checked.get(s.id)
+   })), ...(newStepDraft ? [{ stepId: null, stepName: newStepDraft.name.trim(), parentId,
+   requirementType: newStepDraft.requirementType, takeFrom: newStepDraft.takeFrom }] : [])]` — and
+   calls `onAdd(thatArray)`, then `onClose()`.
+3. **`TemplateBuilderPage.jsx`**: replace the `<StepFormRow ref={addStepFormRef} ... />` +
+   `DialogActions` Add/Close pairing inside the existing `Dialog` (the one opened by `openAddRoot`/
+   `openAddChild`) with `<BulkAddStepsDialog steps={steps} existingChildStepIds={...}
+   onAdd={addSteps} onClose={() => setAddModal({ open: false, type: null })} />`.
+   `existingChildStepIds` computed inline as
+   `stepItems.filter(s => s.parentId === (addModal.type === 'root' ? 0 : selectedId)).map(s =>
+   s.stepId)`. `addStepFormRef`/`addStepValid` state (only needed for the old single-row
+   `StepFormRow` submit-via-ref pattern) are removed — `BulkAddStepsDialog` owns its own Add
+   button/disabled logic internally, no parent-driven `ref.current.submit()` needed.
+4. No backend, DTO, or contract change (see `contracts/api-endpoints.md` Update 12 note) — the
+   existing `flattenForSave()`/Update-template payload shape is unaffected by how many rows were
+   authored per dialog interaction.
+
+---
+
+## 26. Remove VendorCode from EutrTemplates (spec Update 13)
+
+**Decision**: Delete `VendorCode` from `EutrTemplates` (entity), `EutrTemplatesRequestDto`, and the
+derived `VendorName` from `EutrTemplatesResponseDto`, across every layer that touches it (see
+plan.md's "VendorCode removal (backend)"/"(frontend)" subsections for the exhaustive file list).
+Existing `VendorCode` data on live rows is discarded — no backfill into the new
+`eutr_template_references` table. The `IsDefault` uniqueness constraint changes from per-VendorCode
+to global (`ClearIsDefaultForVendorAsync(vendorCode, excludeId)` → `ClearGlobalDefaultAsync(excludeId)`).
+
+**Rationale**: The user explicitly requested removing the column and its logic, replacing the
+"one optional Vendor per template" model with a separate many-to-many, time-bound mapping
+(`eutr_template_references` — Section 27). Discarding old data (rather than backfilling) was a
+direct clarification answer (asked during `/speckit-specify`) — the user judged the old
+single-Vendor-per-template values not worth preserving given the new model has fundamentally
+different semantics (multiple vendors, date ranges) that a naive 1:1 backfill wouldn't represent
+faithfully anyway (what `FromDate` would the migration invent for existing data? the confirmed
+answer was: don't try, start clean). Making `IsDefault` global (rather than deleting the
+constraint outright) was the other confirmed answer — a "no constraint at all" reading would let
+arbitrarily many templates claim `IsDefault=1` simultaneously, which conflicts with every existing
+UI affordance (`Default` chip, "Set as default" checkbox) implying a single, meaningful default.
+
+**Alternatives considered**:
+- Backfill existing `VendorCode` values into one `eutr_template_references` row per template before
+  dropping the column — rejected per explicit user decision (see Q1 in spec.md's Update 13
+  Clarifications): the two data models aren't equivalent (point value vs. date range), so any
+  invented `FromDate`/`ToDate` would misrepresent history rather than preserve it.
+- Keep `VendorCode` nullable but unused (soft-deprecate instead of dropping) — rejected: the user's
+  explicit ask was "bỏ cột VendorCode... và các logic liên quan" (remove the column and related
+  logic), not deprecate it; keeping a dead column/field would leave confusing surface area across
+  ~10 files for no benefit, and this codebase's own precedent (the unused `GET /api/dynamics/vendors`
+  endpoint left in place after Update 5) is reserved for cases where deleting risked breaking an
+  unverified caller — here every caller is this feature's own code, fully traced.
+- Leave the `IsDefault` constraint per-VendorCode by keying it off a "virtual" concept once Vendor
+  moves to `eutr_template_references` (e.g., "default among templates applied to the same vendor
+  set") — rejected as needlessly complex: a template can now be applied to zero, one, or many
+  vendors via time-bound mappings, so "per-vendor default" has no single well-defined scope anymore;
+  global is the simplest constraint that still gives "Default" a stable, unambiguous meaning.
+
+**Implementation**: see plan.md's "VendorCode removal (backend)" and "(frontend)" subsections for
+the complete, file-by-file change list (already traced via a dedicated Explore pass — every
+touch-point has a concrete line reference, not a guess).
+
+---
+
+## 27. New `eutr_template_references` CRUD Stack (spec Update 13 — Apply to Customer)
+
+**Decision**: Build a complete new CRUD stack (`EutrTemplateReferences` entity/DTOs/repository/
+service/controller/validator, plus the matching frontend domain/infrastructure/application/
+presentation layers) modeled directly on the existing `EutrTemplates`/`EutrTemplateDetails` stack,
+rather than searching further for a closer-fit reference feature.
+
+**Rationale**: `compl_template_reference` — a similarly-named table — was checked first as a
+candidate reference (Principle II requires modeling new CRUD on an existing, working feature of the
+same shape) but rejected: it has zero C# code, only three orphaned SQL stored procedures with no
+application-layer caller found anywhere in the codebase. Reusing dead SQL as a "reference pattern"
+would mean reverse-engineering conventions from unverified, unexercised code — worse than just
+mirroring the `EutrTemplates` stack, which is proven working (handles the same audit-field
+conventions, the same Dapper repository base class, the same policy-based controller shape) and
+sits in the exact same feature folder structure the new table needs to fit into.
+
+**Alternatives considered**:
+- Model `EutrTemplateReferencesRepository`'s overlap check as a database-level constraint (e.g., a
+  MySQL trigger or a generated/exclusion constraint) instead of an application-layer query —
+  rejected: MySQL has no native date-range exclusion constraint (unlike PostgreSQL's `EXCLUDE`), and
+  a trigger would bury business logic outside the Application layer, violating Principle I (business
+  rules must not live in the database for this codebase's established pattern — every other
+  cross-field validation in this feature, e.g. the 24h versioning threshold, lives in
+  `EutrTemplatesService`, not in SQL).
+- Give `EutrTemplateReferences` a soft-delete flag for consistency with `EutrTemplates` (`IsDeleted`)
+  — rejected: the confirmed table design (`docs/design/eutr/eutr_db.sql`) has no such column, and
+  the spec (FR-037) explicitly requires a hard delete; adding a flag not in the approved schema
+  would silently diverge from the design doc for no requested benefit.
+- Reuse the `EutrTemplatesController`/`EutrTemplatesService` classes directly (add
+  reference-mapping methods onto the existing controller/service instead of new classes) — rejected:
+  would conflate two different aggregates (Template header+steps vs. Template-to-Vendor mapping)
+  behind one controller/service, working against Principle I's layer/responsibility boundaries and
+  making the existing `EutrTemplatesController`/`Service` harder to reason about; a new, small,
+  single-purpose stack is more consistent with how `eutr_template_details` already gets its own
+  repository methods (not folded into a generic "everything EUTR" service) despite living under the
+  same feature.
+
+**Implementation**: see plan.md's "New: `eutr_template_references` backend CRUD" and "New:
+Apply-to-Customer frontend" subsections; data-model.md's Entity 6; contracts/api-endpoints.md
+Section 9.
+
+---
+
+## 28. Steps-Count Bug — Verify Before Fixing (spec Update 13, FR-042)
+
+**Decision**: Do not write a speculative code fix for the user-reported "Steps column doesn't show
+count" bug. Instead, trace the complete data path first (done during planning — see plan.md's
+"Steps-Count Investigation" subsection) and hand `/speckit-tasks` a verification-first task: call
+the real endpoint, compare against the DB, and only then decide whether/where a fix is needed.
+
+**Rationale**: Two independent code audits (one during `/speckit-specify`, one during this
+`/speckit-plan` pass) traced `EutrTemplatesController.GetPaged` → `EutrTemplatesService.GetPagedAsync`
+→ `EutrTemplatesRepository.GetPagedWithVendorNameAsync`'s `StepsCount` correlated subquery →
+`EutrTemplatesResponseDto.StepsCount` → default ASP.NET Core camelCase JSON serialization (verified
+no `AddJsonOptions` override exists in `Program.cs`) → `TemplateListPage.jsx`'s
+`tmpl.stepsCount ?? 0` binding, and found every link correct. The versioning path (`UpdateAsync`'s
+≥24h branch correctly calls `BulkInsertDetailsAsync(newId, ...)`, inserting copied details under the
+NEW `TemplateId` the grid will actually display) was also checked, ruling out the most plausible
+"stale count after versioning" hypothesis. Writing a fix for a bug that cannot be located in the
+current source risks either a no-op change (masking the real cause) or an unnecessary refactor of
+already-correct code. The responsible move is to first establish whether the bug reproduces against
+the CURRENT source (vs. an older deployed build, which is unverifiable from source alone) before
+touching anything.
+
+**Alternatives considered**:
+- Rename/refactor `GetPagedWithVendorNameAsync`'s `StepsCount` subquery defensively (e.g., add an
+  explicit `COALESCE(..., 0)` or switch to a `LEFT JOIN ... GROUP BY` instead of a correlated
+  subquery) "just in case" — rejected: this is a solution in search of a problem; the existing
+  subquery already returns `0` for a template with zero details (COUNT of an empty set is 0, not
+  NULL), so a defensive `COALESCE` changes nothing behaviorally and would just be code churn.
+- Add extensive backend logging around `StepsCount` to catch the bug next time it's reported —
+  rejected as premature: a single manual Network-tab check (Scenario 18) answers the question
+  immediately and costs nothing to run before implementation begins; logging can be added later if
+  the manual check is inconclusive or the bug turns out to be intermittent.
+- Assume the bug report is stale (already fixed by whichever update actually added `StepsCount`,
+  i.e. Update 11) and simply mark FR-042/SC-035 resolved without further verification — rejected:
+  the user re-reported this specific bug in the same message that asked for VendorCode removal and
+  Apply-to-Customer, i.e., freshly, in this update — treating it as certainly-stale without checking
+  would risk shipping a still-broken feature.
+
+**Implementation**: see quickstart.md Scenario 18 for the exact verification steps and where to
+record the outcome; plan.md's Steps-Count Investigation subsection for the full traced call path and
+next-step triage order if the bug does reproduce.

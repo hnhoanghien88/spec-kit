@@ -2,7 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-07-02
-**Updated**: 2026-07-07
+**Updated**: 2026-07-13 (Update 13)
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -185,3 +185,228 @@
 - No functional/UI behavior change — same constant names, shapes, and values; pure code
   organization change. No new [NEEDS CLARIFICATION] markers; all checkbox items above remain
   passing, no regressions.
+
+### Update 2026-07-13 — TemplateListPage Rename + 2-Step Create/Edit Flow
+
+- **Input**: Update the UI per design reference `E:\Working\design\eutr` (`TemplateListPage.jsx`,
+  `TemplateBuilderPage.jsx`); rename the index page to TemplateListPage; add a Code column, drop
+  Status, add Alert for; drop Preview checklist/Archive from the Action column; split Add into a
+  2-step flow (quick create with Name/Alert for/Set as default only, then Edit to add/build steps).
+- **Change: Page rename** — FR-019 added: the list page MUST be organized/named as
+  **TemplateListPage** (renamed from `EutrTemplatesPage`/`index.jsx`), per the design reference.
+- **Confirmed, no functional change: Grid columns & Action column** — FR-020 added to explicitly
+  confirm the grid column set (Code, Name, Vendor code, Vendor name, Alert for, Is default,
+  Version, Created by, Created date) and Action column (Edit + Delete only) already match the
+  request — Code and Alert for already exist, there is no Status column, and there is no Preview
+  checklist/Archive/Publish/Clone. This is a confirmation against the design mockup's differing
+  column/action set, not a behavior change to the current implementation.
+- **Change: 2-step Create/Edit flow (the substantive change)** — FR-004, FR-004a, FR-005, FR-005b,
+  FR-005c, FR-006 through FR-009a, FR-010, FR-011 updated:
+  - **Step 1 (Create)**: the "Create Template" button now opens a lightweight dialog/modal with
+    only 3 fields — Name (required), Alert for (required combobox), Set as default (checkbox). No
+    Vendor field, no step tree. Code remains system-generated but is not shown in the dialog. Save
+    creates a new template row (VersionId=1, VendorCode=null, no step details), closes the dialog,
+    and refreshes the list — no auto-navigation to Edit.
+  - **Step 2 (Edit)**: clicking Edit on any row (including one just quick-created) opens the
+    existing full 2-column Edit screen (Code readonly/Name/Alert for/Vendor/Default/Save left,
+    step tree right) — now the sole place to set Vendor and add/edit/remove steps, including the
+    very first steps of a template.
+- User Story 2 rewritten (quick create, dialog-based); User Story 3 (Edit) intro and acceptance
+  scenarios updated to describe it as the sole location for Vendor + step tree work, including new
+  scenarios 9-10 for editing a freshly quick-created (0-step, no-Vendor) template.
+- SC-002, SC-009, SC-012, SC-014, SC-016, SC-017 updated to scope Vendor/step-tree/layout claims to
+  the Edit screen only; SC-019, SC-020 added for the quick-create dialog shape and first-edit flow.
+- Edge cases added: closing the Create dialog without Save creates nothing; a freshly
+  quick-created template shows an empty step tree and blank Vendor combobox on first Edit (not an
+  error); no auto-navigation from Create to Edit after Save.
+- Assumptions added: Create dialog implemented as a standard Dialog/Modal (not a page navigation),
+  per the design reference and the request's literal 3-field list; Vendor is fully excluded from
+  Create (deferred to Edit) as a reasonable inference, not an explicit user confirmation; the page
+  rename is organizational only and carries no other behavior change beyond this update.
+- No new [NEEDS CLARIFICATION] markers — the Create-dialog UI shape and Vendor-exclusion-from-Create
+  decisions are documented as reasonable defaults (see Assumptions) rather than blocking questions,
+  since the request's literal field list and the design reference both point to the same answer.
+
+### Update 2026-07-13 (Update 10) — Reverses Update 9's UI Decision: TemplateListPage Table Layout + Edit Opens TemplateBuilderPage
+
+- **Input**: "cập nhật 003-eutr-templates, lấy tính năng đã viết từ TemplateListPageOld sang
+  TemplateListPage, ở màn hình index {tmpl.name} hiển thông tin code, {tmpl.description} là name,
+  chức năng create template, Delete sẽ hoạt động giống cũ, chức năng Add/Edit sẽ mở form
+  TemplateBuilderPage".
+- Two scope questions were asked back to the user before writing this update (both answered):
+  (1) keep the DataGrid layout from Update 9, or switch to the Table/search/chip layout of the
+  `TemplateListPage.jsx` design reference → **answered: switch to the Table layout**; (2) what to
+  do with the mock "Clone"/"Apply to Customer" row actions already present in that design → 
+  **answered: keep the icons but disable them (placeholder)**.
+- **Change: FR-019/FR-020 (Update 9) reversed** — FR-021, FR-021a, FR-021b, FR-026 added: the list
+  screen now uses the Table + search-box + Version/Default chip + Steps-count layout of
+  `TemplateListPage.jsx` instead of the 9-column DataGrid confirmed in Update 9. The bold/primary
+  text position shows the template's real **Code**; the secondary/caption text position shows the
+  real **Name**. Vendor code/Vendor name/Alert for/Created by/Created date are no longer shown as
+  list columns (still viewable/editable in TemplateBuilderPage). Import/Export, column-visibility
+  toggling, and per-column filter/sort are deferred (no equivalent affordance in the new layout).
+- **Change: FR-004a/FR-011 (Update 9) reversed** — FR-023, FR-024, FR-025 added: clicking Edit now
+  opens **TemplateBuilderPage** (tree-view + right-hand config panel, already wired into
+  `MainRoutes.jsx` at `/eutr/templates/edit/:id`) instead of the 2-column form/list layout of
+  `EutrTemplatesAddEdit.jsx`. TemplateBuilderPage must be wired to the real backend/use-cases that
+  `EutrTemplatesAddEdit.jsx` already implements (load/save, conditional 24h versioning, free-solo
+  step auto-create, Vendor/Alert-for lookups) — reusing that logic rather than rewriting it.
+  `EutrTemplatesAddEdit.jsx` is no longer referenced by any route after this change.
+- **Change: FR-022 added** — Delete on TemplateListPage must reuse `TemplateListPageOld.jsx`'s
+  exact behavior: per-row delete via `ConfirmDialog` + `DeleteEutrTemplatesUseCase`, plus a new
+  per-row checkbox + bulk-delete toolbar button via `ConfirmDialog` + `DeleteMultiEutrTemplatesUseCase`
+  (the new Table layout previously had no bulk-select affordance).
+- User Story 1, User Story 3, User Story 4 rewritten to describe the Table layout, the
+  TemplateBuilderPage edit target, and bulk delete respectively. User Story 5 (Import) marked
+  deferred/out of scope for this update (kept for historical reference only).
+- FR-001, FR-002, FR-002a, FR-004a, FR-011, FR-020 marked "(Superseded by Update 10)" in place
+  (body preserved for traceability, per this doc's existing convention for superseded requirements).
+- SC-003 marked superseded (no more Vendor-name list column); SC-008, SC-012 reworded for the new
+  layout; SC-021 through SC-025 added for search filtering, Code/Name mapping, bulk delete,
+  Edit-opens-TemplateBuilderPage, and Clone/Apply disabled state.
+- Assumptions updated: TemplateListPage.jsx/TemplateBuilderPage.jsx are pre-existing mock-data
+  design-reference files already wired into routing; scope of this update is replacing their mock
+  data/logic with real data/logic reused from TemplateListPageOld.jsx/EutrTemplatesAddEdit.jsx, not
+  rewriting the visual layout. Steps-count column falls back to 0/blank if the list API doesn't yet
+  return it — not a blocking condition. Clone/Apply-to-Customer icons only need a disabled state, no
+  click handling.
+- No new [NEEDS CLARIFICATION] markers were embedded in the spec — the two scope decisions above
+  were resolved interactively before writing, per the "resolve via question, not marker" path.
+
+### Update 2026-07-13 (Update 11) — /speckit-clarify: Search Scope + Steps-Count Backend Scope
+
+- Ambiguity scan run against the full taxonomy (functional scope, data model, UX flow,
+  non-functional, integrations, edge cases, constraints, terminology, completion signals,
+  placeholders). Two high-impact gaps surfaced; the rest were Clear or low-impact.
+- **Q1 (resolved)**: The Update 10 search box (FR-021a) didn't say whether it filters server-side
+  or only the currently-loaded page — material because `useEutrTemplatesData` already runs
+  `paginationMode="server"`/`filterMode="server"`, so a client-side-only filter would miss matches
+  sitting on other pages. → **A: server-side** — extend the list API/hook with a Code-or-Name
+  keyword parameter, debounce keystrokes, and reset to page 1 on each search.
+  - FR-021a rewritten to require server-side search with debounce + page-1 reset.
+  - US1 acceptance scenario 3 and SC-021 reworded to state the search re-queries the server across
+    the full dataset, not just the loaded page.
+  - Assumptions: new bullet documenting the server-side search mechanism, extending the existing
+    `filterModel`-to-server pattern with a single free-text keyword field.
+- **Q2 (resolved)**: FR-021 said the Steps column MUST show a real per-template step count, but the
+  Update 10 Assumption contradicted it by allowing a permanent 0/blank placeholder "until backend
+  is enhanced later." → **A: in scope** — the list API MUST be extended in this update to return
+  each template's real step count (count of active `eutr_template_details` rows).
+  - New **FR-021c** added: list API MUST return real step count per template as part of this
+    update's backend scope.
+  - FR-021's Steps-column bullet cross-references FR-021c instead of allowing a placeholder.
+  - The contradictory Update 10 Assumption bullet ("falls back to 0/blank, not blocking") was
+    replaced with a bullet stating the count is real and in scope, cross-referencing FR-021c.
+  - New **SC-026** added to make the real-count requirement measurable/testable.
+- Sections touched: Clarifications (new `### Session 2026-07-13 (Update 11)` subheading), User
+  Story 1 (acceptance scenario 3), Functional Requirements (FR-021, FR-021a, new FR-021c), Success
+  Criteria (SC-021 reworded, new SC-026), Assumptions (Steps-count bullet replaced, new search
+  bullet added).
+- No contradictory statements remain: the FR-021/Assumption conflict on Steps count from Update 10
+  is resolved (both now agree the count is real and in-scope). No new [NEEDS CLARIFICATION]
+  markers were embedded — both ambiguities were resolved through the interactive clarification
+  question flow before being written into the spec.
+- Spec Quality Checklist re-validated against the updated spec: all 16/16 items remain passing (no
+  regressions, no newly-failing items) — the two resolved ambiguities were scope/consistency gaps
+  in already-written requirements, not missing checklist criteria.
+
+### Update 2026-07-13 (Update 12) — Bulk Add Multiple Steps (Root Group / Child Step)
+
+- **Input**: Update the Add Root Group / Add Child Step feature on TemplateBuilderPage to allow
+  adding multiple steps at once, per an attached design image — a checkbox table of master EUTR
+  steps (e.g. P1-P8) with per-row Requirement Type/Take From dropdowns, a selected-count footer,
+  and Cancel/Add actions.
+- **One scope question asked back to the user before writing this update (answered)**: the current
+  Add Root Group/Add Child Step dialog supports free-solo typing of a brand-new step name
+  (auto-created in `eutr_steps` on Save, per FR-007a/Update 6-8); the design image only shows a
+  checkbox table of existing master steps with no text-entry row. → **answered: keep the
+  bulk-select table as the primary flow (per the design), and add a separate "Add new step" area
+  within the same dialog for free-solo entry of a brand-new name** — the new step is merged into
+  the same "pending" batch as the ticked master steps and added together on a single Add click.
+- **Change: FR-025 marked "Superseded một phần"** — FR-027 through FR-030 added: Add Root
+  Group/Add Child Step now opens a bulk-select table (checkbox per row, Step Master column,
+  per-row Requirement Type/Take From editable only once ticked, header select-all, footer counter
+  "{N} step available - {M} selected", disabled Add button when 0 selected) instead of the
+  single-step-at-a-time form. FR-028 defines the multi-add save behavior (ParentId per trigger
+  button, DisplayOrder appended in row order). FR-029 defines de-duplication (exclude steps already
+  a direct child of the target parent). FR-030 defines the dedicated free-solo "Add new step" area,
+  reusing the existing FR-007a auto-create-on-save mechanism.
+- **New: FR-031** — Edit step on an existing node (FR-008b) is explicitly called out as unchanged
+  by this update (still single-step, not bulk).
+- User Story 3 intro rewritten to describe the bulk-select flow; new acceptance scenarios 11-15
+  added (open dialog with 0 selected/Add disabled, bulk-add 5 steps as roots, bulk-add mixed
+  master+free-solo steps as children, Cancel discards the pending batch, already-added steps
+  excluded from "available").
+- SC-027 through SC-030 added for measurable verification (multi-step add in one click, correct
+  ParentId/Requirement Type/Take From per row, Add-button disabled state, free-solo step
+  auto-created on Save).
+- Edge cases added: select-all/partial-unselect counter accuracy, empty "available" list still
+  allows free-solo entry, duplicate-name merge rule between ticked and free-solo entries in the
+  same batch, Cancel discards everything, Root Group ignores any currently-selected tree node.
+- Assumptions added: "step available" source is the same `GetEutrStepsUseCase` list already used
+  for the free-solo combobox (no new API); default Requirement Type/Take From on newly-ticked rows
+  match the existing `stepForm` defaults (Optional/PO); `StepFormRow.jsx` may be reused for the
+  "Add new step" area (implementation detail deferred to `/speckit-plan`).
+- No new [NEEDS CLARIFICATION] markers were embedded in the spec — the one scope decision above was
+  resolved interactively before writing, per the established "resolve via question, not marker"
+  path used in Update 10/11.
+- Spec Quality Checklist re-validated against the updated spec: all 16/16 items remain passing (no
+  regressions, no newly-failing items).
+
+### Update 2026-07-13 (Update 13) — Remove VendorCode, Add Apply-to-Customer, Fix Steps-Count Bug
+
+- **Input**: "cập nhật 003-eutr-templates bỏ cột VendorCode ở eutr_templates và các logic liên
+  quan. Thêm tính năng Apply to customer... Màn hình EUTR template, cột steps vẫn chưa hiển thị
+  count từ eutr_template_details."
+- **Three scope questions asked back to the user before writing this update (all answered)**:
+  (1) migrate existing VendorCode data into `eutr_template_references` on column removal, or
+  discard it → **answered: discard, drop the column outright**; (2) after removing VendorCode,
+  should the "1 default template" constraint become global or be removed entirely →
+  **answered: global (single default across the whole system)**; (3) should the same vendor be
+  blocked from overlapping date-range mappings across *different* templates, or only within the
+  same template → **answered: only within the same template** (matches the existing
+  `ApplyCustomerPage.jsx` mock's `hasOverlap` scope).
+- **Pre-write implementation audit** (via Explore agent + direct file reads) confirmed: VendorCode
+  is fully implemented end-to-end today (entity, DTOs, repository sort/filter whitelist, service
+  default-per-vendor logic, import/export, `TemplateBuilderPage.jsx`, `useEutrTemplatesColumns.jsx`,
+  `CreateTemplateDialog.jsx`) — this is a real removal, not a no-op; `eutr_template_references` has
+  no backend at all yet (new CRUD needed); and the Steps-count backend/frontend wiring
+  (`StepsCount` subquery in `EutrTemplatesRepository.GetPagedWithVendorNameAsync`,
+  `tmpl.stepsCount` in `TemplateListPage.jsx`) already exists in code despite the user-reported bug
+  — root cause left for `/speckit-plan`/`/speckit-implement` to investigate (FR-042, Assumptions).
+- **Change: FR-039 through FR-041 added** — VendorCode removed entirely from `eutr_templates` and
+  all related backend/frontend logic (no data migration); FR-040 replaces FR-005a with a global
+  (not per-vendor) single-default constraint; FR-041 removes the Vendor combobox from
+  TemplateBuilderPage's config panel. FR-005a, FR-005b, FR-010, FR-024 marked "(Superseded/Cập
+  nhật by Update 13)" in place (body preserved for traceability).
+- **New: FR-032 through FR-038** — new **User Story 6 (Apply to Customer)**: the previously-disabled
+  Apply to Customer icon on TemplateListPage (FR-026) becomes active, navigating to a new
+  **ApplyCustomerPage** (route `/eutr/templates/apply/:id`) that lists/creates/edits/deletes vendor
+  mappings in `eutr_template_references` (Vendor via the existing refType=13 reference API, From
+  date/To date, same-template-same-vendor overlap validation, hard delete — no soft-delete column
+  on this table).
+- **New: FR-042 (bug fix)** — Steps column on TemplateListPage MUST actually display the real step
+  count for 100% of rows; despite the code already appearing wired, this remains an open,
+  user-reported defect that MUST be root-caused and fixed, not just re-confirmed as "already done."
+- Edge Cases: 7 new bullets added (template-not-found on ApplyCustomerPage, empty mapping list,
+  To-date-before-From-date validation, blank-To-date = unlimited, overlap check excludes the record
+  being edited, no VendorCode-data migration is expected behavior, global-default unmarking).
+- Key Entities: EUTR Template's "Vendor code" attribute removed; new **EUTR Template Reference**
+  entity added (`eutr_template_references` — all audit columns NOT NULL, no soft-delete flag); D365
+  Vendor entity's usage note updated to point at ApplyCustomerPage instead of TemplateBuilderPage.
+- Success Criteria: SC-031 through SC-035 added (mapping persistence round-trip, same-template
+  overlap blocking + cross-template non-blocking, zero remaining VendorCode references outside
+  `eutr_template_references`, global default-unmarking, Steps column accuracy).
+- Assumptions: 6 new bullets added — VendorCode data discarded on column removal (per Q1 above);
+  default constraint now global; proposed route `/eutr/templates/apply/:id` (to be finalized at
+  `/speckit-plan`); `ApplyCustomerPage.jsx` already exists as a mock-data reference UI (Customer/
+  `MOCK_CUSTOMERS` concept + a `status !== 'Published'` gate that doesn't apply to real templates)
+  whose mock data/gating this update replaces with real Vendor/API data — its `hasOverlap` logic is
+  reused nearly as-is, just rescoped from customerId to VendorCode+TemplateId; `eutr_template_references`
+  needs an entirely new backend CRUD; and the Steps-count bug's root cause is explicitly left
+  unresolved for the plan/implement phase.
+- No new [NEEDS CLARIFICATION] markers were embedded in the spec — all three scope decisions above
+  were resolved interactively (via targeted questions with recommended defaults) before writing,
+  per the established "resolve via question, not marker" path used in Update 10/11/12.
+- Spec Quality Checklist re-validated against the updated spec: all 16/16 items remain passing (no
+  regressions, no newly-failing items).

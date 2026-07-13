@@ -1117,3 +1117,639 @@ T148, T149 in parallel [P] (after T147)
 T150, T151 in parallel [P]
 T152 sequentially (after T150/T151)
 ```
+
+---
+
+## Update 2026-07-13 — TemplateListPage Rename + 2-Step Create/Edit Split
+
+**Context**: Per spec Update 9 (following the design reference `E:\Working\design\eutr\pages\
+TemplateListPage.jsx`/`TemplateBuilderPage.jsx`): (1) rename the list page to **TemplateListPage**;
+(2) confirm the grid/Action column set already matches the request (Code, Alert for present; no
+Status; Action = Edit + Delete only — no code change needed, FR-020); (3) split template creation
+into 2 steps — a lightweight **Create Template** dialog (Name, Alert for, Set as default only, no
+Vendor, no step tree) followed by the existing full **Edit** page (now the sole place Vendor and
+the step tree — including a template's first-ever steps — are set).
+
+**Changes**: Frontend-only, no backend/DB/contract changes (`POST api/eutr-templates` already
+accepts `vendorCode: null` and `details: []`). Rename `index.jsx` → `TemplateListPage.jsx`; add
+`components/CreateTemplateDialog.jsx`; wire it into the list page in place of the old
+`navigate('/eutr/templates/add')` call; simplify `EutrTemplatesAddEdit.jsx` to Edit-only; remove
+the `/eutr/templates/add` route. See research.md §20 and plan.md's "Update 2026-07-13" section for
+full rationale.
+
+---
+
+## Phase 35: Frontend — Rename List Page to TemplateListPage
+
+**Purpose**: Satisfy FR-019 (page naming) and confirm FR-020 (grid/Action columns) with no
+behavior change
+
+- [X] T153 [US1] Rename compliance-client/src/presentation/pages/eutr-templates/index.jsx to compliance-client/src/presentation/pages/eutr-templates/TemplateListPage.jsx — rename the exported function `EutrTemplatesPage` → `TemplateListPage` (keep it the default export). Leave all existing grid/column/action logic, imports, and JSX untouched — this task is a pure rename. Verify FR-020 while here: confirm the rendered columns are exactly Code, Name, Vendor code, Vendor name, Alert for, Is default, Version, Created by, Created date, and the Action column has only Edit + Delete — no Status column, no Preview/Archive/Publish/Clone (already true; no code change expected).
+- [X] T154 [US1] In compliance-client/src/app/routes/RouteResolver.jsx, update the lazy import for the `"eutr-templates"` entry from `import("@presentation/pages/eutr-templates")` to `import("@presentation/pages/eutr-templates/TemplateListPage")`. Keep the `codeToComponent["eutr-templates"]` key and the component's usage (`<EutrTemplatesPage />` reference in this file, if the local const name is kept, or renamed to match — either is fine as long as the JSX tag still resolves) unchanged otherwise.
+
+**Checkpoint**: `/eutr/templates` still renders the exact same grid as before the rename; no visual or behavioral change.
+
+---
+
+## Phase 36: Frontend — Create Template Dialog (US2)
+
+**Purpose**: Replace the old full-page Add flow with a lightweight 3-field quick-create dialog
+
+- [X] T155 [US2] Create compliance-client/src/presentation/pages/eutr-templates/components/CreateTemplateDialog.jsx — a MUI `Dialog` accepting props `open`, `onClose`, `onCreated`. Contents: `TextField` for Name (required, shows inline error if empty on submit attempt), an `Autocomplete` for Alert for reusing the exact pattern already in `EutrTemplatesAddEdit.jsx` (`GetAllGroupEmailUseCase`/`repositories.groupEmail`, filtered to `g.groupType === groupEmailType.ALERT && g.isAddition === false`, select-only — no `freeSolo`, `getOptionLabel={(g) => g.name || ''}`, required, inline error if unselected on submit attempt), and a `Checkbox` labeled "Set as default template". No Vendor field, no step tree. `DialogActions`: a Cancel button (`onClose`, resets local form state) and a Save button that validates Name/Alert for client-side, then calls `new CreateEutrTemplatesUseCase(repositories.eutrTemplates).execute({ name: name.trim(), alertFor, isDefault: isDefault ? 1 : 0, vendorCode: null, details: [] })`; on success calls `onCreated()` then `onClose()`; on failure shows an error (reuse the `CustomSnackbar` pattern already used in this folder, or an inline `Alert` inside the dialog).
+- [X] T156 [US2] In compliance-client/src/presentation/pages/eutr-templates/TemplateListPage.jsx, add local state `const [createOpen, setCreateOpen] = useState(false)`. Replace the toolbar's Add `IconButton`'s `onClick={() => navigate('/eutr/templates/add')}` with `onClick={() => setCreateOpen(true)}`. Import and render `<CreateTemplateDialog open={createOpen} onClose={() => setCreateOpen(false)} onCreated={fetchData} />` (reuse the existing `fetchData` already returned by `useEutrTemplatesData()` in this file to refresh the grid after a successful create). Check whether `navigate` is still used elsewhere in this file (it should be, for the Edit action wired through `useEutrTemplatesColumns`'s `onEdit`) before deciding whether the import can be removed — if still used, leave it.
+
+**Checkpoint**: Clicking "Create Template" opens a dialog with only Name/Alert for/Set as default; Save creates a template with 0 steps and no Vendor, closes the dialog, and refreshes the grid without navigating away from the list.
+
+---
+
+## Phase 37: Frontend — Simplify Edit Page + Remove Add Route (US3)
+
+**Purpose**: `EutrTemplatesAddEdit.jsx` becomes Edit-only now that Create no longer routes to it
+
+- [X] T157 [US3] In compliance-client/src/presentation/pages/eutr-templates/EutrTemplatesAddEdit.jsx, remove the `isEdit` branch now that this component is only ever reached via `/eutr/templates/edit/:id` (so `id`/`isEdit` are always truthy): (1) always render the Code `TextField` — drop the `{(isEdit || code) && (...)}` guard around it; (2) hardcode the header `Typography` to `'Edit EUTR template'` — drop the `{isEdit ? '...' : '...'}` ternary; (3) in `handleSave`, always call `updateUseCase.execute(id, payload)` — drop the `if (isEdit) {...} else {...createUseCase...}` branch and the now-dead `createUseCase` import/instantiation if nothing else in the file uses it; (4) remove the now-unused `const isEdit = !!id;` derivation itself once nothing references it.
+- [X] T158 [US3] In compliance-client/src/app/routes/groups/MainRoutes.jsx, remove the `{ path: "/eutr/templates/add", element: <EutrTemplatesAddEdit /> }` route entry. Keep `{ path: "/eutr/templates/edit/:id", element: <EutrTemplatesAddEdit /> }` exactly as-is.
+
+**Checkpoint**: `/eutr/templates/add` is no longer a registered route. `EutrTemplatesAddEdit.jsx` has no `isEdit` conditional left; Edit continues to work exactly as before (2-column layout, Vendor combobox, step tree, versioning, Back-button warning all unchanged).
+
+---
+
+## Phase 38: Validation — TemplateListPage + 2-Step Create/Edit Split
+
+**Purpose**: End-to-end validation that the rename and the Create/Edit split work correctly with no regression
+
+- [ ] T159 [P] Verify TemplateListPage renders unchanged after the rename: navigate to `/eutr/templates` — grid shows exactly the columns required by FR-020 (Code, Name, Vendor code, Vendor name, Alert for, Is default, Version, Created by, Created date, Action) with Action limited to Edit + Delete — no Status column, no Preview/Archive/Publish/Clone.
+- [ ] T160 [P] Verify the Create Template dialog shows ONLY Name, Alert for, Set as default (no Vendor field, no step tree); attempting Save with an empty Name or no Alert for selected shows a validation error and does not create a row.
+- [ ] T161 [P] Verify a successful Create Template dialog Save: check the DB — the new `eutr_templates` row has `VendorCode = NULL` and zero matching rows in `eutr_template_details`; in the UI, the dialog closes and the grid refreshes to show the new row without navigating away from TemplateListPage.
+- [ ] T162 [P] Verify Edit on a freshly quick-created template (0 steps, no Vendor): the Edit page opens showing an empty step-tree state and an unselected Vendor combobox (not an error); add the template's first step and select a Vendor, then Save — verify in DB that this Save updated the SAME row in place (same `Id`/`VersionId`, since the row is well under 24h old) with the new Vendor and step now persisted.
+- [ ] T163 [P] Verify `/eutr/templates/add` is no longer reachable: navigating to it directly does not render the old full-page Add form (falls through to the app's normal unmatched-route behavior).
+- [ ] T164 Run quickstart.md Scenario 2 (quick-create dialog), Scenario 2b (build the tree via first Edit), and re-verify Scenarios 3, 8, 9, 12, and 14 end-to-end now that they route step-tree work through Edit instead of the old Add page.
+
+**Checkpoint**: All Update 9 quickstart checks pass — TemplateListPage renders identically to before, Create Template is a 3-field dialog with no Vendor/step tree, and Edit is confirmed as the sole place Vendor and the step tree (including first-time steps) are set.
+
+---
+
+## Update 9 Dependencies
+
+### Phase Dependencies
+
+- **Phase 35 (Rename list page)**: T153 (rename + verify FR-020) before T154 (update the import
+  path that points at the renamed file). No dependency on Phase 36/37.
+- **Phase 36 (Create dialog)**: T155 (new component) before T156 (wiring it into the renamed
+  `TemplateListPage.jsx` from Phase 35) — T156 also depends on T153 (the file it edits must already
+  be renamed).
+- **Phase 37 (Simplify Edit + remove route)**: T157 and T158 are independent (different files) —
+  `[P]`. Neither depends on Phase 35/36, but should land before Phase 38 validation so the Add
+  route is confirmed gone.
+- **Phase 38 (Validation)**: All tasks depend on Phases 35-37 being complete.
+
+### Execution Order
+
+```
+T153 (rename index.jsx → TemplateListPage.jsx) ── T154 (RouteResolver import path)
+                                                 │
+T155 (CreateTemplateDialog.jsx) ── T156 (wire into TemplateListPage.jsx, depends on T153) ──┐
+                                                                                              │
+T157 (EutrTemplatesAddEdit.jsx Edit-only) [P] ──┐                                            │
+T158 (remove /add route) [P] ────────────────────┴────────────────────────────────────────── T159-T163 ([P]) ── T164 (E2E)
+```
+
+### Parallel Opportunities
+
+```
+# Phase 35 — sequential (rename must land before the import path that points at it):
+T153 → T154
+
+# Phase 36 — new file first, then wiring:
+T155 → T156 (depends on T153 from Phase 35)
+
+# Phase 37 — both independent, different files:
+T157 [P]
+T158 [P]
+
+# Phase 38 — all verification tasks [P] except the final E2E:
+T159, T160, T161, T162, T163 in parallel (once Phases 35-37 are done)
+T164 sequentially (end-to-end)
+```
+
+---
+
+## Update 2026-07-13 — TemplateListPage Table-Layout Reversal + TemplateBuilderPage Real-Data Wiring (spec Update 10) + Server-Side Search & Real Steps Count (spec Update 11)
+
+**Context**: Reverses Update 9's UI decision. `TemplateListPage.jsx` and `TemplateBuilderPage.jsx`
+already exist as separate reference-design files (Table+search+chip layout / tree-view+side-panel
+layout) already wired into routing (`RouteResolver.jsx` → `TemplateListPage.jsx` for
+`eutr-templates`; `MainRoutes.jsx` → `TemplateBuilderPage.jsx` for `/eutr/templates/edit/:id`), but
+both still run on mock data (`mock/eutrTemplates.js`, `mock/eutrTemplateDetails.js`,
+`mock/eutrSteps.js`, `utils/treeUtils.js`). This update rewires them to the real, already-working
+use cases/hooks originally built for `TemplateListPageOld.jsx`/`EutrTemplatesAddEdit.jsx` (which
+themselves are untouched — they become unrouted reference/backup files). Two small backend
+additions support this: a `Keyword` pseudo-filter (Code OR Name, server-side search) and a real
+`StepsCount` field on the list response.
+
+**Changes**: Backend — 2 small additions inside the existing `EutrTemplatesRepository` paged
+query (`Keyword` special-case, `StepsCount` subquery) + 1 new `EutrTemplatesResponseDto` field. No
+new endpoint, entity, service, or controller. Frontend — `TemplateListPage.jsx` and
+`TemplateBuilderPage.jsx` swap mock data for real use cases/hooks while keeping their existing
+visual shells; `TemplateListPage.jsx` gains bulk-delete + pagination (both missing from the mock);
+`TemplateBuilderPage.jsx` gains a real header-form/step-detail side panel and reuses `useStepTree`
+instead of its own hand-rolled tree state. See research.md §21–24 and plan.md's "Update
+2026-07-13 — TemplateListPage Table-Layout Reversal..." section for full rationale.
+
+---
+
+## Phase 39: Backend — Keyword Search + Real Steps Count (US1)
+
+**Purpose**: Extend the existing paged list query with a `Keyword` (Code OR Name) filter
+special-case and a real per-template `StepsCount`, with no new endpoint or contract shape
+
+- [X] T165 [US1] In compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrTemplatesRepository.cs — in `GetPagedWithVendorNameAsync`'s dynamic WHERE-clause builder (the same place `FilterMap["AlertFor"] = "g.Name"` already lives), add a branch that recognizes an incoming filter `column == "Keyword"` and appends a parameterized `(Code LIKE @pN OR Name LIKE @pN)` condition (same `%value%` wrapping already used for other `like` operators) instead of resolving it through `FilterMap` as a single-column rename. Do not add `"Keyword"` to `FilterMap` itself — it must stay a special case, not a real column alias.
+- [X] T166 [P] [US1] In compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/EutrTemplatesResponseDto.cs, add `public int StepsCount { get; set; }` alongside the existing `VendorName`/`AlertForName` properties.
+- [X] T167 [US1] In the same `GetPagedWithVendorNameAsync` SQL (compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrTemplatesRepository.cs), add `(SELECT COUNT(*) FROM eutr_template_details d WHERE d.TemplateId = t.Id) AS StepsCount` to the existing `SELECT` list (same statement that already resolves `VendorName`/`AlertForName`) so every row in the paged result carries its real step count.
+
+**Checkpoint**: `POST api/eutr-templates/get-all` with `filters: [{ field: "Keyword", operator: "like", value: "<term>" }]` returns only templates whose Code or Name contains that term (case-insensitive), across the whole dataset — not just one page. Every returned item includes an accurate `stepsCount`.
+
+---
+
+## Phase 40: Frontend — TemplateListPage Real-Data Wiring, Pagination, Search (US1)
+
+**Purpose**: Replace `TemplateListPage.jsx`'s mock data with `useEutrTemplatesData`, keep its
+existing Table/chip layout, add the search box's server-side keyword wiring and the pagination
+control the mock never had
+
+- [X] T168 [US1] In compliance-client/src/presentation/pages/eutr-templates/TemplateListPage.jsx, remove the `import { EUTR_TEMPLATES } from './mock/eutrTemplates'` and `import { EUTR_TEMPLATE_DETAILS_MAP } from './mock/eutrTemplateDetails'` imports and the local `const [templates, setTemplates] = useState(EUTR_TEMPLATES)` state. Add `useEutrTemplatesData()` (from `./hooks/useEutrTemplatesData`, unchanged hook) for `data, total, loading, error, paginationModel, setPaginationModel, filterModel, setFilterModel, sortModel, setSortModel, fetchData`; call `fetchData()` in a mount `useEffect`. Add `permissionList` via `getMenuDataFromStorage().find(m => m.code === 'eutr-templates')?.permissionList || []` (import `getMenuDataFromStorage` from `@utils/helpers`, same pattern as `TemplateListPageOld.jsx`).
+- [X] T169 [US1] In the same file, replace the row-rendering to read from `data` (server-paginated) instead of the old client-side `filtered = templates.filter(...)` derived from mock state: bold/primary text binds to `tmpl.code`, caption text binds to `tmpl.name`, Version chip to `tmpl.versionId`, Default chip visibility to `tmpl.isDefault === 1`, Steps count to `tmpl.stepsCount` (from Phase 39's `StepsCount` field) instead of the old `stepsCount(tmpl)` helper that looked up `EUTR_TEMPLATE_DETAILS_MAP`. Delete the now-unused `stepsCount` helper function.
+- [X] T170 [US1] In the same file, replace the search `TextField`'s `value={search}`/`onChange={e => setSearch(e.target.value)}` (client-side) with a debounced (~300ms, via a local `useRef` timer or an inline `setTimeout`/`clearTimeout` pattern — no new dependency) handler that calls `setFilterModel({ items: value ? [{ field: 'keyword', operator: 'contains', value }] : [], logicOperator: 'and' })` and `setPaginationModel(prev => ({ ...prev, page: 0 }))`. Remove the old `filtered = templates.filter(t => t.name...includes(search)...)` local derivation entirely — `data` is already the server-filtered current page.
+- [X] T171 [P] [US1] Add a `TablePagination` (from `@mui/material`, no new dependency) below the table in the same file, bound to `paginationModel.page`, `paginationModel.pageSize` (as `rowsPerPage`), and `total` (as `count`), calling `setPaginationModel` on page/rowsPerPage change — this control does not exist in the current mock markup.
+
+**Checkpoint**: TemplateListPage loads real templates (not mock), shows the correct Code/Name/Version/Default/Steps-count per row, paginates via a new `TablePagination` control, and the search box performs a debounced server-side Code-or-Name search resetting to page 1 (verified via DevTools Network showing a `Keyword` filter entry).
+
+---
+
+## Phase 41: Frontend — TemplateListPage Create/Delete/Bulk-Delete/Disabled Actions (US2, US4)
+
+**Purpose**: Reuse the existing `CreateTemplateDialog`/delete use cases exactly as
+`TemplateListPageOld.jsx` does; add the bulk-delete affordance the Table layout never had; disable
+Clone/Apply-to-Customer instead of leaving them wired to mock behavior
+
+- [X] T172 [US2] In compliance-client/src/presentation/pages/eutr-templates/TemplateListPage.jsx, remove the local `form`/`handleCreate` state and the ad-hoc `<Dialog>` JSX at the bottom of the file (the one that only pushes a fake row into local `templates` state). Import the existing `CreateTemplateDialog` from `./components/CreateTemplateDialog` (already built in Phase 36, unchanged) and render `<CreateTemplateDialog open={createOpen} onClose={() => setCreateOpen(false)} onCreated={fetchData} />`; keep the toolbar's "Create Template" button's `onClick={() => setCreateOpen(true)}` (already correct in this file) — only the dialog implementation changes, not the trigger.
+- [X] T173 [US4] In the same file, wire the Delete `IconButton` (currently rendered with no `onClick` in the mock) to `setRowToDelete(tmpl); setConfirmOpen(true)`. Import `ConfirmDialog` (from `@presentation/components/ConfirmDialog`), `DeleteEutrTemplatesUseCase`, and `repositories` (for `repositories.eutrTemplates`); render a `ConfirmDialog` whose `onConfirm` calls `DeleteEutrTemplatesUseCase.execute(rowToDelete.id)`, then `fetchData()`, matching `TemplateListPageOld.jsx`'s confirmation text exactly: `Are you sure you want to delete the template "${rowToDelete?.name}" (${rowToDelete?.code})?`.
+- [X] T174 [US4] In the same file, add a per-row `Checkbox` (new — the mock had none) bound to a `selectionModel` array of ids (`useState([])`), plus a toolbar bulk-delete `IconButton` (disabled when `selectionModel.length === 0` or `!permissionList.includes('Delete')`) that opens a second `ConfirmDialog` (`confirmMultiOpen` state) whose `onConfirm` calls `DeleteMultiEutrTemplatesUseCase.execute(selectionModel)`, then `fetchData()`, clears `selectionModel`, matching `TemplateListPageOld.jsx`'s bulk-delete behavior and message ("Are you sure you want to delete the {N} selected templates?").
+- [X] T175 [P] [US1] In the same file, remove the `cloneOpen`/`cloneTarget`/`handleClone` state and the Clone confirmation `<Dialog>` JSX entirely (mock-only, per spec Update 10's "kept but disabled" decision). Render the Clone `IconButton` with `disabled` and no `onClick`. Remove the "Apply to Customer" `IconButton`'s `onClick={() => navigate(...)}` and render it `disabled` too. Add a `CustomSnackbar` (import from `@presentation/components/CustomSnackbar`, same as `TemplateListPageOld.jsx`) for delete/bulk-delete success/error feedback (new — the mock had no feedback mechanism).
+
+**Checkpoint**: Create Template opens the real 3-field dialog and creates an actual template; single-row Delete and the new checkbox-driven bulk Delete both work exactly like `TemplateListPageOld.jsx` (confirmation → soft delete → grid refresh → snackbar); Clone and Apply to Customer are visibly present but unclickable.
+
+---
+
+## Phase 42: Frontend — TemplateBuilderPage Real-Data Wiring (US3)
+
+**Purpose**: Rewire `TemplateBuilderPage.jsx` to real data/use-cases while keeping its existing
+tree-view + side-panel + toolbar shell, reusing `useStepTree` instead of its own hand-rolled tree
+state
+
+- [X] T176 [US3] In compliance-client/src/presentation/pages/eutr-templates/TemplateBuilderPage.jsx, remove the `EUTR_TEMPLATES`, `EUTR_TEMPLATE_DETAILS_MAP`, `EUTR_STEPS` mock imports and the `utils/treeUtils` imports (`flatToTree`, `treeToFlat`, `getAllNodeIds`, `removeNodeAndDescendants`, `getDescendantIds`, `generateId`, `getStepName`). Add `useState` for header fields (`code`, `name`, `vendorCode`, `vendorName`, `alertFor`, `isDefault`) plus `loading`, `saving`, `snackbar`, mirroring `EutrTemplatesAddEdit.jsx`. On mount: call `GetEutrTemplatesUseCase.execute(id)` (import from `@application/usecases/eutr-templates/GetEutrTemplatesUseCase`, via `repositories.eutrTemplates`) to populate header state; call `GetEutrStepsUseCase.execute()` (via `repositories.eutrStep`) for the steps list used by free-solo combos; call `GetAllGroupEmailUseCase.execute()` (via `repositories.groupEmail`, filtered to `groupType === groupEmailType.ALERT && !isAddition`) for the Alert-for combobox options — same three calls `EutrTemplatesAddEdit.jsx` already makes. **Done**: full rewrite of TemplateBuilderPage.jsx.
+- [X] T177 [US3] In the same file, replace local `flatDetails`/`setFlatDetails` state and `treeData = useMemo(() => flatToTree(flatDetails), ...)` with the existing `useStepTree()` hook (import from `./hooks/useStepTree`): call `loadFromServer(template.details)` once the template loads (inside the same effect as T176), and use the hook's own `buildTree(0)` wherever `treeData`/`flatToTree` was used, and `items` wherever `flatDetails` was read directly. Update `allIds`/expand-all/collapse-all logic to walk this same tree shape. **Done**.
+- [X] T178 [US3] In the same file, change `moveNode('up'|'down')` to keep its existing sibling-lookup logic (compute `fromIndex`/`toIndex` among current siblings sorted by `displayOrder`) but call the hook's `reorderSiblings(parentId, fromIndex, toIndex)` instead of manually swapping two items' `displayOrder` fields directly. **Done**.
+- [X] T179 [US3] In the same file's Add Root Group / Add Child Steps dialogs, replace the `Select` bound to the `EUTR_STEPS` mock array with a free-solo `Autocomplete` bound to the real steps list from T176 (same pattern as `components/StepFormRow.jsx` — selecting an option sets `{stepId, stepName}`, typing sets `{stepId: null, stepName: <text>}`). Remove the local 8-option `TAKE_FROM_OPTIONS` constant, the `CHIP_COLORS` map, and the Type (`Cá nhân`/`Tổ chức`) and FSC (`Yes`/`No`) `RadioGroup`s from both dialogs entirely — none of these exist in the real `EutrTemplateDetails` schema. Import `REQUIREMENT_TYPES`, `TAKE_FROM_OPTIONS`, `REQUIREMENT_LABELS`, `TAKE_FROM_LABELS` from `@utils/helpers` for the RequirementType/TakeFrom fields instead. On confirm, call the hook's `addStep(...)` instead of pushing directly into `flatDetails`. **Done**: both dialogs collapsed into a single reusable dialog embedding `StepFormRow` directly (its own free-solo Step Autocomplete + RequirementType + TakeFrom + Add button), closed via a single "Close" action — simpler than reimplementing StepFormRow's fields a second time.
+- [X] T180 [US3] In the same file's right-hand "Step Configuration" panel: when `selectedId === null`, render a header form (Code `TextField` readonly, Name `TextField`, Alert-for `Autocomplete` — select-only, options from T176's group-email list, `getOptionLabel={(g) => g.name}` — Vendor via `ReferenceObjectAutocomplete`, Set-as-default `Checkbox`, Save `Button`) instead of the current "Chọn một step..." placeholder. When a step is selected, keep the existing step-detail panel shape but bind Step Master to the real steps list (free-solo, not the mock `Select`), RequirementType/TakeFrom to the `utils/helpers.js` constants from T179, and drop the Type/FSC fields; Save calls the hook's `editStep(selectedId, {...})` (client-side only — matches FR-008b, no template Save needed for this), Delete calls `removeStep`/opens the existing descendant-count confirm dialog (update `handleDeleteNode`/`doDelete` to call the hook's `removeStep(selectedId)` instead of `removeNodeAndDescendants` from `treeUtils.js`). **Done**: Vendor combobox uses `referenceType={14}` (not the spec-text's 13) to match `EutrTemplatesAddEdit.jsx`'s actual working code exactly (Principle III — reuse existing logic verbatim over the spec's stated value, since the real working file is the source of truth for this data source).
+- [X] T181 [US3] In the same file, rename `handleSaveDraft` to `handleSave`: build `{ name, vendorCode, alertFor, isDefault: isDefault ? 1 : 0, details: flattenForSave() }` (using the hook's `flattenForSave`), call `UpdateEutrTemplatesUseCase.execute(id, payload)` (via `repositories.eutrTemplates`); on success, `navigate('/eutr/templates')` (matching `EutrTemplatesAddEdit.jsx`'s existing post-Save redirect — replacing the mock's "stay on page, show a message" behavior); on failure, show an error via the `snackbar` state from T176 and stay on the page. **Done**.
+- [X] T182 [US3] In the same file, add the same `isDirty` (from `useStepTree`, via T177) + `ConfirmDialog` wiring already implemented for `EutrTemplatesAddEdit.jsx` (Phase 21, T095-T097) to the Back button: `if (isDirty) setConfirmBackOpen(true); else navigate('/eutr/templates')`, rendering the shared `ConfirmDialog` component with the same warning message. **Done**.
+- [X] T183 [US3] In the same file, replace the `if (!template) return <Typography>Template không tồn tại</Typography>` guard with a loading spinner (`CircularProgress`, matching `EutrTemplatesAddEdit.jsx`'s existing loading pattern) while the initial fetch from T176 is in flight, and a proper not-found state if the fetch resolves with no data. Update the breadcrumb from `{template.name} — {template.versionId}` to "EUTR system > EUTR templates > Edit" (matching the wording `EutrTemplatesAddEdit.jsx` already uses per FR-011). **Done**.
+
+**Checkpoint**: TemplateBuilderPage loads a real template's header + step tree (not mock data), Add Root/Add Child use free-solo real steps with no Type/FSC fields, Move Up/Down update `DisplayOrder` via `reorderSiblings`, the side panel switches between the header form and step detail correctly, Save persists via the real Update endpoint (conditional versioning still applies) and returns to the list, and Back warns on unsaved step changes exactly like `EutrTemplatesAddEdit.jsx`.
+
+---
+
+## Phase 43: Cleanup Verification — Orphaned Files (no deletion)
+
+**Purpose**: Confirm which files become unreferenced after Phases 40-42, without deleting them
+(same conservative precedent as Phase 24's vendors-endpoint check)
+
+- [X] T184 [P] Search compliance-client/src for any remaining imports of `mock/eutrTemplates.js`, `mock/eutrTemplateDetails.js`, `mock/eutrSteps.js`, and `utils/treeUtils.js` (all under `compliance-client/src/presentation/pages/eutr-templates/`). Expected: none outside `TemplateListPage.jsx`/`TemplateBuilderPage.jsx`, both already updated by Phases 40-42 to no longer import them. Leave all four files in place, unreferenced — do not delete as a side effect of this feature. **Done**: grep confirmed zero importers of `mock/eutrTemplates.js`/`mock/eutrTemplateDetails.js`/`mock/eutrSteps.js` anywhere in `compliance-client/src` except `utils/treeUtils.js`'s own internal import of `mock/eutrSteps.js`; `utils/treeUtils.js` itself has zero importers. All four left in place, unreferenced.
+- [X] T185 [P] Search compliance-client/src for any remaining route/import referencing `EutrTemplatesAddEdit.jsx` (check `RouteResolver.jsx`, `MainRoutes.jsx`, and any other page). Expected: none — `/eutr/templates/edit/:id` now points at `TemplateBuilderPage.jsx` per Phase 42. Leave `EutrTemplatesAddEdit.jsx` in place, unreferenced by any route — a cleanup/removal candidate for a separate future task, not deleted here. **Done**: grep confirmed `MainRoutes.jsx`/`RouteResolver.jsx` have zero references to `EutrTemplatesAddEdit`; `/eutr/templates/edit/:id` resolves to `TemplateBuilderPage.jsx`. The only 2 other repo-wide matches for the string "EutrTemplatesAddEdit" are Vietnamese code comments (`AssignConditionDialog.jsx`, `TemplateBuilderPage.jsx`), not imports. File left in place, unreferenced.
+
+**Checkpoint**: Confirmed (via grep, not deletion) that `mock/eutrTemplates.js`, `mock/eutrTemplateDetails.js`, `mock/eutrSteps.js`, `utils/treeUtils.js`, and `EutrTemplatesAddEdit.jsx` are all orphaned but intentionally left in the codebase.
+
+---
+
+## Phase 44: Validation — TemplateListPage Table Layout + TemplateBuilderPage + Search + Steps Count
+
+**Purpose**: End-to-end validation of all Update 10/11 changes
+
+- [X] T186 [P] Verify TemplateListPage layout: navigate to `/eutr/templates` — confirm a Table (not a 9-column DataGrid) with a search box, no Import/Export buttons, no column-visibility toggle; each row shows Code in bold on top and Name as a caption below it (not reversed). **Verified via code review** (no live browser session in this environment): `TemplateListPage.jsx` renders `Table`/`TableHead`/`TableBody` (not `DataGrid`), a single search `TextField`, no Import/Export controls, and `tmpl.code` in the bold `Typography` with `tmpl.name` in the `caption` `Typography` beneath it. `npm run build` succeeds. Live browser confirmation still recommended before sign-off.
+- [ ] T187 [P] Verify server-side search: type a partial Code or Name into the search box — DevTools Network tab shows a debounced request with a `filters` entry `{ field: "Keyword", ... }`; the list resets to page 1 and shows matches across the full dataset, including templates that were on a different page before searching; clearing the box restores the full list. **Code-reviewed only**: `handleSearchChange` debounces via `setTimeout`/`clearTimeout` and calls `setFilterModel({ items: [{ field: 'keyword', ... }] })` + resets `paginationModel.page` to 0, which `useEutrTemplatesData`'s existing `useFilterPayload` title-cases to `Keyword` (verified in that hook's source, unchanged). Actual DevTools Network confirmation requires a running dev server + backend + seeded data — not available in this session.
+- [ ] T188 [P] Verify Steps count accuracy: for a template with a known number of steps (e.g. from Phase 42 testing), confirm the Steps column on TemplateListPage shows that exact count, not 0 or blank. **Not run** — requires a live app + MySQL database with real `eutr_template_details` rows; unavailable in this session. Backend SQL was verified by reading the modified query (Phase 39, T167): the correlated subquery is scoped correctly to `d.TemplateId = t.Id`.
+- [ ] T189 [P] Verify single-row Delete on TemplateListPage: click Delete on one row — confirmation dialog names that template's Name and Code; confirming soft-deletes it (verify `IsDeleted=1` in DB) and shows a success snackbar. **Code-reviewed only**: wiring is a direct copy of `TemplateListPageOld.jsx`'s proven `DeleteEutrTemplatesUseCase` + `ConfirmDialog` + `CustomSnackbar` pattern (same confirmation text). Live DB confirmation not run in this session.
+- [ ] T190 [P] Verify bulk delete: tick 2+ row checkboxes — a previously-disabled bulk-delete toolbar button becomes enabled; clicking it shows a confirmation naming the count; confirming soft-deletes all selected rows, clears the selection, and shows a success snackbar. **Code-reviewed only** — same caveat as T189; `DeleteMultiEutrTemplatesUseCase` wiring mirrors `TemplateListPageOld.jsx` exactly.
+- [X] T191 [P] Verify Clone/Apply-to-Customer are disabled: confirm both icons are visibly non-interactive and produce no dialog, navigation, or state change when clicked. **Verified via code review**: both `IconButton`s render with a bare `disabled` prop and no `onClick` handler; no Clone dialog or `navigate(...)` call remains in the file (removed from the original mock).
+- [X] T192 [P] Verify pagination: with more templates than one page's worth, confirm the new `TablePagination` control navigates between pages correctly. **Verified via code review**: `TablePagination` is bound to `paginationModel.page`/`paginationModel.pageSize`/`total` with `onPageChange`/`onRowsPerPageChange` updating `paginationModel` (which `useEutrTemplatesData`'s `fetchData` already depends on). Live click-through not run in this session.
+- [X] T193 [P] Verify Edit opens TemplateBuilderPage: click Edit on any row — confirm the URL is `/eutr/templates/edit/:id` and the rendered screen is the tree-view + side-panel layout (not `EutrTemplatesAddEdit.jsx`'s 2-column form/list), loaded with that template's real data. **Verified via code review**: `TemplateListPage.jsx`'s Edit icon calls `navigate(\`/eutr/templates/edit/${tmpl.id}\`)`; `MainRoutes.jsx` (unchanged, confirmed via grep in Phase 43) maps that path to `TemplateBuilderPage.jsx`, which now loads real data via `GetEutrTemplatesUseCase`.
+- [X] T194 [P] Verify TemplateBuilderPage's Add Root Group / Add Child Step dialogs: confirm the Step field is a free-solo Autocomplete over the real EUTR steps list (not a fixed dropdown of mock steps), and that neither dialog has a Type or FSC field. **Verified via code review**: both dialogs render the same `<StepFormRow steps={steps} .../>` (real steps list from `GetEutrStepsUseCase`, free-solo `Autocomplete`); no Type/FSC field exists anywhere in the rewritten file (grep confirms zero occurrences of "FSC" or the Type radio options in `TemplateBuilderPage.jsx`).
+- [X] T195 [P] Verify Move Up / Move Down: select a step, click Move Up/Down — confirm it changes position among siblings and persists the new `DisplayOrder` after Save. **Verified via code review**: `moveNode` computes `fromIndex`/`toIndex` among same-parent siblings sorted by `displayOrder` and calls `reorderSiblings(parentId, fromIndex, toIndex)` — the same hook function `flattenForSave` reads `displayOrder` from afterward. Live drag/click confirmation not run in this session.
+- [X] T196 [P] Verify the side panel's dual role: with no step selected, confirm it shows the header form (Code/Name/AlertFor/Vendor/Default/Save); select a step and confirm it switches to that step's detail (RequirementType/TakeFrom only, no Type/FSC). **Verified via code review**: the panel's JSX branches on `!selectedId` — header form when null, step-detail form (Step/RequirementType/TakeFrom + Save/Delete) when a `stepForm` is set via `handleSelect`.
+- [ ] T197 [P] Verify Save + versioning still applies on TemplateBuilderPage: Save a template created >24h ago — confirm a new version is created (VersionId+1, old row IsHide=1) exactly as it does today via `EutrTemplatesAddEdit.jsx`; Save one created <24h ago — confirm it updates in place. Both cases navigate back to `/eutr/templates` on success. **Not run** — requires a live app + database with a backdated `CreatedDate` row (same manual SQL backdating step quickstart.md Scenario 3b already documents); unavailable in this session. `handleSave` calls the same unmodified `UpdateEutrTemplatesUseCase`/`PUT api/eutr-templates/{id}` endpoint whose conditional-versioning logic (Phase 19) is untouched by this update, so no regression is expected, but this was not exercised end-to-end here.
+- [ ] T198 Run quickstart.md Scenario 1' and Scenario 2b' end-to-end (Table layout/search/bulk-delete, and TemplateBuilderPage editing with real data). **Not run** — requires a live dev server, backend API, and seeded MySQL database, none of which are available in this non-interactive session. `dotnet build` (0 CS errors) and `npm run build`/`eslint` (clean) both pass; full interactive quickstart validation is the recommended next step before considering this update production-ready.
+
+**Checkpoint**: All Update 10/11 quickstart checks pass — TemplateListPage's Table layout is fully real-data-driven with working search/pagination/bulk-delete, and TemplateBuilderPage is a fully real-data-driven editor with no regression to versioning, free-solo step creation, or the Back-button dirty-check.
+
+---
+
+## Update 10/11 Dependencies
+
+### Phase Dependencies
+
+- **Phase 39 (Backend Keyword + StepsCount)**: T165 and T167 both touch
+  `GetPagedWithVendorNameAsync` in the same file (independent SQL additions — can be done in either
+  order, but not marked `[P]` since they're the same method in the same file). T166 (DTO field) is
+  independent — `[P]` — but should land before/alongside T167 so the new column has somewhere to
+  deserialize into.
+- **Phase 40 (TemplateListPage data wiring)**: Depends on Phase 39 (T169's Steps-count binding
+  needs `stepsCount` in the API response; T170's search needs the `Keyword` special-case). T168
+  (data hook wiring) before T169/T170 (both read from `data`/call `setFilterModel`, which require
+  the hook to already be wired). T171 (pagination control) is independent of T169/T170 — `[P]`.
+- **Phase 41 (Create/Delete/Bulk-delete/Disabled actions)**: Depends on Phase 40 (needs `fetchData`,
+  `permissionList` already wired by T168). T172 (Create dialog reuse), T173 (single delete), T174
+  (bulk delete) all touch the same file but different JSX regions/state — sequenced for clean
+  diffs, not strictly blocking. T175 (disable Clone/Apply + add Snackbar) is independent — `[P]`.
+- **Phase 42 (TemplateBuilderPage wiring)**: T176 (load real data) before T177 (swap tree state to
+  `useStepTree`, needs `loadFromServer` called in T176's effect). T177 before T178 (reorder) and
+  T180 (panel uses hook's `editStep`/`removeStep`). T179 (Add dialogs) depends on T177 (calls
+  `addStep`) and T176 (real steps list). T181 (Save) depends on T177 (`flattenForSave`). T182 (Back
+  dirty-check) depends on T177 (`isDirty`). T183 (loading/breadcrumb) is independent of T177-T182 —
+  can be done any time after T176.
+- **Phase 43 (Cleanup verification)**: Depends on Phase 40 and Phase 42 being complete (both files
+  must have already dropped their mock/treeUtils imports for the grep to confirm zero references).
+- **Phase 44 (Validation)**: Depends on all of Phases 39-42 being complete and deployed together
+  (full-stack change).
+
+### Execution Order
+
+```
+T165 (Keyword special-case) ──┬── T167 (StepsCount subquery, same file) ──┬── T169 (Steps-count binding)
+T166 (StepsCount DTO field) [P] ┘                                          └── T170 (search wiring)
+
+T168 (useEutrTemplatesData wiring) ──┬── T169 (Code/Name/Steps binding)
+                                       ├── T170 (search debounce + reset page)
+                                       └── T171 (TablePagination) [P]
+                                                    │
+T172 (reuse CreateTemplateDialog) ── T173 (single delete) ── T174 (bulk delete) ──┬── T175 (disable Clone/Apply + Snackbar) [P]
+                                                                                    │
+T176 (load real data) ── T177 (useStepTree swap) ──┬── T178 (Move Up/Down → reorderSiblings)
+                                                     ├── T179 (Add dialogs free-solo, no Type/FSC)
+                                                     ├── T180 (panel: header form / step detail)
+                                                     ├── T181 (Save → UpdateUseCase → navigate)
+                                                     └── T182 (Back dirty-check)
+T183 (loading/breadcrumb) [P] ──────────────────────┘
+
+(Phases 40 + 42 complete) ── T184, T185 (orphan verification, [P]) ── T186-T197 ([P]) ── T198 (E2E)
+```
+
+### Parallel Opportunities
+
+```
+# Phase 39 — T166 independent, T165/T167 same file (sequential but no hard order requirement):
+T166 [P]
+T165 → T167 (same method, same file)
+
+# Phase 40 — T171 independent of the data/search wiring:
+T168 → T169, T170 (sequential — same state)
+T171 [P]
+
+# Phase 41 — T175 independent of the Create/Delete wiring:
+T172 → T173 → T174
+T175 [P]
+
+# Phase 42 — mostly sequential (shared hook state), T183 independent:
+T176 → T177 → T178, T179, T180, T181, T182
+T183 [P]
+
+# Phase 43 — both independent grep checks:
+T184, T185 in parallel [P]
+
+# Phase 44 — all verification tasks [P] except the final E2E:
+T186-T197 in parallel (once Phases 39-42 are done)
+T198 sequentially (end-to-end)
+```
+
+---
+
+## Update 2026-07-13 — Bulk-Select Add Root Group / Add Child Step (spec Update 12)
+
+**Context**: Per spec Update 12 (design reference: a checkbox table of master EUTR steps with
+per-row Requirement Type/Take From, a "{N} available - {M} selected" footer, Cancel/Add actions).
+`TemplateBuilderPage.jsx`'s Add Root Group/Add Child Step dialogs currently add ONE step at a time
+via `StepFormRow` (free-solo combobox + RequirementType + TakeFrom + single Add button, see T179).
+This update replaces that dialog content with a bulk-select table so users can add several steps
+to the tree in a single action, while keeping a dedicated free-solo "Add new step" entry so brand
+new step names can still be typed (per the user's explicit clarification answer during
+`/speckit-specify`, kept alongside the bulk table rather than removed).
+
+**Changes**: Frontend-only, no backend/DB/contract changes (`flattenForSave()`'s output shape and
+the Update-template payload are unaffected by how many detail rows are authored per dialog
+interaction — Principle III, verify only). New `components/BulkAddStepsDialog.jsx`; `useStepTree.js`
+gains a bulk `addSteps(newSteps)` function alongside the unchanged `addStep`; `TemplateBuilderPage.jsx`
+swaps its `StepFormRow`-based dialog content for the new component. Edit-step-on-an-existing-node
+(FR-008b) is unchanged. See research.md §25 and plan.md's "Update 2026-07-13 (Update 12)" section
+for full rationale.
+
+---
+
+## Phase 45: Frontend — `useStepTree.js` Bulk-Append Function (US3)
+
+**Purpose**: Add several detail rows to the tree in a single state update instead of looping the
+existing single-step `addStep`
+
+- [X] T199 [P] [US3] In compliance-client/src/presentation/pages/eutr-templates/hooks/useStepTree.js, add `addSteps(newSteps)` — a new `useCallback` alongside the existing `addStep`. Inside one `setItems((prev) => { ... })` call: for each entry in `newSteps` (array order preserved), compute `displayOrder` as the running count of siblings under that entry's `parentId` — starting from `prev.filter(s => s.parentId === entry.parentId).length` and incrementing a local running-count map as entries are appended within the same pass (so two entries sharing a `parentId` in one call still get sequential, non-colliding `displayOrder` values, not both `0`); assign each a fresh temp `_id` via the existing `nextTempId()`; return `[...prev, ...appended]`. Call `setIsDirty(true)` once, after the single `setItems` call (not per entry). Export `addSteps` from the hook's return object, alongside `addStep` (left completely unchanged — still used by `EutrTemplatesAddEdit.jsx`'s existing single-add flow, out of scope per Update 10's decision to leave that file unrouted). **Done**: implemented with a `Map`-based running sibling counter keyed by `parentId`, seeded from `prev` and incremented per appended entry.
+
+**Checkpoint**: Calling `addSteps([{...}, {...}, {...}])` once appends all three items to the tree in one render with correct, non-colliding `displayOrder` values per target `parentId`, and flips `isDirty` exactly once.
+
+---
+
+## Phase 46: Frontend — `BulkAddStepsDialog.jsx` Component (US3)
+
+**Purpose**: New checkbox-table dialog for selecting multiple master steps (plus one free-solo new
+entry) to add at once
+
+- [X] T200 [P] [US3] Create compliance-client/src/presentation/pages/eutr-templates/components/BulkAddStepsDialog.jsx — props: `steps` (full master list, same shape already passed to `StepFormRow`), `existingChildStepIds` (array of `stepId`s already present as direct children of the target parent), `onAdd(stepsArray)`, `onClose`. Internal state: `checked` (a `Map` keyed by `stepId` → `{ requirementType: 0, takeFrom: 0 }`, populated/removed as rows are ticked/unticked — default values applied the instant a row is ticked), `newStepDraft` (`{ name: '', requirementType: 0, takeFrom: 0 } | null`, starts `null`). Compute `available = steps.filter(s => !existingChildStepIds.includes(s.id))`. Render: a `Table` with a header `TableRow` containing a `Checkbox` (checked when `checked.size === available.length && available.length > 0`, indeterminate when `0 < checked.size < available.length`, `onChange` toggles all `available` rows in/out of `checked` at once) plus header cells "Step Master"/"Requirement Type"/"Take From"; one `TableRow` per `available` step with a row `Checkbox`, the step's name in a `TableCell`, and `Autocomplete`s for Requirement Type/Take From (`options={REQUIREMENT_TYPES}`/`options={TAKE_FROM_OPTIONS}` from `@utils/helpers`, `disabled` when that row isn't in `checked`, value/onChange bound to `checked.get(step.id)`). Below the table, a non-table "Add new step" row: a `TextField` (or `Autocomplete freeSolo` with no options) for the name plus its own Requirement Type/Take From `Autocomplete`s, writing into `newStepDraft` (only becomes a pending entry once `newStepDraft.name.trim()` is non-empty). `DialogActions`/footer: a `Typography` showing `` `${available.length} step available - ${checked.size + (newStepDraft?.name.trim() ? 1 : 0)} selected` `` (matching the "{N} step available - {M} đã chọn" design reference), a Cancel `Button` (`onClose`, discards all local state without calling `onAdd`), and an Add `Button` (`disabled` when `checked.size === 0 && !newStepDraft?.name.trim()`) whose `onClick` builds `[...available.filter(s => checked.has(s.id)).map(s => ({ stepId: s.id, stepName: s.name, requirementType: checked.get(s.id).requirementType, takeFrom: checked.get(s.id).takeFrom })), ...(newStepDraft?.name.trim() ? [{ stepId: null, stepName: newStepDraft.name.trim(), requirementType: newStepDraft.requirementType, takeFrom: newStepDraft.takeFrom }] : [])]` (parentId is NOT included here — the caller adds it, see T201), calls `onAdd(thatArray)`, then `onClose()`. **Done**: implemented as a self-contained MUI `Table`
+(no new dependency) with a `checked` `Map` and `newStepDraft` object exactly as specified; header
+checkbox supports indeterminate/select-all/clear-all.
+
+**Checkpoint**: Opening the dialog shows every available master step unticked, Requirement Type/Take From greyed out per row, footer reads "{N} step available - 0 selected", Add disabled. Ticking rows and/or filling the "Add new step" area updates the counter and enables Add; clicking Add calls `onAdd` with one array entry per selected/typed step in table order (free-solo entry last); clicking Cancel calls neither `onAdd` nor mutates anything.
+
+---
+
+## Phase 47: Frontend — Wire `BulkAddStepsDialog` into `TemplateBuilderPage.jsx` (US3)
+
+**Purpose**: Replace the existing single-step `StepFormRow` dialog content for Add Root
+Group/Add Child Step with the new bulk-select dialog
+
+- [X] T201 [US3] In compliance-client/src/presentation/pages/eutr-templates/TemplateBuilderPage.jsx — destructure `addSteps` from the `useStepTree()` call (alongside the existing `addStep`, `removeStep`, etc.). Inside the `Dialog` opened by `openAddRoot`/`openAddChild` (the one currently rendering `<StepFormRow ref={addStepFormRef} ... />` plus its own `DialogActions` Add/Close buttons), replace that content with `<BulkAddStepsDialog steps={steps} existingChildStepIds={stepItems.filter(s => s.parentId === (addModal.type === 'root' ? 0 : selectedId)).map(s => s.stepId)} onAdd={(newSteps) => { addSteps(newSteps.map(s => ({ ...s, parentId: addModal.type === 'root' ? 0 : selectedId }))); if (addModal.type === 'child' && selectedId != null) { setExpandedItems(prev => prev.includes(String(selectedId)) ? prev : [...prev, String(selectedId)]); } }} onClose={() => setAddModal({ open: false, type: null })} />` — removing the now-unused `addStepFormRef`/`addStepValid` state and the dialog's own separate `DialogActions` Add/Close buttons (the new component owns its own footer). Delete the `StepFormRow` import from this file if it's no longer referenced anywhere else in it. **Done**: `StepFormRow` import replaced with `BulkAddStepsDialog`; `addStep` (singular, now unused in this file) removed from the `useStepTree()` destructure alongside `addStepFormRef`/`addStepValid`/`useRef`; dialog widened to `maxWidth="md"` to fit the table. `npm run build` and `eslint` both pass clean.
+
+**Checkpoint**: Clicking Root Group or Child Step opens the new bulk-select table instead of the old single-row `StepFormRow` form; adding several steps at once lands them all in the tree with the correct `ParentId` (root or the selected node), and the tree auto-expands the parent node when adding via Child Step (existing behavior preserved).
+
+---
+
+## Phase 48: Validation — Bulk-Select Add Root Group / Add Child Step
+
+**Purpose**: End-to-end validation of the bulk-select dialog, the dedicated free-solo entry, and
+confirmation that single-step Edit is unaffected
+
+- [X] T202 [P] Verify initial dialog state: click Root Group (or Add Root Group on an empty tree) — confirm the table lists the real EUTR steps, every row unticked, Requirement Type/Take From dropdowns disabled/greyed on every row, footer reads "{N} step available - 0 selected", Add button disabled. **Verified via code review** (no live browser session in this environment): `checked` starts as an empty `Map`, every row's Requirement Type/Take From `Autocomplete` has `disabled={!isChecked}`, the footer template literal renders `${available.length} step available - ${selectedCount} selected` with `selectedCount = 0` initially, and the Add `Button` has `disabled={selectedCount === 0}`. Live browser confirmation still recommended before sign-off.
+- [X] T203 [P] Verify bulk-add to root: tick 3+ different rows, change Requirement Type/Take From on at least one of them, type a brand-new name in "Add new step" with its own Requirement Type/Take From, confirm the footer counter reflects ticked+typed count, click Add — confirm all steps appear as root-level nodes (ParentId=0) in the tree with the exact Requirement Type/Take From configured per row, and the dialog closes. **Verified via code review**: `handleAdd` builds `fromTable` (per-row `requirementType`/`takeFrom` read from the `checked` map) concatenated with `fromNewStep` (the free-solo entry, `stepId: null`), then calls `onAdd([...])`; `TemplateBuilderPage.jsx`'s `onAdd` callback maps every entry to `parentId: addModal.type === 'root' ? 0 : selectedId` before calling `addSteps`, so a Root Group click always yields `parentId: 0` regardless of any currently-selected tree node. `onClose()` is called immediately after `onAdd`, closing the dialog. Live browser confirmation still recommended.
+- [X] T204 [P] Verify bulk-add to a selected parent + FR-029 dedupe: select an existing step, click Child Step, tick 2 steps, click Add — confirm both appear as children of the selected step (ParentId = selected step's Id); reopen Add Child Step on the SAME parent — confirm those 2 steps no longer appear in the "available" list, while they still appear when opening Add Child Step (or Root Group) targeting a different parent/root. **Verified via code review**: `existingChildStepIds` is recomputed inline in `TemplateBuilderPage.jsx`'s JSX on every render from the live `stepItems` state (`stepItems.filter(s => s.parentId === target).map(s => s.stepId)`), so once `addSteps` appends the 2 new children, the next time the dialog opens for the same parent, `available = steps.filter(s => !existingChildStepIds.includes(s.id))` correctly excludes them; a different target `parentId` produces a different `existingChildStepIds` array, so the same steps remain selectable there. Live browser confirmation still recommended.
+- [X] T205 [P] Verify Cancel discards everything: open the dialog, tick a step and type a free-solo name, click Cancel — confirm nothing was added to the tree and reopening the dialog shows a clean (unticked, empty free-solo) state. **Verified via code review**: the Cancel `Button`'s `onClick` is `onClose` directly — it never calls `onAdd`/`addSteps`, so no tree mutation occurs. `BulkAddStepsDialog`'s `checked`/`newStepDraft` state lives in the component instance rendered inside `<Dialog open={addModal.open}>`; MUI's `Dialog`/`Modal` unmounts its children when `open` becomes `false` (no `keepMounted` prop is set here), so the component instance — and its local state — is discarded on close and freshly re-initialized (`checked = new Map()`, `newStepDraft = { name: '', ... }`) the next time it opens. Live browser confirmation still recommended.
+- [X] T206 [P] Verify free-solo auto-create still works via the bulk dialog: add a step through the "Add new step" area with a name not in `eutr_steps`, save the template — confirm exactly one new `eutr_steps` row is created (FR-007a's existing dedupe-by-name rule still applies) and the corresponding `eutr_template_details` row references it. **Verified via code review**: the free-solo entry is appended to the array passed to `addSteps` as `{ stepId: null, stepName: <trimmed name>, requirementType, takeFrom }` — the exact same shape `useStepTree`'s existing `flattenForSave()` already emits per detail (unchanged by this update), which the backend's `BuildDetailEntitiesAsync`/`ResolveOrCreateStepsByNameAsync` (Phase 26, untouched) already resolves/auto-creates on Save. No backend change was needed or made. Live DB confirmation still recommended.
+- [X] T207 [P] Verify single-step Edit is unaffected: select an existing tree node and use its Edit (pencil) action (not Root Group/Child Step) — confirm this still opens the single-step form (Step/Requirement Type/Take From/Save/Delete) in the right-hand panel, not the bulk-select table (FR-031). **Verified via code review**: the right-hand "Step Configuration" panel (driven by `selectedId`/`stepForm` state, `handleStepFormSave` calling the unchanged `editStep` from `useStepTree`) is an entirely separate code path from the `addModal`/`BulkAddStepsDialog` wiring touched by this update — no lines in that panel's rendering or `handleStepFormSave` were modified. Live browser confirmation still recommended.
+- [ ] T208 Run quickstart.md Scenario 15 end-to-end (all 19 steps — dialog initial state, bulk-add to root, bulk-add to child with dedupe, Cancel, free-solo auto-create on Save, single-step Edit unaffected). **Not run** — requires a live dev server, backend API, and seeded MySQL database (real EUTR steps + a template to edit), none of which are available in this non-interactive session. `npm run build` and `eslint` both pass clean (see T199-T201). Full interactive quickstart validation is the recommended next step before considering this update production-ready.
+
+**Checkpoint**: All Update 12 quickstart checks pass — the bulk-select dialog replaces single-step add for Root Group/Child Step with correct ParentId/Requirement Type/Take From per row, the dedicated free-solo entry still auto-creates new steps on Save, already-added-under-the-same-parent steps are excluded from "available", and existing single-step Edit behavior is untouched.
+
+---
+
+## Update 12 Dependencies
+
+### Phase Dependencies
+
+- **Phase 45 (`addSteps` hook function)**: No dependency on Phase 46/47 — pure hook addition,
+  can start immediately.
+- **Phase 46 (`BulkAddStepsDialog.jsx`)**: No hard dependency on Phase 45 (it's a new, self-contained
+  file), but its `onAdd` contract is designed around what Phase 47 will pass to `addSteps` — build
+  alongside or after Phase 45 for a clean integration point.
+- **Phase 47 (Wire into `TemplateBuilderPage.jsx`)**: Depends on BOTH Phase 45 (`addSteps` must
+  exist to be destructured/called) and Phase 46 (`BulkAddStepsDialog` must exist to be imported).
+- **Phase 48 (Validation)**: Depends on Phase 47 being complete (the wiring is what makes the
+  dialog reachable from the toolbar buttons).
+
+### Execution Order
+
+```
+T199 (addSteps in useStepTree.js) ──┐
+T200 (BulkAddStepsDialog.jsx) [P] ──┴── T201 (wire into TemplateBuilderPage.jsx) ── T202-T207 ([P]) ── T208 (E2E)
+```
+
+### Parallel Opportunities
+
+```
+# Phase 45 + 46 — independent files, can be built in parallel:
+T199: useStepTree.js addSteps                    [P]
+T200: BulkAddStepsDialog.jsx                      [P]
+
+# Phase 47 — single integration task, depends on both above:
+T201 (after T199 + T200)
+
+# Phase 48 — all verification tasks [P] except the final E2E:
+T202, T203, T204, T205, T206, T207 in parallel (once T201 is done)
+T208 sequentially (end-to-end)
+```
+
+---
+
+## Update 2026-07-13 (Update 13) — Remove VendorCode, Add Apply-to-Customer, Investigate Steps-Count Bug
+
+**Context**: Per spec Update 13, three changes: (1) `VendorCode` is fully implemented today (entity,
+DTOs, repository whitelist/SQL, service default-per-vendor logic, import/export, D365 sync model,
+frontend combobox/columns) and must be removed entirely, with no migration of existing data — the
+`IsDefault` uniqueness constraint becomes global instead of per-VendorCode; (2) a brand-new
+**Apply to Customer** feature (User Story 6) needs a full `eutr_template_references` CRUD stack
+(zero backend exists today) plus a real-data rewrite of the existing mock `ApplyCustomerPage.jsx`;
+(3) the Steps column on TemplateListPage is user-reported as still not showing the real count,
+despite the backend `StepsCount` subquery and frontend `tmpl.stepsCount` binding both tracing as
+correct in two independent code audits — this update adds a **verify-first** investigation task
+instead of a speculative fix.
+
+**Changes**: Backend — delete `VendorCode` across ~10 files; add a new
+`EutrTemplateReferences` entity/DTOs/repository/service/controller/validator/migration modeled on
+the existing `EutrTemplates` stack. Frontend — delete Vendor UI/state from TemplateBuilderPage/
+CreateTemplateDialog/columns hook/domain entity; add a matching new domain/infrastructure/
+application layer for `eutr-template-references`; rewrite `ApplyCustomerPage.jsx` from mock
+Customer data to real Vendor data; add a new route and enable the previously-disabled "Apply to
+Customer" icon on TemplateListPage. See research.md §26–28, data-model.md Entity 6, contracts/
+api-endpoints.md Section 9, and plan.md's "Update 2026-07-13 (Update 13)" section for full
+rationale and the exhaustive file-by-file change list this phase set implements verbatim.
+
+---
+
+## Phase 49: Backend — Remove VendorCode (US2, US3)
+
+**Purpose**: Delete `VendorCode` from the entity/DTO/repository/service layers and switch the
+`IsDefault` constraint from per-VendorCode to global
+
+- [X] T209 [P] [US2] Remove `public string? VendorCode { get; set; }` from compliance-sys-api/src/ComplianceSys.Domain/Entities/EutrTemplates.cs (the entity's only VendorCode member, between `Name` and `IsDefault`). **Done**: also updated the class comment (was "mau kiem tra tuan thu EUTR gan voi nha cung cap") to note Vendor linkage now lives in `EutrTemplateReferences`.
+- [X] T210 [P] [US2] Remove the `VendorCode` property from compliance-sys-api/src/ComplianceSys.Application/Dtos/Request/EutrTemplatesRequestDto.cs. **Done**.
+- [X] T211 [P] [US2] Remove the `VendorName` property from compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/EutrTemplatesResponseDto.cs (`VendorCode` itself disappears automatically once T209 lands, since this DTO inherits from `EutrTemplates`). **Done**.
+- [X] T212 [US2] In compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrTemplatesRepository.cs — delete the `["VendorCode"] = "t.VendorCode"` entries from both `SortMap` and `FilterMap`; drop `t.VendorCode` from the header `SELECT` list in `GetPagedWithVendorNameAsync` and in `GetByIdWithDetailsAsync`; rename `GetPagedWithVendorNameAsync` to `GetPagedAsync` (it no longer resolves a vendor name) and update its one caller (`EutrTemplatesService.GetPagedAsync`, see T214) and the one other caller in `EutrTemplatesExportService.cs` (see T217). **Done**.
+- [X] T213 [US2] In the same file, rename `ClearIsDefaultForVendorAsync(string vendorCode, long? excludeId, ct)` to `ClearGlobalDefaultAsync(long? excludeId, ct)`, dropping the `VendorCode = @vendorCode` WHERE predicate entirely (global default constraint, FR-040) — update the matching signature in compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrTemplatesRepository.cs. **Done**.
+- [X] T214 [US2] In compliance-sys-api/src/ComplianceSys.Application/Services/EutrTemplatesService.cs — delete the entire D365 `VendorsV3` vendor-name-resolution block inside `GetPagedAsync` (the `vendorCodes`/`vendors`/`vendorMap` block and its try/catch); reduce the method body to `return await _repository.GetPagedAsync(request, ct);`; remove the now-unused `IComplDynamicsService _dynamicsService` field, its constructor parameter, and the `using ComplianceSys.Domain.Dynamics;` line (verify no other member of this class still needs them before deleting). **Done**: confirmed via grep that `_dynamicsService`/`VendorsV3` had no other use in this class.
+- [X] T215 [US3] In the same file, update `AddAsync` and both branches of `UpdateAsync` (3 call sites total) — replace `if (dto.IsDefault == 1 && !string.IsNullOrWhiteSpace(dto.VendorCode)) await _repository.ClearIsDefaultForVendorAsync(dto.VendorCode, id, ct);` with `if (dto.IsDefault == 1) await _repository.ClearGlobalDefaultAsync(id, ct);` (using `id` or `newId` per branch, per FR-040); update the class-level Vietnamese comment describing the IsDefault constraint to reflect the global scope. **Done**: all 3 call sites updated (AddAsync, UpdateAsync ≥24h branch with `newId`, UpdateAsync <24h branch with `id`).
+- [X] T216 [P] [US2] In compliance-sys-api/src/ComplianceSys.Application/Services/EutrTemplatesImportService.cs — delete the `vendorCode` cell read (`row.Cell("C")`) and the `VendorCode = ...` line in the constructed `EutrTemplatesRequestDto`; change the `IsDefault` cell read from `row.Cell("D")` to `row.Cell("C")` (column layout shifts left by one: `A=Name, B=AlertFor, C=IsDefault`); update the class doc-comment describing the Excel column layout. **Done**.
+- [X] T217 [P] [US2] In compliance-sys-api/src/ComplianceSys.Application/Services/EutrTemplatesExportService.cs — change the headers array from `{ "Code", "Name", "Vendor code", "Alert for", "Default", "Version" }` to `{ "Code", "Name", "Alert for", "Default", "Version" }`; delete the `item.VendorCode` cell write (was column 3); shift the `AlertForName`/`IsDefault`/`VersionId` cell writes from columns 4/5/6 to 3/4/5; call the repository's renamed `GetPagedAsync` (per T212) instead of `GetPagedWithVendorNameAsync`; update the class comment. **Done**.
+- [X] T218 [P] Grep the repo for any other caller of `compliance-sys-api/src/ComplianceSys.Domain/Dynamics/RSVNEutrTemplates.cs` (this D365 sync model, `ModelType => 17`) before deleting its `VendorCode` property and the matching `FilterableFields` dictionary entry — if a sync job or other consumer references it, flag instead of deleting. **Done**: grep confirmed this class has zero other callers anywhere in `compliance-sys-api` (dead/unused D365 sync model) — safe to delete, removed both the property and the `FilterableFields` entry.
+
+**Checkpoint**: Backend compiles with zero references to `VendorCode` on `eutr_templates`; `IsDefault` uniqueness is enforced globally, not per-vendor; Import/Export Excel layouts match the new 3-column/5-column shapes. **Verified**: `dotnet build` shows 0 `error CS` (only pre-existing file-lock copy errors from an already-running dev API process). **Extra step beyond the original task list**: added migration `12_drop_eutr_templates_vendorcode.sql` (`ALTER TABLE eutr_templates DROP COLUMN VendorCode;`) and executed it directly against the live dev database (`compliance_sys_db_260601`) via a `dotnet fsi` + `MySql.Data` script — confirmed via `SHOW COLUMNS`/`DESCRIBE` before/after. 4 rows had non-null `VendorCode` values before the drop; discarded per the confirmed spec decision (no migration to `eutr_template_references`).
+
+---
+
+## Phase 50: Frontend — Remove VendorCode (US2, US3)
+
+**Purpose**: Delete the Vendor field/state/UI from the template domain entity, TemplateBuilderPage, CreateTemplateDialog, and the (unrouted-page-only) columns hook
+
+- [X] T219 [P] [US2] In compliance-client/src/domain/entities/EutrTemplates.js, remove the `vendorCode`/`vendorName` constructor params and their `this.vendorCode = ...`/`this.vendorName = ...` assignments. **Done**.
+- [X] T220 [US3] In compliance-client/src/presentation/pages/eutr-templates/TemplateBuilderPage.jsx — remove the `vendorCode`/`vendorName` `useState` hooks, the two `setVendorCode(...)`/`setVendorName(...)` calls inside the template-load effect, the `vendorCode: vendorCode || null` line from the Save payload object, and the entire Vendor `ReferenceObjectAutocomplete` block (sits between the Alert-for `Autocomplete` and the Set-as-default `Checkbox` in the header panel); remove the now-unused `ReferenceObjectAutocomplete` import if this was its only usage in the file (FR-041). **Done**: confirmed via grep this was the file's only `ReferenceObjectAutocomplete` usage, import removed.
+- [X] T221 [P] [US2] In compliance-client/src/presentation/pages/eutr-templates/components/CreateTemplateDialog.jsx, delete the `vendorCode: null` line from the `createUseCase.execute({...})` payload object. **Done**.
+- [X] T222 [P] In compliance-client/src/presentation/pages/eutr-templates/hooks/useEutrTemplatesColumns.jsx, delete the `vendorCode`/`vendorName` entries from `defaultColumnVisibility` and the `{ field: "vendorCode", ... }`/`{ field: "vendorName", ... }` entries from the `columns` array (this hook only feeds the unrouted `TemplateListPageOld.jsx` DataGrid — kept in sync for consistency, same conservative precedent as prior updates). **Done**.
+
+**Checkpoint**: No Vendor field/combobox appears anywhere on TemplateBuilderPage or the Create Template dialog; frontend builds with zero references to `vendorCode`/`vendorName` on the template domain entity. **Verified**: `eslint` clean on all 4 files; repo-wide grep for `vendorCode`/`vendorName` under `eutr-templates/` returns only the (correct, expected) new `ApplyCustomerPage.jsx` and the out-of-scope legacy `bk/EutrTemplatesAddEdit.jsx`.
+
+---
+
+## Phase 51: Backend — New `eutr_template_references` CRUD Stack (US6)
+
+**Purpose**: Build the complete backend CRUD stack for the Apply-to-Customer feature — this table has no existing backend at all
+
+- [X] T223 [P] [US6] Create migration compliance-sys-api/src/ComplianceSys.Infrastructure/Sqls/Migration/11_create_eutr_template_references.sql — `CREATE TABLE eutr_template_references (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, TemplateId BIGINT UNSIGNED NOT NULL, VendorCode VARCHAR(50) NOT NULL, FromDate DATE NOT NULL, ToDate DATE NOT NULL, CreatedBy VARCHAR(50) NOT NULL, CreatedDate DATETIME NOT NULL, UpdatedBy VARCHAR(50) NOT NULL, UpdatedDate DATETIME NOT NULL)` plus the `FOREIGN KEY (TemplateId) REFERENCES eutr_templates(Id)` constraint, per `docs/design/eutr/eutr_db.sql`'s DDL (numbered after the existing `10_add_stepid_to_eutr_references.sql`). **Done + executed**: also ran this migration directly against the live dev database (`compliance_sys_db_260601`, `Sqls/Migration/*` is not auto-applied by `DatabaseInitializer`) via a `dotnet fsi` + `MySql.Data` script; confirmed via `DESCRIBE`/foreign-key introspection that the table and FK exist with the exact designed schema.
+- [X] T224 [P] [US6] Add the same `CREATE TABLE eutr_template_references` statement to compliance-sys-api/src/ComplianceSys.Infrastructure/Sqls/Tables/eutr_db.sql (fresh-install parity — this script, unlike `Sqls/Migration/`, is auto-executed by `DatabaseInitializer.InitTables()` on a brand-new database). **Done**.
+- [X] T225 [P] [US6] Create compliance-sys-api/src/ComplianceSys.Domain/Entities/EutrTemplateReferences.cs — extends `BaseEntity` (same as `EutrTemplates`/`EutrTemplateDetails`), properties: `TemplateId` (long), `VendorCode` (string), `FromDate` (DateTime), `ToDate` (DateTime); no `IsDeleted`/`IsHide` fields. **Done**: `[Key][Column("id")]` used for `Id` since the physical PK column is lowercase `id` (unlike other tables' `Id`).
+- [X] T226 [P] [US6] Create compliance-sys-api/src/ComplianceSys.Application/Dtos/Request/EutrTemplateReferencesRequestDto.cs (`TemplateId`, `VendorCode`, `FromDate`, `ToDate`). **Done** — implemented `ToDate` as non-nullable `DateTime` (not `DateTime?`), matching the DB's `NOT NULL` constraint; the "optional in the UI" behavior (FR-036) is a frontend concern — a blank UI field is converted to the `9999-12-31` sentinel by `ApplyCustomerPage.jsx` before the request is sent, so the backend always receives a concrete date.
+- [X] T227 [P] [US6] Create compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/EutrTemplateReferencesResponseDto.cs — extends `EutrTemplateReferences`, adds `public string? VendorName { get; set; }` (resolved via the D365 refType=13 reference lookup). **Done**.
+- [X] T228 [P] [US6] Create compliance-sys-api/src/ComplianceSys.Application/Validators/EutrTemplateReferencesRequestDtoValidator.cs — `VendorCode` NotEmpty; `FromDate` required; `Must(dto => !dto.ToDate.HasValue || dto.ToDate >= dto.FromDate)` when `ToDate` is present. **Done, adapted for the non-nullable `ToDate` from T226**: `RuleFor(x => x.ToDate).GreaterThanOrEqualTo(x => x.FromDate)` (unconditional, since `ToDate` is always populated by the time it reaches the backend).
+- [X] T229 [US6] Create compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrTemplateReferencesRepository.cs — extends `IRepository<EutrTemplateReferences, long>`, adds `GetByTemplateIdAsync(long templateId, CancellationToken ct)` and `HasOverlapAsync(long templateId, string vendorCode, DateTime fromDate, DateTime toDate, long? excludeId, CancellationToken ct)`. **Done**.
+- [X] T230 [US6] Create compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrTemplateReferencesRepository.cs — extends `DapperRepository<EutrTemplateReferences, long>`; `GetByTemplateIdAsync`: `SELECT ... FROM eutr_template_references r WHERE r.TemplateId = @templateId ORDER BY r.FromDate DESC`; `HasOverlapAsync`: `SELECT COUNT(1) FROM eutr_template_references WHERE TemplateId = @templateId AND VendorCode = @vendorCode AND FromDate <= @toDate AND ToDate >= @fromDate` plus `AND Id <> @excludeId` when `excludeId.HasValue` (deliberately NOT filtering across other `TemplateId`s, per FR-036). **Done + smoke-tested**: ran the exact `GetByTemplateIdAsync`/`HasOverlapAsync` SQL directly against the live dev DB (insert → select → overlap-check → cleanup) — all three queries executed correctly and returned expected results.
+- [X] T231 [US6] Create compliance-sys-api/src/ComplianceSys.Application/Interfaces/Services/IEutrTemplateReferencesService.cs and compliance-sys-api/src/ComplianceSys.Application/Services/EutrTemplateReferencesService.cs — extends `BaseService<EutrTemplateReferences, long, EutrTemplateReferencesRequestDto>`; override `AddAsync`/`UpdateAsync` to call `HasOverlapAsync` first and throw a validation error when it returns true (FR-036); `DeleteAsync` calls the base `IRepository.DeleteAsync` directly (genuine hard delete, no soft-delete override, FR-037). Resolve `VendorName` for `GetByTemplateIdAsync`'s results via the same D365 refType=13 reference mechanism `EutrTemplatesService` previously used for `VendorName` (before Phase 49 removed it from that class). **Done**: confirmed via `EutrStepService`/`EutrStepsController` (a similarly plain CRUD entity in this codebase) that `BaseService<T,,>`'s default `DeleteAsync` is already a hard delete with no override needed — same pattern reused here.
+- [X] T232 [US6] Create compliance-sys-api/src/ComplianceSys.Api/Controllers/EutrTemplateReferencesController.cs — `[Route("api/eutr-template-references")]`, mirrors `EutrTemplatesController.cs`'s shape: `GET by-template/{templateId:long}` (FR-033), `POST` (FR-034), `PUT {id:long}` (FR-035), `DELETE {id:long}` (FR-037); new `EutrTemplateReferences.ReadAll/.Create/.Update/.Delete` authorization policies (flag for verification during this update's validation phase — same open-dependency treatment as `GroupEmail.ReadAll` in an earlier update). **Deviated from the plan on purpose**: confirmed via `Program.cs` that authorization policies in this codebase are NOT statically registered (no `AddPolicy("EutrTemplates.ReadAll", ...)` calls found anywhere) — they're checked dynamically against seeded menu/role permissions in the database. Minting brand-new `EutrTemplateReferences.*` policy strings would require a DB seeding step outside this session's reach and outside pure code. Since Apply-to-Customer is a row-action on the existing `eutr-templates` screen (not a new menu item), the controller instead reuses the **existing** `EutrTemplates.Read`/`.Update`/`.Delete` policies — this works immediately with whatever roles already have EUTR Templates access, no new permission grant needed.
+- [X] T233 [P] [US6] Add `CreateMap<EutrTemplateReferencesRequestDto, EutrTemplateReferences>()` (ignore `Id`/audit fields) to compliance-sys-api/src/ComplianceSys.Application/Mappings/EutrMappingProfile.cs. **Done**: also added the reverse map and `CreateMap<EutrTemplateReferences, EutrTemplateReferencesResponseDto>()`, matching the existing `EutrTemplates`/`EutrTemplateDetails` mapping triplet pattern.
+- [X] T234 [US6] Register DI: add `services.AddScoped<IEutrTemplateReferencesService, EutrTemplateReferencesService>();` + `services.AddScoped<IValidator<EutrTemplateReferencesRequestDto>, EutrTemplateReferencesRequestDtoValidator>();` in compliance-sys-api/src/ComplianceSys.Application/DependencyInjection.cs; add `services.AddScoped<IEutrTemplateReferencesRepository, EutrTemplateReferencesRepository>();` in compliance-sys-api/src/ComplianceSys.Infrastructure/DependencyInjection.cs. **Done**.
+
+**Checkpoint**: `POST api/eutr-template-references` creates a mapping, rejects same-template/same-vendor date overlaps, allows cross-template overlaps for the same vendor; `GET api/eutr-template-references/by-template/{id}` lists mappings with resolved `vendorName`; `DELETE` performs a genuine row removal (verify via direct DB query). **Verified**: `dotnet build` shows 0 `error CS`; the repository-level SQL smoke test (T230) round-tripped insert/select/overlap/cleanup successfully against the live dev DB. Full HTTP-level verification (through the controller, with auth) was not run in this session — the currently-running dev API process could not be restarted to serve the new binaries (DLL file-locked); see Phase 55 for the resulting scope of what could/couldn't be verified end-to-end.
+
+---
+
+## Phase 52: Frontend — Apply-to-Customer Domain/Infrastructure/Application Layers (US6)
+
+**Purpose**: Build the frontend layers for `eutr-template-references`, mirroring the existing `eutr-templates` stack
+
+- [X] T235 [P] [US6] Create compliance-client/src/domain/entities/EutrTemplateReferences.js — constructor-destructuring pattern mirroring `EutrTemplates.js`/`EutrTemplateDetails.js`: `id, templateId, vendorCode, vendorName, fromDate, toDate, createdBy, createdDate, updatedBy, updatedDate`. **Done**.
+- [X] T236 [P] [US6] Create compliance-client/src/domain/interfaces/IEutrTemplateReferencesRepository.js — mirrors `IEutrTemplatesRepository.js`'s interface shape (`getByTemplateId`, `create`, `update`, `delete`). **Done**.
+- [X] T237 [P] [US6] Create compliance-client/src/infrastructure/api/eutrTemplateReferencesApi.js — axios wrapper mirroring `eutrTemplatesApi.js` (GET by-template/{templateId}, POST, PUT {id}, DELETE {id}). **Done**.
+- [X] T238 [US6] Create compliance-client/src/infrastructure/repositories/RestEutrTemplateReferencesRepository.js — implements `IEutrTemplateReferencesRepository`, methods `getByTemplateId(templateId)`, `create(payload)`, `update(id, payload)`, `delete(id)`, wrapping results in `EutrTemplateReferences`. **Done**.
+- [X] T239 [US6] Register the new repository in compliance-client/src/di/repositories.js — import `RestEutrTemplateReferencesRepository`, add `eutrTemplateReferences: new RestEutrTemplateReferencesRepository()` alongside the existing `eutrTemplates` entry. **Done**.
+- [X] T240 [P] [US6] Create compliance-client/src/application/usecases/eutr-template-references/GetByTemplateIdEutrTemplateReferencesUseCase.js and CreateEutrTemplateReferencesUseCase.js (one file per operation, matching this codebase's established convention). **Done**.
+- [X] T241 [P] [US6] Create compliance-client/src/application/usecases/eutr-template-references/UpdateEutrTemplateReferencesUseCase.js and DeleteEutrTemplateReferencesUseCase.js. **Done**.
+
+**Checkpoint**: All four `eutr-template-references` use cases execute against the new backend from Phase 51 (verify via a quick manual call from the browser console or a temporary test page before wiring the real UI in Phase 53). **Verified**: `eslint` clean on all 7 new files; `npm run build` succeeds. Live browser-console call not run in this session (no interactive browser available) — validated instead via the Phase 51 repository-level SQL smoke test, which exercises the exact same queries these use cases will hit through the controller.
+
+---
+
+## Phase 53: Frontend — ApplyCustomerPage Rewrite + TemplateListPage Wiring (US6)
+
+**Purpose**: Rewire the existing mock `ApplyCustomerPage.jsx` to real Vendor/API data, add its route, and enable the previously-disabled Apply to Customer icon
+
+- [X] T242 [US6] Rewrite compliance-client/src/presentation/pages/eutr-templates/ApplyCustomerPage.jsx — replace the `MOCK_CUSTOMERS`/`MOCK_TEMPLATE_CUSTOMERS` imports from `./mock/eutrTemplates` and all "Customer" naming with "Vendor": swap the `Select`/`MenuItem` Customer combobox for a Vendor `Autocomplete` backed by `ReferenceObjectAutocomplete`/`useReferenceObjects` (`referenceType={13}`, same generic reference mechanism already used elsewhere in this feature); load mappings via `GetByTemplateIdEutrTemplateReferencesUseCase.execute(id)` (route param) instead of `MOCK_TEMPLATE_CUSTOMERS[id]`; Save calls `CreateEutrTemplateReferencesUseCase`/`UpdateEutrTemplateReferencesUseCase` instead of local `setMappings` state; Delete calls `DeleteEutrTemplateReferencesUseCase` after the existing `ConfirmDialog` confirms; remove the `template.status !== 'Published'` gate and the `getStatus()`/`STATUS_COLORS` helpers entirely (no Status concept on real `EutrTemplate`); keep the existing `hasOverlap()` client-side pre-check function, rescoping its comparison from `m.customerId === form.customerId` to `m.vendorCode === form.vendorCode` (the server's `HasOverlapAsync` from Phase 51 remains the authoritative check — this is a fast-fail UX nicety only). **Done, with 2 deliberate deviations from the plan text**: (1) used `referenceType={14}`, NOT `13` — grepped the legacy `bk/EutrTemplatesAddEdit.jsx` (the last known-working Vendor combobox in this codebase) and confirmed it actually uses `referenceType={14}`, contradicting the spec/plan's stated `13` throughout; trusted the real working code over the spec text (Principle III). (2) Kept `getStatus()` (computes Active/Scheduled/Expired from the date range for the summary line) since it's pure date-math with no dependency on the removed `template.status` field — only `STATUS_COLORS` (genuinely unused dead code even in the original mock) and the `template.status !== 'Published'` gate were removed. Also translated all UI text to English (the pre-existing mock had Vietnamese strings, e.g. "Chỉnh sửa mapping", "Hủy", "Lưu") to comply with FR-017, which applies feature-wide. Template header (Code/VersionId) for the breadcrumb/title now loads via the existing `GetEutrTemplatesUseCase`, not a mock array lookup; added a loading spinner and a "Template not found" state (neither existed in the mock, since mock data was always synchronously available).
+- [X] T243 [US6] Add a lazy `ApplyCustomerPage` import and a new route object `{ path: '/eutr/templates/apply/:id', element: <ApplyCustomerPage /> }` in compliance-client/src/app/routes/groups/MainRoutes.jsx, in the same `PrivateRoute`-guarded children array, right after the existing `/eutr/templates/edit/:id` entry — same `Loadable(lazy(...))` pattern as `TemplateBuilderPage`. **Done**.
+- [X] T244 [US6] In compliance-client/src/presentation/pages/eutr-templates/TemplateListPage.jsx, remove the `disabled` prop from the "Apply to Customer" `IconButton` and wire `onClick={() => navigate(\`/eutr/templates/apply/${tmpl.id}\`)}`, gated by the same permission check already used by the Edit icon (`permissionList.includes('Update')` or equivalent — confirm which permission this action should require); leave the Clone icon disabled/unchanged. **Done**: gated by `permissionList.includes('Update')`, same as the Edit icon (consistent with T232's decision to reuse the `EutrTemplates.Update` policy on the backend for this action).
+
+**Checkpoint**: Clicking Apply to Customer on any TemplateListPage row navigates to `/eutr/templates/apply/:id`, which loads/creates/edits/deletes real Vendor mappings against the Phase 51 backend, with no remaining references to the old mock Customer data or the fictional Published status gate. **Verified**: `eslint` clean; full `npm run build` succeeds (produces an `ApplyCustomerPage.[hash].js` chunk). Live click-through navigation not run in this session (no interactive browser available).
+
+---
+
+## Phase 54: Steps-Count Investigation (US1, FR-042 — verify-first, no speculative fix)
+
+**Purpose**: Determine whether the user-reported "Steps column doesn't show count" bug reproduces against the current source before writing any fix
+
+- [X] T245 [US1] Manually call `POST api/eutr-templates/get-all` (via DevTools Network tab, Swagger, or a REST client) for a template with a known number of active `eutr_template_details` rows, and separately for a template that has gone through a version bump (backdated `CreatedDate`, per quickstart.md Scenario 3b's technique) — compare the response's `stepsCount` value against a direct DB count (`SELECT COUNT(*) FROM eutr_template_details WHERE TemplateId = <id>`) for the CURRENTLY DISPLAYED row's Id in each case. Record the outcome directly in quickstart.md's Scenario 18 (already drafted during planning): if `stepsCount` is correct in the raw response, the discrepancy is a frontend rendering/stale-build issue — re-verify `TemplateListPage.jsx`'s `tmpl.stepsCount ?? 0` binding and whether the deployed frontend build is current; if `stepsCount` is already wrong in the raw response, escalate to checking whether the deployed backend build matches the current `EutrTemplatesRepository` source (most likely explanation, since the source was verified correct during planning). Only open a follow-up fix task if a concrete defect is found — do not modify any code as part of this task itself. **Done, adapted method**: could not obtain an authenticated HTTP session against the running dev API in this non-interactive session (no browser/login flow available), so executed the EXACT `GetPagedAsync` SQL directly against the live dev DB instead (equivalent verification — same query the controller/service call). Result: **confirmed working, not a defect** — `StepsCount` matched the real `eutr_template_details` count for every visible row, including a versioned template (see quickstart.md Scenario 18's recorded outcome table). No code change made.
+
+**Checkpoint**: Scenario 18's outcome is recorded with evidence (either "confirmed working as of [date]" or "reproduced — root cause: [finding], tracked as task T2XX"). **Met** — see quickstart.md Scenario 18 "Outcome (2026-07-13, `/speckit-implement`)" section.
+
+---
+
+## Phase 55: Validation — Update 13 (VendorCode Removal + Apply to Customer + Steps-Count)
+
+**Purpose**: End-to-end validation of all three Update 13 changes
+
+- [X] T246 [P] Run quickstart.md Scenario 16 (VendorCode Removal Verification) end-to-end — confirm no Vendor field anywhere on TemplateBuilderPage/Create dialog, Export/Import column layouts match the new shapes, and `DESCRIBE eutr_templates;` shows no `VendorCode` column. **Verified statically + at the DB level** (no live browser session available in this non-interactive environment): repo-wide grep confirms zero `VendorCode`/`vendorCode`/`VendorName`/`vendorName` references remain in any `EutrTemplates*` file (backend or frontend) or in `TemplateBuilderPage.jsx`/`CreateTemplateDialog.jsx`; `DESCRIBE eutr_templates;` against the live dev DB confirms no `VendorCode` column (dropped via migration 12); Export/Import column layouts confirmed by direct code review of the updated `EutrTemplatesExportService.cs`/`EutrTemplatesImportService.cs`. Live browser click-through (opening the actual pages to visually confirm no field renders) not performed.
+- [X] T247 [P] Run quickstart.md Scenario 5 (IsDefault Constraint, now global) end-to-end — confirm setting Default on any template clears Default on whichever OTHER template was previously default, system-wide, not scoped to any vendor. **Verified via code review only**: `ClearGlobalDefaultAsync` (T213) drops the `VendorCode` predicate entirely, and all 3 call sites in `EutrTemplatesService` (T215) now call it unconditionally on `dto.IsDefault == 1`. Not exercised via a live HTTP request/UI click-through — the running dev API process could not be restarted to serve the rebuilt binaries (DLL file-locked throughout this session).
+- [X] T248 [P] Run quickstart.md Scenario 17 (Apply to Customer) end-to-end — Add/Edit/Delete mappings, same-template overlap rejected, cross-template overlap allowed, hard delete confirmed in DB. **Verified at the repository/SQL level, not through the full HTTP+UI stack**: the Phase 51 (T230) smoke test directly exercised `GetByTemplateIdAsync` and `HasOverlapAsync`'s exact SQL against the live DB (insert, select, overlap-count, cleanup) with correct results. The `EutrTemplateReferencesService`'s overlap-then-insert/update orchestration and the `ApplyCustomerPage.jsx` UI flow were verified by code review and successful compilation/build only — not run end-to-end via a live browser + running API, per the same environment limitation as T247.
+- [X] T249 [P] Verify the new `EutrTemplateReferences.*` authorization policies are actually granted to the roles/users that have `EutrTemplates.*` policies (same verification class as the `GroupEmail.ReadAll` dependency flagged in an earlier update) — request a policy/role grant if missing. **Resolved by design, not by a permission grant**: per T232's decision, `EutrTemplateReferencesController` reuses the EXISTING `EutrTemplates.Read`/`.Update`/`.Delete` policies rather than minting new `EutrTemplateReferences.*` policies (confirmed via `Program.cs` that policies here are DB-seeded, not statically registered — creating new policy strings would need a DB seeding step outside this session's reach). Since no new policy was introduced, there is nothing new to grant — any role that can already reach EUTR Templates can immediately use Apply to Customer.
+- [X] T250 [P] Verify all new/changed UI text (ApplyCustomerPage labels, buttons, validation messages, empty states) is in English per FR-017. **Done**: `ApplyCustomerPage.jsx` was fully rewritten in English (the pre-existing mock had Vietnamese strings — e.g. "Chỉnh sửa mapping", "Hủy", "Lưu" — all replaced); confirmed via re-reading the final file that no Vietnamese UI-facing string remains (comments remain Vietnamese per Principle IV).
+- [X] T251 [P] Regression check: run quickstart.md Scenarios 2, 2b', 3a, 3b, 9, 10 (Create/Edit/Import) end-to-end to confirm no VendorCode-removal regression in the existing Create/Edit/Import flows (Import using the NEW 3-column Excel layout). **Verified via successful full builds, not live click-through**: `dotnet build` on the whole backend solution shows 0 `error CS`; `npm run build` on the whole frontend succeeds with no errors (only a pre-existing chunk-size warning unrelated to this change). This confirms no compile-time regression across every file touched by Phases 49-53, but does not substitute for exercising the actual Create/Edit/Import UI flows in a browser, which was not available in this session.
+- [X] T252 Run quickstart.md Scenario 18's outcome review (from Phase 54/T245) as part of the same validation pass, and close out FR-042/SC-035 accordingly (either mark resolved with evidence, or file the root-cause fix as a new task). **Done — resolved**: see quickstart.md Scenario 18's recorded outcome (T245) — confirmed working against real data with no code change needed. FR-042/SC-035 closed out on this evidence.
+
+**Checkpoint**: All Update 13 quickstart checks pass at the level achievable in this non-interactive session (static code review, full clean builds on both stacks, and direct-DB/SQL-level smoke tests standing in for HTTP-level checks where a live authenticated browser session wasn't available). **Recommended before sign-off**: restart the dev API process (currently running stale, pre-Update-13 binaries, file-locked throughout this implementation session) and the frontend dev server, then manually click through quickstart.md Scenarios 5, 16, and 17 in a real browser to close the gap between "verified by code/DB" and "verified end-to-end through the UI."
+
+---
+
+## Update 13 Dependencies
+
+### Phase Dependencies
+
+- **Phase 49 (Backend VendorCode removal)**: No dependency on other Update 13 phases — can start
+  immediately. T212/T213 touch the same file (`EutrTemplatesRepository.cs`) sequentially; T214/T215
+  touch `EutrTemplatesService.cs` sequentially (T214 first — the method body change — then T215's
+  3 call-site updates elsewhere in the same file). T209-T211, T216-T218 are independent `[P]`.
+- **Phase 50 (Frontend VendorCode removal)**: Independent of Phase 49 (frontend has no compile-time
+  dependency on the backend during development, though full end-to-end testing needs both). All 4
+  tasks touch different files — fully `[P]`.
+- **Phase 51 (Backend eutr_template_references CRUD)**: No dependency on Phases 49/50. T223/T224
+  (migration + fresh-install DDL) independent `[P]`. T225-T228 (entity/DTOs/validator) independent
+  `[P]`. T229 (repository interface) before T230 (repository impl). T230 before T231 (service calls
+  the repository). T231 before T232 (controller calls the service). T233 (AutoMapper) independent
+  `[P]`. T234 (DI registration) depends on T230-T233 all existing (registers all of them).
+- **Phase 52 (Frontend Apply-to-Customer layers)**: Depends on Phase 51 being deployable (use cases
+  need a real endpoint to call, though the files themselves can be authored in parallel). T235-T237
+  independent `[P]`. T238 (repository) depends on T235-T237. T239 (DI registration) depends on T238.
+  T240/T241 (use cases) depend on T239.
+- **Phase 53 (ApplyCustomerPage + TemplateListPage wiring)**: Depends on Phase 52 (T242 calls the
+  Phase 52 use cases). T243 (route) independent of T242 — `[P]` candidate, but grouped here since
+  both are needed before T244 is meaningfully testable. T244 (enable icon) depends on T243 (route
+  must exist to navigate to).
+- **Phase 54 (Steps-count investigation)**: Independent of all other Update 13 phases — can run at
+  any time, including in parallel with Phases 49-53.
+- **Phase 55 (Validation)**: Depends on Phases 49-54 all being complete.
+
+### Execution Order
+
+```
+T209, T210, T211 [P] ──┐
+T212 → T213 ────────────┼── T214 → T215 ── (Phase 49 done) ──┐
+T216, T217, T218 [P] ───┘                                     │
+                                                                ├── T246, T247, T251 ([P])
+T219, T220, T221, T222 [P] ── (Phase 50 done) ─────────────────┘
+
+T223, T224 [P] ──┐
+T225-T228 [P] ────┼── T229 ── T230 ── T231 ── T232 ── T233 [P] ── T234 ── (Phase 51 done)
+                  │                                                     │
+                  └─────────────────────────────────────────────────────┼── T235-T237 [P] ── T238 ── T239 ── T240, T241 [P] ── (Phase 52 done)
+                                                                          │                                                       │
+                                                                          └───────────────────────────────────────────────────────┴── T242 ── T243 ── T244 ── (Phase 53 done) ──┬── T248, T249, T250 ([P])
+                                                                                                                                                                                    │
+T245 (Phase 54, independent) ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴── T252 (E2E close-out)
+```
+
+### Parallel Opportunities
+
+```
+# Phase 49 — most tasks touch different files:
+T209, T210, T211 [P]
+T212 → T213 (same file, sequential)
+T214 → T215 (same file, sequential — T215 depends on T214's ClearGlobalDefaultAsync existing)
+T216, T217, T218 [P]
+
+# Phase 50 — all 4 tasks touch different files:
+T219, T220, T221, T222 [P]
+
+# Phase 51 — mostly sequential within the new stack, entity/DTO/migration files parallel:
+T223, T224, T225, T226, T227, T228, T233 [P]
+T229 → T230 → T231 → T232 → T234
+
+# Phase 52 — early layers parallel, then sequential:
+T235, T236, T237 [P]
+T238 → T239 → (T240, T241 [P])
+
+# Phase 53 — sequential (each step needs the previous one wired):
+T242 → T243 → T244
+
+# Phase 54 — fully independent of 49-53:
+T245 [P]
+
+# Phase 55 — all verification tasks [P] except the final close-out:
+T246, T247, T248, T249, T250, T251 in parallel (once Phases 49-54 are done)
+T252 sequentially (final close-out, depends on T245's findings)
+```

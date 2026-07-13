@@ -4,6 +4,11 @@
 **Base URL**: `api/eutr-templates`
 **Auth**: Policy-based (`EutrTemplates.{Action}`)
 
+**Update 13 (2026-07-13)**: `vendorCode`/`vendorName` removed from every `api/eutr-templates`
+request/response shape below (no migration of existing values); the `IsDefault` constraint changes
+from per-`VendorCode` to global; Import/Export Excel column layouts shift left by one column. A new
+`api/eutr-template-references` contract (Section 9) is added for the Apply-to-Customer feature.
+
 ---
 
 ## 1. Get Paged List
@@ -20,11 +25,29 @@ POST api/eutr-templates/get-all
   "sortColumn": "CreatedDate",
   "sortOrder": "DESC",
   "filters": [
-    { "field": "Name", "operator": "like", "value": "test" },
-    { "field": "VendorCode", "operator": "like", "value": "V001" }
+    { "field": "Name", "operator": "like", "value": "test" }
   ]
 }
 ```
+*(Update 13: the `VendorCode` filter example above is removed — that column no longer exists on
+`eutr_templates`.)*
+
+**Request Body — TemplateListPage search box (Update 11, 2026-07-13)**:
+```json
+{
+  "page": 1,
+  "pageSize": 100,
+  "sortColumn": "Id",
+  "sortOrder": "asc",
+  "filters": [
+    { "field": "Keyword", "operator": "like", "value": "temp" }
+  ]
+}
+```
+A `Keyword` filter entry expands server-side to `(Code LIKE @value OR Name LIKE @value)` instead of
+being mapped to a single SQL column — see Notes below. Sent by `TemplateListPage.jsx`'s search box,
+debounced, replacing (not combined with) any other filter entries; the frontend resets `page` to 1
+whenever the keyword changes.
 
 **Response** (PagedResult):
 ```json
@@ -36,12 +59,11 @@ POST api/eutr-templates/get-all
         "id": 1,
         "code": "Templates-001",
         "name": "Template A",
-        "vendorCode": "V001",
-        "vendorName": "Vendor Corp",
         "alertFor": 3,
         "alertForName": "Compliance Alerts Group",
         "isDefault": 1,
         "versionId": 2,
+        "stepsCount": 4,
         "createdBy": "user@email.com",
         "createdDate": "2026-07-03T10:00:00"
       }
@@ -52,17 +74,28 @@ POST api/eutr-templates/get-all
   }
 }
 ```
+*(Update 13: `vendorCode`/`vendorName` fields removed from this response — no longer applicable.)*
 
 **Notes**:
 - Filters implicitly include `WHERE IsDeleted = 0 AND IsHide = 0`
-- `vendorName` is resolved from D365 VendorsV3 by `VendorCode`
 - **Update 7 (2026-07-07)**: `alertFor` is now the numeric Id of a row in `compl_group_email`
   (was a free-text string). `alertForName` (new field) is resolved via `LEFT JOIN compl_group_email`
   on `alertFor` and is what the grid displays.
-- Sortable columns: Code, Name, VendorCode, AlertFor, IsDefault, VersionId, CreatedBy, CreatedDate
-- Filterable columns: Code, Name, VendorCode, AlertFor (Update 7: the `AlertFor` filter now matches
-  against the joined `compl_group_email.Name`, not the raw Id, since a numeric Id isn't a
-  meaningful text-search target)
+- **Update 11 (2026-07-13)**: `stepsCount` (new field) is a real per-template count —
+  `SELECT COUNT(*) FROM eutr_template_details d WHERE d.TemplateId = t.Id` — used by
+  TemplateListPage's Steps column. `Keyword` is a special-cased filter field (see request example
+  above) expanding to an OR condition across `Code` and `Name`; it is not a real column and has no
+  entry in the sortable-columns list below. **Update 13**: FR-042 flags this field as a
+  user-reported display bug despite the query/response being verified correct end-to-end — see
+  plan.md's Steps-Count Investigation section; no contract change results from that item unless a
+  concrete defect is found during verification.
+- Sortable columns: Code, Name, AlertFor, IsDefault, VersionId, CreatedBy, CreatedDate *(Update 13:
+  `VendorCode` removed from this list)*
+- Filterable columns: Code, Name, AlertFor (Update 7: the `AlertFor` filter now matches against the
+  joined `compl_group_email.Name`, not the raw Id, since a numeric Id isn't a meaningful text-search
+  target), Keyword (Update 11: pseudo-column, OR across Code and Name — see above; used only by
+  TemplateListPage's search box, not exposed as a sortable/visible column) *(Update 13: `VendorCode`
+  removed from this list)*
 
 ---
 
@@ -80,8 +113,6 @@ GET api/eutr-templates/{id}
     "id": 1,
     "code": "Templates-001",
     "name": "Template A",
-    "vendorCode": "V001",
-    "vendorName": "Vendor Corp",
     "alertFor": 3,
     "alertForName": "Compliance Alerts Group",
     "isDefault": 1,
@@ -117,6 +148,13 @@ GET api/eutr-templates/{id}
 **Notes**:
 - Details include `stepName` from JOIN with `eutr_steps`
 - Tree structure is flat (parent-child via `parentId`); frontend builds the tree
+- **Update 10 (2026-07-13)**: this endpoint is called by `TemplateBuilderPage.jsx` (via the
+  existing `GetEutrTemplatesUseCase`) instead of `EutrTemplatesAddEdit.jsx` — no contract change,
+  same response shape consumed the same way (header fields + `details` fed into `useStepTree`'s
+  `loadFromServer`)
+- No `stepsCount` field on this single-record response (it's a list-only convenience field —
+  see Section 1); the Edit screen already has the full `details` array to derive a count from if
+  ever needed
 
 ---
 
@@ -126,11 +164,10 @@ GET api/eutr-templates/{id}
 POST api/eutr-templates
 ```
 
-**Request Body**:
+**Request Body** (full shape — Update 13: `vendorCode` field removed from the payload entirely):
 ```json
 {
   "name": "Template A",
-  "vendorCode": "V001",
   "alertFor": 3,
   "isDefault": 1,
   "details": [
@@ -154,6 +191,23 @@ POST api/eutr-templates
 }
 ```
 
+**Frontend usage (Update 9, 2026-07-13)**: the `CreateTemplateDialog.jsx` quick-create dialog
+(Name, Alert for, Set as default only — no Vendor field, no step tree) always sends the minimal
+form of this same payload:
+```json
+{
+  "name": "Template A",
+  "alertFor": 3,
+  "isDefault": 1,
+  "details": []
+}
+```
+`details` was already allowed to be an empty array — no change there. **Update 13**: the dialog no
+longer sends `vendorCode: null` (that field no longer exists on the DTO at all). The first steps
+are added afterwards via `PUT api/eutr-templates/{id}` (Section 4) from the Edit screen; Vendor is
+no longer set on the template at all — it's applied separately via `api/eutr-template-references`
+(Section 9).
+
 **Response**:
 ```json
 {
@@ -167,7 +221,8 @@ POST api/eutr-templates
 - `Code` auto-generated by backend (not accepted from client)
 - `VersionId` set to 1
 - `IsDeleted = 0`, `IsHide = 0`
-- If `IsDefault = 1`: clears existing default for same VendorCode
+- If `IsDefault = 1`: clears existing default **globally** across all templates (Update 13 — was
+  "for same VendorCode" before VendorCode was removed)
 - `parentId` in details: 0 = root; for child steps, use a temporary client-side ID scheme — backend resolves parent references after inserting root steps first
 - Validation: Name required; AlertFor required (must be a positive Id — **Update 7**: no longer a
   free-text string, not validated for existence in `compl_group_email`); each detail requires
@@ -217,9 +272,20 @@ Note: `id` and `versionId` are unchanged from before the update in this case.
   - **< 24 hours**: updates the EXISTING row in place — same `Id`, same `VersionId`,
     `CreatedDate` unchanged; details for the current template ID are replaced (deleted and
     re-inserted); returns the same ID and version.
-- If `IsDefault = 1`: clears existing default for same VendorCode (applies in both branches,
-  using the current effective ID)
+- If `IsDefault = 1`: clears existing default **globally** across all templates (Update 13; applies
+  in both branches, using the current effective ID)
 - Free-solo step resolution (see Create Template, Update 6) applies identically in both branches
+- **Update 10 (2026-07-13)**: this endpoint is now called by `TemplateBuilderPage.jsx`'s Save
+  button (via the existing `UpdateEutrTemplatesUseCase`) instead of `EutrTemplatesAddEdit.jsx` — no
+  contract change, same request/response shape; on success the frontend navigates back to
+  `/eutr/templates` (unchanged existing behavior)
+- **Update 12 (2026-07-13)**: `TemplateBuilderPage.jsx`'s Add Root Group / Add Child Step dialogs
+  now let the user tick multiple master steps (plus optionally type one new free-solo step name)
+  and add them all to the tree in a single UI action instead of one at a time — this only changes
+  how many `details[]` entries `flattenForSave()` produces per user interaction before the existing
+  Save click; the request body shape, per-detail fields (`stepId`/`stepName`/`parentId`/
+  `requirementType`/`takeFrom`/`displayOrder`), and free-solo step auto-create resolution (Update 6)
+  are all unchanged. No contract change.
 
 ---
 
@@ -240,6 +306,8 @@ DELETE api/eutr-templates/{id}
 **Behavior**:
 - Sets `IsDeleted = 1` on the visible row (IsHide=0) only
 - Old hidden versions (IsHide=1) are not affected
+- **Update 10 (2026-07-13)**: called by `TemplateListPage.jsx`'s per-row Delete icon (via the
+  existing `DeleteEutrTemplatesUseCase`) — no contract change
 
 ---
 
@@ -264,6 +332,10 @@ DELETE api/eutr-templates
 }
 ```
 
+**Update 10 (2026-07-13)**: called by `TemplateListPage.jsx`'s new bulk-delete toolbar button (via
+the existing `DeleteMultiEutrTemplatesUseCase`) — the Table layout previously had no per-row
+checkbox/bulk-select affordance; no contract change.
+
 ---
 
 ## 7. Import Templates
@@ -275,14 +347,19 @@ Content-Type: multipart/form-data
 
 **Request**: Form field `file` with `.xlsx` file.
 
-**Expected Excel columns** (row 1 = header, data from row 2):
+**Expected Excel columns** (row 1 = header, data from row 2) — **Update 13: layout shifts left by
+one column, `VendorCode` column removed**:
 
-| A | B | C | D |
-|---|---|---|---|
-| Name | VendorCode | AlertFor | IsDefault |
+| A | B | C |
+|---|---|---|
+| Name | AlertFor | IsDefault |
 
-**Update 7 (2026-07-07)**: Column C (AlertFor) now expects the Alert group's **Name** (text,
-matched against `compl_group_email` where `GroupType = 2`) instead of arbitrary free text.
+*(Corrected/previously: `A=Name, B=AlertFor, C=VendorCode, D=IsDefault` before Update 13 — this
+table had drifted from the actual `EutrTemplatesImportService.cs` cell-read order, which reads
+`B=AlertFor` before `C=VendorCode`; fixed while updating for Update 13.)*
+
+**Update 7 (2026-07-07)**: Column B (AlertFor) expects the Alert group's **Name** (text, matched
+against `compl_group_email` where `GroupType = 2`) instead of arbitrary free text.
 
 **Response**:
 ```json
@@ -319,7 +396,9 @@ GET api/eutr-templates/export
 
 **Response**: Binary file download (`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`)
 
-**Excel columns**: Code, Name, VendorCode, AlertFor, IsDefault, Version
+**Excel columns**: Code, Name, AlertFor, IsDefault, Version *(Update 13: `VendorCode` column
+removed — was `Code, Name, VendorCode, AlertFor, IsDefault, Version` before Update 13; remaining
+columns shift left by one)*
 
 **Update 7 (2026-07-07)**: The "AlertFor" column now writes the resolved group **Name**
 (`AlertForName`, via the same `LEFT JOIN compl_group_email` used by the list endpoint) instead of
@@ -333,6 +412,11 @@ the raw Id, so a re-imported export file continues to match Import's expected Na
 `refType = 13`. The dedicated `GET api/dynamics/vendors` endpoint from Update 2/3 still exists in
 `DynController` but is superseded for this feature — see the "Superseded" subsection at the end
 for historical reference.
+
+**Update 13 (2026-07-13)**: This lookup is no longer used by `api/eutr-templates` at all (the
+Vendor field was removed from that entity). It is now used exclusively by the new
+`api/eutr-template-references` endpoints (Section 9) — same contract, same `refType=13`, just a
+different consumer entity.
 
 ```
 POST api/dynamics/reference?page=1&pageSize=50&sortColumn=&sortOrder=asc&refType=13
@@ -427,3 +511,125 @@ GET api/dynamics/vendors?skip=0&top=50&filter=&order_by=
 
 Returned raw OData from D365 VendorsV3 with `$select=dataAreaId,VendorAccountNumber,VendorOrganizationName`
 applied (3 columns only): `{ "value": [{ "dataAreaId", "VendorAccountNumber", "VendorOrganizationName" }] }`.
+
+---
+
+## 9. Apply to Customer — EutrTemplateReferences (new, Update 13)
+
+**Base URL**: `api/eutr-template-references`
+**Auth**: Policy-based (`EutrTemplateReferences.{Action}` — new policies, verify wiring during
+`/speckit-implement`, same open-dependency treatment as `GroupEmail.ReadAll` in Update 7)
+
+### 9.1 Get Mappings by Template
+
+```
+GET api/eutr-template-references/by-template/{templateId}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 1,
+      "templateId": 5,
+      "vendorCode": "V001",
+      "vendorName": "Vendor Corp",
+      "fromDate": "2026-01-01",
+      "toDate": "2026-06-30",
+      "createdBy": "user@email.com",
+      "createdDate": "2026-01-01T09:00:00",
+      "updatedBy": "user@email.com",
+      "updatedDate": "2026-01-01T09:00:00"
+    }
+  ]
+}
+```
+
+**Notes**:
+- `vendorName` is a response-only field, resolved via the generic reference API (`refType=13`) —
+  same mechanism previously used for `EutrTemplates.VendorName` (Section "D365 Vendor Lookup"
+  above), now relocated here.
+- No pagination — a single template is expected to have a small number of vendor mappings; ordered
+  by `FromDate DESC`.
+- Called by `ApplyCustomerPage.jsx` on mount, keyed by the `:id` route param (`/eutr/templates/apply/:id`).
+
+### 9.2 Create Mapping (Apply Vendor)
+
+```
+POST api/eutr-template-references
+```
+
+**Request Body**:
+```json
+{
+  "templateId": 5,
+  "vendorCode": "V001",
+  "fromDate": "2026-01-01",
+  "toDate": "2026-06-30"
+}
+```
+`toDate` may be omitted/null in the UI (interpreted as unlimited/9999-12-31 before persisting — the
+exact persisted sentinel value is a `/speckit-tasks` implementation detail).
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": { "id": 1 },
+  "message": "Vendor applied successfully."
+}
+```
+
+**Response — overlap rejected** (FR-036):
+```json
+{
+  "success": false,
+  "message": "This vendor already has an overlapping mapping for this template."
+}
+```
+
+**Behavior**:
+- Validation: `vendorCode` required; `fromDate` required; `toDate` (if present) must be ≥ `fromDate`.
+- Overlap check: rejects if an existing mapping for the **same `templateId` AND same `vendorCode`**
+  has an overlapping `[fromDate, toDate]` range. Overlap for the same vendor across **different**
+  templates is explicitly allowed (confirmed decision, FR-036).
+- No `Code`/`VersionId` auto-generation — this table has neither.
+
+### 9.3 Update Mapping (Edit)
+
+```
+PUT api/eutr-template-references/{id}
+```
+
+**Request Body**: Same shape as Create (Section 9.2).
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "Vendor mapping updated successfully."
+}
+```
+
+**Behavior**: Updates the row in place (no versioning — this table has no `VersionId`). The overlap
+check (FR-036) excludes the record being edited (`id`) from the comparison set.
+
+### 9.4 Delete Mapping (Hard Delete)
+
+```
+DELETE api/eutr-template-references/{id}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "Vendor mapping removed successfully."
+}
+```
+
+**Behavior**: Real `DELETE FROM eutr_template_references WHERE id = @id` — this table has no
+`IsDeleted`/`IsHide` column, so there is no soft-delete branch (FR-037). Confirmed via
+`ConfirmDialog` on the frontend before this call is made.
