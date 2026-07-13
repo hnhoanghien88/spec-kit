@@ -92,3 +92,15 @@ CREATE TABLE `compl_group_email` (
   `UpdatedBy` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`Id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=24 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE `eutr_reference_details`(
+    `Id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    `RefId` BIGINT UNSIGNED NULL,
+    `ConditionType` BIGINT NOT NULL DEFAULT 0,
+    `ConditionValue` VARCHAR(255) NULL,
+    `CreatedBy` VARCHAR(50) NULL,
+    `CreatedDate` DATETIME NULL,
+    `UpdatedBy` VARCHAR(50) NULL,
+    `UpdatedDate` DATETIME NULL
+);
+ALTER TABLE
+    `eutr_reference_details` ADD CONSTRAINT `eutr_reference_details_refid_foreign` FOREIGN KEY(`RefId`) REFERENCES `eutr_references`(`Id`);

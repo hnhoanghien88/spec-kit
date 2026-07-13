@@ -536,3 +536,216 @@ Với mỗi file đã qua validate định dạng/kích thước (FR-026) VÀ va
   `StepId = 5` và `Prefix = "INV2026"`, `StepId = 7`) → tạo 1 dòng `eutr_documents` (`Id = 501`) và
   2 dòng `eutr_references`: `{ DocumentId: 501, StepId: 5, RefType: 0, RefValue: "PO000123" }` và
   `{ DocumentId: 501, StepId: 7, RefType: 0, RefValue: "PO000123" }`.
+
+## Thực thể mới: EutrReferenceDetails (bảng `eutr_reference_details`, spec Update 11, FR-052)
+
+Bảng **đã tồn tại sẵn** trong `docs/design/eutr/eutr_db.sql` (không migration mới — xem research
+Quyết định 29). Entity backend mới `ComplianceSys.Domain/Entities/EutrReferenceDetails.cs`
+(`[Table("eutr_reference_details")]`, kế thừa `BaseEntity`):
+
+| Trường | Kiểu | Nguồn | Ghi chú |
+|---|---|---|---|
+| `Id` | long | DB | Khóa chính, auto-increment |
+| `RefId` | long? | Popup Assign condition | FK → `eutr_references.Id` (khóa ngoại `eutr_reference_details_refid_foreign` — **khác** `eutr_references.RefId`, hai cột trùng tên ở hai bảng, không liên quan) |
+| `ConditionType` | byte? | Popup Assign condition (dropdown "Conditions type") | Giá trị `refType` dùng để tải Condition value (`15`="PO", `14`="Vendor") — không có bảng mapping riêng |
+| `ConditionValue` | string? | Popup Assign condition (Condition value đã chọn) | Mã/tên định danh của 1 PO hoặc 1 Vendor — mỗi giá trị multi-select = 1 dòng riêng |
+
+Không có repository generic phù hợp cho đọc/xóa tùy biến (cần JOIN + xóa theo `RefId` không phải
+khóa chính) — tạo `IEutrReferenceDetailsRepository`/`EutrReferenceDetailsRepository`
+(`DapperRepository<EutrReferenceDetails,long>`, clone `EutrReferencesRepository`):
+
+```csharp
+public interface IEutrReferenceDetailsRepository
+{
+    Task<List<EutrConditionGroupRow>> GetGroupedConditionsByDocumentIdsAsync(
+        IEnumerable<long> documentIds, CancellationToken ct = default);
+    Task DeleteByRefIdAsync(long refId, CancellationToken ct = default);
+}
+```
+
+- `EutrConditionGroupRow { long DocumentId; byte ConditionType; string ConditionValue; }` —
+  projection phẳng (JOIN `eutr_reference_details`+`eutr_references` theo `RefId`=`Id`, lọc
+  `WHERE eutr_references.DocumentId IN @DocumentIds`); service gộp theo `DocumentId` rồi theo
+  `ConditionType` thành `List<ConditionGroupDto>` (xem mục "Mở rộng `EutrDocumentsResponseDto`" bên
+  dưới).
+- `DeleteByRefIdAsync`: `DELETE FROM eutr_reference_details WHERE RefId = @RefId` — dùng khi sửa
+  (FR-058, xem mục "Sửa Step/Conditions" bên dưới).
+- Đường **ghi thêm** dùng thẳng `IRepository<EutrReferenceDetails,long>` generic (giống cách
+  `EutrReferences` được ghi ở `EutrUploadService`) — không cần method riêng cho `AddAsync`.
+
+### ⚠️ Sửa `DeleteByDocumentIdAsync` để tránh vi phạm khóa ngoại (research Quyết định 30)
+
+`eutr_reference_details_refid_foreign` KHÔNG có `ON DELETE CASCADE`. Từ Update 11,
+`EutrReferencesRepository.DeleteByDocumentIdAsync` (dùng bởi `EutrDocumentsService.DeleteAsync`/
+`DeleteMultiAsync`, FR-039/FR-040) MUST đổi SQL thành 2 câu trong cùng transaction — xóa
+`eutr_reference_details` con trước, rồi mới xóa `eutr_references` cha:
+
+```sql
+DELETE FROM eutr_reference_details
+WHERE RefId IN (SELECT Id FROM eutr_references WHERE DocumentId = @DocumentId);
+DELETE FROM eutr_references WHERE DocumentId = @DocumentId;
+```
+
+Chữ ký method (`Task DeleteByDocumentIdAsync(long documentId, ct)`) và toàn bộ caller **không đổi**
+— chỉ SQL nội bộ thay đổi.
+
+## Upload file thật cho Screen2 ("Upload manual") — endpoint MỚI trong `SharePointController` (spec Update 11, FR-046/FR-047)
+
+### `POST /api/sharepoint/eutr-upload-manual-multi` (request, `multipart/form-data`)
+
+```
+files: File[]   (multiple, cùng field name "files")
+```
+
+`EutrManualMultiUploadFileRequest { List<IFormFile> Files }` — **không có** `PoCode` (khác
+`EutrMultiUploadFileRequest` của Update 6). Validate định dạng/kích thước tái dùng nguyên vẹn
+(PDF/DOC/DOCX/XLS/XLSX/JPG/PNG, tối đa 10MB) — KHÔNG validate prefix `eutr_master_documents`.
+
+### Response — tái dùng `List<EutrUploadFileResultDto>` (không đổi shape so với Update 6)
+
+```json
+{
+  "success": true,
+  "data": [
+    { "fileName": "note1.pdf", "success": true, "documentId": 601, "fileId": "01XYZ..." },
+    { "fileName": "bad.exe", "success": false, "errorMessage": "Invalid file type" }
+  ]
+}
+```
+
+- Thư mục SharePoint đích **cố định**: `{SharePointEutrPath}/UploadManual` (tự tạo nếu chưa có,
+  dùng lại `ResolveOrCreatePoFolderAsync(basePath, "UploadManual")` — tên hàm giữ nguyên, chỉ đổi
+  tham số truyền vào).
+- Mỗi file thành công tạo **đúng 1 dòng `eutr_documents`** (`Name`, `FileId`, `ValidFrom`=hôm nay,
+  `ValidTo`=sentinel `9999-12-31`) — **KHÔNG** tạo bất kỳ dòng `eutr_references`/
+  `eutr_reference_details` nào ở bước này (khác nhánh PO của Update 6/7).
+- Policy: dùng chung `[Authorize]` cấp controller của `SharePointController` (không thêm policy
+  riêng theo action, giống `upload-multi`/`eutr-upload-multi` hiện có).
+
+## Danh sách file "chưa gán Step/Conditions" — endpoint MỚI trong `EutrDocumentsController` (spec Update 11, FR-048)
+
+### `POST /api/eutr-documents/get-unassigned` (request — giống `get-all`)
+
+Query: `page`, `pageSize`, `sortColumn`, `sortOrder`. Body: `filters: FilterRequest[]` (whitelist
+theo cột thật của `eutr_documents`: `Name`, `ValidFrom`, `ValidTo`, `CreatedBy`, `CreatedDate`).
+
+### Response — `PagedResult<EutrDocumentsResponseDto>` (cùng shape `get-all`, các field
+Step/Type/Conditions luôn rỗng/`null`)
+
+```json
+{
+  "items": [
+    { "id": 601, "name": "note1.pdf", "fileId": "01XYZ...", "validFrom": "2026-07-10T00:00:00",
+      "validTo": "9999-12-31T00:00:00", "createdBy": "hien", "createdDate": "2026-07-10T09:00:00Z",
+      "stepNames": [], "refType": null, "stepId": null, "conditions": [] }
+  ],
+  "totalCount": 1
+}
+```
+
+- Điều kiện lọc **cố định**, luôn áp dụng (không thuộc whitelist filter người dùng gõ):
+  `WHERE NOT EXISTS (SELECT 1 FROM eutr_references r WHERE r.DocumentId = eutr_documents.Id)` —
+  xem research Quyết định 33 (lý do phải viết SQL tùy biến, generic repository không hỗ trợ).
+  Nguồn: `EutrReferencesRepository.GetUnassignedDocumentsPagedAsync(PagedRequest, ct)` (đặt cạnh 2
+  method JOIN hiện có, cùng lý do sở hữu mọi truy vấn cross-table trên `eutr_references`).
+- Bao gồm CẢ document tạo qua form Save nhập tay (chưa từng upload) VÀ document tạo qua khu Upload
+  File Screen2 (Update 11) chưa được Assign condition — loại trừ document đã có `eutr_references`
+  (ví dụ tạo qua Upload Screen1, luôn có `eutr_references` ngay khi tạo).
+- Policy: `EutrDocuments.ReadAll` (dùng chung với `get-all`).
+
+## Popup "Assign condition" — 3 endpoint MỚI trong `EutrDocumentsController` (spec Update 11/12, FR-051 đến FR-058)
+
+### `POST /api/eutr-documents/assign-conditions` (chế độ tạo mới, FR-052) — request
+
+```json
+{
+  "documentIds": [601, 602],
+  "stepId": 5,
+  "conditions": [
+    { "conditionType": 15, "values": ["PO000123", "PO000124"] },
+    { "conditionType": 14, "values": ["V001"] }
+  ]
+}
+```
+
+`EutrAssignConditionsRequestDto { List<long> DocumentIds, long StepId, List<EutrConditionRowDto>
+Conditions }`; `EutrConditionRowDto { byte ConditionType, List<string> Values }`. Validator
+(`EutrAssignConditionsRequestDtoValidator`, FluentValidation) MUST chặn khi: `DocumentIds` rỗng,
+`StepId <= 0`, `Conditions` rỗng HOẶC bất kỳ dòng nào có `Values` rỗng (FR-052, "ít nhất 1 dòng
+Conditions type với ít nhất 1 giá trị"), HOẶC `Conditions` có 2 dòng cùng `ConditionType` (Update
+13, FR-051 — dùng `Distinct().Count()`, xem research Quyết định 34).
+
+- Với **mỗi** `DocumentId`, 1 transaction riêng (per-item, per-document lỗi không chặn document
+  khác trong cùng request — cùng ngữ nghĩa FR-030/FR-040): insert 1 dòng `eutr_references`
+  (`DocumentId`, `StepId`, `RefType=1`, `RefValue=null`), rồi insert N dòng `eutr_reference_details`
+  (1 dòng/giá trị trong mỗi `Conditions[].Values`, `RefId`=Id vừa tạo, `ConditionType`,
+  `ConditionValue`).
+- Response: `List<EutrUploadFileResultDto>`-style hoặc đơn giản `ApiResponse<string>` liệt kê số
+  document thành công/thất bại (chi tiết chữ ký trả về là quyết định triển khai, không ảnh hưởng
+  hành vi quan sát được — FR-052/SC-028 chỉ yêu cầu đúng số bản ghi được tạo).
+- Policy: `EutrDocuments.Update`.
+
+### `GET /api/eutr-documents/{id}/condition-assignment` (chế độ sửa, tải trước, FR-057) — response
+
+```json
+{ "stepId": 5, "conditions": [{ "conditionType": 15, "values": ["PO000123", "PO000124"] }] }
+```
+
+`EutrDocumentConditionAssignmentDto { long? StepId, List<EutrConditionRowDto> Conditions }`. Policy:
+`EutrDocuments.ReadOne`. Document không có `eutr_references`/`RefType=1` → `404`/`stepId: null`
+(not-found rõ ràng, theo mẫu xử lý đã có ở nơi khác trong feature).
+
+### `PUT /api/eutr-documents/{id}/condition-assignment` (chế độ sửa, lưu, FR-058) — request
+
+Cùng shape `EutrUpdateConditionAssignmentRequestDto { long StepId, List<EutrConditionRowDto>
+Conditions }` (không có `DocumentIds` — 1 document duy nhất, lấy từ route `{id}`), cùng validator
+(Step bắt buộc, ≥1 Conditions type hợp lệ, không trùng `ConditionType`). Trong 1 transaction: (a)
+`UpdateAsync` đổi `StepId` của dòng `eutr_references` hiện có (giữ `DocumentId`/`RefType=1`/
+`RefValue=null`); (b) `DeleteByRefIdAsync(refId, ct)` xóa hết `eutr_reference_details` cũ, rồi ghi
+lại từ đầu đúng bộ `Conditions` mới (replace toàn bộ — KHÔNG giữ `Id` cũ, xem research Quyết định
+34). Policy: `EutrDocuments.Update`.
+
+## Sửa Step cho document Type="PO" — endpoint MỚI trong `EutrDocumentsController` (spec Update 12/13, FR-055)
+
+### `PUT /api/eutr-documents/{id}/step` (request/response)
+
+Request: `EutrUpdatePoStepRequestDto { long StepId }`. Trong 1 transaction: lấy `RefValue` (mã PO)
+từ dòng `eutr_references` (`RefType=0`) có `Id` **nhỏ nhất** trong số các dòng của document đó
+(quy tắc xác định của Update 13/FR-055), xóa **toàn bộ** các dòng đó, insert **đúng 1** dòng mới
+(`DocumentId`, `StepId` mới, `RefType=0`, `RefValue` giữ nguyên). Policy: `EutrDocuments.Update`.
+
+## Mở rộng `EutrDocumentsResponseDto` — `StepId` (Update 13) + `Conditions` (Update 11)
+
+```json
+{
+  "id": 501, "name": "INV2026_hop-dong-po123.pdf", "...": "...",
+  "stepNames": ["Bước kiểm tra hóa đơn"], "refType": 0, "stepId": 5,
+  "conditions": []
+}
+```
+```json
+{
+  "id": 701, "name": "vendor-cert.pdf", "...": "...",
+  "stepNames": ["Bước xác minh nguồn gốc"], "refType": 1, "stepId": 9,
+  "conditions": [
+    { "conditionType": 15, "values": ["PO000123", "PO000124"] },
+    { "conditionType": 14, "values": ["V001"] }
+  ]
+}
+```
+
+- `stepId` (`long?`, mới): Step hiện tại — với `refType=0` (PO), là `StepId` của dòng
+  `eutr_references` có `Id` nhỏ nhất trong nhóm (Update 13 tie-break); với `refType=1` (Upload
+  manual), luôn đúng 1 dòng nên không cần tie-break. Dùng để nạp dropdown Step khi mở Edit (Quyết
+  định 38), tránh gọi thêm API riêng.
+- `conditions` (`List<ConditionGroupDto>`, mới): `ConditionGroupDto { byte ConditionType,
+  List<string> Values }` — nhóm `eutr_reference_details` theo `ConditionType`; `[]` khi document
+  không có bản ghi nào (Type="PO", hoặc Type="Upload manual" nhưng chỉ có Step, không có Conditions
+  type nào — không còn xảy ra sau Update 13 vì Save bắt buộc ≥1 dòng, nhưng dữ liệu cũ trước Update
+  13 vẫn có thể ở trạng thái này). Frontend map `conditionType` → nhãn qua `CONDITION_TYPE_OPTIONS`
+  mới (`compliance-client/src/utils/helpers.js`, cạnh `TAKE_FROM_OPTIONS`).
+- Nguồn: `EutrReferenceStepInfo` (projection JOIN hiện có) thêm field `ReferenceId` (= `eutr_references
+  .Id`, dùng để suy `stepId` theo `Id` nhỏ nhất); `IEutrReferenceDetailsRepository.
+  GetGroupedConditionsByDocumentIdsAsync(documentIds)` (mới, xem trên) cho `conditions`. Cả hai được
+  gộp trong cùng bước `AttachStepInfoAsync` (đổi tên `AttachStepAndConditionInfoAsync`) đã có từ
+  Update 8 — không thêm round-trip HTTP mới cho grid chính.

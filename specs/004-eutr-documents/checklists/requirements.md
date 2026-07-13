@@ -186,3 +186,68 @@
   (`EUTR Document`, new `SharePoint File Content`), revised SC-006/SC-009, new SC-023/SC-024, new
   Edge Cases, revised FR-015, and new Assumptions notes. All checklist items remain passing after
   this update.
+- 2026-07-10 `/speckit-specify` update 11: Screen2 ("Upload manual") stops being a UI-only demo — the
+  static drag-and-drop area is replaced by the same "Upload File" component built for Screen1
+  (Update 7), but always enabled (no PO selection required) and without the prefix check; uploaded
+  files land in a fixed `{SharePointEutrPath}/UploadManual` SharePoint folder (auto-created) and each
+  becomes an `eutr_documents` row with no `eutr_references` yet. The file grid below now loads every
+  `eutr_documents` row that has no `eutr_references` at all (regardless of how it was created), with
+  real per-row View/Delete (reusing the Update 10 List PO logic) and multi-select checkboxes. The
+  "Assign condition" button opens a real popup (per `condition.png`): a fixed, mandatory "Step" row
+  plus user-added "Conditions type" (PO/Vendor) rows whose "Condition value" multi-select loads from
+  the shared `POST /api/dynamics/reference` endpoint (`refType=15` for PO, `refType=14` for Vendor).
+  Saving writes one `eutr_references` row per selected file (`RefType=1`, the file's chosen Step,
+  `RefValue=null`) plus one `eutr_reference_details` row per chosen condition value (`ConditionType`
+  = the refType used, `ConditionValue` = the chosen value) — the `eutr_reference_details` table
+  already existed in `eutr_db.sql` with no migration needed. The main list's previously-always-blank
+  Conditions column now shows these grouped values (e.g. "PO: PO1, PO2") for "Upload manual" rows.
+  No [NEEDS CLARIFICATION] markers were needed — the request was fully detailed (including two
+  reference images), so ambiguous points (the `ConditionType` numeric convention, one
+  `eutr_references` row per selected file, no edit/reassign after save, removable condition rows)
+  were resolved as informed defaults, documented as embedded Q&A in a new Clarifications Update 11
+  session, matching this spec's established self-documenting convention. Reflected in a new
+  Clarifications Update 11 session, revised User Story 1 (narrative + new acceptance scenarios
+  2c/2d), revised User Story 2 (Screen2 narrative + revised acceptance scenarios 9/10), a new User
+  Story 6 (20 acceptance scenarios), revised FR-003/FR-006/FR-018/FR-019/FR-036, new FR-046 to
+  FR-054, a new `EUTR Reference Detail` Key Entity, revised `EUTR Reference`/`Type (PO/Manual)` Key
+  Entities, a new `SharePoint Folder "UploadManual"` Key Entity, new SC-025 to SC-029, revised
+  SC-008/SC-009, new Edge Cases, and revised/new Assumptions notes. All checklist items remain
+  passing after this update.
+- 2026-07-10 `/speckit-specify` update 11 (correction): per direct user feedback, tightened the Save
+  validation in the Assign condition popup — Update 11's original rule let Save succeed with only a
+  Step selected (no Conditions type row required); it now also requires **at least one** Conditions
+  type row with at least one Condition value chosen, blocking Save with a clear warning otherwise
+  (in addition to the existing block when Step is unselected). Updated the Clarifications Update 11
+  "Change"/Q&A entries, User Story 6 acceptance scenarios 11/11a/19, FR-052, the `EUTR Reference
+  Detail` Key Entity note, and SC-027/SC-028. All checklist items remain passing after this
+  correction.
+- 2026-07-10 `/speckit-specify` update 12: the Edit action on the main EUTR documents list (User
+  Story 3) now branches by document Type instead of always opening the same simple popup. Type =
+  "PO" keeps the simple popup (File name/Valid from/Valid to) but adds a single-select Step field
+  pre-filled with the document's current Step; saving replaces the document's entire
+  `eutr_references` row-set (there can be more than one if Update 7's prefix match hit multiple
+  Steps) with exactly one row carrying the newly chosen `StepId`. Type = "Upload manual" no longer
+  opens the simple popup at all — Edit reopens the Update 11 Assign-condition popup in an edit mode
+  scoped to that single document (read-only file name at the top, no checkbox), pre-loaded with its
+  current Step and Conditions type/value groups; saving updates the existing `eutr_references` row's
+  `StepId` directly (no new row) and replaces the document's entire `eutr_reference_details` set
+  (delete-all-then-reinsert, not a diff/merge) — both choices (single-select Step; full-replace
+  Conditions) were confirmed directly with the user via two clarifying questions before drafting,
+  given the real data/UX impact of guessing wrong. Documents with no `eutr_references` (blank Type)
+  keep the unchanged simple-popup behavior. File name/Valid from/Valid to remain unreachable via
+  Edit for "Upload manual" documents in this update's scope (explicit user request only mentioned
+  Step/Conditions), noted as a deliberate, revisitable limitation. Reflected in a new Clarifications
+  Update 12 session, revised User Story 3 (narrative + 11 acceptance scenarios), revised
+  FR-009/FR-010, new FR-055 to FR-058, revised `EUTR Reference`/`EUTR Reference Detail` Key Entities,
+  new SC-030 to SC-033, new/revised Edge Cases, and new Assumptions notes. All checklist items
+  remain passing after this update.
+- 2026-07-10 `/speckit-clarify` session (Update 13): resolved 2 remaining ambiguities interactively
+  before planning — (1) when a Type = "PO" document links to multiple Steps, the Edit popup's Step
+  dropdown now deterministically pre-fills the Step tied to the `eutr_references` row with the
+  smallest `Id` (earliest-created), instead of an unspecified "first one found"; (2) the Assign
+  condition popup's "Conditions type" dropdown now disables types already used by another row in
+  the same popup, so a Save can never produce two rows of the same Conditions type (create or edit
+  mode) — closing a gap where duplicate/ambiguous condition groupings were unaddressed. Recorded
+  under spec.md `## Clarifications` as a new "Session 2026-07-10 (Update 13)" entry and reflected in
+  revised FR-051/FR-055, new User Story 3 scenario 7a, new User Story 6 scenarios 12a/12b, new Edge
+  Cases, and new SC-034. All checklist items remain passing after this session — no regressions.

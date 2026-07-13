@@ -287,6 +287,180 @@ Step name ở List PO (Screen1)
   `eutr_references`** liên quan — KHÔNG gọi thêm API xóa file thật trên SharePoint (file vẫn còn tồn
   tại trên SharePoint, chỉ không còn được hệ thống tham chiếu tới nữa).
 
+### Session 2026-07-10 (Update 11) — Screen2 ("Upload manual") trở thành upload file thật + popup
+"Assign condition" gán Step/Conditions qua `eutr_references`/`eutr_reference_details`
+
+- Change: Khu vực **"Drag and drop files to upload"** ở Screen2 (Type = "Upload manual") KHÔNG còn
+  là silent no-op (áp dụng từ Update 3) — được thay bằng khu vực **Upload File**, dùng lại đúng giao
+  diện đã xây cho Screen1 (Update 7: tiêu đề "Upload File", khung viền nét đứt chứa icon đám mây,
+  dòng chữ "Drop file here or click to browse", dòng phụ + hàng chip định dạng/kích thước, hỗ trợ cả
+  click chọn và kéo-thả) — **NHƯNG** khu vực này KHÔNG cần chọn PO trước (Screen2 không có List PO)
+  nên MUST luôn ở trạng thái khả dụng. Ràng buộc định dạng/kích thước file giữ nguyên như Screen1
+  (PDF, DOC/DOCX, XLS/XLSX, JPG/PNG, tối đa 10MB/file — FR-026); KHÔNG áp dụng validate prefix theo
+  `eutr_master_documents` (FR-032) cho luồng này, vì Step của file Upload manual do người dùng chọn
+  sau (qua popup Assign condition), không suy ra từ prefix tên file.
+- Change: Backend MUST upload file Screen2 lên SharePoint vào một thư mục **cố định**
+  `{SharePointEutrPath}/UploadManual` — tìm thư mục này nếu đã tồn tại, tự động tạo mới nếu chưa có
+  (dùng lại cơ chế tìm/tạo thư mục đã có ở FR-028, chỉ khác tên thư mục cố định thay cho tên theo mã
+  PO). Với mỗi file upload thành công, backend MUST tạo một bản ghi mới trong `eutr_documents` (File
+  name = tên file gốc, Valid from = ngày hiện tại, Valid to = ngày tối đa, FileId = id trả về từ
+  SharePoint) theo đúng cách tạo document ở FR-029 — **KHÔNG** ghi bất kỳ bản ghi `eutr_references`
+  nào tại bước upload này (khác Screen1/FR-033) vì Step/Conditions của file này chưa được xác định,
+  sẽ được gán riêng, sau đó, qua popup Assign condition.
+- Change: Bảng danh sách file ở Screen2 KHÔNG còn hiển thị dữ liệu mẫu tĩnh (File 1..File 8, dùng từ
+  Update 3) — được thay bằng dữ liệu thật: hệ thống MUST tải toàn bộ bản ghi `eutr_documents`
+  **chưa có bất kỳ bản ghi `eutr_references` nào liên kết** (điều kiện `NOT EXISTS` theo
+  `DocumentId`). Điều kiện này KHÔNG phân biệt document được tạo qua đường nào — bao gồm cả document
+  tạo qua khu Upload File Screen2 mới lẫn document tạo qua form Save nhập tay (File name, Valid
+  from, Valid to) chưa từng được gán Step/Conditions; KHÔNG bao gồm document đã có `eutr_references`
+  (ví dụ document tạo qua khu Upload Screen1/PO, luôn có `eutr_references` ngay khi upload — FR-033).
+  Mỗi dòng hiển thị checkbox chọn dòng, File name, và cột Action gồm icon **View** và **Delete** —
+  logic hai icon này MUST giống hệt logic View/Delete đã có cho từng file trong List PO (Screen1,
+  Update 10, FR-041 đến FR-044): View mở popup xem trước file thật (dùng `FileId`); Delete (sau xác
+  nhận) xóa document đó khỏi `eutr_documents` (và mọi `eutr_references` liên quan, nếu có — dùng lại
+  API xóa đơn `DELETE /api/eutr-documents/{id}`), KHÔNG xóa file thật trên SharePoint.
+- Change: Checkbox chọn dòng (đã có từ Update 3, trước đây chỉ tác động dữ liệu demo) giờ áp dụng
+  lên dữ liệu thật — người dùng MUST có thể chọn một hoặc nhiều dòng file. Nút **"Assign condition"**
+  KHÔNG còn là silent no-op — MUST ở trạng thái vô hiệu hóa khi chưa chọn dòng nào, khả dụng khi có
+  ít nhất một dòng được chọn; nhấn vào mở một **popup Assign condition** (tham khảo bố cục hình
+  `condition.png`): phần trên hiển thị danh sách read-only các file đang được chọn (mỗi dòng có dấu
+  tích + File name) cùng nút **"Add condition"**; phần dưới là một bảng 2 cột **"Conditions type"** |
+  **"Condition value"**. Dòng đầu tiên **"Step"** MUST luôn hiển thị cố định (không thể xóa khỏi
+  bảng, không đổi "Conditions type" của dòng này) với "Condition value" là dropdown chọn **một**
+  Step — Step MUST được chọn (bắt buộc) trước khi Save. Mỗi lần nhấn **"Add condition"**, hệ thống
+  MUST thêm một dòng mới vào bảng, cho phép chọn **"Conditions type"** ("PO" hoặc "Vendor") ở dòng
+  đó; khi chọn Conditions type, "Condition value" tương ứng MUST tải dữ liệu từ API tham chiếu dùng
+  chung `POST /api/dynamics/reference` theo `refType` tương ứng — **`refType = 15`**
+  (`RSVNEutrPurchOrders`) nếu Conditions type = "PO", **`refType = 14`** (`VendorsV3`) nếu Conditions
+  type = "Vendor" — và cho phép chọn **nhiều** giá trị (multi-select). Mỗi dòng Conditions type đã
+  thêm (khác dòng Step) MUST có cách xóa dòng đó khỏi bảng trước khi Save.
+- Change: Nút Save trong popup Assign condition MUST bị chặn (báo lỗi, không lưu gì) nếu **thiếu một
+  trong hai điều kiện**: (1) Step chưa được chọn; (2) chưa có **bất kỳ** dòng Conditions type nào
+  được thêm (qua "Add condition") với ít nhất một Condition value đã chọn — tức người dùng **MUST**
+  thêm tối thiểu **một** dòng Conditions type (PO hoặc Vendor, có ít nhất 1 giá trị) mới được Save;
+  chỉ chọn Step mà không thêm dòng Conditions type nào (hoặc thêm dòng nhưng chưa chọn giá trị nào)
+  MUST bị chặn kèm thông báo lỗi rõ ràng, không tạo bản ghi nào. *(Sửa lại — trước đây cho phép Save
+  chỉ với Step, không bắt buộc có Conditions type.)*
+- Change: Khi Step đã chọn VÀ có ít nhất một dòng Conditions type hợp lệ, nhấn **Save** MUST, với
+  **mỗi** file đang được chọn: (a) tạo một bản ghi mới trong `eutr_references` với `DocumentId` =
+  Id document đó, `StepId` = Step đã chọn trong popup, `RefType` = giá trị "Upload manual" của
+  `TAKE_FROM_OPTIONS` (`= 1`), `RefValue` = `null` (không có giá trị đơn lẻ nào cần lưu ở cấp
+  `eutr_references` cho luồng này); (b) với **mỗi** dòng Conditions type đã thêm và **mỗi** giá trị
+  đã chọn trong "Condition value" của dòng đó, tạo một bản ghi mới trong `eutr_reference_details` với
+  `RefId` = Id bản ghi `eutr_references` vừa tạo ở bước (a) cho file đó, `ConditionType` = giá trị
+  `refType` tương ứng Conditions type đã chọn (`15` cho "PO", `14` cho "Vendor"), `ConditionValue` =
+  giá trị đã chọn (mã/tên định danh của PO hoặc Vendor đó).
+- Change: Sau khi Save thành công, popup MUST đóng lại, và bảng danh sách file Screen2 MUST tự tải
+  lại — các file vừa được gán Step/Conditions (giờ đã có `eutr_references`) MUST biến mất khỏi bảng
+  này (vì không còn thỏa điều kiện `NOT EXISTS`).
+- Change: Cột **Conditions** trên danh sách EUTR documents chính (User Story 1) — trước đây luôn
+  trống với mọi dòng (FR-003/FR-036) — MUST hiển thị dữ liệu thật cho document có Type =
+  "Upload manual" (`RefType = 1`): tra cứu các bản ghi `eutr_reference_details` (qua `RefId` trỏ tới
+  các bản ghi `eutr_references` của document đó), nhóm theo `ConditionType`, hiển thị mỗi nhóm dạng
+  `"{Nhãn Conditions type}: {giá trị 1}, {giá trị 2}, ..."` (đối chiếu hình `view.png`: "Vendor: C001,
+  C002.." / "PO: PO1, PO2.."), mỗi nhóm một dòng/chip. Document có Type = "PO" (`RefType = 0`) hoặc
+  không có bản ghi `eutr_reference_details` nào tiếp tục hiển thị cột này ở trạng thái trống — không
+  đổi so với FR-003/FR-036.
+- Q: `ConditionType` (kiểu `BIGINT` trong `eutr_reference_details`) lưu giá trị gì để phân biệt "PO"
+  và "Vendor"? → A: Lưu trực tiếp giá trị **`refType`** đã dùng để tải dữ liệu cho "Condition value"
+  tương ứng (`15` = "PO", `14` = "Vendor") — tái sử dụng đúng số đã có ở API tham chiếu dùng chung,
+  không định nghĩa thêm một bảng mapping "Conditions type" riêng; nhãn hiển thị ("PO"/"Vendor") suy
+  ra từ danh sách "Conditions type" hiển thị trong dropdown ở popup (xem Assumptions).
+- Q: Danh sách "Conditions type" ở popup hiện có 2 lựa chọn (PO, Vendor theo đúng yêu cầu) — có mở
+  rộng thêm loại nào khác không? → A: **Không** trong phạm vi feature này — chỉ "PO" (`refType=15`)
+  và "Vendor" (`refType=14`); danh sách này nên được khai báo dạng hằng số có thể mở rộng ở một tính
+  năng sau (thêm entry ứng với `refType` D365 khác), không giới hạn cứng khó mở rộng trong code.
+- Q: Danh sách file "chưa gán Step/Conditions" ở Screen2 có bao gồm document tạo qua nút Upload ở
+  Screen1 (Type = PO) hoặc qua form Save nhập tay không? → A: **Có, nếu chưa có bất kỳ bản ghi
+  `eutr_references` nào** — điều kiện lọc chỉ dựa vào việc document đã có `eutr_references` hay
+  chưa, không phân biệt document đó tạo qua đường nào. Trong thực tế, document tạo qua Upload
+  Screen1 luôn có `eutr_references` ngay khi tạo (FR-033) nên hầu như không xuất hiện ở danh sách
+  này; document tạo qua Save nhập tay hoặc Upload Screen2 (Update 11) thường xuất hiện cho tới khi
+  được gán Step/Conditions.
+- Q: Sau khi Save trong popup Assign condition, người dùng có thể sửa/gỡ Step/Conditions đã gán cho
+  một file (gán lại) không? → A: *(Superseded by Update 12 — xem Session 2026-07-10 (Update 12) bên
+  dưới)* **Không** trong phạm vi feature này tại thời điểm Update 11 — popup Assign condition chỉ hỗ
+  trợ **tạo mới** liên kết Step/Conditions cho file chưa được gán (file đã có `eutr_references`
+  không còn xuất hiện trong danh sách để chọn lại). **Kể từ Update 12**, chức năng Edit trên danh
+  sách chính (User Story 3) MỞ LẠI popup này ở **chế độ sửa** cho document Type = "Upload manual" để
+  sửa Step/Conditions đã gán — xem FR-056 đến FR-058.
+- Q: Nhấn Save khi chưa chọn Step, hoặc đã chọn Step nhưng chưa thêm dòng Conditions type nào (hoặc
+  đã thêm dòng nhưng chưa chọn Condition value), hệ thống xử lý thế nào? → A: **Chặn Save cả hai
+  trường hợp**, kèm thông báo lỗi rõ ràng, không tạo bản ghi `eutr_references`/`eutr_reference_details`
+  nào. Step vẫn là điều kiện bắt buộc như đã chốt ban đầu; bổ sung thêm điều kiện bắt buộc thứ hai:
+  popup Assign condition MUST có **ít nhất một** dòng Conditions type với ít nhất một Condition
+  value đã chọn — không còn cho phép Save chỉ với Step mà không có Conditions type nào (khác quyết
+  định ban đầu ở Update 11).
+
+### Session 2026-07-10 (Update 12) — Edit (User Story 3) rẽ nhánh theo Type: PO thêm sửa Step,
+Upload manual mở lại popup Assign condition để sửa Step/Conditions
+
+- Change: Chức năng **Edit** trên danh sách EUTR documents chính (User Story 3) KHÔNG còn dùng một
+  popup duy nhất cho mọi document — hành vi Edit MUST rẽ nhánh theo **Type** (`RefType` suy ra từ
+  `eutr_references`, xem FR-034) của document đang sửa:
+  - **Type = "PO"** (`RefType = 0`): tiếp tục mở popup Edit hiện có (File name, Valid from, Valid
+    to), **bổ sung thêm** một trường **Step** (dropdown chọn **một** Step, single-select), hiển thị
+    giá trị Step hiện tại của document (nếu document đang liên kết nhiều Step do prefix khớp nhiều
+    Step ở Update 7, dropdown hiển thị/chọn được đúng một trong số đó tại một thời điểm). Khi Save,
+    hệ thống MUST cập nhật lại liên kết Step của document đó thành **đúng một** Step đã chọn — nếu
+    document trước đó có nhiều bản ghi `eutr_references` (nhiều `StepId` khác nhau, cùng
+    `DocumentId`/`RefType=0`/`RefValue`), Save MUST thay thế toàn bộ các bản ghi đó bằng **một** bản
+    ghi duy nhất mang `StepId` mới đã chọn (giữ nguyên `RefValue`/mã PO cũ).
+  - **Type = "Upload manual"** (`RefType = 1`): KHÔNG mở popup Edit đơn giản (File name/Valid from/
+    Valid to) — thay vào đó, hệ thống MUST mở lại **popup Assign condition** (đã xây ở Update 11) ở
+    **chế độ sửa (edit mode)**, chỉ cho **đúng một** document đang được sửa (phần danh sách file ở
+    đầu popup hiển thị read-only tên file đó, không có checkbox chọn vì chỉ có một file). Popup
+    MUST được nạp sẵn: dòng **Step** hiển thị đúng Step hiện tại của document (từ `eutr_references.
+    StepId`); các dòng **Conditions type/value** hiển thị đúng các nhóm hiện có, tra cứu từ
+    `eutr_reference_details` (nhóm theo `ConditionType`, mỗi nhóm thành một dòng Conditions type với
+    Condition value là tập giá trị hiện có). Người dùng có thể đổi Step, thêm dòng Conditions type
+    mới (qua "Add condition"), sửa/thêm/bớt giá trị trong Condition value của các dòng hiện có, hoặc
+    xóa hẳn một dòng Conditions type — áp dụng đúng cùng validate bắt buộc đã có ở Update 11 (Step
+    phải được chọn; phải có ít nhất một dòng Conditions type với ít nhất một Condition value).
+  - Document KHÔNG có bất kỳ bản ghi `eutr_references` nào (Type hiển thị trống — ví dụ tạo qua form
+    Save nhập tay, chưa từng qua Upload hay Assign condition) tiếp tục mở popup Edit đơn giản (File
+    name, Valid from, Valid to) như hiện tại, KHÔNG có thêm trường Step nào — hành vi này KHÔNG đổi,
+    ngoài phạm vi update này.
+- Change: Khi Save popup Assign condition ở **chế độ sửa** (Type = Upload manual) thành công, hệ
+  thống MUST: (a) cập nhật `StepId` của bản ghi `eutr_references` hiện có của document đó thành Step
+  mới đã chọn (không tạo bản ghi `eutr_references` mới — vẫn đúng một bản ghi cho document này, giữ
+  nguyên `DocumentId`/`RefType=1`/`RefValue=null`); (b) **xóa toàn bộ** các bản ghi
+  `eutr_reference_details` cũ có `RefId` = Id bản ghi `eutr_references` đó, rồi **ghi lại từ đầu**
+  đúng bộ Conditions type/value hiện có trên popup tại thời điểm Save (một bản ghi cho mỗi giá trị
+  đã chọn ở mỗi dòng Conditions type) — cách xử lý "xóa hết rồi ghi lại" (replace toàn bộ), KHÔNG so
+  khớp/giữ lại Id của các bản ghi `eutr_reference_details` cũ.
+- Q: Với document Type = "PO", trường Step mới thêm khi Edit là chọn một Step hay nhiều Step? → A:
+  **Chọn một Step (single-select)** — giống cách chọn Step trong popup Assign condition; nếu document
+  trước đó có nhiều Step liên kết (do khớp nhiều prefix ở Update 7), Save sẽ **thu về đúng một** Step
+  đã chọn trong popup Edit, thay thế toàn bộ tập Step cũ.
+- Q: Khi sửa Conditions cho document Type = "Upload manual", hệ thống nên cập nhật từng dòng
+  `eutr_reference_details` đã có (giữ nguyên Id, chỉ sửa phần thay đổi) hay xóa hết rồi ghi lại toàn
+  bộ? → A: **Xóa hết rồi ghi lại toàn bộ (replace)** — đơn giản, không cần logic so khớp dòng cũ/mới;
+  Id của các bản ghi `eutr_reference_details` không được giữ nguyên qua các lần sửa.
+- Q: Popup Assign condition ở chế độ sửa cho một document duy nhất có cần hiển thị checkbox chọn
+  file ở phần danh sách trên cùng như chế độ tạo mới (nhiều file) không? → A: **Không** — vì chỉ có
+  đúng một document đang được sửa, phần danh sách trên cùng chỉ hiển thị read-only tên file đó (bỏ
+  checkbox, vì không có gì để chọn/bỏ chọn).
+- Q: Chế độ sửa của popup Assign condition có cho phép đồng thời sửa File name/Valid from/Valid to
+  của document Type = "Upload manual" không? → A: **Không** trong phạm vi update này — yêu cầu chỉ
+  đề cập sửa Step và Conditions; File name/Valid from/Valid to của document Type = "Upload manual"
+  tạm thời KHÔNG có đường sửa nào qua Edit (khác với trước Update 12, khi Edit luôn mở popup đơn
+  giản có thể sửa 3 trường này cho mọi document) — bổ sung khả năng sửa 3 trường này cho Type =
+  "Upload manual" sẽ là một tính năng sau nếu cần.
+
+### Session 2026-07-10 (Update 13) — `/speckit-clarify`
+
+- Q: Với document Type = "PO" liên kết nhiều Step (khớp nhiều prefix, Update 7), khi mở popup Edit
+  (FR-055), dropdown Step hiển thị đúng Step nào làm giá trị hiện tại? → A: **Step ứng với bản ghi
+  `eutr_references` có `Id` nhỏ nhất** (bản ghi được tạo sớm nhất trong số các bản ghi cùng
+  `DocumentId`) — quy tắc xác định (deterministic), không phụ thuộc thứ tự trả về ngẫu nhiên của
+  query.
+- Q: Trong popup Assign condition (cả chế độ tạo mới lẫn chế độ sửa), người dùng có thể thêm hai
+  dòng Conditions type cùng loại (ví dụ hai dòng "PO") trong cùng một lượt không? → A: **Không** —
+  dropdown "Conditions type" của mỗi dòng mới MUST tự loại bỏ (disable) các Conditions type đã được
+  chọn ở dòng khác trong cùng popup; mỗi Conditions type chỉ xuất hiện tối đa một dòng tại một thời
+  điểm. Xóa hoặc đổi Conditions type của một dòng sẽ giải phóng lại lựa chọn đó cho các dòng còn lại.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Xem danh sách EUTR documents (Priority: P1)
@@ -294,15 +468,19 @@ Step name ở List PO (Screen1)
 Người dùng vào mục **EUTR > EUTR documents** từ thanh điều hướng và thấy bảng liệt kê các
 document EUTR đã được thêm vào hệ thống. Bảng hiển thị File name, Step name, Conditions, Type, Valid from, Valid
 to, Created by, Created date và cột Action (Edit, Delete, View). Bảng `eutr_documents` chỉ lưu File
-name (Name), Valid from, Valid to, Created by, Created date; cột **Conditions** vẫn chưa có nguồn
-dữ liệu nên luôn hiển thị trống. **Kể từ Update 8**, cột **Step name** và **Type** KHÔNG còn luôn
-trống — hệ thống tra cứu bảng `eutr_references` theo `DocumentId` của mỗi document (JOIN `StepId`
-với `eutr_steps.Name` để lấy Step name; lấy nhãn `TAKE_FROM_OPTIONS` ứng với `RefType` để hiển thị
-Type); document chưa có bản ghi `eutr_references` nào (chưa từng upload file) vẫn hiển thị hai cột
-này ở trạng thái trống. Người dùng có thể chuyển trang khi danh sách dài. **Kể từ Update 10**, icon
-**View** trên cột Action không còn là placeholder — nhấn vào mở popup xem trước file thật của
-document đó (nếu document có `FileId`); document không có `FileId` (tạo tay qua Save, chưa qua
-Upload) hiển thị icon View ở trạng thái vô hiệu hóa kèm tooltip "No file to view".
+name (Name), Valid from, Valid to, Created by, Created date; cột **Conditions** trước Update 11
+chưa có nguồn dữ liệu nên luôn hiển thị trống. **Kể từ Update 8**, cột **Step name** và **Type**
+KHÔNG còn luôn trống — hệ thống tra cứu bảng `eutr_references` theo `DocumentId` của mỗi document
+(JOIN `StepId` với `eutr_steps.Name` để lấy Step name; lấy nhãn `TAKE_FROM_OPTIONS` ứng với `RefType`
+để hiển thị Type); document chưa có bản ghi `eutr_references` nào (chưa từng upload file) vẫn hiển
+thị hai cột này ở trạng thái trống. **Kể từ Update 11**, cột **Conditions** cũng không còn luôn
+trống — document có Type = "Upload manual" (gán Step/Conditions qua popup Assign condition, xem
+User Story 6) hiển thị dữ liệu thật tra cứu từ `eutr_reference_details` (nhóm theo Conditions type,
+ví dụ "PO: PO1, PO2.."); document Type = "PO" hoặc chưa có bản ghi `eutr_reference_details` nào tiếp
+tục hiển thị cột này ở trạng thái trống. Người dùng có thể chuyển trang khi danh sách dài. **Kể từ
+Update 10**, icon **View** trên cột Action không còn là placeholder — nhấn vào mở popup xem trước
+file thật của document đó (nếu document có `FileId`); document không có `FileId` (tạo tay qua Save,
+chưa qua Upload) hiển thị icon View ở trạng thái vô hiệu hóa kèm tooltip "No file to view".
 
 **Why this priority**: Đây là giá trị cốt lõi — xem danh sách document hiện có là thao tác đầu
 tiên người dùng cần trước khi thêm mới, sửa, xóa hay xem chi tiết bất kỳ document nào.
@@ -329,6 +507,13 @@ cột Conditions hiển thị trống, cột Step name/Type hiển thị đúng 
    biệt (cùng `DocumentId`, cùng `RefType`), **When** bảng hiển thị dòng đó, **Then** cột Step name
    hiển thị đầy đủ tất cả Step name tương ứng (không chỉ một) và cột Type vẫn hiển thị đúng một nhãn
    duy nhất (vì mọi bản ghi cùng `RefType`).
+2c. **(Update 11) Given** một document có Type = "Upload manual" và đã được gán một hoặc nhiều
+   Conditions type/value qua popup Assign condition (User Story 6), **When** bảng hiển thị dòng đó,
+   **Then** cột Conditions hiển thị đúng các nhóm "{Nhãn Conditions type}: {giá trị 1}, {giá trị 2},
+   ..." tương ứng (ví dụ "PO: PO1, PO2"), tra cứu từ `eutr_reference_details`.
+2d. **(Update 11) Given** một document có Type = "Upload manual" nhưng chỉ được gán Step (không có
+   dòng Conditions type nào), **When** bảng hiển thị dòng đó, **Then** cột Conditions vẫn hiển thị
+   trống (không có `eutr_reference_details` nào để hiển thị).
 3. **Given** danh sách vượt quá một trang, **When** chọn số trang khác, **Then** bảng hiển thị các
    bản ghi của trang đó.
 4. **Given** danh sách document rỗng, **When** mở màn hình, **Then** bảng hiển thị trạng thái
@@ -400,15 +585,28 @@ dụng hằng số `TAKE_FROM_OPTIONS` có sẵn trong codebase — xem Assumpti
   thêm một bản ghi vào `eutr_references` cho **mỗi** Step ứng với Prefix đã khớp (một file thường
   khớp 1 Step, nhưng có thể khớp nhiều Step nếu Prefix trùng giữa nhiều Step — khi đó ghi nhiều bản
   ghi, cùng `DocumentId`, khác `StepId`) và với PO đang chọn — xem FR-024 đến FR-033.
-- Khi chọn Type = **"Upload manual"**: hiển thị layout Screen2 — một khu vực **"Drag and drop files to
-  upload"** ở trên cùng, nút **"Assign condition"**, và bên dưới là bảng danh sách file (checkbox
-  chọn dòng, File name, Action: View/Delete) hiển thị **dữ liệu mẫu tĩnh (demo)** giống thiết kế
-  (File 1..File 8).
+- Khi chọn Type = **"Upload manual"**: hiển thị layout Screen2. **Trước Update 11**, Screen2 gồm một
+  khu vực "Drag and drop files to upload" tĩnh, nút "Assign condition", và bảng danh sách file demo
+  (File 1..File 8) — toàn bộ chỉ mang tính hiển thị. **Kể từ Update 11** (xem User Story 6 để biết
+  đầy đủ luồng), Screen2 trở thành chức năng thật: (a) khu vực upload được thay bằng **Upload File**
+  dùng lại đúng giao diện Screen1 (Update 7) nhưng luôn khả dụng (không cần chọn PO trước) — file
+  hợp lệ (định dạng/kích thước như FR-026, KHÔNG validate prefix) được upload lên SharePoint vào thư
+  mục cố định `{SharePointEutrPath}/UploadManual` (tự tạo nếu chưa có) và tạo một document mới trong
+  `eutr_documents` cho mỗi file, chưa có Step/Conditions nào; (b) bảng danh sách file bên dưới tải
+  dữ liệu thật — mọi `eutr_documents` chưa có bản ghi `eutr_references` nào (chưa được gán Step/
+  Conditions), kèm checkbox chọn dòng và icon **View**/**Delete** riêng hoạt động giống hệt File
+  name trong List PO (Update 10); (c) nút **"Assign condition"** chỉ khả dụng khi đã chọn ít nhất
+  một dòng, mở popup cho phép chọn Step (bắt buộc) và thêm các dòng Conditions type (PO/Vendor) với
+  Condition value multi-select (tải từ `POST /api/dynamics/reference`, `refType=15` cho PO,
+  `refType=14` cho Vendor); Save ghi một bản ghi `eutr_references` (RefType = "Upload manual") cho
+  mỗi file đã chọn cùng các bản ghi `eutr_reference_details` tương ứng, sau đó file đó biến mất khỏi
+  bảng "chưa gán" — xem FR-046 đến FR-054.
 - Mọi tương tác trong các khu vực mới này — **NGOẠI TRỪ nút Upload thật ở Screen1 (Type = PO, xem
-  Update 6) và icon View/Delete theo từng file trong cột File name của List PO (Update 10, xem
-  trên)** — (kéo-thả file ở Screen2, nhấn Assign condition, nhấn View/Delete/checkbox trong bảng
-  demo) **KHÔNG thực hiện hành động thật nào** (không tải file, không gọi API, không điều hướng) —
-  silent no-op, cùng mẫu với icon View ở User Story 5 (trước Update 10).
+  Update 6), icon View/Delete theo từng file trong cột File name của List PO (Update 10, xem trên),
+  và toàn bộ khu vực Screen2 (Upload File, bảng danh sách file, checkbox, Assign condition, View/
+  Delete — kể từ Update 11, xem trên)** — **KHÔNG thực hiện hành động thật nào** (không tải file,
+  không gọi API, không điều hướng) — silent no-op, cùng mẫu với icon View ở User Story 5 (trước
+  Update 10). Kể từ Update 11, KHÔNG còn phần nào ở Screen2 thuộc diện silent no-op này.
 - Trường Type và khu vực List PO (cột PO name/File name, ô tìm kiếm PO) và Manual upload **KHÔNG
   được lưu vào bảng `eutr_documents`** (bảng không có cột lưu Type hay liên kết PO ở phạm vi này) —
   việc Save trên form chính vẫn hoạt động như hiện tại, chỉ lưu một document duy nhất dựa trên File
@@ -423,8 +621,9 @@ mới, danh sách chỉ có giá trị tra cứu tĩnh.
 phải popup), nhập File name và valid from/to, lưu, và xác nhận document mới xuất hiện trong bảng
 với đúng file name, valid from, valid to, người tạo và ngày tạo; riêng biệt, xác nhận nhấn Back
 quay về danh sách mà không tạo bản ghi. Đồng thời, xác nhận trường Type hiển thị với 2 lựa chọn
-PO/Manual, chuyển đổi đúng giữa layout Screen1/Screen2 theo thiết kế, hiển thị dữ liệu mẫu tương
-ứng, và mọi tương tác trong khu vực Screen2 (Manual) không gây ra hành động thật nào. Riêng cột PO
+PO/Manual, chuyển đổi đúng giữa layout Screen1/Screen2 theo thiết kế, hiển thị dữ liệu tương ứng —
+xem User Story 6 để kiểm tra chi tiết luồng Upload File/Assign condition thật ở Screen2 (Update 11).
+Riêng cột PO
 name (Type = PO), xác nhận danh sách tải từ API thật và ô tìm kiếm PO gọi lại API với từ khóa nhập
 vào (kiểm tra tab Network — có request `refType=15` mới phát sinh khi gõ từ khóa), không chỉ lọc
 trên dữ liệu đã tải. Riêng khu vực Upload ở Screen1 (Update 6/7): xác nhận khu vực bị vô hiệu hóa khi chưa
@@ -553,37 +752,87 @@ các file hợp lệ khác vẫn được upload.
    nhưng bước ghi `eutr_references` thất bại (lỗi hệ thống/DB), **When** hệ thống trả kết quả,
    **Then** file đó MUST được báo là thất bại trong thông báo kết quả (không tính là thành công dù
    đã có document), theo đúng ngữ nghĩa per-file đã có ở Update 6 (Update 7, FR-033).
-9. **Given** đang ở trang Add, **When** chọn Type = "Upload manual", **Then** hệ thống hiển thị khu vực
-   "Drag and drop files to upload" ở trên cùng, nút "Assign condition", và bảng danh sách file
-   (checkbox, File name, Action: View/Delete) với dữ liệu mẫu tĩnh giống thiết kế.
-10. **Given** đang ở layout Screen2 (Manual), **When** người dùng kéo-thả file vào khu upload, nhấn
-    Assign condition, hoặc nhấn View/Delete/checkbox trong bảng demo, **Then** hệ thống KHÔNG thực
-    hiện hành động thật nào (không tải file, không gọi API, không điều hướng); Save trên form chính
-    vẫn chỉ lưu File name, Valid from, Valid to như hiện tại.
+9. **(Superseded by Update 11 — xem User Story 6) Given** đang ở trang Add, **When** chọn Type =
+   "Upload manual", **Then** hệ thống hiển thị khu vực **Upload File** (thay cho "Drag and drop
+   files to upload" tĩnh trước Update 11) ở trên cùng, nút "Assign condition", và bảng danh sách
+   file (checkbox, File name, Action: View/Delete) với **dữ liệu thật** từ `eutr_documents` (điều
+   kiện chưa có `eutr_references`) — không còn dữ liệu mẫu tĩnh.
+10. **(Superseded by Update 11 — xem User Story 6) Given** đang ở layout Screen2 (Manual), **When**
+    người dùng dùng khu Upload File, chọn dòng file rồi nhấn Assign condition, hoặc nhấn View/Delete
+    trên một dòng, **Then** hệ thống thực hiện đúng hành động thật tương ứng (upload file thật, mở
+    popup Assign condition thật, xem/xóa file thật) — không còn silent no-op cho các thao tác này;
+    Save trên form chính (File name, Valid from, Valid to) vẫn hoạt động độc lập, không đổi.
 
 ---
 
 ### User Story 3 - Sửa thông tin document (Priority: P2)
 
-Người dùng nhấn **Edit** trên một dòng trong bảng. Hệ thống mở một **popup** cho phép chỉnh sửa
-File name, Valid from và Valid to. Sau khi lưu, thay đổi được phản ánh ngay trong bảng.
+Người dùng nhấn **Edit** trên một dòng trong bảng. **Trước Update 12**, hệ thống luôn mở một popup
+đơn giản cho phép chỉnh sửa File name, Valid from và Valid to, không phân biệt Type. **Kể từ Update
+12**, Edit rẽ nhánh theo **Type** của document đó: (a) **Type = "PO"** — vẫn mở popup đơn giản (File
+name, Valid from, Valid to), nhưng bổ sung thêm một trường **Step** (single-select, hiển thị Step
+hiện tại) — Save cập nhật liên kết Step của document thành đúng Step mới chọn (thay thế toàn bộ tập
+Step cũ nếu có nhiều); (b) **Type = "Upload manual"** — KHÔNG mở popup đơn giản, mà mở lại **popup
+Assign condition** (Update 11) ở chế độ sửa, chỉ cho document đó, nạp sẵn Step và các dòng Conditions
+type/value hiện có — cho phép đổi Step, thêm/sửa/xóa dòng Conditions type/value, Save ghi đè
+(`StepId` cập nhật trực tiếp; `eutr_reference_details` xóa hết và ghi lại toàn bộ); (c) document
+chưa có `eutr_references` nào (Type trống) tiếp tục mở popup đơn giản như trước, không có trường
+Step. Sau khi lưu (ở cả ba trường hợp), thay đổi được phản ánh ngay trong bảng.
 
-**Why this priority**: Sửa tên hiển thị hoặc hiệu lực của document là nhu cầu thường gặp nhưng
-đứng sau xem và thêm mới.
+**Why this priority**: Sửa tên hiển thị, hiệu lực, hoặc (kể từ Update 12) Step/Conditions của
+document hiện có là nhu cầu thường gặp nhưng đứng sau xem và thêm mới.
 
-**Independent Test**: Nhấn Edit trên một dòng, đổi File name và/hoặc Valid from/to trong popup,
-lưu, và xác nhận giá trị mới hiển thị trong bảng.
+**Independent Test**: (1) Với document Type trống hoặc chưa gán gì: nhấn Edit, đổi File name và/
+hoặc Valid from/to trong popup đơn giản, lưu, xác nhận giá trị mới hiển thị trong bảng. (2) Với
+document Type = "PO": nhấn Edit, xác nhận popup có thêm trường Step hiển thị đúng Step hiện tại,
+đổi sang Step khác rồi lưu, xác nhận cột Step name trên bảng cập nhật đúng thành Step mới (và không
+còn Step cũ nếu trước đó có nhiều). (3) Với document Type = "Upload manual": nhấn Edit, xác nhận mở
+popup Assign condition (không phải popup đơn giản) với Step/Conditions hiện có đã được nạp sẵn, đổi
+Step và/hoặc thêm một dòng Conditions type mới rồi lưu, xác nhận cột Step name và Conditions trên
+bảng cập nhật đúng theo thay đổi.
 
 **Acceptance Scenarios**:
 
-1. **Given** một document tồn tại, **When** nhấn Edit, **Then** một popup mở ra cho phép chỉnh sửa
-   File name, Valid from, Valid to.
-2. **Given** popup Edit đang mở, **When** đổi File name và/hoặc Valid from/to rồi lưu, **Then**
-   bảng hiển thị giá trị đã cập nhật và popup đóng lại.
-3. **Given** popup Edit đang mở, **When** để trống File name rồi lưu, **Then** hệ thống báo lỗi và
-   không lưu.
-4. **Given** popup Edit đang mở, **When** nhấn Cancel, **Then** popup đóng lại và không có thay
-   đổi nào được lưu.
+1. **Given** một document chưa có `eutr_references` nào (Type trống), **When** nhấn Edit, **Then**
+   một popup đơn giản mở ra cho phép chỉnh sửa File name, Valid from, Valid to — KHÔNG có trường
+   Step.
+2. **Given** popup Edit đơn giản đang mở, **When** đổi File name và/hoặc Valid from/to rồi lưu,
+   **Then** bảng hiển thị giá trị đã cập nhật và popup đóng lại.
+3. **Given** popup Edit đơn giản đang mở, **When** để trống File name rồi lưu, **Then** hệ thống
+   báo lỗi và không lưu.
+4. **Given** popup Edit đơn giản đang mở, **When** nhấn Cancel, **Then** popup đóng lại và không có
+   thay đổi nào được lưu.
+5. **(Update 12) Given** một document có Type = "PO", **When** nhấn Edit, **Then** popup mở ra với
+   File name, Valid from, Valid to như cũ, cộng thêm một trường **Step** (dropdown single-select)
+   hiển thị đúng Step hiện tại của document đó.
+6. **(Update 12) Given** popup Edit của một document Type = "PO" đang mở, **When** đổi trường Step
+   sang một Step khác rồi lưu, **Then** hệ thống cập nhật liên kết Step của document đó thành đúng
+   Step mới chọn (thay thế `eutr_references` cũ), và bảng danh sách chính hiển thị đúng Step name
+   mới ở cột Step name.
+7. **(Update 12) Given** một document Type = "PO" trước đó liên kết với nhiều Step (do khớp nhiều
+   prefix ở Update 7), **When** mở popup Edit và lưu với một Step khác đã chọn trong dropdown, **Then**
+   hệ thống thay thế toàn bộ các Step cũ bằng đúng một Step mới đã chọn — cột Step name trên bảng
+   chính chỉ còn hiển thị đúng một Step sau khi lưu.
+7a. **(Update 13) Given** một document Type = "PO" liên kết với nhiều Step (nhiều bản ghi
+   `eutr_references` cùng `DocumentId`), **When** mở popup Edit, **Then** dropdown Step hiển thị giá
+   trị hiện tại đúng là Step ứng với bản ghi `eutr_references` có `Id` nhỏ nhất trong số các bản ghi
+   đó (bản ghi tạo sớm nhất) — kết quả này không đổi giữa các lần mở popup (deterministic).
+8. **(Update 12) Given** một document có Type = "Upload manual", **When** nhấn Edit, **Then** hệ
+   thống mở popup **Assign condition** ở chế độ sửa (KHÔNG mở popup đơn giản) — phần danh sách trên
+   cùng hiển thị read-only đúng tên file của document đó (không có checkbox); dòng Step và các dòng
+   Conditions type/value hiển thị đúng dữ liệu hiện có của document đó.
+9. **(Update 12) Given** popup Assign condition (chế độ sửa) đang mở cho một document Type = "Upload
+   manual", **When** đổi Step, thêm/sửa/xóa một hoặc nhiều dòng Conditions type/value rồi nhấn Save,
+   **Then** hệ thống cập nhật `StepId` của bản ghi `eutr_references` hiện có (không tạo bản ghi
+   mới), xóa toàn bộ `eutr_reference_details` cũ và ghi lại đúng bộ Conditions type/value hiện có
+   trên popup tại thời điểm Save; bảng danh sách chính hiển thị đúng Step name và Conditions mới.
+10. **(Update 12) Given** popup Assign condition (chế độ sửa) đang mở, **When** người dùng bỏ chọn
+    Step hoặc xóa hết mọi dòng Conditions type/value rồi nhấn Save, **Then** hệ thống báo lỗi (cùng
+    quy tắc bắt buộc đã có ở FR-052) và KHÔNG lưu thay đổi nào — dữ liệu Step/Conditions cũ của
+    document đó giữ nguyên.
+11. **(Update 12) Given** popup Assign condition (chế độ sửa) đang mở, **When** người dùng đóng popup
+    mà không nhấn Save, **Then** popup đóng lại và KHÔNG có thay đổi nào được lưu — Step/Conditions
+    của document đó giữ nguyên như trước khi mở popup.
 
 ---
 
@@ -660,6 +909,115 @@ hiển thị icon View ở trạng thái vô hiệu hóa.
 
 ---
 
+### User Story 6 - Upload file thật và gán Step/Conditions cho Type "Upload manual" (Update 11) (Priority: P2)
+
+Trên trang Add, khi Type = **"Upload manual"** (Screen2), người dùng dùng khu vực **Upload File**
+(cùng giao diện Screen1, Update 7, nhưng luôn khả dụng — không cần chọn PO trước) để chọn hoặc
+kéo-thả một hoặc nhiều file. File hợp lệ (đúng định dạng PDF/DOC/DOCX/XLS/XLSX/JPG/PNG, tối đa
+10MB) được upload lên SharePoint vào thư mục cố định `UploadManual` (tự động tạo nếu chưa có) và
+tạo một document mới trong `eutr_documents` cho mỗi file — document này **chưa có** Step/Conditions
+nào gắn kèm. Bảng danh sách file dưới khu Upload MUST hiển thị mọi document trong `eutr_documents`
+chưa có bản ghi `eutr_references` nào (chưa được gán Step/Conditions), kèm checkbox chọn dòng và
+icon View/Delete cho mỗi dòng (logic giống hệt File name trong List PO ở Screen1, Update 10). Người
+dùng chọn một hoặc nhiều dòng rồi nhấn **Assign condition** để mở popup: chọn **Step** (bắt buộc),
+có thể nhấn **Add condition** để thêm các dòng Conditions type (PO/Vendor) với Condition value chọn
+nhiều giá trị tương ứng (tải từ API reference theo `refType`). Nhấn Save ghi Step/Conditions cho tất
+cả file đã chọn — mỗi file có một bản ghi `eutr_references` riêng (RefType = "Upload manual") cùng
+các bản ghi `eutr_reference_details` tương ứng cho mỗi Conditions type/giá trị đã chọn. Sau khi lưu,
+các file đó biến mất khỏi danh sách "chưa gán" và cột Conditions trên danh sách EUTR documents
+chính hiển thị đúng các Conditions type/giá trị đã gán.
+
+**Why this priority**: Hoàn thiện luồng "Upload manual" đã tồn tại ở dạng chỉ giao diện từ Update 3
+— cho phép người dùng thật sự upload và phân loại file theo Step/PO/Vendor, đứng sau các nghiệp vụ
+CRUD chính (User Story 1-4) nhưng cùng mức ưu tiên với User Story 5 (hoàn thiện View file thật).
+
+**Independent Test**: Mở trang Add, chọn Type = "Upload manual", upload một file hợp lệ qua khu
+Upload File, xác nhận file xuất hiện trong bảng danh sách "chưa gán" ngay sau khi upload; chọn file
+đó, nhấn Assign condition, chọn Step, thêm một dòng Conditions type = "PO" với 2 giá trị PO, nhấn
+Save; xác nhận file biến mất khỏi bảng "chưa gán", và trên danh sách EUTR documents chính, document
+đó hiển thị đúng Step name (Update 8, không đổi), Type = "Upload manual", và cột Conditions hiển
+thị "PO: {giá trị 1}, {giá trị 2}".
+
+**Acceptance Scenarios**:
+
+1. **Given** đang ở trang Add với Type = "Upload manual", **When** trang hiển thị, **Then** khu vực
+   trên cùng là **Upload File** (giống mẫu Screen1) — KHÔNG còn là khung "Drag and drop files to
+   upload" tĩnh — và khu vực này luôn khả dụng (không cần chọn PO trước, khác Screen1).
+2. **Given** khu Upload File ở Screen2 đang hiển thị, **When** người dùng click hoặc kéo-thả chọn
+   một file hợp lệ (đúng định dạng, ≤10MB), **Then** hệ thống upload file đó lên SharePoint vào thư
+   mục `{SharePointEutrPath}/UploadManual` (tạo thư mục này nếu chưa tồn tại) và tạo một document
+   mới trong `eutr_documents` (File name, Valid from = hôm nay, Valid to = ngày tối đa, FileId từ
+   SharePoint) — KHÔNG tạo bản ghi `eutr_references` nào ở bước này.
+3. **Given** người dùng chọn một file sai định dạng hoặc vượt 10MB ở khu Upload File Screen2,
+   **When** xác nhận chọn file, **Then** hệ thống loại file đó kèm thông báo lỗi, không tạo
+   document, không chặn các file hợp lệ khác trong cùng lượt (giống FR-026).
+4. **Given** vừa upload thành công một hoặc nhiều file qua khu Upload File Screen2, **When** bảng
+   danh sách file bên dưới hiển thị, **Then** các file vừa upload xuất hiện ngay trong bảng (không
+   cần tải lại trang).
+5. **Given** bảng danh sách file ở Screen2 đang hiển thị, **When** hệ thống tải dữ liệu, **Then**
+   bảng MUST hiển thị mọi document trong `eutr_documents` chưa có bản ghi `eutr_references` nào
+   liên kết — bất kể document đó tạo qua khu Upload Screen2 hay qua form Save nhập tay; document đã
+   có `eutr_references` (ví dụ tạo qua Upload Screen1) KHÔNG xuất hiện trong bảng này.
+6. **Given** một dòng file trong bảng Screen2, **When** nhấn icon View, **Then** hệ thống mở popup
+   xem trước file thật đó, dùng đúng cơ chế đã có ở FR-041/FR-042 (`get-file-by-idref`).
+7. **Given** một dòng file trong bảng Screen2, **When** nhấn icon Delete và xác nhận, **Then** hệ
+   thống xóa document đó khỏi `eutr_documents` (và mọi `eutr_references` liên quan nếu có) và file
+   biến mất khỏi bảng, KHÔNG xóa file thật trên SharePoint — giống hệt hành vi Delete ở List PO
+   (FR-044).
+8. **Given** đang ở bảng danh sách file Screen2 và chưa chọn dòng nào, **Then** nút "Assign
+   condition" ở trạng thái vô hiệu hóa.
+9. **Given** đã chọn (checkbox) một hoặc nhiều dòng file, **Then** nút "Assign condition" chuyển
+   sang khả dụng; nhấn vào mở popup Assign condition hiển thị đúng danh sách các file đang được chọn
+   (đối chiếu hình `condition.png`).
+10. **Given** popup Assign condition đang mở, **When** popup hiển thị, **Then** dòng đầu tiên của
+    bảng Conditions type/Condition value luôn là **"Step"** (không thể xóa dòng này, không đổi được
+    Conditions type của dòng này) với một dropdown chọn một Step.
+11. **Given** popup Assign condition đang mở và chưa chọn Step, **When** nhấn Save, **Then** hệ
+    thống báo lỗi yêu cầu chọn Step và KHÔNG lưu bất kỳ bản ghi nào.
+11a. **Given** popup Assign condition đang mở, Step đã chọn nhưng chưa thêm dòng Conditions type
+    nào (hoặc đã thêm dòng nhưng chưa chọn Condition value nào ở dòng đó), **When** nhấn Save,
+    **Then** hệ thống báo lỗi yêu cầu thêm ít nhất một Conditions type kèm giá trị, và KHÔNG lưu bất
+    kỳ bản ghi nào (không tạo `eutr_references` lẫn `eutr_reference_details`).
+12. **Given** popup Assign condition đang mở, **When** nhấn "Add condition", **Then** hệ thống thêm
+    một dòng mới vào bảng với ô "Conditions type" là dropdown ("PO", "Vendor") và ô "Condition
+    value" ban đầu trống/vô hiệu hóa tới khi chọn Conditions type.
+12a. **(Update 13) Given** popup Assign condition đang có một dòng với Conditions type = "PO",
+    **When** nhấn "Add condition" để thêm dòng mới, **Then** dropdown Conditions type của dòng mới
+    hiển thị "PO" ở trạng thái vô hiệu hóa (không chọn được) — chỉ "Vendor" khả dụng để chọn.
+12b. **(Update 13) Given** hai dòng Conditions type đang tồn tại (một "PO", một "Vendor"), **When**
+    người dùng xóa dòng "PO", **Then** "PO" trở lại khả dụng trong dropdown của các dòng còn lại
+    (kể cả dòng đang thêm mới sau đó).
+13. **Given** một dòng Conditions type mới được chọn là "PO", **When** ô Condition value được mở,
+    **Then** hệ thống tải danh sách giá trị bằng cách gọi `POST /api/dynamics/reference` với
+    `refType = 15`, cho phép chọn nhiều giá trị PO.
+14. **Given** một dòng Conditions type mới được chọn là "Vendor", **When** ô Condition value được
+    mở, **Then** hệ thống tải danh sách giá trị bằng cách gọi `POST /api/dynamics/reference` với
+    `refType = 14`, cho phép chọn nhiều giá trị Vendor.
+15. **Given** một dòng Conditions type đã thêm (khác dòng Step), **When** nhấn icon xóa dòng đó,
+    **Then** dòng đó bị loại khỏi bảng trước khi Save, không ảnh hưởng các dòng khác.
+16. **Given** popup Assign condition có Step đã chọn và một hoặc nhiều dòng Conditions type hợp lệ
+    (đã chọn ít nhất 1 Condition value mỗi dòng), **When** nhấn Save, **Then** với mỗi file đang
+    được chọn ban đầu, backend tạo đúng một bản ghi `eutr_references` (`DocumentId` = Id file đó,
+    `StepId` = Step đã chọn, `RefType` = 1, `RefValue` = null) và với mỗi (Conditions type, mỗi
+    Condition value đã chọn của dòng đó), tạo một bản ghi `eutr_reference_details` (`RefId` = Id
+    bản ghi `eutr_references` vừa tạo cho file đó, `ConditionType` = `refType` tương ứng Conditions
+    type đã chọn, `ConditionValue` = giá trị đã chọn).
+17. **Given** Save đã thành công, **When** popup đóng lại, **Then** bảng danh sách file Screen2 tự
+    tải lại và KHÔNG còn hiển thị các file vừa được gán Step/Conditions.
+18. **Given** một document đã được gán Step/Conditions qua popup này (Type = "Upload manual"),
+    **When** xem danh sách EUTR documents chính (User Story 1), **Then** cột Conditions của document
+    đó hiển thị đúng các nhóm Conditions type/value đã gán (ví dụ "PO: PO1, PO2"), theo đúng mẫu
+    hình `view.png`.
+19. **(Sửa lại)** **Given** popup Assign condition chỉ chọn Step, không thêm dòng Conditions type
+    nào, **When** nhấn Save, **Then** hệ thống báo lỗi yêu cầu thêm ít nhất một Conditions type kèm
+    giá trị — KHÔNG còn tạo bản ghi `eutr_references` "chỉ với Step" như quyết định ban đầu của
+    Update 11; người dùng phải thêm ít nhất một dòng Conditions type hợp lệ mới Save được (xem
+    scenario 11a).
+20. **Given** popup Assign condition đang mở, **When** người dùng đóng popup mà không nhấn Save,
+    **Then** popup đóng lại và KHÔNG có bản ghi nào được tạo, danh sách file Screen2 không đổi.
+
+---
+
 ### Edge Cases
 
 - Khi danh sách rỗng, bảng hiển thị trạng thái trống thân thiện thay vì lỗi.
@@ -703,16 +1061,19 @@ hiển thị icon View ở trạng thái vô hiệu hóa.
   dụng hoặc thao tác bị từ chối với thông báo rõ ràng.
 - Khi lưu/xóa thất bại do lỗi mạng hoặc máy chủ, người dùng nhận thông báo lỗi và dữ liệu không bị
   thay đổi sai lệch.
-- Khi chuyển đổi qua lại giữa Type = "PO" và "Upload manual" trên trang Add, giao diện chuyển đúng layout
-  tương ứng; dữ liệu mẫu tĩnh hiển thị lại đúng như ban đầu (không có trạng thái lưu tạm giữa hai
-  lần chuyển).
+- Khi chuyển đổi qua lại giữa Type = "PO" và "Upload manual" trên trang Add, giao diện chuyển đúng
+  layout tương ứng; mỗi layout tự tải lại đúng dữ liệu thật của nó (List PO cho Screen1; bảng file
+  "chưa gán" cho Screen2, kể từ Update 11) — không có trạng thái lưu tạm giữa hai lần chuyển (ví dụ
+  dòng PO/dòng file đang chọn ở lượt trước không được giữ lại khi chuyển Type rồi chuyển về).
 - Khi rời trang Add (Back hoặc điều hướng khác) rồi quay lại, Type được đặt lại về giá trị mặc định
   ban đầu (không nhớ lựa chọn trước đó).
-- Khi người dùng tương tác với khu vực Manual upload ở Screen2 (kéo-thả, Assign condition, View/
-  Delete, checkbox), không có yêu cầu nào được gửi tới server và Save vẫn chỉ tạo bản ghi dựa trên
-  File name, Valid from, Valid to — đây là hành vi đúng theo phạm vi hiện tại (chỉ giao diện, chưa
-  có chức năng), ngoại trừ việc tải danh sách PO name và nút Upload thật ở Screen1 (xem bên dưới,
-  Update 6).
+- **(Trước Update 11)** Khi người dùng tương tác với khu vực Manual upload ở Screen2 (kéo-thả, Assign
+  condition, View/Delete, checkbox), không có yêu cầu nào được gửi tới server và Save vẫn chỉ tạo
+  bản ghi dựa trên File name, Valid from, Valid to — đây là hành vi đúng theo phạm vi hiện tại (chỉ
+  giao diện, chưa có chức năng). **Kể từ Update 11**, mọi tương tác này ở Screen2 (Upload File,
+  bảng danh sách file, checkbox, Assign condition, View/Delete) là hành động thật — xem FR-046 đến
+  FR-054 và User Story 6; Save trên form chính (File name, Valid from, Valid to) tiếp tục hoạt động
+  độc lập, không đổi.
 - Khi API reference (`refType = 15`, `RSVNEutrPurchOrders`) trả về danh sách rỗng, bảng List PO
   hiển thị trạng thái trống thân thiện thay vì lỗi.
 - Khi gọi API reference (`refType = 15`) thất bại (lỗi mạng/máy chủ), bảng List PO hiển thị thông
@@ -785,6 +1146,59 @@ hiển thị icon View ở trạng thái vô hiệu hóa.
 - **(Update 10)** Việc xóa một file trong List PO KHÔNG gọi API xóa file thật trên SharePoint — file
   đó vẫn còn tồn tại trên SharePoint sau khi xóa, chỉ không còn bản ghi nào trong `eutr_documents`/
   `eutr_references` trỏ tới nó nữa; đây là hành vi có chủ đích, không phải lỗi hay thiếu sót.
+- **(Update 11)** Khi gọi API upload file Screen2 thất bại toàn bộ (lỗi mạng/máy chủ trước khi kịp
+  upload file nào), hệ thống MUST hiển thị lỗi thân thiện, không tạo document nào; nếu một số file
+  trong cùng lượt thành công và một số thất bại, hệ thống vẫn tạo document cho các file thành công —
+  theo cùng ngữ nghĩa per-file đã áp dụng ở Screen1 (FR-030).
+- **(Update 11)** Khi danh sách file "chưa gán Step/Conditions" ở Screen2 trống (mọi document đã
+  được gán, hoặc chưa có document nào), bảng hiển thị trạng thái trống ("No data") thay vì lỗi.
+- **(Update 11)** Khi popup Assign condition đang mở và một dòng Conditions type được đổi từ "PO"
+  sang "Vendor" (hoặc ngược lại), các giá trị Condition value đã chọn trước đó của dòng đó MUST bị
+  xóa (vì nguồn dữ liệu thay đổi hoàn toàn) — không giữ lại lựa chọn cũ không còn hợp lệ với type
+  mới.
+- **(Update 11)** Khi gọi API reference (`refType=15` hoặc `refType=14`) cho ô Condition value thất
+  bại, ô đó hiển thị lỗi thân thiện, không chặn các dòng Conditions type khác hoặc nút Save (Save
+  vẫn khả dụng nếu Step đã chọn, dù dòng lỗi đó chưa có giá trị nào).
+- **(Update 11)** Khi một file đang được chọn (checkbox) trong danh sách Screen2 bị xóa qua icon
+  Delete trước khi nhấn Assign condition, file đó không còn trong danh sách để chọn — trạng thái
+  chọn của nó (nếu đang chọn) tự động bị bỏ.
+- **(Update 11)** Khi Save trong popup Assign condition cho nhiều file cùng lúc, nếu việc ghi
+  `eutr_references`/`eutr_reference_details` cho một file thất bại (lỗi DB), hệ thống áp dụng ngữ
+  nghĩa per-item giống các luồng khác trong feature (ví dụ FR-030/FR-040): file đó báo lỗi riêng,
+  không chặn việc gán thành công cho các file khác trong cùng lượt Save; file bị lỗi tiếp tục xuất
+  hiện trong danh sách "chưa gán" (vì `eutr_references` chưa được tạo thành công cho nó).
+- **(Update 11, superseded by Update 12)** Việc gán Step/Conditions qua popup Assign condition từ
+  danh sách "chưa gán" ở Screen2 chỉ **tạo mới** — một khi document đã có `eutr_references`, nó
+  không còn xuất hiện lại trong danh sách "chưa gán" để chọn gán lại theo đường đó. **Kể từ Update
+  12**, vẫn có một đường khác để sửa Step/Conditions của document đã có `eutr_references`: nhấn
+  **Edit** trên danh sách EUTR documents chính (User Story 3) — xem Edge Cases Update 12 bên dưới.
+- **(Update 12)** Khi Edit một document Type = "PO" và người dùng không đổi Step (giữ nguyên giá
+  trị hiện tại trong dropdown) rồi lưu, hệ thống vẫn thực hiện thay thế bản ghi `eutr_references`
+  như FR-055 mô tả (xóa bản ghi cũ, ghi bản ghi mới với cùng `StepId`) — không phải lỗi, kết quả
+  quan sát được không đổi (vẫn đúng một bản ghi với `StepId` đó).
+- **(Update 12)** Khi Edit một document Type = "Upload manual" nhưng document đó đã bị xóa trước đó
+  (ví dụ do vừa xóa từ một tab khác), hệ thống MUST báo not-found rõ ràng khi mở popup Assign
+  condition (chế độ sửa) hoặc khi Save, thay vì lỗi hệ thống — theo cùng mẫu xử lý đã có ở nơi khác
+  trong feature này (ví dụ Edit một document đã bị xóa ở Edge Cases gốc).
+- **(Update 12)** Khi Save popup Assign condition ở chế độ sửa thất bại (lỗi mạng/máy chủ/DB) giữa
+  bước (a) cập nhật `StepId` và bước (b) replace `eutr_reference_details`, toàn bộ thay đổi của lượt
+  Save đó MUST được xử lý như một giao dịch — nếu một bước thất bại, dữ liệu Step/Conditions của
+  document đó giữ nguyên như trước khi Save (rollback), không để lại trạng thái nửa-cập-nhật (ví dụ
+  `StepId` đã đổi nhưng `eutr_reference_details` chưa kịp ghi lại).
+- **(Update 12)** Popup Edit của document Type = "PO" chỉ hiển thị/tra cứu Step qua trường mới; các
+  ràng buộc hiện có của File name (bắt buộc nhập, FR-010) và Valid from/to (tùy chọn) không đổi.
+- **(Update 12)** Với document Type = "Upload manual", Edit KHÔNG cung cấp cách sửa File name/Valid
+  from/Valid to trong phạm vi update này (khác document Type trống hoặc Type = "PO", vẫn sửa được 3
+  trường này) — đây là hành vi có chủ đích theo đúng phạm vi yêu cầu, không phải thiếu sót.
+- **(Update 13)** Trong popup Assign condition, một Conditions type (PO hoặc Vendor) chỉ có thể
+  xuất hiện ở **đúng một** dòng tại một thời điểm — dropdown Conditions type của các dòng khác tự
+  loại bỏ (disable) type đã dùng, người dùng KHÔNG thể tạo hai dòng cùng Conditions type dù đã xóa
+  hết giá trị Condition value của dòng cũ (chỉ khi xóa/đổi hẳn dòng đó sang type khác mới giải
+  phóng lại type cũ).
+- **(Update 13)** Vì mỗi Conditions type chỉ có tối đa một dòng, Save không bao giờ tạo hai nhóm
+  `eutr_reference_details` cùng `ConditionType` cho cùng một bản ghi `eutr_references` — cột
+  Conditions trên danh sách chính (FR-054) luôn hiển thị mỗi Conditions type đúng một nhóm duy nhất
+  cho mỗi document, không có nhóm trùng lặp cần gộp.
 
 ## Requirements *(mandatory)*
 
@@ -795,19 +1209,22 @@ hiển thị icon View ở trạng thái vô hiệu hóa.
   Delete, View).
 - **FR-002**: Hệ thống MUST hiển thị màn hình trong mục điều hướng "EUTR documents" với breadcrumb
   "EUTR > EUTR documents".
-- **FR-003**: Vì bảng `eutr_documents` không lưu Conditions, hệ thống MUST hiển thị cột Conditions
-  luôn ở trạng thái trống cho mọi dòng trong phạm vi feature này. Cột Step name và Type KHÔNG còn
-  thuộc phạm vi FR này kể từ Update 8 — xem FR-034/FR-035/FR-036.
+- **FR-003**: *(Superseded partially by Update 11 — xem FR-054)* Vì bảng `eutr_documents` không lưu
+  Conditions, hệ thống MUST hiển thị cột Conditions ở trạng thái trống cho document Type = "PO" và
+  cho document Type = "Upload manual" chưa có bản ghi `eutr_reference_details` nào. Document Type =
+  "Upload manual" có bản ghi `eutr_reference_details` liên quan MUST hiển thị dữ liệu thật (xem
+  FR-054, Update 11) — không còn "luôn trống cho mọi dòng" như trước Update 11. Cột Step name và
+  Type KHÔNG còn thuộc phạm vi FR này kể từ Update 8 — xem FR-034/FR-035/FR-036.
 - **FR-004**: Người dùng MUST có thể phân trang danh sách khi số bản ghi vượt một trang và chuyển
   trang.
 - **FR-005**: Người dùng MUST có thể nhấn nút **Add** trên toolbar để điều hướng sang một trang
   riêng (`eutr/documents/add`), KHÔNG phải popup, nhằm tạo document mới.
 - **FR-006**: Trên trang Add, người dùng MUST có thể nhập File name và thiết lập Valid from, Valid
   to. Bản thân 3 trường này và nút Save MUST KHÔNG có control chọn/upload file thật gắn kèm. Khu
-  vực upload thật duy nhất trên trang Add là nút **Upload** ở Screen1 (Type = PO, xem FR-024 đến
-  FR-030, Update 6); khu vực "Drag and drop files to upload" ở Screen2 (Type = Upload manual, mô tả
-  ở FR-018) tiếp tục chỉ mang tính hiển thị (silent no-op, không xử lý file thả vào) — chức năng
-  upload thật cho Screen2 sẽ được bổ sung ở một tính năng sau (xem Clarifications).
+  vực upload thật trên trang Add gồm nút **Upload** ở Screen1 (Type = PO, xem FR-024 đến FR-030,
+  Update 6) và, **kể từ Update 11**, khu vực **Upload File** ở Screen2 (Type = Upload manual, xem
+  FR-046/FR-047) — khu vực Screen2 KHÔNG còn chỉ mang tính hiển thị/silent no-op như trước Update
+  11 (xem FR-018/FR-019 đã sửa).
 - **FR-006a**: Trang Add MUST có nút **Back** để điều hướng về danh sách document mà KHÔNG tạo bản
   ghi; nhấn Back không yêu cầu xác nhận (không cảnh báo mất dữ liệu).
 - **FR-007**: Hệ thống MUST yêu cầu nhập File name (không được để trống) khi tạo mới; Valid from
@@ -817,9 +1234,12 @@ hiển thị icon View ở trạng thái vô hiệu hóa.
 - **FR-008**: Khi Save trên trang Add thành công, hệ thống MUST lưu document vào bảng
   `eutr_documents` (File name, Valid from, Valid to) và ghi nhận người tạo, ngày tạo tự động, sau
   đó điều hướng về danh sách.
-- **FR-009**: Người dùng MUST có thể nhấn **Edit** trên một dòng để mở popup chỉnh sửa File name,
-  Valid from, Valid to của document đó.
-- **FR-010**: Hệ thống MUST yêu cầu File name không được để trống khi sửa.
+- **FR-009**: *(Sửa lại — rẽ nhánh theo Type kể từ Update 12, xem FR-055 đến FR-058)* Người dùng
+  MUST có thể nhấn **Edit** trên một dòng. Với document Type trống (chưa có `eutr_references` nào),
+  Edit MUST mở popup đơn giản để chỉnh sửa File name, Valid from, Valid to của document đó — không
+  đổi so với trước Update 12.
+- **FR-010**: Hệ thống MUST yêu cầu File name không được để trống khi sửa qua popup đơn giản (áp
+  dụng cho document Type trống hoặc Type = "PO", xem FR-055).
 - **FR-011**: Người dùng MUST có thể xóa một document, có bước xác nhận trước khi xóa. Kể từ
   Update 9, việc xóa này MUST bao gồm cả bước xóa `eutr_references` liên quan — xem FR-039/FR-040.
 - **FR-012**: Hệ thống MUST hỗ trợ xóa nhiều document cùng lúc. Kể từ Update 9, mỗi document trong
@@ -850,17 +1270,23 @@ hiển thị icon View ở trạng thái vô hiệu hóa.
   lỗi, bảng MUST hiển thị trạng thái trống/lỗi tương ứng thay vì chặn các phần khác của trang.
   *(Superseded by Update 10: cột Action cấp-dòng với View/Delete không còn tồn tại — mỗi file riêng
   lẻ trong cột File name có icon View/Delete thật riêng, xem FR-043/FR-044.)*
-- **FR-018**: Khi Type = "Upload manual", trang Add MUST hiển thị: (a) khu vực "Drag and drop files to
-  upload" ở trên cùng; (b) nút "Assign condition"; (c) bảng danh sách file với checkbox chọn dòng,
-  cột File name, Action (View, Delete). Bảng này MUST hiển thị dữ liệu mẫu tĩnh (hard-coded, giống
-  thiết kế: File 1..File 8). *(Không thuộc phạm vi Update 10 — bảng demo Screen2 tiếp tục silent
-  no-op, không đổi.)*
-- **FR-019**: Mọi tương tác trong các khu vực Type/Manual upload (kéo-thả file vào khu upload ở
-  Screen2, nhấn "Assign condition", nhấn View/Delete hoặc checkbox trong bảng demo) MUST KHÔNG thực
-  hiện bất kỳ hành động thật nào (không tải file lên, không gọi API, không điều hướng) — silent
-  no-op, cùng mẫu với FR-013 trước Update 10. Nút **Upload** ở Screen1 (FR-024 đến FR-030) và các
-  icon View/Delete theo từng file trong cột File name của List PO (Update 10, FR-043/FR-044) là các
-  ngoại lệ duy nhất — đây là các control thật, có gọi API và thay đổi dữ liệu.
+- **FR-018**: *(Superseded by Update 11 — xem FR-046 đến FR-054)* Khi Type = "Upload manual", trang
+  Add MUST hiển thị: (a) khu vực **Upload File** (thay cho khung "Drag and drop files to upload"
+  tĩnh dùng từ Update 3 tới trước Update 11, xem FR-046/FR-047) ở trên cùng; (b) nút "Assign
+  condition" (thật, xem FR-050/FR-051); (c) bảng danh sách file với checkbox chọn dòng, cột File
+  name, Action (View, Delete). Bảng này MUST hiển thị dữ liệu **thật** từ `eutr_documents` (điều
+  kiện `NOT EXISTS` trong `eutr_references`, xem FR-048) — không còn dữ liệu mẫu tĩnh (File 1..File
+  8) như trước Update 11.
+- **FR-019**: *(Superseded by Update 11)* Trước Update 11, mọi tương tác trong khu vực Type =
+  Upload manual (Screen2) — kéo-thả file vào khu upload, nhấn "Assign condition", nhấn View/Delete
+  hoặc checkbox trong bảng demo — đều là silent no-op, cùng mẫu với FR-013 trước Update 10. **Kể từ
+  Update 11**, toàn bộ các tương tác này trở thành hành động thật (KHÔNG còn tương tác nào ở Screen2
+  là silent no-op): khu vực Upload File tải file thật lên SharePoint (FR-046/FR-047), bảng danh
+  sách file tải dữ liệu thật (FR-048), icon View/Delete hoạt động thật (FR-049), checkbox chọn dòng
+  dùng để kích hoạt nút Assign condition thật (FR-050), và nút Assign condition mở popup gán Step/
+  Conditions thật (FR-051 đến FR-053). Nút **Upload** ở Screen1 (FR-024 đến FR-030) và các icon
+  View/Delete theo từng file trong cột File name của List PO (Update 10, FR-043/FR-044) tiếp tục là
+  các control thật như trước, không đổi.
 - **FR-020**: Việc bổ sung Type/List PO/Manual layout MUST KHÔNG làm thay đổi hành vi hiện có của
   File name, Valid from, Valid to, Save, Back (FR-006 đến FR-008, FR-006a) — Save vẫn tạo (chỉ) một
   document mới dựa trên 3 trường này. Việc nút Upload (FR-024 đến FR-030) tạo thêm document khác
@@ -957,8 +1383,11 @@ hiển thị icon View ở trạng thái vô hiệu hóa.
   diện MAY giới hạn số lượng hiển thị trực tiếp và gộp phần còn lại vào một chỉ báo dạng "+N more"
   kèm tooltip liệt kê đầy đủ, theo đúng mẫu hiển thị nhiều giá trị đã áp dụng ở cột "Country Codes"
   (màn Country Groups, `useCountryGroupColumns.jsx`).
-- **FR-036** *(Update 8)*: Cột **Conditions** MUST tiếp tục hiển thị trống trên mọi dòng trong phạm
-  vi feature này — không nằm trong yêu cầu Update 8, không đổi so với FR-003.
+- **FR-036** *(Update 8, superseded partially by Update 11 — xem FR-054)*: Cột **Conditions** MUST
+  tiếp tục hiển thị trống trên mọi dòng — không nằm trong yêu cầu Update 8, không đổi so với FR-003.
+  Quy tắc "luôn trống" này KHÔNG còn áp dụng cho document Type = "Upload manual" có bản ghi
+  `eutr_reference_details` liên quan, kể từ Update 11 (FR-054); vẫn áp dụng cho mọi trường hợp còn
+  lại.
 - **FR-037** *(Update 8)*: Trên trang Add (Screen1, Type = "PO"), với mỗi dòng PO trong bảng List
   PO, hệ thống MUST tính **File name** và **Step name** bằng cách tra cứu các bản ghi
   `eutr_references` có `RefType = 0` ("PO") và `RefValue` = mã PO của dòng đó: **File name** =
@@ -1011,6 +1440,83 @@ hiển thị icon View ở trạng thái vô hiệu hóa.
   (silent no-op theo FR-017/FR-019 trước Update 10) MUST được gỡ bỏ hoàn toàn, thay thế bằng các icon
   View/Delete theo từng file ở FR-043/FR-044. Dòng PO chưa có file nào liên kết (File name/Step name
   trống) MUST tiếp tục không hiển thị icon View/Delete nào (không có gì để thao tác).
+- **FR-046** *(Update 11)*: Khu vực "Drag and drop files to upload" ở Screen2 (Type = Upload manual)
+  MUST được thay bằng khu vực **Upload File** dùng lại đúng giao diện đã xây ở Screen1 (FR-031),
+  nhưng KHÔNG yêu cầu chọn PO trước — khu vực này MUST luôn khả dụng khi Type = Upload manual. Ràng
+  buộc định dạng/kích thước file giữ nguyên FR-026; KHÔNG áp dụng validate prefix (FR-032) cho luồng
+  này.
+- **FR-047** *(Update 11)*: Backend MUST upload file Screen2 lên SharePoint vào thư mục cố định
+  `{SharePointEutrPath}/UploadManual` (tự động tạo thư mục này nếu chưa tồn tại, dùng lại cơ chế
+  tìm/tạo thư mục ở FR-028). Với mỗi file upload thành công, backend MUST tạo một bản ghi mới trong
+  `eutr_documents` (File name, Valid from = ngày hiện tại, Valid to = ngày tối đa, FileId) theo đúng
+  FR-029 — KHÔNG ghi bất kỳ bản ghi `eutr_references` nào ở bước này.
+- **FR-048** *(Update 11)*: Bảng danh sách file ở Screen2 MUST tải toàn bộ bản ghi `eutr_documents`
+  KHÔNG có bất kỳ bản ghi `eutr_references` nào liên kết (điều kiện `NOT EXISTS` theo `DocumentId`),
+  thay cho dữ liệu mẫu tĩnh (FR-018 trước Update 11) — bao gồm document tạo qua Save nhập tay lẫn
+  qua khu Upload File Screen2 mới.
+- **FR-049** *(Update 11)*: Icon View/Delete trên mỗi dòng file ở bảng Screen2 MUST hoạt động theo
+  đúng logic đã có ở FR-041/FR-042 (View) và FR-044 (Delete) cho từng file trong List PO — không có
+  luồng/endpoint mới nào khác cho hai thao tác này.
+- **FR-050** *(Update 11)*: Người dùng MUST có thể chọn (checkbox) một hoặc nhiều dòng trong bảng
+  Screen2; nút "Assign condition" MUST ở trạng thái vô hiệu hóa khi chưa chọn dòng nào, và khả dụng
+  khi có ít nhất một dòng được chọn.
+- **FR-051** *(Update 11, sửa lại ở Update 13 — chặn trùng Conditions type)*: Nhấn "Assign condition"
+  (khi khả dụng) MUST mở một popup gồm: danh sách read-only các file đang được chọn; nút "Add
+  condition"; một bảng 2 cột "Conditions type"/"Condition value" với dòng đầu cố định là "Step"
+  (bắt buộc chọn, dropdown một Step, không thể xóa dòng này) và các dòng thêm qua "Add condition"
+  cho phép chọn Conditions type ("PO" hoặc "Vendor", có thể xóa dòng) — khi chọn Conditions type,
+  Condition value MUST tải dữ liệu qua `POST /api/dynamics/reference` với `refType = 15` (PO) hoặc
+  `refType = 14` (Vendor) tương ứng, và cho phép chọn nhiều giá trị. Dropdown "Conditions type" của
+  mỗi dòng mới thêm MUST **loại bỏ (disable)** các Conditions type đã được chọn ở (các) dòng khác
+  đang có trong cùng popup — không cho phép hai dòng cùng mang một Conditions type trong cùng một
+  lượt (tạo mới hoặc sửa). Khi một dòng bị xóa hoặc đổi sang Conditions type khác, Conditions type
+  vừa được giải phóng MUST xuất hiện lại (khả dụng) trong dropdown của các dòng còn lại.
+- **FR-052** *(Update 11, sửa lại — bổ sung điều kiện bắt buộc thứ hai)*: Nút Save trong popup Assign
+  condition MUST bị chặn (báo lỗi, không lưu bất kỳ bản ghi nào) nếu **thiếu một trong hai điều
+  kiện**: (a) Step chưa được chọn; (b) chưa có **ít nhất một** dòng Conditions type đã thêm (qua
+  "Add condition") với **ít nhất một** Condition value đã chọn ở dòng đó — Conditions type KHÔNG còn
+  là tùy chọn, MUST có tối thiểu một dòng hợp lệ mới được Save. Khi cả hai điều kiện đã thỏa và nhấn
+  Save, với mỗi file đang được chọn, backend MUST tạo một bản ghi `eutr_references` (`DocumentId` =
+  Id file đó, `StepId` = Step đã chọn, `RefType` = giá trị "Upload manual" của `TAKE_FROM_OPTIONS`
+  (`=1`), `RefValue` = null), và với mỗi giá trị đã chọn ở mỗi dòng Conditions type, tạo một bản ghi
+  `eutr_reference_details` (`RefId` = Id bản ghi `eutr_references` vừa tạo cho file đó, `ConditionType`
+  = `refType` tương ứng Conditions type đã chọn, `ConditionValue` = giá trị đã chọn).
+- **FR-053** *(Update 11)*: Sau khi Save thành công, popup MUST đóng lại và bảng danh sách file
+  Screen2 MUST tải lại — các file vừa được gán Step/Conditions KHÔNG còn hiển thị trong bảng này.
+- **FR-054** *(Update 11)*: Cột Conditions trên danh sách EUTR documents chính (User Story 1) MUST
+  hiển thị dữ liệu thật cho document có Type = "Upload manual" (`RefType = 1`): tra cứu các bản ghi
+  `eutr_reference_details` (qua `RefId` trỏ tới các bản ghi `eutr_references` của document đó), nhóm
+  theo `ConditionType`, hiển thị mỗi nhóm dạng "{Nhãn Conditions type}: {giá trị 1}, {giá trị 2},
+  ...". Document có Type = "PO" hoặc không có bản ghi `eutr_reference_details` nào tiếp tục hiển
+  thị cột này ở trạng thái trống (không đổi so với FR-003/FR-036).
+- **FR-055** *(Update 12, sửa lại ở Update 13 — quy tắc xác định giá trị hiện tại)*: Với document
+  Type = "PO" (`RefType = 0`), popup Edit MUST hiển thị thêm một trường **Step** (dropdown
+  single-select) bên cạnh File name/Valid from/Valid to, hiển thị đúng Step hiện tại của document.
+  Nếu document liên kết nhiều Step (do khớp nhiều prefix ở Update 7 — nhiều bản ghi `eutr_references`
+  cùng `DocumentId`), giá trị hiện tại hiển thị trong dropdown MUST là Step ứng với bản ghi
+  `eutr_references` có **`Id` nhỏ nhất** trong số các bản ghi đó (bản ghi được tạo sớm nhất) — quy
+  tắc xác định (deterministic), không phụ thuộc thứ tự trả về của query. Khi Save, hệ thống MUST
+  thay thế toàn bộ bản ghi `eutr_references` hiện có của document đó (cùng `DocumentId`/`RefType=0`/
+  `RefValue`) bằng **đúng một** bản ghi mang `StepId` mới đã chọn (giữ nguyên `RefValue`).
+- **FR-056** *(Update 12)*: Với document Type = "Upload manual" (`RefType = 1`), nhấn Edit MUST mở
+  popup **Assign condition** (Update 11) ở **chế độ sửa** — KHÔNG mở popup đơn giản (File name/Valid
+  from/Valid to). Popup MUST chỉ áp dụng cho đúng một document đang sửa: phần danh sách file ở đầu
+  popup hiển thị read-only tên file đó (không có checkbox chọn).
+- **FR-057** *(Update 12)*: Popup Assign condition ở chế độ sửa MUST được nạp sẵn dữ liệu hiện có
+  của document: dòng Step hiển thị đúng `StepId` hiện tại (từ `eutr_references`); các dòng
+  Conditions type/value hiển thị đúng các nhóm hiện có (tra cứu `eutr_reference_details`, nhóm theo
+  `ConditionType`). Người dùng MUST có thể đổi Step, thêm dòng Conditions type mới (qua "Add
+  condition"), sửa/thêm/bớt giá trị trong Condition value của các dòng hiện có, hoặc xóa hẳn một
+  dòng Conditions type. Nút Save MUST áp dụng đúng cùng validate bắt buộc đã có ở FR-052 (Step phải
+  được chọn; phải có ít nhất một dòng Conditions type với ít nhất một Condition value) — thiếu một
+  trong hai điều kiện này MUST chặn Save, không lưu thay đổi nào, giữ nguyên dữ liệu cũ.
+- **FR-058** *(Update 12)*: Khi Save popup Assign condition ở chế độ sửa thành công, backend MUST:
+  (a) cập nhật `StepId` của bản ghi `eutr_references` hiện có của document đó thành Step mới đã
+  chọn — KHÔNG tạo bản ghi `eutr_references` mới (vẫn đúng một bản ghi cho document này, giữ nguyên
+  `DocumentId`/`RefType=1`/`RefValue=null`); (b) xóa toàn bộ bản ghi `eutr_reference_details` cũ có
+  `RefId` = Id bản ghi `eutr_references` đó, rồi ghi lại từ đầu đúng bộ Conditions type/value hiện
+  có trên popup tại thời điểm Save (một bản ghi cho mỗi giá trị đã chọn ở mỗi dòng Conditions type)
+  — replace toàn bộ, KHÔNG giữ lại Id của các bản ghi `eutr_reference_details` cũ.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -1049,8 +1555,10 @@ hiển thị icon View ở trạng thái vô hiệu hóa.
   `TAKE_FROM_OPTIONS` (`0`), `RefValue` = mã PO đã chọn — hai giá trị này giống nhau trên mọi bản
   ghi của cùng file (FR-033). Cột `RefId` hiện có **KHÔNG được ghi** bởi luồng này — giữ nguyên mục
   đích thiết kế cũ (trỏ tới `eutr_template_details`), tránh xung đột với ràng buộc khóa ngoại đã có
-  trên cột đó. Đây là (những) bản ghi **duy nhất** được feature này **ghi** vào `eutr_references` —
-  không có luồng nào khác trong feature ghi vào bảng này. **Kể từ Update 8**, feature này cũng
+  trên cột đó. *(Trước Update 11)* Đây là (những) bản ghi duy nhất được feature này ghi vào
+  `eutr_references` — không có luồng nào khác trong feature ghi vào bảng này. **Kể từ Update 11**,
+  luồng Assign condition ở Screen2 (Upload manual) là một luồng ghi thứ hai vào bảng này, xem cuối
+  đoạn này. **Kể từ Update 8**, feature này cũng
   **đọc** bảng `eutr_references` (JOIN với `eutr_steps`/`eutr_documents`) để hiển thị Step name/Type
   trên danh sách EUTR documents (User Story 1, FR-034/FR-035) và File name/Step name trên bảng List
   PO ở trang Add (User Story 2, FR-037/FR-038) — đây là các luồng đọc (read-only) bổ sung, không làm
@@ -1058,11 +1566,45 @@ hiển thị icon View ở trạng thái vô hiệu hóa.
   **xóa (delete)** duy nhất của feature này trên bảng `eutr_references` — khi một document
   `eutr_documents` bị xóa (User Story 4, FR-011/FR-012), toàn bộ bản ghi `eutr_references` có
   `DocumentId` trỏ tới document đó bị xóa theo, trong cùng một giao dịch với việc xóa document
-  (FR-039/FR-040), không phân biệt số lượng bản ghi hay `RefType`.
-- **Type (PO/Manual), danh sách file demo (Screen2)**: Chỉ là trạng thái/nội dung hiển thị trên
-  giao diện trang Add ở phạm vi feature này — KHÔNG có entity hay cột dữ liệu tương ứng trên bảng
-  `eutr_documents`. Danh sách file demo (File 1-8) trên Screen2 là dữ liệu mẫu tĩnh, hard-coded
-  trong giao diện, không phản ánh dữ liệu thật của hệ thống.
+  (FR-039/FR-040), không phân biệt số lượng bản ghi hay `RefType`. **Kể từ Update 11**, bảng này
+  cũng được ghi với `RefType = 1` ("Upload manual") — mỗi bản ghi loại này có `DocumentId` trỏ tới
+  một document tạo qua khu Upload File Screen2 (hoặc qua Save nhập tay), `StepId` = Step người dùng
+  chọn trong popup Assign condition, `RefValue = null` (không có giá trị đơn lẻ nào cho luồng này —
+  các giá trị Conditions type/value được lưu ở bảng con `eutr_reference_details`, xem entity **EUTR
+  Reference Detail** bên dưới); cột `RefId` của `eutr_references` (trỏ `eutr_template_details`)
+  tiếp tục KHÔNG được ghi bởi luồng này, giống Update 7. **Kể từ Update 12**, bảng này còn có thêm
+  hai luồng **sửa (update)**, cả hai qua chức năng Edit ở User Story 3: (a) với document Type = "PO",
+  Edit MUST thay thế toàn bộ (những) bản ghi hiện có của document đó (cùng `DocumentId`/`RefType=0`/
+  `RefValue`) bằng **đúng một** bản ghi mang `StepId` mới đã chọn trong popup Edit (FR-055); (b) với
+  document Type = "Upload manual", Edit (qua popup Assign condition ở chế độ sửa) MUST cập nhật
+  trực tiếp `StepId` của bản ghi `eutr_references` hiện có (không tạo/xóa bản ghi nào, vẫn đúng một
+  bản ghi cho document đó) — xem FR-057/FR-058.
+- **EUTR Reference Detail (Condition Upload manual, Update 11)**: Bảng `eutr_reference_details`
+  (Id, RefId, ConditionType, ConditionValue, CreatedBy, CreatedDate, UpdatedBy, UpdatedDate) — bảng
+  này **đã có sẵn** trong `docs/design/eutr/eutr_db.sql` với khóa ngoại
+  `eutr_reference_details_refid_foreign` (`eutr_reference_details.RefId` → `eutr_references.Id`,
+  KHÔNG liên quan tới cột `eutr_references.RefId` đang trỏ `eutr_template_details`) — feature này
+  KHÔNG cần migration DB mới để dùng bảng này. Mỗi bản ghi đại diện một giá trị Conditions type/value
+  (PO hoặc Vendor) gán cho một bản ghi `eutr_references` (Type = "Upload manual", Update 11):
+  `RefId` = Id của bản ghi `eutr_references` đó; `ConditionType` = giá trị `refType` dùng để tải
+  Condition value tương ứng (`15` = "PO", `14` = "Vendor"); `ConditionValue` = mã/tên giá trị đã
+  chọn (một PO hoặc một Vendor). Một dòng "Conditions type" có N giá trị được chọn (multi-select)
+  tạo ra N bản ghi `eutr_reference_details` (một bản ghi cho mỗi giá trị). Ghi bởi popup Assign
+  condition khi Save ở chế độ tạo mới (FR-052); đọc để hiển thị cột Conditions trên danh sách EUTR
+  documents chính (FR-054). *(Sửa lại)* Vì FR-052 kể từ nay bắt buộc phải có ít nhất một dòng
+  Conditions type hợp lệ mới cho Save, mọi document Type = "Upload manual" được tạo qua popup này
+  (kể từ bản sửa này) luôn có **ít nhất một** bản ghi trong bảng `eutr_reference_details` — không
+  còn trường hợp document Type = "Upload manual" nhưng không có bản ghi nào ở bảng này (khác quyết
+  định ban đầu của Update 11). **Kể từ Update 12**, bảng này còn được **sửa (update)** qua popup
+  Assign condition ở chế độ sửa (Edit, User Story 3): khi Save, toàn bộ bản ghi cũ có `RefId` = Id
+  bản ghi `eutr_references` của document đang sửa MUST bị xóa hết trước, sau đó ghi lại từ đầu đúng
+  bộ Conditions type/value hiện có trên popup — replace toàn bộ, Id của các bản ghi cũ KHÔNG được
+  giữ lại (FR-058).
+- **Type (PO/Manual)**: Trạng thái hiển thị trên giao diện trang Add — KHÔNG có entity hay cột dữ
+  liệu tương ứng trên bảng `eutr_documents`. **Trước Update 11**, bảng danh sách file ở Screen2
+  (Type = Upload manual) chỉ hiển thị dữ liệu mẫu tĩnh, hard-coded (File 1-8), không phản ánh dữ
+  liệu thật. **Kể từ Update 11**, bảng này hiển thị dữ liệu thật — các bản ghi `eutr_documents`
+  chưa có `eutr_references` nào liên kết (xem FR-048) — không còn dữ liệu mẫu tĩnh.
 - **D365 RSVNEutrPurchOrders (external, read-only reference)**: Danh sách Purchase Order liên quan
   EUTR, lấy từ D365 qua API tham chiếu dùng chung `POST /api/dynamics/reference` với
   `refType = 15` (FR-021). Dùng để hiển thị cột PO name trong bảng List PO trên trang Add (Screen1,
@@ -1078,6 +1620,12 @@ hiển thị icon View ở trạng thái vô hiệu hóa.
   mục đã tồn tại ứng với PO đó để upload tiếp, hoặc tạo mới thư mục này nếu chưa có (FR-028). Không
   có bảng lưu trữ cục bộ ánh xạ PO ↔ thư mục — việc tìm/tạo thư mục thực hiện trực tiếp trên
   SharePoint mỗi lượt upload.
+- **SharePoint Folder "UploadManual" (Update 11)**: Thư mục con **cố định** trên SharePoint, tên
+  `UploadManual`, nằm dưới cùng thư mục gốc `SharePointEutrPath` đã dùng ở Update 6 (khác thư mục
+  con theo PO — thư mục này dùng chung cho mọi file upload qua khu Upload File Screen2, không phân
+  biệt theo PO/Vendor/Step). Khi upload qua Screen2, backend tìm thư mục này nếu đã tồn tại, hoặc
+  tạo mới nếu chưa có (cùng cơ chế FR-028, xem FR-047). Không có bảng lưu trữ cục bộ nào cho thư mục
+  này.
 - **SharePoint File Content (xem trước, Update 10)**: Nội dung file thật (base64) kèm content type,
   file name, đọc trực tiếp từ SharePoint qua `FileId` của một `eutr_documents` mỗi khi người dùng
   nhấn icon View (FR-041/FR-042/FR-043) — tương đương DTO `SharepointFileContent` đã dùng bởi
@@ -1104,12 +1652,15 @@ hiển thị icon View ở trạng thái vô hiệu hóa.
 - **SC-007**: 100% lượt nhấn Back trên trang Add điều hướng ngay về danh sách mà không tạo bản ghi
   và không cần xác nhận thêm.
 - **SC-008**: 100% lượt chuyển đổi Type giữa "PO" và "Upload manual" trên trang Add hiển thị đúng layout
-  và dữ liệu mẫu tương ứng ngay lập tức (không cần tải lại trang).
-- **SC-009** *(revised by Update 10 — bỏ phần List PO)*: 100% lượt tương tác với khu vực Manual
-  upload demo ở Screen2 (kéo-thả, Assign condition, View/Delete, checkbox) không kích hoạt bất kỳ
-  lời gọi API, điều hướng hay thay đổi dữ liệu nào, đúng theo phạm vi chỉ giao diện hiện tại. Thao
-  tác View/Delete theo từng file trên List PO KHÔNG còn thuộc phạm vi tiêu chí này kể từ Update 10 —
-  xem SC-023/SC-024 (đây MUST là các thao tác thật, có gọi API và thay đổi dữ liệu).
+  và dữ liệu tương ứng ngay lập tức (không cần tải lại trang).
+- **SC-009** *(revised by Update 10, superseded by Update 11)*: **Trước Update 11**, 100% lượt
+  tương tác với khu vực Manual upload demo ở Screen2 (kéo-thả, Assign condition, View/Delete,
+  checkbox) không kích hoạt bất kỳ lời gọi API, điều hướng hay thay đổi dữ liệu nào, đúng theo phạm
+  vi chỉ giao diện khi đó. Thao tác View/Delete theo từng file trên List PO KHÔNG thuộc phạm vi tiêu
+  chí này kể từ Update 10 — xem SC-023/SC-024. **Kể từ Update 11**, tiêu chí "không hành động thật"
+  này KHÔNG còn áp dụng cho bất kỳ phần nào của Screen2 — mọi tương tác ở đây (Upload File, bảng
+  danh sách file, checkbox, Assign condition, View/Delete) MUST là hành động thật, xem SC-025 đến
+  SC-029.
 - **SC-010**: 100% lượt chọn Type = "PO" tải đúng danh sách PO name thật từ API reference
   (`refType = 15`); khi API trả về rỗng hoặc lỗi, bảng List PO hiển thị đúng trạng thái tương ứng
   (trống/lỗi) thay vì treo giao diện hoặc hiển thị dữ liệu sai.
@@ -1162,6 +1713,46 @@ hiển thị icon View ở trạng thái vô hiệu hóa.
   khỏi `eutr_documents` và mọi `eutr_references` liên quan (không ảnh hưởng các file khác của cùng
   PO), file đó biến mất đồng thời khỏi List PO và danh sách EUTR documents chính, và file thật trên
   SharePoint vẫn còn tồn tại sau khi xóa.
+- **SC-025** *(Update 11)*: 100% file hợp lệ (đúng định dạng, ≤10MB) upload qua khu Upload File ở
+  Screen2 được lưu vào đúng thư mục SharePoint `{SharePointEutrPath}/UploadManual` và tạo đúng một
+  document tương ứng trong `eutr_documents`, xuất hiện ngay trong bảng danh sách "chưa gán" của
+  Screen2 mà không cần tải lại trang.
+- **SC-026** *(Update 11)*: 100% document đã có ít nhất một bản ghi `eutr_references` (bất kể
+  `RefType`) không xuất hiện trong bảng danh sách "chưa gán" ở Screen2; 100% document chưa có bản
+  ghi `eutr_references` nào (bất kể tạo qua đường nào) xuất hiện đúng trong bảng này.
+- **SC-027** *(Update 11, sửa lại)*: 100% lượt nhấn Save trong popup Assign condition khi thiếu một
+  trong hai điều kiện bắt buộc — (a) chưa chọn Step, hoặc (b) chưa có ít nhất một dòng Conditions
+  type với ít nhất một Condition value đã chọn — bị chặn kèm thông báo lỗi; không có bản ghi
+  `eutr_references`/`eutr_reference_details` nào được tạo trong cả hai trường hợp này.
+- **SC-028** *(Update 11)*: 100% lượt Save thành công trong popup Assign condition (Step đã chọn VÀ
+  có ít nhất một dòng Conditions type hợp lệ) tạo đúng một bản ghi `eutr_references` (RefType =
+  "Upload manual") cho mỗi file đang được chọn, và đúng số bản ghi `eutr_reference_details` bằng
+  tổng số giá trị Condition value đã chọn trên tất cả dòng Conditions type (không tính dòng Step),
+  nhân với số file đã chọn — không thiếu, không dư bản ghi nào, và luôn ≥ 1 bản ghi
+  `eutr_reference_details` cho mỗi file (vì Conditions type không còn là tùy chọn).
+- **SC-029** *(Update 11)*: 100% file được gán Step/Conditions thành công biến mất khỏi bảng "chưa
+  gán" của Screen2 ngay sau khi popup đóng; cột Conditions trên danh sách EUTR documents chính hiển
+  thị đúng và đầy đủ các nhóm Conditions type/value đã gán cho document đó (theo mẫu hình
+  `view.png`), không thiếu nhóm nào và không hiển thị nhóm không tồn tại.
+- **SC-030** *(Update 12)*: 100% lượt nhấn Edit trên một document đúng rẽ nhánh theo Type: document
+  Type trống mở popup đơn giản (không Step); Type = "PO" mở popup đơn giản có thêm trường Step;
+  Type = "Upload manual" mở popup Assign condition ở chế độ sửa — không có trường hợp mở sai popup
+  so với Type thực tế của document.
+- **SC-031** *(Update 12)*: 100% lượt Save popup Edit của document Type = "PO" với Step mới đã chọn
+  cập nhật đúng cột Step name trên danh sách chính thành Step mới đó (và chỉ Step đó, không còn Step
+  cũ nếu trước đó có nhiều).
+- **SC-032** *(Update 12)*: 100% lượt mở popup Assign condition (chế độ sửa) cho document Type =
+  "Upload manual" nạp đúng và đầy đủ Step hiện tại và mọi nhóm Conditions type/value hiện có của
+  document đó — không thiếu, không sai nhóm nào so với dữ liệu đã lưu trong `eutr_references`/
+  `eutr_reference_details`.
+- **SC-033** *(Update 12)*: 100% lượt Save popup Assign condition (chế độ sửa) thiếu Step hoặc thiếu
+  Conditions type/value bị chặn kèm thông báo lỗi, không làm mất dữ liệu Step/Conditions cũ của
+  document đó; 100% lượt Save hợp lệ (đủ cả hai điều kiện) cập nhật đúng Step mới và đúng bộ
+  Conditions type/value mới, phản ánh ngay trên cột Step name và Conditions của danh sách chính.
+- **SC-034** *(Update 13)*: 100% dropdown Conditions type của một dòng mới thêm (qua "Add condition")
+  trong popup Assign condition disable đúng các Conditions type đã dùng ở dòng khác trong cùng
+  popup — không có trường hợp Save thành công với hai dòng cùng Conditions type trong cùng một lượt
+  (tạo mới hoặc sửa).
 
 ## Assumptions
 
@@ -1187,7 +1778,10 @@ hiển thị icon View ở trạng thái vô hiệu hóa.
   nạp dữ liệu trong feature này — không có nguồn dữ liệu nào được yêu cầu bổ sung cho cột này; việc
   liên kết dữ liệu này (nếu cần) thuộc phạm vi một feature khác trong tương lai. **Kể từ Update 8**,
   cột Step name và Type KHÔNG còn thuộc quy tắc "luôn để trống" này — chúng được nạp dữ liệu thật từ
-  `eutr_references`/`eutr_steps` (xem FR-034/FR-035).
+  `eutr_references`/`eutr_steps` (xem FR-034/FR-035). *(Superseded partially by Update 11)* Cột
+  Conditions cũng không còn thuộc quy tắc "luôn để trống" này cho document Type = "Upload manual" có
+  bản ghi `eutr_reference_details` — nguồn dữ liệu cho trường hợp này là bảng `eutr_reference_details`
+  (đã có sẵn trong schema, xem FR-054 và Key Entities); mọi trường hợp còn lại vẫn tiếp tục để trống.
 - Nút toolbar cho hành động thêm mới được đặt tên **"Add"** (đổi từ "Upload" trong thiết kế gốc)
   để khớp đúng với hành vi hiện tại — chỉ nhập thông tin, không có upload file thật. Nút này điều
   hướng sang trang riêng `eutr/documents/add` (không phải popup), khác với Edit (mở popup).
@@ -1196,8 +1790,9 @@ hiển thị icon View ở trạng thái vô hiệu hóa.
   các trường/nút này KHÔNG có upload file thật gắn kèm. Ràng buộc định dạng/kích thước file (PDF,
   DOC/DOCX, XLS/XLSX, JPG/PNG, tối đa 10MB) đã thống nhất ở clarify đầu tiên, bị hoãn ở Update 1, và
   **được áp dụng lại kể từ Update 6** cho riêng nút Upload thật ở Screen1 (Type = PO, xem FR-026).
-  Nút Upload thật cho Screen2 (Type = Upload manual) vẫn chưa được xây dựng — sẽ bổ sung ở một tính
-  năng sau.
+  *(Superseded by Update 11)* Khu vực Upload File thật cho Screen2 (Type = Upload manual) — từng
+  được ghi là "chưa được xây dựng, sẽ bổ sung ở một tính năng sau" — giờ đã được xây dựng, xem
+  FR-046/FR-047 và User Story 6.
 - *(Superseded by Update 10)* Icon View trên cột Action từng là placeholder không gắn hành vi xử lý
   nào; kể từ Update 10, icon này mở popup xem trước file thật (khi có `FileId`) hoặc hiển thị vô
   hiệu hóa kèm tooltip "No file to view" (khi không có `FileId`) — xem FR-042.
@@ -1320,13 +1915,16 @@ hiển thị icon View ở trạng thái vô hiệu hóa.
   kế cũ, không bị ảnh hưởng bởi feature này. Migration cụ thể (thêm cột `StepId`, có FK hay không)
   là **quyết định kỹ thuật** sẽ được ghi chi tiết trong `research.md`/`data-model.md` ở bước lập kế
   hoạch (`/speckit-plan`), không phải quyết định nghiệp vụ nên không đưa vào clarify của spec này.
-- **(Update 7)** `RefType = 0` ("PO") lấy từ hằng số `TAKE_FROM_OPTIONS` đã dùng xuyên suốt feature
-  này (`[{ value: 0, label: 'PO' }, { value: 1, label: 'Upload manual' }]`, xem Update 3) — vì khu
-  vực Upload thật (Update 6/7) chỉ tồn tại ở Screen1 (Type = PO), giá trị `RefType` ghi vào
-  `eutr_references` luôn là `0`, không có nhánh nào ghi `RefType = 1` trong phạm vi feature này.
-- **(Update 7)** "Kéo-thả file thật" bổ sung cho khu vực Upload chỉ áp dụng cho **Screen1** (Type =
-  PO) — khu vực "Drag and drop files to upload" ở Screen2 (Type = Upload manual) vẫn là silent no-op
-  không đổi (ngoài phạm vi Update 7, xem FR-006/FR-018/FR-019).
+- **(Update 7, superseded by Update 11)** `RefType = 0` ("PO") lấy từ hằng số `TAKE_FROM_OPTIONS` đã
+  dùng xuyên suốt feature này (`[{ value: 0, label: 'PO' }, { value: 1, label: 'Upload manual' }]`,
+  xem Update 3) — trong phạm vi Update 6/7, khu vực Upload thật chỉ tồn tại ở Screen1 (Type = PO) nên
+  `RefType` ghi vào `eutr_references` luôn là `0`. **Kể từ Update 11**, luồng Assign condition ở
+  Screen2 ghi thêm `RefType = 1` ("Upload manual") — xem FR-052 và Key Entity `EUTR Reference`.
+- **(Update 7, superseded by Update 11)** "Kéo-thả file thật" bổ sung cho khu vực Upload ở Update 7
+  chỉ áp dụng cho **Screen1** (Type = PO) — khu vực "Drag and drop files to upload" ở Screen2 (Type =
+  Upload manual) khi đó vẫn là silent no-op. **Kể từ Update 11**, khu Upload File ở Screen2 cũng hỗ
+  trợ cả kéo-thả file thật lẫn click chọn file, theo đúng cùng cơ chế đã dùng ở Screen1 (xem
+  FR-046).
 - **(Update 8)** Việc tra cứu Step name/Type (danh sách) và File name/Step name (List PO) không đòi
   hỏi migration DB mới — toàn bộ dữ liệu cần thiết (`DocumentId`, `StepId`, `RefType`, `RefValue`
   trên `eutr_references`; `Name` trên `eutr_steps`/`eutr_documents`) đã tồn tại từ Update 7. Cột Step
@@ -1342,4 +1940,71 @@ hiển thị icon View ở trạng thái vô hiệu hóa.
 - **(Update 8)** Vì mọi bản ghi `eutr_references` của cùng một `DocumentId` luôn được ghi trong cùng
   một transaction với cùng `RefType` (FR-033/Update 7), cột Type trên danh sách EUTR documents luôn
   hiển thị đúng **một** nhãn duy nhất cho mỗi document — không có trường hợp một document hiển thị
-  nhiều Type khác nhau trong phạm vi dữ liệu hợp lệ của hệ thống hiện tại.
+  nhiều Type khác nhau trong phạm vi dữ liệu hợp lệ của hệ thống hiện tại. **Kể từ Update 11**, quy
+  tắc này vẫn đúng — mỗi document tạo qua Assign condition (Screen2) chỉ có `eutr_references` với
+  `RefType = 1` (không trộn lẫn với `RefType = 0`).
+- **(Update 11)** Bảng `eutr_reference_details` (Id, RefId, ConditionType, ConditionValue,
+  CreatedBy, CreatedDate, UpdatedBy, UpdatedDate) **đã tồn tại sẵn** trong
+  `docs/design/eutr/eutr_db.sql` (khóa ngoại `eutr_reference_details_refid_foreign`:
+  `eutr_reference_details.RefId` → `eutr_references.Id`) — feature này KHÔNG cần migration DB mới
+  để dùng bảng này, chỉ cần bổ sung logic đọc/ghi ở tầng ứng dụng (application-level).
+- **(Update 11)** `ConditionType` (kiểu `BIGINT` trong `eutr_reference_details`) lưu trực tiếp giá
+  trị `refType` của API tham chiếu dùng chung đã dùng để tải "Condition value" tương ứng (`15` =
+  "PO", `14` = "Vendor") — không định nghĩa bảng/enum mapping "Conditions type" riêng. Nhãn hiển thị
+  ("PO"/"Vendor") suy ra từ một hằng số front-end mới, ví dụ `CONDITION_TYPE_OPTIONS` (đặt cạnh
+  `TAKE_FROM_OPTIONS` trong `compliance-client/src/utils/helpers.js`), có thể mở rộng thêm entry
+  (Conditions type mới ứng với `refType` D365 khác) ở một tính năng sau mà không cần đổi cấu trúc dữ
+  liệu.
+- **(Update 11)** Dropdown chọn Step trong popup Assign condition dùng lại API/luồng lấy danh sách
+  Step hiện có trong hệ thống (ví dụ `GetEutrStepsUseCase`, đã dùng ở `eutr-templates`/
+  `eutr-masters`) — không tạo endpoint lấy danh sách Step mới.
+- **(Update 11)** Backend cần bổ sung: (a) một logic/endpoint upload nhiều file lên SharePoint cho
+  Screen2 (thư mục cố định `UploadManual`, không cần PoCode, không validate prefix) — có thể là một
+  endpoint mới trong `SharePointController` (ví dụ `POST /api/sharepoint/eutr-upload-manual-multi`)
+  gọi một phương thức mới trên `IEutrUploadService` (ví dụ
+  `UploadManualMultipleToSharePointAndSaveDataAsync`), tách biệt với
+  `UploadMultipleToSharePointAndSaveDataAsync` đã có ở Update 6/7 (khác luồng: không nhận PoCode,
+  không validate prefix, không ghi `eutr_references`); (b) một endpoint/tham số lọc mới trong
+  `EutrDocumentsController`/`IEutrDocumentsService` để lấy danh sách `eutr_documents` chưa có
+  `eutr_references` nào (ví dụ `POST /api/eutr-documents/get-unassigned`, hoặc mở rộng tham số lọc
+  của `get-all` hiện có); (c) một endpoint mới để lưu Step/Conditions cho nhiều file cùng lúc (ví dụ
+  `POST /api/eutr-documents/assign-conditions`, nhận danh sách `DocumentId` đã chọn, `StepId`, và
+  danh sách các Conditions type kèm giá trị đã chọn). Tên endpoint/service cụ thể là quyết định kỹ
+  thuật, sẽ được chốt ở `/speckit-plan`, không ảnh hưởng hành vi quan sát được đã mô tả ở FR-046 đến
+  FR-054.
+- **(Update 11)** Với N file đang được chọn khi nhấn Save trong popup Assign condition, hệ thống tạo
+  **N** bản ghi `eutr_references` độc lập (một cho mỗi file, cùng `StepId`/`RefType`, khác
+  `DocumentId`) — giống cách các bản ghi `eutr_references` được tạo độc lập cho từng file ở luồng
+  Upload Screen1 (Update 7). Với mỗi bản ghi `eutr_references` đó, tập hợp `eutr_reference_details`
+  gán cho nó là **giống nhau** trên toàn bộ N bản ghi (cùng Step/Conditions type/value đã chọn trong
+  popup) — không có cách để gán Conditions khác nhau cho từng file riêng lẻ trong cùng một lượt Save
+  ở phạm vi feature này.
+- **(Update 11, superseded by Update 12)** Trong popup Assign condition, mỗi dòng Conditions type
+  đã thêm (qua "Add condition") MUST có cách xóa dòng đó trước khi Save (không áp dụng cho dòng Step
+  cố định). **Tại thời điểm Update 11**, popup này chỉ được vào từ danh sách "chưa gán" ở Screen2,
+  nên chỉ hỗ trợ tạo mới, không có đường sửa Step/Conditions của document đã có `eutr_references`.
+  **Kể từ Update 12**, chức năng Edit ở User Story 3 mở lại chính popup này ở **chế độ sửa** cho
+  document Type = "Upload manual" đã có `eutr_references` — xem FR-056 đến FR-058 và Assumptions
+  Update 12 bên dưới.
+- **(Update 12)** Popup Assign condition có hai chế độ, dùng chung giao diện/component: **chế độ
+  tạo mới** (vào từ danh sách "chưa gán" ở Screen2, có thể áp dụng cho nhiều file cùng lúc, có
+  checkbox chọn file, chỉ MUST hoạt động khi Save — xem Update 11) và **chế độ sửa** (vào từ Edit ở
+  danh sách chính, chỉ áp dụng cho đúng một document đã có `eutr_references`, không có checkbox chọn
+  file vì chỉ có một file, nạp sẵn Step/Conditions hiện có). Cả hai chế độ dùng chung quy tắc bắt
+  buộc khi Save (Step + ít nhất một Conditions type/value, FR-052) và chung nguồn dữ liệu Condition
+  value (`refType=15` cho PO, `refType=14` cho Vendor).
+- **(Update 12)** Việc sửa Step cho document Type = "PO" (FR-055) và sửa Step/Conditions cho
+  document Type = "Upload manual" (FR-057/FR-058) là **hai cơ chế sửa riêng biệt**, phù hợp với cách
+  mỗi Type ghi `eutr_references` khác nhau: Type = "PO" có thể có nhiều bản ghi `eutr_references`
+  (nhiều `StepId` do khớp nhiều prefix) nên Edit **thay thế toàn bộ tập bản ghi** bằng một bản ghi
+  duy nhất; Type = "Upload manual" luôn chỉ có đúng một bản ghi `eutr_references` (Update 11, FR-052)
+  nên Edit **cập nhật trực tiếp** `StepId` của bản ghi đó, không cần xóa/tạo lại bản ghi
+  `eutr_references` nào.
+- **(Update 12)** Việc replace toàn bộ `eutr_reference_details` khi sửa (xóa hết bản ghi cũ theo
+  `RefId`, ghi lại từ đầu) được chọn vì đơn giản, không cần logic so khớp dòng cũ/mới theo Id — đánh
+  đổi là Id của các bản ghi `eutr_reference_details` không được giữ nguyên qua các lần sửa (không
+  ảnh hưởng hành vi quan sát được, vì các bản ghi này không được tham chiếu bởi bảng nào khác trong
+  hệ thống).
+- **(Update 12)** Trường Step mới trong popup Edit (Type = "PO") dùng lại đúng nguồn dữ liệu Step đã
+  dùng ở popup Assign condition (ví dụ `GetEutrStepsUseCase`) — không tạo API lấy danh sách Step
+  riêng cho luồng Edit này.

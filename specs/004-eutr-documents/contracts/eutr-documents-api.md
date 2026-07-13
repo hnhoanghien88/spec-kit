@@ -14,6 +14,11 @@
 | 5 | DELETE | `/api/eutr-documents/{id}` | `EutrDocuments.Delete` | — | message |
 | 6 | POST | `/api/eutr-documents/delete-multi` | `EutrDocuments.Delete` | `IEnumerable<long> ids` | message |
 | 7 | GET | `/api/eutr-documents/get-file-by-idref` | `EutrDocuments.ReadOne` | query: `idRef` (= `FileId`) | `SharepointFileContent` (`{ content, contentType, fileName }`) |
+| 8 | POST | `/api/eutr-documents/get-unassigned` | `EutrDocuments.ReadAll` | query: `page,pageSize,sortColumn,sortOrder`; body: `List<FilterRequest>` | `PagedResult<EutrDocumentsResponseDto>` (chưa gán, xem Update 11) |
+| 9 | POST | `/api/eutr-documents/assign-conditions` | `EutrDocuments.Update` | `EutrAssignConditionsRequestDto { documentIds, stepId, conditions }` | kết quả gán (per-item) |
+| 10 | GET | `/api/eutr-documents/{id}/condition-assignment` | `EutrDocuments.ReadOne` | — | `EutrDocumentConditionAssignmentDto { stepId, conditions }` |
+| 11 | PUT | `/api/eutr-documents/{id}/condition-assignment` | `EutrDocuments.Update` | `EutrUpdateConditionAssignmentRequestDto { stepId, conditions }` | message |
+| 12 | PUT | `/api/eutr-documents/{id}/step` | `EutrDocuments.Update` | `EutrUpdatePoStepRequestDto { stepId }` | message |
 
 > Không có endpoint import/export/upload file ở phạm vi feature này (FR-006 — Add chưa có bước
 > chọn/upload file thật).
@@ -77,6 +82,29 @@
 > **không đổi** — được tái sử dụng nguyên vẹn làm cơ chế xóa cho icon Delete theo từng file ở List
 > PO (không có API xóa mới nào cho luồng này). Không có endpoint xóa file SharePoint nào được gọi
 > bởi Update 10 (file thật trên SharePoint không bị xóa).
+>
+> **Update 11** (Screen2 "Upload manual" trở thành upload thật + Assign condition, tạo mới — spec
+> FR-046 đến FR-054): thêm 1 endpoint MỚI ở **controller khác**
+> (`POST /api/sharepoint/eutr-upload-manual-multi`, `SharePointController`, xem chi tiết dưới) và 2
+> endpoint MỚI trong `EutrDocumentsController` (#8, #9 ở bảng trên — xem chi tiết dưới). Endpoint #2
+> (`POST get-all`) **mở rộng response**: mỗi `EutrDocumentsResponseDto` có thêm `stepId`/
+> `conditions` (xem mục "Mở rộng `EutrDocumentsResponseDto`" dưới). Endpoint #5/#6 (Delete đơn/nhiều)
+> **không đổi request/response** — chỉ đổi SQL nội bộ của `DeleteByDocumentIdAsync` để dọn kèm
+> `eutr_reference_details` (tránh vi phạm khóa ngoại, xem research Quyết định 30) — hành vi quan sát
+> được từ client không đổi (vẫn xóa sạch mọi dữ liệu liên quan, chỉ nay bao gồm cả bảng con mới).
+>
+> **Update 12** (Edit rẽ nhánh theo Type — spec FR-055 đến FR-058): thêm 3 endpoint MỚI trong
+> `EutrDocumentsController` (#10, #11 cho Type="Upload manual"; #12 cho Type="PO" — ở bảng trên).
+> Endpoint #1 (`GET get-by-id/{id}`) và #4 (`PUT {id}`) **không đổi** — Edit cho Type="PO" gọi thêm
+> endpoint #12 SAU khi #4 thành công (2 lời gọi độc lập cho 1 lượt Save); Edit cho Type="Upload
+> manual" KHÔNG gọi #4 nữa (chỉ gọi #10 để tải trước, #11 để lưu).
+>
+> **Update 13** (`/speckit-clarify`): KHÔNG có endpoint mới — 2 thay đổi hành vi nội bộ: (a)
+> `GET get-by-id/{id}`/`POST get-all` MUST trả `stepId` theo quy tắc xác định "Id nhỏ nhất" khi
+> document Type="PO" có nhiều `eutr_references` (không đổi response shape, chỉ đổi cách tính giá
+> trị); (b) endpoint #9/#11 (`assign-conditions`/`condition-assignment`) MUST validate chặn khi
+> `conditions` có 2 dòng cùng `conditionType` (`400 Bad Request`, không đổi response shape khi hợp
+> lệ).
 
 ### API mới — `GET /api/eutr-documents/get-file-by-idref` (spec Update 10, FR-041/FR-042)
 
@@ -151,6 +179,78 @@
   validate file, validate prefix và ghi `eutr_references` trong `data-model.md` (mục "Upload nhiều
   file thật lên SharePoint").
 
+### API mới — `POST /api/sharepoint/eutr-upload-manual-multi` (spec Update 11, FR-046/FR-047)
+
+| Method | Path | Policy | Consumes | Body (`multipart/form-data`) | Trả về |
+|---|---|---|---|---|---|
+| POST | `/api/sharepoint/eutr-upload-manual-multi` | `[Authorize]` (chung, không policy riêng) | `multipart/form-data` | `files`: 1+ file (KHÔNG có `poCode`) | `ApiResponse<List<EutrUploadFileResultDto>>` |
+
+- Nằm trong `SharePointController.cs` hiện có, gọi thêm 1 method mới trên `IEutrUploadService`
+  (`UploadManualMultipleToSharePointAndSaveDataAsync`) — cùng service của Update 6, không service
+  mới.
+- Thư mục SharePoint đích **cố định**: `{SharePointEutrPath}/UploadManual` (tự tạo nếu chưa có).
+- KHÔNG validate prefix `eutr_master_documents` — chỉ validate định dạng/kích thước (giống FR-026).
+- Mỗi file thành công tạo 1 dòng `eutr_documents` — **KHÔNG** tạo `eutr_references`/
+  `eutr_reference_details` nào (khác nhánh PO, nơi ghi `eutr_references` ngay khi upload).
+- Response shape giống hệt `eutr-upload-multi` (Update 6): `[{ fileName, success, documentId,
+  fileId, errorMessage }]`.
+
+### API mới — `POST /api/eutr-documents/get-unassigned` (spec Update 11, FR-048)
+
+| Method | Path | Policy | Body | Trả về |
+|---|---|---|---|---|
+| POST | `/api/eutr-documents/get-unassigned` | `EutrDocuments.ReadAll` | giống `get-all` (query `page,pageSize,sortColumn,sortOrder`; body `List<FilterRequest>`) | `PagedResult<EutrDocumentsResponseDto>` |
+
+- Điều kiện lọc **cố định** (không thuộc filter người dùng gõ):
+  `WHERE NOT EXISTS (SELECT 1 FROM eutr_references r WHERE r.DocumentId = eutr_documents.Id)` — trả
+  về mọi document (bất kể tạo qua Save nhập tay hay qua Upload File Screen2) chưa có bất kỳ
+  `eutr_references` nào. `stepNames`/`refType`/`stepId`/`conditions` trong response luôn rỗng/`null`
+  cho các dòng này.
+
+### API mới — `POST /api/eutr-documents/assign-conditions` (spec Update 11, chế độ tạo mới, FR-052)
+
+| Method | Path | Policy | Body | Trả về |
+|---|---|---|---|---|
+| POST | `/api/eutr-documents/assign-conditions` | `EutrDocuments.Update` | `EutrAssignConditionsRequestDto { documentIds: long[], stepId: long, conditions: [{ conditionType: byte, values: string[] }] }` | `ApiResponse<string>` (message, per-item) |
+
+- Validator MUST chặn (`400`): `documentIds` rỗng; `stepId <= 0`; `conditions` rỗng HOẶC có dòng
+  `values` rỗng (Update 11 correction, FR-052); `conditions` có 2 dòng cùng `conditionType` (Update
+  13, FR-051).
+- Với mỗi `documentId`, 1 transaction riêng — 1 document lỗi không chặn document khác trong cùng
+  request (ngữ nghĩa per-item, giống FR-030/FR-040).
+- Request ví dụ:
+  ```json
+  { "documentIds": [601, 602], "stepId": 5,
+    "conditions": [
+      { "conditionType": 15, "values": ["PO000123", "PO000124"] },
+      { "conditionType": 14, "values": ["V001"] }
+    ] }
+  ```
+
+### API mới — `GET`/`PUT /api/eutr-documents/{id}/condition-assignment` (spec Update 11/12, chế độ sửa, FR-057/FR-058)
+
+| Method | Path | Policy | Body | Trả về |
+|---|---|---|---|---|
+| GET | `/api/eutr-documents/{id}/condition-assignment` | `EutrDocuments.ReadOne` | — | `ApiResponse<EutrDocumentConditionAssignmentDto>` |
+| PUT | `/api/eutr-documents/{id}/condition-assignment` | `EutrDocuments.Update` | `EutrUpdateConditionAssignmentRequestDto { stepId: long, conditions: [...] }` | message |
+
+- `GET`: tải trước Step/Conditions hiện có của document Type="Upload manual" để nạp popup Assign
+  condition ở chế độ sửa. `404` nếu document không có `eutr_references`/`RefType=1`.
+- `PUT`: cùng validator với `assign-conditions` (Step bắt buộc, ≥1 Conditions type hợp lệ, không
+  trùng `conditionType`). Cập nhật `StepId` của dòng `eutr_references` hiện có trực tiếp (không
+  tạo/xóa dòng cha); **xóa hết rồi ghi lại toàn bộ** `eutr_reference_details` (replace, KHÔNG giữ
+  `Id` cũ).
+
+### API mới — `PUT /api/eutr-documents/{id}/step` (spec Update 12/13, Edit cho Type="PO", FR-055)
+
+| Method | Path | Policy | Body | Trả về |
+|---|---|---|---|---|
+| PUT | `/api/eutr-documents/{id}/step` | `EutrDocuments.Update` | `EutrUpdatePoStepRequestDto { stepId: long }` | message |
+
+- Thay thế **toàn bộ** dòng `eutr_references` (`RefType=0`) hiện có của document đó bằng **đúng 1**
+  dòng mới mang `stepId` đã chọn (giữ nguyên `RefValue`/mã PO cũ — lấy từ dòng có `Id` nhỏ nhất
+  trước khi xóa, quy tắc Update 13).
+
 ### API dùng chung — `POST /api/dynamics/reference` (đã tồn tại, chỉ mở rộng bảng ánh xạ refType)
 
 | Method | Path | Policy | Body | Trả về |
@@ -183,7 +283,9 @@
   "createdBy": "hien", "createdDate": "2026-07-07T03:00:00Z",
   "updatedBy": null, "updatedDate": null,
   "stepNames": [],
-  "refType": null
+  "refType": null,
+  "stepId": null,
+  "conditions": []
 }
 ```
 
@@ -193,8 +295,13 @@
   theo `DocumentId` (xem `data-model.md`, research Quyết định 20). `[]`/`null` cho document không có
   bản ghi `eutr_references` nào (ví dụ document tạo qua form Save nhập tay) — frontend map `refType`
   sang nhãn hiển thị qua `TAKE_FROM_OPTIONS`.
-- Không có `conditions` trong response — cột này chỉ tồn tại ở phía grid frontend và luôn hiển thị
-  trống (không đổi bởi Update 8, xem FR-003/FR-036).
+- `stepId` (`long?`, **mới, kể từ Update 13**): Step hiện tại — với Type="PO" (nhiều
+  `eutr_references` có thể), là `StepId` của dòng có `Id` nhỏ nhất; dùng để nạp dropdown Step khi mở
+  Edit (FR-055).
+- `conditions` (`List<ConditionGroupDto>`, **mới, kể từ Update 11**): `[{ conditionType: 15, values:
+  ["PO000123"] }]` — nhóm `eutr_reference_details` theo `conditionType`; `[]` khi document Type="PO"
+  hoặc chưa có `eutr_reference_details` nào (FR-054). Đây chính là dữ liệu hiển thị ở cột "Conditions"
+  trên grid — cột này **không còn luôn trống** kể từ Update 11 (xem FR-003/FR-036/FR-054).
 
 ## `POST /api/eutr-documents/list-po-references` (spec Update 8, FR-037/FR-038) — endpoint MỚI
 
@@ -250,3 +357,9 @@
 | DeleteMultiEutrDocuments | `deleteMulti(ids)` | POST `/eutr-documents/delete-multi` |
 | (Update 8) GetEutrDocumentsPoReferences | `getPoReferences(poCodes)` | POST `/eutr-documents/list-po-references` |
 | (Update 10) GetEutrDocumentsFileByIdRef | `getFileByIdRef(fileId)` | GET `/eutr-documents/get-file-by-idref?idRef={fileId}` |
+| (Update 11) GetEutrDocumentsUnassigned | `getUnassigned(page,pageSize,sortColumn,sortOrder,payload)` | POST `/eutr-documents/get-unassigned` |
+| (Update 11) AssignEutrConditions | `assignConditions(payload)` | POST `/eutr-documents/assign-conditions` |
+| (Update 12) GetEutrDocumentConditionAssignment | `getConditionAssignment(id)` | GET `/eutr-documents/{id}/condition-assignment` |
+| (Update 12) UpdateEutrConditionAssignment | `updateConditionAssignment(id,payload)` | PUT `/eutr-documents/{id}/condition-assignment` |
+| (Update 12) UpdateEutrDocumentPoStep | `updatePoStep(id,stepId)` | PUT `/eutr-documents/{id}/step` |
+| (Update 11) UploadEutrManualFilesMulti (`ISharePointRepository`) | `uploadEutrManualFilesMulti(files)` | POST `/sharepoint/eutr-upload-manual-multi` |

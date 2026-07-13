@@ -28,6 +28,13 @@ Hướng dẫn chạy và kiểm thử thủ công feature EUTR Documents end-to
   document có `FileId` (tạo qua nút Upload, xem tiền đề Update 7) để kiểm thử icon View mở được
   popup xem trước; và ít nhất 1 document KHÔNG có `FileId` (tạo qua form Save nhập tay) để kiểm thử
   icon View bị vô hiệu hóa.
+- **(Update 11)** Bảng `eutr_reference_details` đã tồn tại sẵn trong DB (không cần migration —
+  xem `data-model.md`). Cần ít nhất vài bản ghi `eutr_steps` (feature `001-eutr-steps`) để chọn
+  trong dropdown Step ở popup Assign condition. Cấu hình `SharePointEutrPath` (đã có từ Update 6)
+  tiếp tục dùng cho thư mục cố định `UploadManual` — không cần khóa cấu hình mới.
+- **(Update 12/13)** Không cần thêm tiền đề DB/cấu hình nào — chỉ cần đã có sẵn ít nhất 1 document
+  Type="PO" (từ Update 6/7) và ít nhất 1 document Type="Upload manual" (từ Update 11) để kiểm thử
+  Edit rẽ nhánh theo Type.
 
 ## Chạy
 
@@ -224,21 +231,73 @@ Mở SPA, đăng nhập, vào menu **EUTR documents** (đường dẫn `/eutr/do
    xác nhận không có request nào xóa file SharePoint được gọi (tab Network không có request tới
    `POST /api/sharepoint/delete-file` hay tương đương).
 
-10. **Type = Upload manual trên trang Add (US2, chỉ giao diện)**: Chuyển Type sang "Upload manual" → layout đổi
-    ngay lập tức sang: khu "Drag and drop files to upload" ở trên cùng, nút "Assign condition", và
-    bảng danh sách file (checkbox, File name, Action: View/Delete) với 8 dòng dữ liệu mẫu (File
-    1..File 8).
-11. **Tương tác không chức năng (US2, chỉ giao diện, Screen2)**: Ở layout Screen2 (Manual), thử
-    kéo-thả một file vào khu upload, nhấn "Assign condition", nhấn View/Delete/checkbox trong bảng
-    demo → xác nhận KHÔNG có request nào gửi lên server (tab Network trống cho các thao tác này),
-    KHÔNG có điều hướng/popup nào mở ra. Sau đó vẫn nhập File name + Valid from/to (không quan tâm
-    Type đang chọn gì) và nhấn Save → xác nhận document mới vẫn được tạo bình thường (chỉ theo File
-    name, Valid from, Valid to — Type không được lưu). (Lưu ý: Screen1 KHÔNG còn no-op hoàn toàn —
-    khu vực Upload là control thật, xem 9e-9o.)
+10. **Type = Upload manual — khu Upload File thật (US6, Update 11, FR-046/FR-047)**: Chuyển Type
+    sang "Upload manual" → layout đổi ngay sang khu **Upload File** (giống mẫu Screen1) LUÔN khả
+    dụng (không cần chọn gì trước, khác Screen1) + nút "Assign condition" + bảng danh sách file
+    thật. Click hoặc kéo-thả 1-2 file hợp lệ (PDF/DOC/DOCX/XLS/XLSX/JPG/PNG, ≤10MB) → kiểm tra tab
+    Network: có request `POST /api/sharepoint/eutr-upload-manual-multi` (multipart, chỉ field
+    `files`, KHÔNG có `poCode`). Sau khi hoàn tất, các file vừa upload xuất hiện ngay trong bảng
+    danh sách bên dưới (không cần tải lại trang). Kiểm tra DB: mỗi file tạo đúng 1 dòng
+    `eutr_documents` (FileId từ SharePoint, ValidFrom=hôm nay, ValidTo=`9999-12-31`) và **KHÔNG có**
+    dòng `eutr_references` nào cho các document này.
+10a. **File sai định dạng/quá 10MB ở Screen2 (Update 11, FR-046)**: Chọn kèm 1 file sai định dạng
+    hoặc quá 10MB lẫn file hợp lệ ở khu Upload File Screen2 → file không hợp lệ bị loại kèm thông
+    báo lỗi, file hợp lệ vẫn được upload — giống hành vi FR-026 ở Screen1 (không cần prefix khớp).
+11. **Danh sách "chưa gán" (US6, Update 11, FR-048)**: Quan sát bảng danh sách file ở Screen2 → xác
+    nhận hiển thị mọi document trong `eutr_documents` **chưa có** `eutr_references` nào (bao gồm cả
+    document tạo qua form Save nhập tay lẫn qua khu Upload File Screen2), KHÔNG bao gồm document
+    Type="PO" (đã có `eutr_references` ngay khi upload). Kiểm tra tab Network: request
+    `POST /api/eutr-documents/get-unassigned`.
+11a. **View/Delete trên bảng "chưa gán" (US6, Update 11, FR-049)**: Nhấn icon View trên 1 dòng → mở
+    popup xem trước file thật (giống kịch bản 6). Nhấn icon Delete trên 1 dòng, xác nhận → document
+    đó biến mất khỏi bảng và khỏi `eutr_documents`; file thật trên SharePoint vẫn còn (giống kịch
+    bản 9s).
+11b. **Assign condition — chọn nhiều file, gán Step/Conditions (US6, Update 11/13, FR-050 đến
+    FR-054)**: Tick chọn 2 file trong bảng "chưa gán" → nút "Assign condition" chuyển khả dụng →
+    nhấn vào → popup mở, hiển thị đúng 2 file đã chọn (read-only, không checkbox). Dòng đầu "Step"
+    hiển thị dropdown — thử nhấn Save ngay (chưa chọn Step) → bị chặn kèm lỗi (FR-052). Chọn 1 Step
+    → nhấn Save lần nữa (vẫn chưa có dòng Conditions type) → **vẫn bị chặn** kèm lỗi yêu cầu thêm
+    Conditions type (Update 13 correction). Nhấn "Add condition" → thêm 1 dòng, chọn Conditions
+    type = "PO" → ô Condition value tải dữ liệu qua `POST /api/dynamics/reference?refType=15`,
+    chọn 2 giá trị PO. Nhấn "Add condition" lần 2 → xác nhận dropdown Conditions type của dòng mới
+    **disable** sẵn "PO" (đã dùng ở dòng trên), chỉ "Vendor" chọn được (Update 13, FR-051) — chọn
+    "Vendor" (`refType=14`), chọn 1 giá trị. Nhấn Save → kiểm tra tab Network: request
+    `POST /api/eutr-documents/assign-conditions`. Sau khi lưu: popup đóng, 2 file vừa gán biến mất
+    khỏi bảng "chưa gán"; mở danh sách EUTR documents chính → cả 2 document hiển thị Type="Upload
+    manual", Step name đúng, và cột **Conditions** hiển thị "PO: <giá trị 1>, <giá trị 2>" và
+    "Vendor: <giá trị>" (theo mẫu `view.png`). Kiểm tra DB: mỗi document có đúng 1 dòng
+    `eutr_references` (RefType=1, RefValue=null) và đúng 3 dòng `eutr_reference_details` (2 PO + 1
+    Vendor).
+12. **Edit — Type="PO" thêm sửa Step (US3, Update 12/13, FR-055)**: Trên danh sách chính, tìm 1
+    document Type="PO" → nhấn Edit → popup đơn giản mở ra với File name/Valid from/Valid to **và
+    thêm trường Step** hiển thị đúng Step hiện tại (nếu document có nhiều Step liên kết do khớp
+    nhiều prefix — Update 7 — dropdown hiển thị Step ứng với `eutr_references.Id` nhỏ nhất, Update
+    13). Đổi sang Step khác → Save → kiểm tra tab Network có thêm request
+    `PUT /eutr-documents/{id}/step`; cột Step name trên danh sách chính cập nhật đúng thành **chỉ**
+    Step mới (không còn Step cũ nếu trước đó có nhiều).
+13. **Edit — Type="Upload manual" mở popup Assign condition để sửa (US3, Update 12, FR-056 đến
+    FR-058)**: Tìm 1 document Type="Upload manual" (đã gán ở kịch bản 11b) → nhấn Edit → xác nhận
+    **KHÔNG** mở popup đơn giản, mà mở popup Assign condition ở chế độ sửa (kiểm tra tab Network:
+    request `GET /eutr-documents/{id}/condition-assignment`), nạp sẵn đúng Step và các dòng
+    Conditions type/value hiện có. Đổi Step, xóa dòng "Vendor", thêm 1 giá trị PO mới vào dòng "PO"
+    → Save → kiểm tra tab Network: request `PUT /eutr-documents/{id}/condition-assignment`. Sau khi
+    lưu: cột Step name/Conditions trên danh sách chính cập nhật đúng theo thay đổi (dòng "Vendor" đã
+    biến mất khỏi Conditions). Thử Save khi bỏ hết dòng Conditions type (chỉ còn Step) → bị chặn
+    kèm lỗi, dữ liệu cũ giữ nguyên (không mất Step/Conditions đã có).
 
 ## Tiêu chí đạt
 
-- Tất cả 11 kịch bản trên (cùng các kịch bản phụ 9a-9s, 1a, 5a-5c, 6a) hoạt động đúng.
+- Tất cả 13 kịch bản trên (cùng các kịch bản phụ 9a-9s, 10a, 11a-11b, 1a, 5a-5c, 6a) hoạt động đúng.
+- **(Update 11)** Khu Upload File ở Screen2 luôn khả dụng (không cần chọn gì trước), upload đúng
+  vào thư mục cố định `UploadManual`, không validate prefix — xem SC-025. Danh sách "chưa gán" chỉ
+  hiển thị document không có `eutr_references` — xem SC-026. Save trong popup Assign condition bị
+  chặn khi thiếu Step HOẶC thiếu Conditions type/value (Update 13 correction) — xem SC-027, tạo
+  đúng số bản ghi `eutr_references`/`eutr_reference_details` khi hợp lệ — xem SC-028/SC-029/SC-034
+  (không cho phép 2 dòng cùng Conditions type).
+- **(Update 12)** Edit rẽ nhánh đúng theo Type của document (PO/Upload manual/trống) — xem SC-030;
+  sửa Step cho Type="PO" thay thế đúng toàn bộ tập Step cũ bằng Step mới — xem SC-031; popup Assign
+  condition ở chế độ sửa nạp đúng dữ liệu hiện có — xem SC-032; Save chế độ sửa tuân thủ cùng quy
+  tắc bắt buộc như chế độ tạo mới, không làm mất dữ liệu cũ khi bị chặn — xem SC-033.
 - **(Update 9)** Sau khi xóa 1 hoặc nhiều document (đơn hoặc bulk), không còn dòng `eutr_references`
   nào có `DocumentId` trỏ tới document đã xóa — xem SC-021. Nếu bước dọn `eutr_references` thất bại,
   document đó không bị xóa; lỗi ở 1 document không chặn việc xóa các document khác trong cùng lượt
@@ -257,9 +316,10 @@ Mở SPA, đăng nhập, vào menu **EUTR documents** (đường dẫn `/eutr/do
   đúng và chỉ đúng document đó (kèm `eutr_references` liên quan) mà KHÔNG xóa file thật trên
   SharePoint — xem SC-024.
 - Trường Type + layout List PO (Screen1)/Upload manual (Screen2) trên trang Add hiển thị đúng theo
-  `docs/design/eutr/eutr_documents_overview.md`; Screen2 và cột File name/Action của Screen1 vẫn
-  dùng dữ liệu mẫu tĩnh/no-op như Update 3; Save vẫn hoạt động như cũ (chỉ File name, Valid from,
-  Valid to).
+  `docs/design/eutr/eutr_documents_overview.md`. **Kể từ Update 11**, Screen2 KHÔNG còn dùng dữ
+  liệu mẫu tĩnh/no-op — khu Upload File, bảng danh sách "chưa gán", checkbox, và Assign condition
+  đều là hành vi thật (xem kịch bản 10-11b); Save trên form chính vẫn hoạt động độc lập như cũ (chỉ
+  File name, Valid from, Valid to).
 - Cột **PO name** trong List PO (Screen1) tải đúng dữ liệu thật từ `POST /api/dynamics/reference`
   (`refType = 15`); trạng thái trống/lỗi của bảng này hiển thị đúng khi API trả về rỗng/thất bại
   (Update 4).

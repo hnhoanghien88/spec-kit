@@ -592,6 +592,163 @@ khác của trang Add (Update 3-9) không đổi.
 
 ---
 
+## Phase 17: Update 11 - Screen2 "Upload manual" trở thành upload file thật + popup "Assign condition" gán Step/Conditions (User Story 6)
+
+**Goal**: Khu "Drag and drop files to upload" ở Screen2 (silent no-op từ Update 3) trở thành khu
+**Upload File** thật (luôn khả dụng, không cần chọn gì trước) — upload lên thư mục **cố định**
+`{SharePointEutrPath}/UploadManual`, KHÔNG validate prefix, KHÔNG ghi `eutr_references`. Bảng danh
+sách file bên dưới đổi từ dữ liệu mẫu sang danh sách **"chưa gán"** thật (mọi `eutr_documents`
+KHÔNG có `eutr_references` nào — SQL `NOT EXISTS` tùy biến). Nút "Assign condition" mở popup mới
+**`AssignConditionDialog.jsx`**: dòng "Step" cố định (bắt buộc) + các dòng "Conditions type" (PO/
+Vendor, thêm qua "Add condition") với "Condition value" multi-select. Save ghi 1 dòng
+`eutr_references` (`RefType=1`) + N dòng `eutr_reference_details` **cho mỗi** document đã chọn
+(bảng `eutr_reference_details` **đã tồn tại sẵn** trong `eutr_db.sql` — KHÔNG migration DB mới).
+Cột **Conditions** trên danh sách chính hiển thị dữ liệu thật cho Type="Upload manual" (spec
+FR-046 đến FR-054, research Quyết định 29-40).
+
+**Independent Test**: Xem [quickstart.md](./quickstart.md) kịch bản 10, 10a, 11, 11a, 11b.
+
+### Backend — bảng con `eutr_reference_details` (đã tồn tại sẵn trong DDL, KHÔNG migration mới)
+
+- [X] T142 [P] [US6] Tạo entity `compliance-sys-api/src/ComplianceSys.Domain/Entities/EutrReferenceDetails.cs` (`[Table("eutr_reference_details")]`, kế thừa `BaseEntity`: `Id: long`, `RefId: long?`, `ConditionType: byte?`, `ConditionValue: string?` — clone hình dạng `EutrReferences.cs`, research Quyết định 29).
+- [X] T143 [P] [US6] Tạo `compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/EutrConditionGroupRow.cs` (projection phẳng `{ long DocumentId, byte ConditionType, string ConditionValue }` — kết quả thô của truy vấn JOIN `eutr_reference_details`+`eutr_references`).
+- [X] T144 [P] [US6] Tạo `compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/ConditionGroupDto.cs` (`{ byte ConditionType, List<string> Values }` — dùng trong `EutrDocumentsResponseDto.Conditions`).
+- [X] T145 [US6] Tạo interface `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrReferenceDetailsRepository.cs`: `Task<List<EutrConditionGroupRow>> GetGroupedConditionsByDocumentIdsAsync(IEnumerable<long> documentIds, CancellationToken ct = default);` + `Task DeleteByRefIdAsync(long refId, CancellationToken ct = default);` (phải sau T143, cần type `EutrConditionGroupRow`).
+- [X] T146 [US6] Tạo `compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrReferenceDetailsRepository.cs` (`DapperRepository<EutrReferenceDetails,long>`, implement `IEutrReferenceDetailsRepository` — SQL JOIN `eutr_reference_details d ON d.RefId = r.Id ... WHERE r.DocumentId IN @DocumentIds` cho method 1; `DELETE FROM eutr_reference_details WHERE RefId = @RefId` cho method 2, cùng style `Connection.ExecuteAsync`/`QueryAsync` + `CommandDefinition` của `EutrReferencesRepository`) (phải sau T142, T145).
+- [X] T147 [US6] Đăng ký DI `services.AddScoped<IEutrReferenceDetailsRepository, EutrReferenceDetailsRepository>();` trong `compliance-sys-api/src/ComplianceSys.Infrastructure/DependencyInjection.cs` (phải sau T146).
+
+### Backend — critical fix: dọn `eutr_reference_details` khi xóa document (tránh vi phạm khóa ngoại)
+
+- [X] T148 [US6] Sửa SQL trong `compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrReferencesRepository.cs`, method `DeleteByDocumentIdAsync` — đổi thành 2 câu lệnh trong cùng `CommandDefinition`/transaction: `DELETE FROM eutr_reference_details WHERE RefId IN (SELECT Id FROM eutr_references WHERE DocumentId = @DocumentId); DELETE FROM eutr_references WHERE DocumentId = @DocumentId;` — chữ ký method KHÔNG đổi (research Quyết định 30; phải làm **trước khi** `eutr_reference_details` có dữ liệu thật, tức trước T157).
+
+### Backend — Upload File thật cho Screen2 (thư mục cố định, KHÔNG prefix, KHÔNG ghi `eutr_references`)
+
+- [X] T149 [P] [US6] Tạo `compliance-sys-api/src/ComplianceSys.Application/Dtos/Request/EutrManualMultiUploadFileRequest.cs` (`{ List<IFormFile> Files }` — KHÔNG có `PoCode`, khác `EutrMultiUploadFileRequest`).
+- [X] T150 [US6] Sửa `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Services/IEutrUploadService.cs`: + `Task<List<EutrUploadFileResultDto>> UploadManualMultipleToSharePointAndSaveDataAsync(EutrManualMultiUploadFileRequest request, string email, CancellationToken ct);` (phải sau T149).
+- [X] T151 [US6] Sửa `compliance-sys-api/src/ComplianceSys.Application/Services/EutrUploadService.cs`: implement method trên — gọi `ResolveOrCreatePoFolderAsync(basePath, "UploadManual")` (tên hàm giữ nguyên, đổi tham số thành hằng chuỗi cố định), validate file qua `ValidateFile` hiện có (KHÔNG gọi `GetMatchingPrefixesAsync`), mỗi file thành công chỉ `_repository.AddAsync` 1 dòng `EutrDocuments` (`Name`, `FileId`, `ValidFrom`=hôm nay, `ValidTo`=`9999-12-31`) — KHÔNG mở transaction/ghi `EutrReferences` nào (research Quyết định 31; phải sau T150).
+- [X] T152 [US6] Sửa `compliance-sys-api/src/ComplianceSys.Api/Controllers/SharepointController.cs`: thêm action `[HttpPost("eutr-upload-manual-multi")] [Consumes("multipart/form-data")]` nhận `[FromForm] EutrManualMultiUploadFileRequest request`, gọi `_eutrUploadService.UploadManualMultipleToSharePointAndSaveDataAsync(request, email, ct)` (dùng chung `[Authorize]` cấp controller, research Quyết định 32; phải sau T151).
+
+### Backend — danh sách "chưa gán" (SQL `NOT EXISTS` tùy biến)
+
+- [X] T153 [US6] Sửa `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrReferencesRepository.cs`: + `Task<PagedResult<EutrDocuments>> GetUnassignedDocumentsPagedAsync(PagedRequest request, CancellationToken ct = default);`.
+- [X] T154 [US6] Sửa `compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrReferencesRepository.cs`: implement method trên — clone khung paging tùy biến của `EutrMastersRepository.GetPagedWithStepNameAsync`/`EutrTemplatesRepository.GetPagedWithVendorNameAsync` (`SortMap`/`FilterMap` whitelist theo cột của `eutr_documents`, `LIMIT`/`OFFSET` + `COUNT` riêng), với `WHERE NOT EXISTS (SELECT 1 FROM eutr_references r WHERE r.DocumentId = d.Id)` **luôn áp dụng** (không thuộc filter người dùng) (research Quyết định 33; phải sau T153, độc lập với T148 dù cùng file — khác method, không conflict logic).
+- [X] T155 [US6] Sửa `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Services/IEutrDocumentsService.cs`: + `Task<PagedResult<EutrDocumentsResponseDto>> GetUnassignedPagedAsync(PagedRequest request, CancellationToken ct = default);`.
+- [X] T156 [US6] Sửa `compliance-sys-api/src/ComplianceSys.Application/Services/EutrDocumentsService.cs`: implement `GetUnassignedPagedAsync` — gọi `_referencesRepository.GetUnassignedDocumentsPagedAsync`, map sang `List<EutrDocumentsResponseDto>` qua `_mapper` (các field Step/Type/Conditions giữ giá trị mặc định rỗng/`null`) (phải sau T154, T155).
+
+### Backend — cột Conditions trên danh sách chính (`EutrDocumentsResponseDto.Conditions`)
+
+- [X] T157 [US6] Sửa `compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/EutrDocumentsResponseDto.cs`: + `public List<ConditionGroupDto> Conditions { get; set; } = [];` (phải sau T144).
+- [X] T158 [US6] Sửa `compliance-sys-api/src/ComplianceSys.Application/Services/EutrDocumentsService.cs`: đổi tên `AttachStepInfoAsync` thành `AttachStepAndConditionInfoAsync`, thêm bước gọi `_referenceDetailsRepository.GetGroupedConditionsByDocumentIdsAsync(ids)` (cần inject thêm `IEutrReferenceDetailsRepository _referenceDetailsRepository` qua constructor), gộp theo `DocumentId` rồi theo `ConditionType` thành `List<ConditionGroupDto>`, gán vào `item.Conditions` — cập nhật cả lời gọi trong `GetPagedAsync` sang tên method mới (research Quyết định 39; phải sau T146, T147, T157, và sau T156 vì cùng file).
+
+### Backend — popup Assign condition, chế độ tạo mới (`POST /assign-conditions`)
+
+- [X] T159 [P] [US6] Tạo `compliance-sys-api/src/ComplianceSys.Application/Dtos/Request/EutrConditionRowDto.cs` (`{ byte ConditionType, List<string> Values }`).
+- [X] T160 [US6] Tạo `compliance-sys-api/src/ComplianceSys.Application/Dtos/Request/EutrAssignConditionsRequestDto.cs` (`{ List<long> DocumentIds, long StepId, List<EutrConditionRowDto> Conditions }`) (phải sau T159).
+- [X] T161 [US6] Tạo `compliance-sys-api/src/ComplianceSys.Application/Validators/EutrAssignConditionsRequestDtoValidator.cs` (`BaseValidator<EutrAssignConditionsRequestDto>`: `DocumentIds` NotEmpty; `StepId` GreaterThan(0); `Conditions` NotEmpty + mỗi dòng `Values` NotEmpty — FR-052) (phải sau T160).
+- [X] T162 [US6] Tạo interface `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Services/IEutrConditionAssignmentService.cs`: `Task AssignConditionsAsync(EutrAssignConditionsRequestDto request, string email, CancellationToken ct = default);` (phải sau T160).
+- [X] T163 [US6] Tạo `compliance-sys-api/src/ComplianceSys.Application/Services/EutrConditionAssignmentService.cs` (constructor DI: `IRepository<EutrReferences,long>`, `IRepository<EutrReferenceDetails,long>`, `IUnitOfWork`) — implement `AssignConditionsAsync`: với mỗi `DocumentId`, 1 transaction riêng (mẫu per-item Quyết định 24/34) — insert 1 `EutrReferences` (`DocumentId`, `StepId`, `RefType=1`, `RefValue=null`), rồi với mỗi `Conditions[].Values`, insert 1 `EutrReferenceDetails` (`RefId`=Id vừa tạo, `ConditionType`, `ConditionValue`); gom lỗi per-document, không chặn document khác (research Quyết định 34; phải sau T142, T162).
+- [X] T164 [US6] Đăng ký DI trong `compliance-sys-api/src/ComplianceSys.Application/DependencyInjection.cs`: `services.AddScoped<IEutrConditionAssignmentService, EutrConditionAssignmentService>();` + `services.AddScoped<IValidator<EutrAssignConditionsRequestDto>, EutrAssignConditionsRequestDtoValidator>();` (phải sau T161, T163).
+- [X] T165 [US6] Sửa `compliance-sys-api/src/ComplianceSys.Api/Controllers/EutrDocumentsController.cs`: thêm constructor param `IEutrConditionAssignmentService _conditionAssignmentService`; thêm action `[Authorize(Policy = "EutrDocuments.ReadAll")] [HttpPost("get-unassigned")] GetUnassigned(page, pageSize, sortColumn, sortOrder, [FromBody] List<FilterRequest>? filters, ct)` (gọi `_eutrDocumentsService.GetUnassignedPagedAsync`, clone action `GetPaged` hiện có) + action `[Authorize(Policy = "EutrDocuments.Update")] [HttpPost("assign-conditions")] AssignConditions([FromBody] EutrAssignConditionsRequestDto dto, ct)` (gọi `_conditionAssignmentService.AssignConditionsAsync`) (phải sau T156, T164).
+
+### Frontend — hằng số + hạ tầng SharePoint/repository
+
+- [X] T166 [P] [US6] Sửa `compliance-client/src/utils/helpers.js`: + `export const CONDITION_TYPE_OPTIONS = [{ value: 15, label: 'PO' }, { value: 14, label: 'Vendor' }];` (cạnh `TAKE_FROM_OPTIONS`).
+- [X] T167 [P] [US6] Sửa `compliance-client/src/domain/interfaces/ISharePointRepository.js`: + `uploadEutrManualFilesMulti(_files) { throw new Error('Method not implemented'); }`.
+- [X] T168 [US6] Sửa `compliance-client/src/infrastructure/repositories/RestSharePointRepository.js`: implement `uploadEutrManualFilesMulti(files)` — `FormData` chỉ field `files[]` (không `poCode`) → `POST /sharepoint/eutr-upload-manual-multi` (phải sau T167).
+- [X] T169 [US6] Sửa `compliance-client/src/application/usecases/sharepoint/UploadToSharePointUseCase.js`: + `executeManualMulti(files) { return this.sharePointRepository.uploadEutrManualFilesMulti(files); }` (phải sau T168).
+- [X] T170 [P] [US6] Sửa `compliance-client/src/domain/interfaces/IEutrDocumentsRepository.js`: + `getUnassigned(_page,_pageSize,_sortColumn,_sortOrder,_payload)`, `assignConditions(_payload) { throw new Error('Method not implemented'); }`.
+- [X] T171 [P] [US6] Sửa `compliance-client/src/infrastructure/api/eutrDocumentsApi.js`: + `getUnassigned(page,pageSize,sortColumn,sortOrder,payload) -> POST /eutr-documents/get-unassigned`; + `assignConditions(payload) -> POST /eutr-documents/assign-conditions`.
+- [X] T172 [US6] Sửa `compliance-client/src/infrastructure/repositories/RestEutrDocumentsRepository.js`: implement 2 method trên (phải sau T170, T171).
+- [X] T173 [P] [US6] Tạo `compliance-client/src/application/usecases/eutr-documents/GetEutrDocumentsUnassignedUseCase.js` (`execute(page,pageSize,sortColumn,sortOrder,payload) { return this.repository.getUnassigned(...); }`) (phải sau T172).
+- [X] T174 [P] [US6] Tạo `compliance-client/src/application/usecases/eutr-documents/AssignEutrConditionsUseCase.js` (`execute(payload) { return this.repository.assignConditions(payload); }`) (phải sau T172).
+
+### Frontend — popup `AssignConditionDialog` (chế độ tạo mới) + Screen2 thật
+
+- [X] T175 [US6] Tạo `compliance-client/src/presentation/pages/eutr-documents/components/AssignConditionDialog.jsx`: props `{ open, mode: 'create', documents, onClose, onSaved }`; state `stepId`, `conditionRows` (mảng `{ rowId, conditionType, values }`); dòng "Step" cố định ở đầu (dropdown từ `GetEutrStepsUseCase`, gọi 1 lần khi `open`); nút "Add condition" (`handleAddConditionRow`, clone state machine `ComplianceMasterForm.jsx`) thêm dòng mới; mỗi dòng: `<Select>` "Conditions type" (options `CONDITION_TYPE_OPTIONS`) + `<ReferenceObjectMultiAutocomplete referenceType={row.conditionType} value={row.values} onChange={...} />` cho "Condition value"; icon Delete xóa dòng (không áp dụng dòng Step); Save validate Step đã chọn + ≥1 dòng Conditions type có ≥1 giá trị (chặn kèm lỗi nếu thiếu — FR-052/Update 13), gọi `assignEutrConditionsUseCase.execute({ documentIds: documents.map(d => d.id), stepId, conditions: conditionRows.map(r => ({ conditionType: r.conditionType, values: r.values.map(v => v.code ?? v.id) })) })`, `onSaved()` + `onClose()` khi thành công (research Quyết định 36/37; phải sau T166, T174).
+- [X] T176 [US6] Sửa `compliance-client/src/presentation/pages/eutr-documents/hooks/useEutrDocumentsColumns.jsx`: cột `"conditions"` đổi từ khai báo trống sang `renderCell` — `.map()` qua `row.conditions`, mỗi nhóm hiển thị `"{label}: {values.join(', ')}"` (label tra `CONDITION_TYPE_OPTIONS` theo `conditionType`) (research Quyết định 39; phải sau T166).
+- [X] T177 [US6] Sửa `compliance-client/src/presentation/pages/eutr-documents/EutrDocumentsAdd.jsx` (Screen2, nhánh `takeFrom === TAKE_FROM_OPTIONS[1].value`): bỏ `DEMO_FILE_LIST` + handler no-op; thêm state `unassignedFiles`/`selectedUnassignedIds`; `useEffect` gọi `getEutrDocumentsUnassignedUseCase.execute()` khi `takeFrom` đổi sang "Upload manual" (mẫu effect đã có cho `fetchPoList` ở Screen1); clone khối JSX khu "Upload File" của Screen1 nhưng **bỏ** điều kiện `opacity`/`pointerEvents` theo PO (luôn khả dụng), đổi hàm xử lý file sang gọi `uploadToSharePointUseCase.executeManualMulti(files)` (research Quyết định 40; phải sau T169, T173, cùng file với T112/T113/T137/T138).
+- [X] T178 [US6] Trong cùng file `EutrDocumentsAdd.jsx`, bảng danh sách file Screen2: `.map()` qua `unassignedFiles` (checkbox `selectedUnassignedIds`), icon View/Delete mỗi dòng dùng lại đúng cơ chế đã có ở List PO (`EutrFileViewerDialog`/`ConfirmDialog`/`deleteEutrDocumentsUseCase`, refetch `unassignedFiles` sau khi xóa); nút "Assign condition" `disabled={selectedUnassignedIds.length === 0}`, `onClick` mở `AssignConditionDialog` `mode="create"` với `documents = unassignedFiles.filter(f => selectedUnassignedIds.includes(f.id))`; `onSaved` gọi lại `getEutrDocumentsUnassignedUseCase.execute()` để refetch (phải sau T175, T177, cùng file).
+- [X] T179 [P] [US6] Rà soát toàn bộ văn bản mới bằng tiếng Anh (FR-015): "Upload File", "Add condition", "Conditions type", "Condition value", "Step" trong `AssignConditionDialog.jsx`/`EutrDocumentsAdd.jsx`.
+- [ ] T180 [US6] Kiểm thử thủ công theo [quickstart.md](./quickstart.md) kịch bản 10, 10a, 11, 11a, 11b trên `/eutr/documents` (Type = "Upload manual"). Cần backend build lại (T142-T165) và DB có sẵn dữ liệu `eutr_steps`. **CHƯA chạy trong trình duyệt** — cùng điều kiện với các kịch bản trước.
+
+**Checkpoint**: Screen2 upload file thật, danh sách "chưa gán" tải đúng, popup Assign condition tạo
+mới hoạt động end-to-end (Step + Conditions bắt buộc), cột Conditions trên danh sách chính hiển thị
+đúng; toàn bộ CRUD US1-US5 và Update 3-10 không đổi.
+
+---
+
+## Phase 18: Update 12 - Edit (User Story 3) rẽ nhánh theo Type: PO thêm sửa Step, Upload manual mở lại popup Assign condition để sửa
+
+**Goal**: Edit trên danh sách chính rẽ nhánh theo `refType`: Type="PO" giữ popup đơn giản + thêm
+trường Step (single-select, thay thế toàn bộ tập `eutr_references` cũ); Type="Upload manual" mở lại
+**chính** `AssignConditionDialog.jsx` (Phase 17) ở chế độ sửa (cập nhật `StepId` trực tiếp + replace
+toàn bộ `eutr_reference_details`); Type trống không đổi (spec FR-055 đến FR-058, research Quyết
+định 34/38).
+
+**Independent Test**: Xem [quickstart.md](./quickstart.md) kịch bản 12, 13.
+
+### Backend
+
+- [X] T181 [P] [US3] Tạo `compliance-sys-api/src/ComplianceSys.Application/Dtos/Request/EutrUpdateConditionAssignmentRequestDto.cs` (`{ long StepId, List<EutrConditionRowDto> Conditions }`).
+- [X] T182 [P] [US3] Tạo `compliance-sys-api/src/ComplianceSys.Application/Dtos/Request/EutrUpdatePoStepRequestDto.cs` (`{ long StepId }`).
+- [X] T183 [P] [US3] Tạo `compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/EutrDocumentConditionAssignmentDto.cs` (`{ long? StepId, List<EutrConditionRowDto> Conditions }`).
+- [X] T184 [US3] Tạo `compliance-sys-api/src/ComplianceSys.Application/Validators/EutrUpdateConditionAssignmentRequestDtoValidator.cs` (cùng rule `EutrAssignConditionsRequestDtoValidator`: `StepId` GreaterThan(0), `Conditions` NotEmpty + mỗi dòng `Values` NotEmpty) (phải sau T181).
+- [X] T185 [US3] Sửa `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Services/IEutrConditionAssignmentService.cs`: + `Task<EutrDocumentConditionAssignmentDto> GetConditionAssignmentAsync(long documentId, CancellationToken ct = default);` + `Task UpdateConditionAssignmentAsync(long documentId, EutrUpdateConditionAssignmentRequestDto request, string email, CancellationToken ct = default);` + `Task UpdatePoStepAsync(long documentId, long stepId, string email, CancellationToken ct = default);` (phải sau T181, T183).
+- [X] T186 [US3] Sửa `compliance-sys-api/src/ComplianceSys.Application/Services/EutrConditionAssignmentService.cs`: implement `GetConditionAssignmentAsync` (đọc 1 `EutrReferences` `RefType=1` của document + `GetGroupedConditionsByDocumentIdsAsync([documentId])`, nhóm thành `Conditions`); `UpdateConditionAssignmentAsync` (1 transaction: `UpdateAsync` đổi `StepId` của `EutrReferences` hiện có, `DeleteByRefIdAsync(refId)` rồi insert lại từ đầu `EutrReferenceDetails` mới — replace toàn bộ, research Quyết định 34); `UpdatePoStepAsync` (1 transaction: lấy `RefValue` từ dòng `RefType=0` có `Id` nhỏ nhất, xóa toàn bộ dòng `RefType=0` của document, insert đúng 1 dòng mới với `StepId` mới + `RefValue` giữ nguyên) (phải sau T185, T146 (repo details), T148 (SQL cascade đã sửa)).
+- [X] T187 [US3] Sửa `compliance-sys-api/src/ComplianceSys.Api/Controllers/EutrDocumentsController.cs`: + `[Authorize(Policy = "EutrDocuments.ReadOne")] [HttpGet("{id:long}/condition-assignment")] GetConditionAssignment(long id, ct)`; + `[Authorize(Policy = "EutrDocuments.Update")] [HttpPut("{id:long}/condition-assignment")] UpdateConditionAssignment(long id, [FromBody] EutrUpdateConditionAssignmentRequestDto dto, ct)`; + `[Authorize(Policy = "EutrDocuments.Update")] [HttpPut("{id:long}/step")] UpdatePoStep(long id, [FromBody] EutrUpdatePoStepRequestDto dto, ct)` (phải sau T182, T184, T186).
+- [X] T188 [US3] Đăng ký DI validator mới trong `compliance-sys-api/src/ComplianceSys.Application/DependencyInjection.cs`: `services.AddScoped<IValidator<EutrUpdateConditionAssignmentRequestDto>, EutrUpdateConditionAssignmentRequestDtoValidator>();` (phải sau T184).
+
+### Frontend
+
+- [X] T189 [P] [US3] Sửa `compliance-client/src/domain/interfaces/IEutrDocumentsRepository.js`: + `getConditionAssignment(_id)`, `updateConditionAssignment(_id,_payload)`, `updatePoStep(_id,_stepId) { throw new Error('Method not implemented'); }`.
+- [X] T190 [P] [US3] Sửa `compliance-client/src/infrastructure/api/eutrDocumentsApi.js`: + `getConditionAssignment(id) -> GET /eutr-documents/{id}/condition-assignment`; + `updateConditionAssignment(id,payload) -> PUT .../condition-assignment`; + `updatePoStep(id,stepId) -> PUT /eutr-documents/{id}/step`.
+- [X] T191 [US3] Sửa `compliance-client/src/infrastructure/repositories/RestEutrDocumentsRepository.js`: implement 3 method trên (phải sau T189, T190).
+- [X] T192 [P] [US3] Tạo `compliance-client/src/application/usecases/eutr-documents/GetEutrDocumentConditionAssignmentUseCase.js` (phải sau T191).
+- [X] T193 [P] [US3] Tạo `compliance-client/src/application/usecases/eutr-documents/UpdateEutrConditionAssignmentUseCase.js` (phải sau T191).
+- [X] T194 [P] [US3] Tạo `compliance-client/src/application/usecases/eutr-documents/UpdateEutrDocumentPoStepUseCase.js` (phải sau T191).
+- [X] T195 [US3] Sửa `compliance-client/src/presentation/pages/eutr-documents/components/AssignConditionDialog.jsx`: hỗ trợ thêm `mode="edit"` — nhận thêm prop `documentId`, `initialStepId`, `initialConditions` (nạp sẵn `stepId`/`conditionRows` khi `open` ở mode này); phần danh sách file trên cùng hiển thị đúng 1 file (`documents` có 1 phần tử, read-only, không checkbox — không đổi so với create); Save gọi `updateEutrConditionAssignmentUseCase.execute(documentId, { stepId, conditions })` thay vì `assignEutrConditionsUseCase` khi `mode === 'edit'` (phải sau T175 (Phase 17), T193).
+- [X] T196 [US3] Sửa `compliance-client/src/presentation/pages/eutr-documents/components/EutrDocumentsModal.jsx`: khi `open` và `initialData?.refType === TAKE_FROM_OPTIONS[0].value` (PO), render thêm 1 `<Autocomplete>`/`<Select>` "Step" (options từ `GetEutrStepsUseCase`, gọi 1 lần khi mount, `value` = Step khớp `initialData.stepId`); Save: sau khi `onSubmit` (File name/Valid from/Valid to) thành công, gọi thêm `updateEutrDocumentPoStepUseCase.execute(initialData.id, stepId)` (2 lời gọi độc lập cho 1 lượt Save) (phải sau T194).
+- [X] T197 [US3] Sửa `compliance-client/src/presentation/pages/eutr-documents/index.jsx`: `onEdit` rẽ nhánh theo `row.refType` — `0` (PO): giữ `setModalData(row); setModalOpen(true)` (không đổi, popup nay có Step nhờ T196); `1` (Upload manual): gọi `getEutrDocumentConditionAssignmentUseCase.execute(row.id)` rồi mở `AssignConditionDialog` `mode="edit"` với `documentId=row.id`, `documents=[{id: row.id, fileName: row.name}]`, `initialStepId`/`initialConditions` từ kết quả; `null`/`undefined`: không đổi (phải sau T192, T195).
+- [X] T198 [P] [US3] Rà soát toàn bộ văn bản mới bằng tiếng Anh (FR-015): trường "Step" trong `EutrDocumentsModal.jsx`, chế độ sửa của `AssignConditionDialog.jsx`.
+- [ ] T199 [US3] Kiểm thử thủ công theo [quickstart.md](./quickstart.md) kịch bản 12, 13 trên `/eutr/documents`. Cần backend build lại (T181-T188) và ít nhất 1 document Type="PO" + 1 document Type="Upload manual" (từ Phase 17). **CHƯA chạy trong trình duyệt** — cùng điều kiện với các kịch bản trước.
+
+**Checkpoint**: Edit mở đúng UI theo Type của document; sửa Step (PO) và sửa Step/Conditions (Upload
+manual) hoạt động end-to-end, phản ánh đúng trên cột Step name/Conditions của danh sách chính; Type
+trống không đổi; toàn bộ US1-US6 và Update 3-11 không đổi.
+
+---
+
+## Phase 19: Update 13 - `/speckit-clarify` (quy tắc xác định Step hiện tại + chặn trùng Conditions type)
+
+**Goal**: (1) Dropdown Step ở popup Edit (Type="PO") hiển thị đúng Step ứng với bản ghi
+`eutr_references` có `Id` **nhỏ nhất** khi document liên kết nhiều Step (deterministic). (2) Popup
+Assign condition (cả 2 chế độ) KHÔNG cho phép 2 dòng cùng Conditions type — dropdown tự loại bỏ
+type đã dùng ở dòng khác + validator backend chặn trùng lặp trong 1 request (spec FR-051/FR-055).
+
+**Independent Test**: Xem [quickstart.md](./quickstart.md) kịch bản 11b (đoạn kiểm tra dropdown
+disable trùng type) và 12 (đoạn kiểm tra Step hiển thị đúng khi có nhiều Step).
+
+### Backend
+
+- [X] T200 [US3] Sửa `compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/EutrReferenceStepInfo.cs`: + `public long ReferenceId { get; set; }` (= `eutr_references.Id`, dùng để suy `StepId` hiện tại theo `Id` nhỏ nhất).
+- [X] T201 [US3] Sửa `compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrReferencesRepository.cs`: trong `GetStepInfoByDocumentIdsAsync`, thêm `r.Id AS ReferenceId` vào `SELECT` (phải sau T200).
+- [X] T202 [US3] Sửa `compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/EutrDocumentsResponseDto.cs`: + `public long? StepId { get; set; }`.
+- [X] T203 [US3] Sửa `compliance-sys-api/src/ComplianceSys.Application/Services/EutrDocumentsService.cs`: trong `AttachStepAndConditionInfoAsync`, gán thêm `item.StepId = info.OrderBy(x => x.ReferenceId).FirstOrDefault()?.StepId` (theo nhóm `DocumentId`, giữ nguyên `StepNames`/`RefType`/`Conditions` đã tính) (phải sau T201, T202, T158).
+- [X] T204 [P] [US3] Sửa `compliance-sys-api/src/ComplianceSys.Application/Validators/EutrAssignConditionsRequestDtoValidator.cs`: + `RuleFor(x => x.Conditions).Must(c => c.Select(x => x.ConditionType).Distinct().Count() == c.Count).WithMessage("Duplicate Conditions type is not allowed");` (FR-051).
+- [X] T205 [P] [US3] Sửa `compliance-sys-api/src/ComplianceSys.Application/Validators/EutrUpdateConditionAssignmentRequestDtoValidator.cs`: + cùng rule trên.
+
+### Frontend
+
+- [X] T206 [US3] Sửa `compliance-client/src/presentation/pages/eutr-documents/components/AssignConditionDialog.jsx`: mỗi `<MenuItem>` của dropdown "Conditions type" — + `disabled={conditionRows.some(r => r.rowId !== row.rowId && r.conditionType === option.value)}` (clone `ComplianceMasterForm.jsx`) (phải sau T175, T195).
+- [X] T207 [P] [US3] Rà soát văn bản lỗi mới bằng tiếng Anh: "Duplicate Conditions type is not allowed" (hoặc thông báo tương đương hiển thị trên UI khi validator backend trả lỗi).
+- [ ] T208 [US3] Kiểm thử thủ công theo [quickstart.md](./quickstart.md) kịch bản 11b (dropdown Conditions type disable đúng type đã dùng) và 12 (dropdown Step hiển thị đúng Step khi có nhiều Step liên kết). **CHƯA chạy trong trình duyệt** — cùng điều kiện với các kịch bản trước.
+
+**Checkpoint**: Dropdown Step ở Edit (PO) luôn hiển thị đúng 1 giá trị xác định; popup Assign
+condition không cho tạo 2 dòng cùng Conditions type (cả UI và validator backend); toàn bộ US1-US6
+và Update 3-12 không đổi.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -674,25 +831,67 @@ khác của trang Add (Update 3-9) không đổi.
   thật), và sau Phase 14 (T112/T113, bảng chi tiết List PO đã tồn tại) — T138 còn cần Phase 6 (T037,
   `DeleteEutrDocumentsUseCase` đã tồn tại). T139 (rà soát text) sau T133, T138. T140/T141 (kiểm thử)
   cần toàn bộ Backend + Frontend của Phase 16 hoàn tất, cùng dữ liệu test đã dùng ở Phase 12/13/14.
+- **Update 11 (Phase 17)**: T142/T143/T144 (entity + 2 DTO, file khác nhau) song song, có thể làm
+  ngay từ đầu. T145 (interface) sau T143. T146 (implement repository) sau T142, T145. T147 (DI) sau
+  T146. **T148 (sửa SQL `DeleteByDocumentIdAsync`) độc lập hoàn toàn, có thể làm bất kỳ lúc nào —
+  nhưng BẮT BUỘC hoàn tất trước T163 (lần đầu ghi dữ liệu thật vào `eutr_reference_details`), tránh
+  vi phạm khóa ngoại khi Delete document sau này**. T149 (DTO) độc lập. T150 (interface) sau T149.
+  T151 (implement) sau T150 — và sau Phase 12 (T066, cùng file `EutrUploadService.cs`). T152 (action
+  controller) sau T151 — và sau Phase 12 (T067, cùng file `SharepointController.cs`). T153
+  (interface) độc lập. T154 (implement, cùng file `EutrReferencesRepository.cs` với T148 nhưng khác
+  method) sau T153. T155 (interface service) độc lập. T156 (implement) sau T154, T155. T157 (DTO
+  field) sau T144. T158 (mở rộng `AttachStepAndConditionInfoAsync`, cùng file với T156) sau T146,
+  T147, T157, T156. T159 (DTO) độc lập, có thể làm sớm. T160 (DTO) sau T159. T161 (validator) sau
+  T160. T162 (interface service) sau T160. T163 (implement, sau T148 — xem lưu ý trên) sau T142,
+  T162. T164 (DI) sau T161, T163. T165 (action controller, cùng file `EutrDocumentsController.cs`
+  với Phase 2/10/14/16 nhưng thêm mới) sau T156, T164. Frontend: T166/T167/T170/T171 (file khác
+  nhau) song song, có thể làm sớm. T168 sau T167. T169 sau T168. T172 sau T170, T171. T173/T174 song
+  song, sau T172. T175 (`AssignConditionDialog.jsx` mới) sau T166, T174. T176 (cột Conditions) sau
+  T166 — và sau Phase 14 (T105, cùng file `useEutrDocumentsColumns.jsx`). T177 (Screen2, cùng file
+  `EutrDocumentsAdd.jsx` với chuỗi Update 3-10 đã có) sau T169, T173 — và sau Phase 16 (T138, dòng
+  cuối cùng đã sửa file này). T178 (cùng file) sau T175, T177. T179/T180 sau cùng.
+- **Update 12 (Phase 18)**: T181/T182/T183 (3 DTO, file khác nhau) song song. T184 (validator) sau
+  T181. T185 (mở rộng interface) sau T181, T183. T186 (implement, cùng file
+  `EutrConditionAssignmentService.cs` với T163 nhưng thêm method mới) sau T185, T146, T148 (**bắt
+  buộc SQL cascade đã sửa trước khi có luồng sửa Step nào chạy trên dữ liệu thật**). T187 (action
+  controller, cùng file với T165) sau T182, T184, T186. T188 (DI) sau T184. Frontend:
+  T189/T190 (file khác nhau) song song. T191 sau T189, T190. T192/T193/T194 song song, sau T191.
+  T195 (mở rộng `AssignConditionDialog.jsx`, cùng file với T175/T176/T206) sau T175 (Phase 17), T193.
+  T196 (`EutrDocumentsModal.jsx`, cùng file với Phase 5 T033) sau T194. T197 (`index.jsx`, cùng file
+  với chuỗi Phase 3/6/16 T026/T039/T136) sau T192, T195. T198/T199 sau cùng.
+- **Update 13 (Phase 19)**: T200 (DTO field) độc lập. T201 (SQL, cùng file `EutrReferencesRepository.cs`
+  với T148/T154 nhưng khác method) sau T200. T202 (DTO field) độc lập. T203 (cùng file
+  `EutrDocumentsService.cs` với T158) sau T201, T202, T158. T204/T205 (2 validator khác file) song
+  song, độc lập — có thể làm bất kỳ lúc nào sau Phase 17/18 (T161/T184 đã tạo file). Frontend: T206
+  (cùng file `AssignConditionDialog.jsx`) sau T175, T195. T207/T208 sau cùng.
 
 ### Điểm chia sẻ file (tránh sửa song song)
 
 - `EutrDocumentsController.cs`: T011 (skeleton) → T022 (US1: get-all/get-by-id) → T027 (US2:
   create) → T031 (US3: update) → T036 (US4: delete/delete-multi). US5 không đụng file này ở lần đầu
   — **Update 10 (Phase 16)**: T123 (thêm constructor param `ISharepointService` + action mới
-  `get-file-by-idref`), sau T036 (không đụng lại 7 action hiện có).
+  `get-file-by-idref`), sau T036 (không đụng lại 7 action hiện có) → **Update 11 (Phase 17)**: T165
+  (thêm constructor param `IEutrConditionAssignmentService` + action `get-unassigned`/
+  `assign-conditions`), sau T123 → **Update 12 (Phase 18)**: T187 (thêm action
+  `condition-assignment` GET/PUT + `step` PUT), sau T165.
 - `eutr-documents/index.jsx`: T021 (shell) → T026 (US1: grid) → T030 (US2: nút Add navigate) →
   T035 (US3: wiring Edit) → T039 (US4: wiring Delete) → **Update 10 (Phase 16)**: T136 (state +
-  wiring popup xem trước file, sau T039).
+  wiring popup xem trước file, sau T039) → **Update 12 (Phase 18)**: T197 (`onEdit` rẽ nhánh theo
+  `refType`, sau T136).
 - `EutrDocumentsActionCell.jsx`: T034 (US3: Edit/Delete) → T040 (US5: thêm icon View) →
   **Update 10 (Phase 16)**: T134 (đổi icon View từ silent no-op sang control thật, sau T040).
 - `useEutrDocumentsColumns.jsx`: T025 (US1: khai báo cột) → T105 (Update 8: renderCell Step
-  name/Type) → **Update 10 (Phase 16)**: T135 (thêm prop `onView`, sau T105 và sau T134).
+  name/Type) → **Update 10 (Phase 16)**: T135 (thêm prop `onView`, sau T105 và sau T134) →
+  **Update 11 (Phase 17)**: T176 (renderCell cột Conditions, sau T135).
 - `EutrDocumentsService.cs`: tạo ở T010 (Foundational) — không override ở US1-US5/Update 3-8 (khác
   `eutr-masters` phải override `AddAsync`/`UpdateAsync` để chống trùng); **Update 9 (Phase 15)**:
   T120 (override `DeleteAsync` + field `_unitOfWork`) → T121 (override `DeleteMultiAsync`), tuần tự
   vì cùng file, sau T119; **Update 10 (Phase 16)**: T127 (gán thêm `FileId` trong
-  `GetPoReferencesAsync`), sau T121 (khác đoạn code với Update 9, không phụ thuộc logic).
+  `GetPoReferencesAsync`), sau T121 (khác đoạn code với Update 9, không phụ thuộc logic) →
+  **Update 11 (Phase 17)**: T156 (implement `GetUnassignedPagedAsync`) → T158 (đổi tên
+  `AttachStepInfoAsync`→`AttachStepAndConditionInfoAsync`, gán thêm `Conditions`), tuần tự vì cùng
+  file, sau T127 → **Update 13 (Phase 19)**: T203 (gán thêm `StepId` theo `ReferenceId` nhỏ nhất
+  trong cùng method đã đổi tên ở T158), sau T158.
 - `EutrDocumentsAdd.jsx`: T029 (US2: tạo trang) → T047 → T049 → T050 (Update 3: Type + Screen1 +
   Screen2, tuần tự vì cùng file); T048 (hằng số demo) có thể làm song song với T047 trước khi T049/
   T050 cần dùng tới, T051 (rà soát text) làm sau T050 → T057 → T058 (Update 4: List PO nối API
@@ -703,7 +902,8 @@ khác của trang Add (Update 3-9) không đổi.
   file, sau T076) → T112 → T113 (Update 8: state + effect tra cứu reference, đổi bảng chi tiết
   sang dữ liệu thật, tuần tự vì cùng file, sau T074 để có `selectedPoId`/`selectedPo`) → T137 →
   T138 (Update 10: gắn View/Delete thật cho mỗi dòng bảng chi tiết List PO, tuần tự vì cùng file,
-  sau T113).
+  sau T113) → **Update 11 (Phase 17)**: T177 → T178 (Screen2 thật: khu Upload File + bảng "chưa
+  gán" + nút Assign condition, tuần tự vì cùng file, sau T138).
 - `EutrDocumentsService.cs` (Update 8): T100 (mở rộng `GetPagedAsync` cho Step name/Type) và
   T101→T102 (thêm `GetPoReferencesAsync`) đều sửa cùng file đã tạo ở T010 (Foundational) — làm tuần
   tự với nhau nếu cùng người/agent chỉnh sửa (khác đoạn code, không bắt buộc thứ tự giữa 2 nhóm này
@@ -713,30 +913,52 @@ khác của trang Add (Update 3-9) không đổi.
 - `EutrReferencePoDocumentInfo.cs`/`EutrDocumentsPoReferenceItemDto.cs` (Update 8 → 10): T091/T093
   (tạo, Update 8) → T124/T125 (thêm field `FileId`, Update 10), mỗi file 1 task nối tiếp — 2 file
   khác nhau, có thể làm song song với nhau ở Update 10.
-- `EutrReferencesRepository.cs` (Update 8 → 9 → 10, file tạo ở Update 8): T096 (tạo file + method
-  1) → T097 (thêm method 2, Update 8) → T119 (thêm method 3 `DeleteByDocumentIdAsync`, Update 9) →
-  T126 (thêm `FileId` vào `SELECT` của method 2, Update 10), tuần tự vì cùng file — độc lập hoàn
-  toàn với `EutrUploadService.cs` (Update 6/7, chỉ ghi qua `IRepository<EutrReferences,long>`
-  generic, không dùng repository này).
-- `IEutrReferencesRepository.cs` (Update 8 → 9): T095 (tạo, 2 method đọc) → T118 (thêm method
-  `DeleteByDocumentIdAsync`, Update 9), tuần tự vì cùng file. Update 10 không sửa file này (chỉ đổi
-  field trên DTO/SQL, không thêm method mới).
+- `EutrReferencesRepository.cs` (Update 8 → 9 → 10 → 11 → 13, file tạo ở Update 8): T096 (tạo file +
+  method 1) → T097 (thêm method 2, Update 8) → T119 (thêm method 3 `DeleteByDocumentIdAsync`,
+  Update 9) → T126 (thêm `FileId` vào `SELECT` của method 2, Update 10) → **Update 11 (Phase 17)**:
+  T148 (sửa SQL `DeleteByDocumentIdAsync` — dọn `eutr_reference_details` trước, **BẮT BUỘC** trước
+  T163) → T154 (thêm method 4 `GetUnassignedDocumentsPagedAsync`) → **Update 13 (Phase 19)**: T201
+  (thêm `ReferenceId` vào `SELECT` của method 1) — toàn bộ tuần tự vì cùng file, độc lập hoàn toàn
+  với `EutrUploadService.cs` (Update 6/7/11, chỉ ghi qua `IRepository<EutrReferences,long>` generic,
+  không dùng repository này).
+- `IEutrReferencesRepository.cs` (Update 8 → 9 → 11): T095 (tạo, 2 method đọc) → T118 (thêm method
+  `DeleteByDocumentIdAsync`, Update 9) → **Update 11 (Phase 17)**: T153 (thêm method
+  `GetUnassignedDocumentsPagedAsync`), tuần tự vì cùng file. Update 10/13 không sửa file này (chỉ
+  đổi field trên DTO/SQL, không thêm method mới).
 - `ComplDynamicsService.cs` (Update 4): T053 (EntityMappings) → T054 (case 15) → T055 (case 16),
   tuần tự vì cùng file (không đụng gì của Phase 1-9).
-- `SharePointController.cs` (Update 6): chỉ 1 task sửa file này (T067, sau T066) — action mới
-  `eutr-upload-multi` không đụng các action `upload`/`upload-multi` hiện có trong cùng file. Update
-  7 KHÔNG sửa file này (chỉ sửa `EutrUploadService.cs` bên trong, không đổi controller/contract).
-  Update 10 KHÔNG sửa file này (endpoint xem file mới đặt trong `EutrDocumentsController.cs`, không
-  phải `SharePointController.cs`).
-- `EutrUploadService.cs` (Update 6 → 7): T066 (tạo mới, Update 6) → T084 → T085 (mở rộng validate
-  prefix + ghi `eutr_references`, Update 7, tuần tự vì cùng file, sau T066). Update 10 không sửa
-  file này (Delete từng file ở List PO dùng lại API xóa đơn hiện có, không đụng luồng Upload).
+- `SharePointController.cs` (Update 6 → 11): T067 (action `eutr-upload-multi`, sau T066) →
+  **Update 11 (Phase 17)**: T152 (thêm action `eutr-upload-manual-multi`), sau T067 — không đụng
+  các action hiện có. Update 7/10/12/13 KHÔNG sửa file này.
+- `EutrUploadService.cs` (Update 6 → 7 → 11): T066 (tạo mới, Update 6) → T084 → T085 (mở rộng
+  validate prefix + ghi `eutr_references`, Update 7, tuần tự vì cùng file, sau T066) →
+  **Update 11 (Phase 17)**: T151 (thêm method `UploadManualMultipleToSharePointAndSaveDataAsync`),
+  sau T085 — khác method, không phụ thuộc logic. Update 10/12/13 không sửa file này.
 - `IEutrMastersRepository.cs`/`EutrMastersRepository.cs` (Update 7): T082 (thêm khai báo interface)
   → T083 (implement), tuần tự vì là cặp interface/impl của cùng method mới — không đụng các method
   hiện có của feature `002-eutr-masters` (`GetPagedWithStepNameAsync`, `ExistsStepPrefixAsync`).
 - `FilePreviewer.jsx` (Update 10, file KHÔNG thuộc feature `004-eutr-documents` — dùng chung với
   `compliance-detail`): chỉ 1 task sửa file này (T128) — thêm 2 prop tùy chọn, KHÔNG đổi logic
   render hiện có, không ảnh hưởng caller `compliance-detail`.
+- `IEutrConditionAssignmentService.cs`/`EutrConditionAssignmentService.cs` (Update 11 → 12, file tạo
+  ở Update 11): T162 → T163 (tạo, `AssignConditionsAsync`) → **Update 12 (Phase 18)**: T185 (thêm 3
+  khai báo `GetConditionAssignmentAsync`/`UpdateConditionAssignmentAsync`/`UpdatePoStepAsync`) →
+  T186 (implement 3 method trên), tuần tự vì cùng cặp file — `UpdatePoStepAsync`/
+  `UpdateConditionAssignmentAsync` (T186) phải sau T148 (SQL cascade đã sửa ở Phase 17).
+- `AssignConditionDialog.jsx` (Update 11 → 12 → 13, file tạo ở Update 11): T175 (tạo, `mode="create"`)
+  → **Update 12 (Phase 18)**: T195 (thêm `mode="edit"`) → **Update 13 (Phase 19)**: T206 (disable
+  Conditions type đã dùng ở dòng khác trong dropdown), tuần tự vì cùng file.
+- `EutrDocumentsModal.jsx` (Update 3 → 12, file tạo ở Phase 5): T033 (tạo, File name/Valid from/
+  Valid to) → **Update 12 (Phase 18)**: T196 (thêm trường Step có điều kiện khi Type="PO"), tuần tự
+  vì cùng file — độc lập với Phase 9-17 (không phần nào khác sửa lại file này).
+- `EutrDocumentsResponseDto.cs` (Update 8 → 11 → 13): T099 (tạo, `StepNames`/`RefType`, Update 8) →
+  **Update 11 (Phase 17)**: T157 (thêm `Conditions`) → **Update 13 (Phase 19)**: T202 (thêm
+  `StepId`), tuần tự vì cùng file.
+- `ComplianceSys.Application/DependencyInjection.cs` (Update 11 → 12): T164 (đăng ký
+  `IEutrConditionAssignmentService` + validator `EutrAssignConditionsRequestDtoValidator`) →
+  **Update 12 (Phase 18)**: T188 (đăng ký thêm validator
+  `EutrUpdateConditionAssignmentRequestDtoValidator`), tuần tự vì cùng file — độc lập với các dòng
+  đăng ký DI khác đã có từ Phase 2/12 (Foundational/Update 6, khác đoạn code).
 
 ### Parallel Opportunities
 
@@ -782,6 +1004,24 @@ khác của trang Add (Update 3-9) không đổi.
   với mọi phase khác — có thể làm song song với Phase 5-15 ngay từ đầu (không đụng file chung nào
   ngoài `EutrDocumentsController.cs`/`FilePreviewer.jsx`, cả hai chưa từng bị Update nào khác sửa
   cho mục đích tương tự).
+- Update 11 (Phase 17): T142/T143/T144 (entity + 2 DTO, file khác nhau) song song; T149 (DTO upload
+  manual), T153 (interface `IEutrReferencesRepository.cs`), T159 (DTO `EutrConditionRowDto`) đều
+  **độc lập hoàn toàn** với nhau và với chuỗi T142-T148, có thể làm ngay từ đầu phase. T166/T167/
+  T170/T171 (frontend, file khác nhau) song song, có thể làm sớm; T173/T174 (2 use case, file khác
+  nhau) song song sau T172; T179 (rà soát text) có thể làm song song với T180 (kiểm thử) sau khi
+  T178 xong. **T148 (sửa SQL cascade delete) nên làm SỚM NHẤT trong phase này** — độc lập, không
+  chờ task nào, nhưng là điều kiện bắt buộc trước T163 (tránh vi phạm khóa ngoại khi có dữ liệu
+  `eutr_reference_details` thật).
+- Update 12 (Phase 18): T181/T182/T183 (3 DTO, file khác nhau) song song; T189/T190 (frontend,
+  file khác nhau) song song; T192/T193/T194 (3 use case, file khác nhau) song song sau T191; T198
+  (rà soát text) có thể làm song song với T199 (kiểm thử) sau khi T197 xong. Toàn bộ Phase 18 phụ
+  thuộc Phase 17 (dùng lại `AssignConditionDialog.jsx`/`IEutrConditionAssignmentService`/
+  `EutrConditionAssignmentService.cs`), độc lập với Phase 3-16 (không đụng US1/US2/US4/US5/
+  Update 3-10).
+- Update 13 (Phase 19): T200/T202 (2 DTO field, file khác nhau) song song; T204/T205 (2 validator,
+  file khác nhau) song song, độc lập với chuỗi T200-T203; T207 (rà soát text) có thể làm song song
+  với T208 (kiểm thử) sau khi T206 xong. Toàn bộ Phase 19 là các sửa nhỏ trên file đã có từ Phase
+  14/17/18 — không thêm file mới nào ngoài việc sửa các file hiện có.
 
 ---
 
@@ -833,7 +1073,14 @@ mới `get-file-by-idref` clone `ComplCompliancesController.GetFileByIds`, tổn
 `FilePreviewer.jsx` bằng 2 prop tùy chọn; Delete từng file ở List PO dùng lại API xóa đơn hiện có
 (không endpoint mới, không migration DB mới); cần Phase 7 (US5, icon View đã tồn tại), Phase 14
 (Update 8, bảng chi tiết List PO đã tồn tại) và Phase 6 (US4, `DeleteEutrDocumentsUseCase` đã tồn
-tại)). Mỗi story test độc lập theo quickstart trước khi sang story kế.
+tại)) → **Update 11 / US6** (Screen2 "Upload manual" trở thành upload thật + popup Assign
+condition tạo mới; entity/repository mới cho `eutr_reference_details` **đã tồn tại sẵn** trong DDL
+— không migration mới; **quan trọng**: sửa SQL cascade delete (T148) trước khi ghi dữ liệu thật
+(T163); cần Phase 16/Update 10 đã tồn tại vì cùng file `EutrDocumentsAdd.jsx`) → **Update 12**
+(Edit rẽ nhánh theo Type — PO thêm trường Step, Upload manual mở lại `AssignConditionDialog` ở chế
+độ sửa; cần Phase 17/Update 11 đã tồn tại vì tái dùng service/component) → **Update 13**
+(`/speckit-clarify`: dropdown Step hiển thị đúng khi có nhiều Step, chặn trùng Conditions type; cần
+Phase 17/18 đã tồn tại). Mỗi story test độc lập theo quickstart trước khi sang story kế.
 
 ### Lưu ý
 
@@ -913,3 +1160,37 @@ tại)). Mỗi story test độc lập theo quickstart trước khi sang story k
   Update 9), KHÔNG gọi API xóa file SharePoint nào. Độc lập với Phase 3-6, 9-13 (không đụng US1-US4/
   Update 3-7); phụ thuộc Phase 7 (US5), Phase 14 (Update 8) và Phase 15 (Update 9, gián tiếp qua
   hành vi Delete đã đúng sẵn).
+- Phase 17 (T142-T180) là phần bổ sung cho spec Session Update 11 (User Story 6) — Screen2 "Upload
+  manual" trở thành upload file thật (thư mục cố định `UploadManual`, KHÔNG validate prefix, KHÔNG
+  ghi `eutr_references` ở bước upload) + bảng danh sách "chưa gán" (SQL `NOT EXISTS` tùy biến, vì
+  repository generic không hỗ trợ JOIN/NOT EXISTS) + popup mới `AssignConditionDialog.jsx` (Step
+  bắt buộc + ≥1 Conditions type/value bắt buộc — chặn Save nếu thiếu) ghi `eutr_references`
+  (`RefType=1`) + `eutr_reference_details` (bảng **đã tồn tại sẵn** trong `eutr_db.sql`, không
+  migration DB mới). **Phát hiện kỹ thuật quan trọng**: T148 sửa SQL `DeleteByDocumentIdAsync` để
+  dọn kèm `eutr_reference_details` trước khi xóa `eutr_references` — bắt buộc phải hoàn tất trước
+  T163 (lần đầu ghi dữ liệu thật vào bảng con), nếu không Delete document sẽ lỗi vi phạm khóa ngoại
+  ngay khi có dữ liệu Assign condition thật. Backend service mới `IEutrConditionAssignmentService`
+  clone mẫu `ComplMasterConditionPersistenceService.AddAsync` đã có sẵn trong hệ thống (compliance-
+  master), KHÔNG mẫu `ComplMasterDuplicateConditionService` (bài toán khác). Frontend tái dùng
+  nguyên vẹn `ReferenceObjectMultiAutocomplete.jsx`/`GetEutrStepsUseCase.js` đã có sẵn — không thêm
+  dependency mới. Phụ thuộc Phase 16 (Update 10, cùng file `EutrDocumentsAdd.jsx`/
+  `EutrDocumentsController.cs`), Phase 12 (Update 6, cùng file `EutrUploadService.cs`/
+  `SharepointController.cs`), Phase 14 (Update 8, cùng file `EutrReferencesRepository.cs`/
+  `EutrDocumentsService.cs`); độc lập với Phase 3-11, 13, 15 (không đụng US1-US4, Update 3-5/7/9).
+- Phase 18 (T181-T199) là phần bổ sung cho spec Session Update 12 — Edit (User Story 3) rẽ nhánh
+  theo `refType`: Type="PO" thêm trường Step (single-select) vào popup đơn giản hiện có, Save thay
+  thế toàn bộ tập `eutr_references` cũ bằng 1 dòng mới (`PUT /eutr-documents/{id}/step`); Type=
+  "Upload manual" mở lại **chính** `AssignConditionDialog.jsx` (Phase 17) ở chế độ sửa — cập nhật
+  `StepId` trực tiếp (không tạo/xóa dòng `eutr_references`) và **replace toàn bộ**
+  `eutr_reference_details` (xóa hết rồi ghi lại, không diff/merge — quyết định đã chốt ở clarify).
+  Không migration DB mới. Phụ thuộc hoàn toàn vào Phase 17 (mở rộng cùng service/interface/component
+  đã tạo ở đó — `IEutrConditionAssignmentService`, `EutrConditionAssignmentService.cs`,
+  `AssignConditionDialog.jsx`); độc lập với Phase 3-16 (không đụng US1/US2/US4/US5, Update 3-10).
+- Phase 19 (T200-T208) là phần bổ sung cho `/speckit-clarify` (spec Session Update 13) — 2 sửa nhỏ,
+  không thêm file mới: (1) dropdown Step ở Edit (Type="PO") hiển thị đúng Step ứng với bản ghi
+  `eutr_references` có `Id` **nhỏ nhất** khi document liên kết nhiều Step (deterministic, thêm field
+  `ReferenceId`/`StepId` vào 2 DTO đã có); (2) popup Assign condition (cả 2 chế độ) KHÔNG cho phép 2
+  dòng cùng Conditions type — dropdown tự disable type đã dùng (frontend, clone
+  `ComplianceMasterForm.jsx`) + validator backend chặn trùng lặp bằng `Distinct().Count()` đơn giản
+  (KHÔNG clone `ComplMasterDuplicateConditionService`'s full-table scan — bài toán khác). Phụ thuộc
+  Phase 17 (T158, T161, T175) và Phase 18 (T184, T195); độc lập với Phase 3-16.
