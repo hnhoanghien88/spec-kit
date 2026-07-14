@@ -195,6 +195,14 @@ resolution. Domain model: `ComplianceSys.Domain.Entities.ComplGroupEmail` (alrea
 - Delete is a hard delete (no flag to set) — confirmed via `ConfirmDialog` on the frontend (FR-037).
 - VendorName is a response-only field (not a DB column), resolved the same way the old
   `EutrTemplates.VendorName` was — via the generic reference API (`refType=13`).
+- **Bulk Import/Export (Update 14)**: mappings for one template can be exported to / imported from
+  an Excel (.xlsx) file with exactly 4 columns — `TemplateCode`, `VendorCode`, `FromDate`, `ToDate`
+  — scoped to a single `TemplateId` (the currently-open ApplyCustomerPage). Export includes
+  `TemplateCode` purely for round-trip readability/verification (every row repeats the same Code);
+  Import uses it to cross-check each row belongs to the template being imported into — a mismatch
+  fails that row, it does NOT route the row to a different template. Import always creates a NEW row
+  per valid line (reuses `AddAsync`'s existing validation + overlap-check) — it never updates an
+  existing mapping, even on an exact data match (FR-043 to FR-048).
 
 ## Relationships
 
@@ -243,8 +251,9 @@ EutrTemplateDetails ──self-ref── EutrTemplateDetails (via ParentId → I
 
 ```
 [Apply Vendor — ApplyCustomerPage "Apply Vendor" dialog] ──→ Row created
-                                                               (TemplateId, VendorCode, FromDate, ToDate)
-                │
+[Import — ApplyCustomerPage "Import" button, Update 14]  ──┘ (TemplateId, VendorCode, FromDate, ToDate)
+                │                                             one row created per valid Excel row
+                │                                             (same AddAsync path as manual Apply)
                 ├──[Edit]──→ Same row updated in place (no versioning — this table has no VersionId)
                 │
                 └──[Delete]──→ Row hard-deleted (no IsDeleted flag on this table)
@@ -265,6 +274,9 @@ EutrTemplateDetails ──self-ref── EutrTemplateDetails (via ParentId → I
 | EutrTemplateReferences (Update 13) | FromDate | Required |
 | EutrTemplateReferences (Update 13) | ToDate | Optional in the UI (blank = unlimited/9999-12-31); when provided, must be ≥ FromDate |
 | EutrTemplateReferences (Update 13) | (TemplateId, VendorCode, FromDate/ToDate range) | Must not overlap an existing mapping for the same TemplateId + VendorCode (FR-036) |
+| EutrTemplateReferences Import (Update 14) | File format | Must be `.xlsx` with header columns exactly `TemplateCode`, `VendorCode`, `FromDate`, `ToDate`; any other extension or missing/renamed column rejects the whole file before any row is processed |
+| EutrTemplateReferences Import (Update 14) | Row: TemplateCode | Must equal the Code of the template currently open (route `:id`) — mismatch fails only that row (FR-046, FR-048) |
+| EutrTemplateReferences Import (Update 14) | Row: VendorCode/FromDate/ToDate | Same rules as FR-036/the validator above, enforced by re-using `AddAsync` per row — not duplicated |
 
 ## Enums
 

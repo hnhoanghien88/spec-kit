@@ -2,7 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-07-02
-**Updated**: 2026-07-13 (Update 13)
+**Updated**: 2026-07-14 (Update 14)
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -408,5 +408,48 @@
 - No new [NEEDS CLARIFICATION] markers were embedded in the spec — all three scope decisions above
   were resolved interactively (via targeted questions with recommended defaults) before writing,
   per the established "resolve via question, not marker" path used in Update 10/11/12.
+- Spec Quality Checklist re-validated against the updated spec: all 16/16 items remain passing (no
+  regressions, no newly-failing items).
+
+### Update 2026-07-14 (Update 14) — Import/Export Vendor Mapping on ApplyCustomerPage
+
+- **Input**: "cập nhật 003-eutr-templates chức năng apply to customer, thêm 2 nút Import và Export,
+  file template gồm 2 cột là TemplateCode, VendorCode, FromDate, ToDate. Logic giống như Add. Khi
+  Export, import sẽ dựa vào liên kết template code để xuất, add dữ liệu, chỉ chấp nhận file excel,
+  khi thành công có thông báo dòng nào ok, dòng nào bị lỗi."
+- **One scope question asked back to the user before writing this update (answered)**: whether
+  Import on ApplyCustomerPage (a single-template screen, route `/eutr/templates/apply/:id`) is
+  scoped to only the currently-open template, or can create mappings across multiple templates in
+  one file using the TemplateCode column per row → **answered: scoped to the currently-open
+  template only** — the TemplateCode column is used to cross-check/validate each row, not to route
+  rows to other templates; mismatched rows fail with a per-row error.
+- **Change: FR-043 through FR-048 added** — Import/Export buttons added to the ApplyCustomerPage
+  toolbar. Export downloads an .xlsx file (TemplateCode, VendorCode, FromDate, ToDate columns) of
+  the current template's mappings, including a header-only file when the mapping list is empty
+  (doubling as the import template file). Import accepts only .xlsx, validates each row with the
+  same rules as the existing Add Vendor dialog (FR-034/FR-036 — required VendorCode/FromDate,
+  optional ToDate, same-vendor-same-template overlap check spanning both existing mappings and
+  earlier valid rows within the same file, TemplateCode-must-match-current-template), creates new
+  mappings only (no update-on-match), and reports a per-row OK/error result after processing.
+- User Story 6 intro updated to describe the Import/Export buttons; 6 new acceptance scenarios
+  (11-16) added covering Export with data, Export when empty, non-.xlsx rejection, mixed
+  valid/invalid rows with per-row reporting, in-file overlap handling, and header-only file import.
+- 9 new edge cases added: non-.xlsx rejection, missing/renamed required columns, header-only file,
+  mismatched TemplateCode per row, in-file overlap sequencing, ToDate < FromDate per row, blank
+  ToDate = unlimited, and Import never updates existing mappings (duplicate data is treated as an
+  overlap error, not a silent update).
+- Key Entities: EUTR Template Reference updated with a note on bulk Import/Export (Add-only, same
+  validation as manual Add).
+- Success Criteria: SC-036 through SC-039 added (Export column/content accuracy including the
+  empty-list case, non-.xlsx rejection, per-row Import result reporting, mismatched-TemplateCode
+  row isolation).
+- Assumptions: 4 new bullets added — reuse of the existing Excel import/export mechanism (no new
+  library), Export-when-empty doubling as the template file (resolving the "file template"
+  wording), the request's literal "2 columns" vs. the 4 column names actually listed (treated as a
+  wording slip, processed as 4 columns), and Import being Add-only (never updates an existing
+  mapping, even on an exact duplicate).
+- No new [NEEDS CLARIFICATION] markers were embedded in the spec — the one scope decision above was
+  resolved interactively before writing, per the established "resolve via question, not marker"
+  path used in Update 10/11/12/13.
 - Spec Quality Checklist re-validated against the updated spec: all 16/16 items remain passing (no
   regressions, no newly-failing items).

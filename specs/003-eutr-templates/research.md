@@ -1106,3 +1106,65 @@ touching anything.
 **Implementation**: see quickstart.md Scenario 18 for the exact verification steps and where to
 record the outcome; plan.md's Steps-Count Investigation subsection for the full traced call path and
 next-step triage order if the bug does reproduce.
+
+---
+
+## 29. Import/Export Vendor Mapping — Reuse the EutrTemplates* Excel Pattern + Reuse AddAsync Per Row (spec Update 14)
+
+**Decision**: Build `EutrTemplateReferencesImportService`/`EutrTemplateReferencesExportService` as
+close structural copies of the already-shipped `EutrTemplatesImportService`/
+`EutrTemplatesExportService` (same ClosedXML usage, same row-loop/error-accumulation shape, same
+controller-level `.xlsx`-only check and try/catch mapping), scoped by `templateId` instead of
+operating on the whole table. Critically, each valid Import row is turned into an
+`EutrTemplateReferencesRequestDto` and passed to the EXISTING `EutrTemplateReferencesService.AddAsync`
+— the same method the manual "Apply Vendor" dialog already calls — rather than re-implementing its
+`FluentValidation` rules or `HasOverlapAsync` check inside the import service.
+
+**Rationale**: The request states "Logic giống như Add" (logic same as Add) explicitly — the most
+direct, lowest-risk way to satisfy that in code is to literally call the same `AddAsync` method, not
+to hand-copy its validation/overlap logic into a second place where the two could drift out of sync
+over time (e.g., if `HasOverlapAsync`'s query changes later, an import-side copy would silently go
+stale). This also solves the in-file overlap-sequencing requirement (FR-046 — a later row in the
+same file must be checked against an earlier row's just-created mapping) for free: because each row's
+`AddAsync` call commits its own transaction (`IUnitOfWork.BeginTransactionAsync`/`CommitAsync`,
+already implemented) before the next row is read, `HasOverlapAsync` on row N+1 naturally sees row N's
+already-persisted mapping — no separate in-memory "pending batch" tracking needed, unlike (for
+example) the frontend's `BulkAddStepsDialog.jsx` (Update 12) which DOES need in-memory
+de-duplication because its steps aren't persisted until the whole tree is saved at once. The two
+situations look similar ("multiple rows added together") but resolve differently once you notice one
+path persists row-by-row and the other batches everything into one client-side Save.
+
+**Alternatives considered**:
+- Pre-load all `templateId`'s existing mappings into memory, do a single custom overlap-check loop
+  across (existing + all file rows) in the import service, then bulk-insert survivors — rejected:
+  this duplicates `HasOverlapAsync`'s exact same date-range-intersection logic in a second place
+  (Principle II violation — the point of reference-pattern reuse is to have ONE authoritative
+  implementation, not two that need to stay in sync), and buys no real performance benefit at the
+  expected scale ("a small number of vendor mappings per template", per data-model.md's Entity 6
+  note) to justify the duplication risk.
+- Make Import capable of creating templates too, if a `TemplateCode` in the file doesn't match any
+  existing template (auto-provisioning) — rejected during the interactive scope clarification before
+  writing spec Update 14: the user confirmed Import is scoped to the currently-open template only:
+  TemplateCode in the file is a cross-check, not a routing key to other templates, so an unmatched
+  code is always a row-level error, never an implicit create-elsewhere.
+- Have Import UPDATE an existing mapping when a row's (VendorCode, exact FromDate/ToDate) matches one
+  already in the table, instead of always inserting — rejected: the spec's Update 14 assumptions
+  section explicitly rules this out ("Import KHÔNG hỗ trợ cập nhật... mọi dòng hợp lệ đều tạo bản ghi
+  MỚI"); a duplicate row is intentionally treated as an overlap error like any other overlapping
+  range, keeping Import's semantics identical to clicking "Apply Vendor" N times, never to clicking
+  "Edit" on an existing row.
+- Include a resolved `VendorName` column in the Export file for readability — rejected: the spec
+  names exactly 4 columns (TemplateCode, VendorCode, FromDate, ToDate) and Export doubling as the
+  Import template file only works if Export's column set exactly matches what Import expects; adding
+  a 5th column would either break round-trip re-import (if Import then rejects the extra column) or
+  require Import to silently ignore it — both worse than just not adding it. It also removes a D365
+  call from Export entirely, which is a nice side benefit, not the primary reason.
+- Introduce a new `EutrTemplateReferences.*` authorization policy family for the two new endpoints —
+  rejected: the already-shipped `EutrTemplateReferencesController` (Update 13, verified in code during
+  this planning pass) resolved its own "verify policy wiring" open item by reusing
+  `EutrTemplates.Read/.Update/.Delete` directly, not by seeding new policies; the two new Import/
+  Export actions follow that same already-established, working precedent instead of reopening a
+  question Update 13 already answered in the shipped code.
+
+**Implementation**: see plan.md's "Update 2026-07-14 (Update 14)" section for the full file-by-file
+backend/frontend design; contracts/api-endpoints.md Section 9.5/9.6; quickstart.md Scenario 19.

@@ -1753,3 +1753,128 @@ T245 [P]
 T246, T247, T248, T249, T250, T251 in parallel (once Phases 49-54 are done)
 T252 sequentially (final close-out, depends on T245's findings)
 ```
+
+---
+
+## Update 2026-07-14 (Update 14) — Import/Export Vendor Mapping on ApplyCustomerPage
+
+**Context**: Per spec Update 14, add Import and Export buttons to the already-implemented
+`ApplyCustomerPage.jsx` (Update 13). The Excel file format is 4 columns — TemplateCode, VendorCode,
+FromDate, ToDate — scoped to the template currently open (`:id` route param). Export downloads the
+current template's mappings in that format (a header-only file when empty, doubling as the Import
+template). Import accepts `.xlsx` only, validates each row with the exact same logic as the manual
+"Apply Vendor" dialog (reusing `EutrTemplateReferencesService.AddAsync` per row rather than
+duplicating its validation/overlap-check), rejects rows whose TemplateCode doesn't match the
+currently-open template, creates new mappings only (never updates an existing one), and reports a
+per-row OK/error result after processing.
+
+**Changes**: Backend — two new Excel services (`EutrTemplateReferencesImportService`/
+`ExportService`) modeled 1:1 on the existing `EutrTemplatesImportService`/`ExportService`, plus two
+new controller actions on the already-shipped `EutrTemplateReferencesController.cs`, reusing its
+existing `EutrTemplates.Update`/`EutrTemplates.Read` policies (no new policy family). Frontend — two
+new use cases, API/repository passthroughs, a new `ImportMappingResultDialog.jsx` (copy of
+`ImportResultDialog.jsx` with different columns), and Import/Export buttons wired into
+`ApplyCustomerPage.jsx`. See research.md §29, data-model.md's Entity 6 Import/Export note,
+contracts/api-endpoints.md Sections 9.5–9.6, and plan.md's "Update 2026-07-14 (Update 14)" section
+for the full rationale and file-by-file design this phase set implements.
+
+---
+
+## Phase 56: Backend — Import/Export Services + Controller Actions (US6)
+
+**Purpose**: Add the Excel import/export services and the two new controller actions for `eutr_template_references`, scoped by `templateId`
+
+- [X] T253 [P] [US6] Create compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/ImportEutrTemplateReferencesResultDto.cs — mirrors `ImportEutrTemplatesResultDto.cs`'s shape: `TotalRows`, `SuccessCount`, `FailCount`, `Errors` (list of `ImportEutrTemplateReferencesRowError { Row, TemplateCode, VendorCode, Message }`).
+- [X] T254 [P] [US6] Create compliance-sys-api/src/ComplianceSys.Application/Interfaces/Services/IEutrTemplateReferencesImportService.cs + compliance-sys-api/src/ComplianceSys.Application/Services/EutrTemplateReferencesImportService.cs — `ImportFromExcelAsync(long templateId, Stream fileStream, string userEmail, CancellationToken ct)`: (1) call `IEutrTemplatesService.GetByIdWithDetailsAsync(templateId, ct)`, throw `KeyNotFoundException` if null; (2) open the workbook with ClosedXML (same pattern as `EutrTemplatesImportService`), verify the header row has exactly `TemplateCode`/`VendorCode`/`FromDate`/`ToDate` (case-insensitive, trimmed), throw `InvalidOperationException` on mismatch before processing any row; (3) for each data row (skip empty rows), increment `TotalRows`, then validate in order: `TemplateCode` (trimmed) must equal `template.Code` exactly (else row error "TemplateCode does not match the current template", `continue`); `VendorCode`/`FromDate` non-blank; blank `ToDate` → sentinel `9999-12-31`, else parsed; `ToDate >= FromDate`; (4) build `new EutrTemplateReferencesRequestDto { TemplateId = templateId, VendorCode, FromDate, ToDate }` and call `IEutrTemplateReferencesService.AddAsync(dto, userEmail, ct)` inside try/catch — `ValidationException`/`InvalidOperationException` → row error with `ex.Message`, `FailCount++`; other exception → log + generic "Failed to import row" error, `FailCount++`; else `SuccessCount++`. Do NOT re-implement `AddAsync`'s validation/overlap logic here — call the existing method.
+- [X] T255 [P] [US6] Create compliance-sys-api/src/ComplianceSys.Application/Interfaces/Services/IEutrTemplateReferencesExportService.cs + compliance-sys-api/src/ComplianceSys.Application/Services/EutrTemplateReferencesExportService.cs — `ExportToExcelAsync(long templateId, CancellationToken ct)`: (1) call `IEutrTemplatesService.GetByIdWithDetailsAsync(templateId, ct)`, throw `KeyNotFoundException` if null; (2) call `IEutrTemplateReferencesService.GetByTemplateIdAsync(templateId, ct)` for the mapping rows (no D365 call needed — `VendorName` is not one of the 4 export columns); (3) build a ClosedXML workbook with headers `TemplateCode, VendorCode, FromDate, ToDate` (same `sheet.Cell(...).Value = ...` + `AdjustToContents()` pattern as `EutrTemplatesExportService`), one row per mapping (`TemplateCode` = `template.Code` repeated), `FromDate`/`ToDate` written as real Excel date values with a `"yyyy-mm-dd"` number format; zero mappings → header-only workbook.
+- [X] T256 [US6] Add two actions to compliance-sys-api/src/ComplianceSys.Api/Controllers/EutrTemplateReferencesController.cs — `[Authorize(Policy = "EutrTemplates.Update")] [HttpPost("import/{templateId:long}")] Import(long templateId, IFormFile file, CancellationToken ct)`: validate `file` not null/empty and extension `.xlsx` (same check as `EutrTemplatesController.Import`) before calling `IEutrTemplateReferencesImportService.ImportFromExcelAsync`; catch `KeyNotFoundException` → `NotFound`, `InvalidOperationException` → `BadRequest`, else 500; return `ApiResponse<ImportEutrTemplateReferencesResultDto>` with message `"Import finished: {SuccessCount} success, {FailCount} errors."`. `[Authorize(Policy = "EutrTemplates.Read")] [HttpGet("export/{templateId:long}")] Export(long templateId, CancellationToken ct)`: call `IEutrTemplateReferencesExportService.ExportToExcelAsync`, catch `KeyNotFoundException` → `NotFound`, else follow `EutrTemplatesController.Export`'s try/catch shape; return the file as `eutr-template-references-{code}-{yyyyMMddHHmmss}.xlsx`.
+- [X] T257 [US6] Register DI in compliance-sys-api/src/ComplianceSys.Application/DependencyInjection.cs — add `services.AddScoped<IEutrTemplateReferencesImportService, EutrTemplateReferencesImportService>();` and `services.AddScoped<IEutrTemplateReferencesExportService, EutrTemplateReferencesExportService>();` alongside the existing `EutrTemplateReferencesService` registration.
+
+**Checkpoint**: `POST api/eutr-template-references/import/{templateId}` accepts a valid 4-column `.xlsx`, creates one mapping per valid row, rejects non-`.xlsx` files and rows with a mismatched TemplateCode; `GET api/eutr-template-references/export/{templateId}` downloads a 4-column `.xlsx` matching the template's current mappings (header-only when empty). **Verified**: `dotnet build` on `ComplianceSys.Application.csproj` shows 0 `error CS` (the `ComplianceSys.Api.csproj` build hits the same pre-existing DLL file-lock from a running dev API process documented in Update 13 — no `error CS` there either, only `MSB3027`/`MSB3021` copy-lock errors). Header-validation/date-parsing logic and the overlap-check SQL path were smoke-tested directly (see Phase 59/T264) rather than through a live HTTP call.
+
+---
+
+## Phase 57: Frontend — Import/Export API, Repository, Use Cases (US6)
+
+**Purpose**: Add the frontend infrastructure/application layers for calling the two new backend endpoints
+
+- [X] T258 [P] [US6] Add `importByTemplate(templateId, file)` and `exportByTemplate(templateId)` methods to compliance-client/src/infrastructure/api/eutrTemplateReferencesApi.js — `importByTemplate` builds a `FormData` with the file and POSTs (multipart) to `/eutr-template-references/import/${templateId}` (same `FormData` construction as `eutrTemplatesApi.js`'s `import`); `exportByTemplate` GETs `/eutr-template-references/export/${templateId}` with `responseType: 'blob'` (same as `eutrTemplatesApi.js`'s `export`).
+- [X] T259 [US6] Add `importByTemplate(templateId, file)`/`exportByTemplate(templateId)` passthrough methods to compliance-client/src/infrastructure/repositories/RestEutrTemplateReferencesRepository.js, delegating to the T258 API methods (mirrors `RestEutrTemplatesRepository.js`'s `import`/`export` wrapper shape).
+- [X] T260 [P] [US6] Create compliance-client/src/application/usecases/eutr-template-references/ImportEutrTemplateReferencesUseCase.js — `execute(templateId, file)` calls `repository.importByTemplate(templateId, file)` (mirrors `ImportEutrTemplatesUseCase.js` verbatim shape).
+- [X] T261 [P] [US6] Create compliance-client/src/application/usecases/eutr-template-references/ExportEutrTemplateReferencesUseCase.js — `execute(templateId)` calls `repository.exportByTemplate(templateId)`, then builds a temporary `<a download>` link from the blob response and clicks it (mirrors `ExportEutrTemplatesUseCase.js`'s blob-download-trigger logic and its `_resolveFileName` Content-Disposition fallback, default filename `eutr-template-references-${templateId}-${timestamp}.xlsx`).
+
+**Checkpoint**: `ImportEutrTemplateReferencesUseCase`/`ExportEutrTemplateReferencesUseCase` are ready to call from `ApplyCustomerPage.jsx` (verify via a quick manual call before wiring the UI in Phase 58). **Verified**: `eslint` clean on all 4 new/changed files; the API/repository method shapes mirror `eutrTemplatesApi.js`/`RestEutrTemplatesRepository.js`'s `import`/`export` exactly, which are already proven working in production. Live browser-console call not run (no interactive browser available).
+
+---
+
+## Phase 58: Frontend — ApplyCustomerPage Import/Export UI (US6)
+
+**Purpose**: Add the Import/Export buttons, the result dialog, and the wiring on `ApplyCustomerPage.jsx`
+
+- [X] T262 [US6] Create compliance-client/src/presentation/pages/eutr-templates/components/ImportMappingResultDialog.jsx — copy `ImportResultDialog.jsx`'s structure (Total/Success/Error `Chip`s + error table + Close button) verbatim, with the error table's columns changed to **Row, TemplateCode, VendorCode, Reason** to match `ImportEutrTemplateReferencesRowError`'s shape (`result.errors[].row/.templateCode/.vendorCode/.message`).
+- [X] T263 [US6] Add Import/Export buttons and wiring to compliance-client/src/presentation/pages/eutr-templates/ApplyCustomerPage.jsx — add **Import**/**Export** `Button`s to the existing header `Stack` (next to Back/Apply Vendor); add a hidden `<input type="file" accept=".xlsx" hidden>` behind a `ref`, wired to an `onChange` handler that: (1) does a fast-fail client-side extension check (server is still authoritative), (2) calls `ImportEutrTemplateReferencesUseCase.execute(id, file)`, (3) opens `ImportMappingResultDialog` (T262) with the returned result, (4) calls the existing `fetchMappings()` to refresh the table, (5) resets the file `<input>`'s value so re-selecting the same filename re-fires `onChange`; the Export button's `onClick` calls `ExportEutrTemplateReferencesUseCase.execute(id)` directly (no dialog). Add `importing` state (disables both buttons while a request is in flight) and `importResult`/`importDialogOpen` state.
+
+**Checkpoint**: Clicking Export on ApplyCustomerPage downloads a 4-column `.xlsx` of the current template's mappings; clicking Import, selecting a valid file, shows a per-row OK/error result dialog and refreshes the mapping table with newly-created mappings. **Verified**: `eslint` clean; full `npm run build` succeeds (produces an updated `ApplyCustomerPage.[hash].js` chunk, 10.29 kB). Live click-through navigation/file-picker interaction not run in this session (no interactive browser available) — see Phase 59/T264 for the fallback verification performed instead.
+
+---
+
+## Phase 59: Validation — Import/Export Vendor Mapping (Update 14)
+
+**Purpose**: End-to-end validation of the Import/Export feature
+
+- [X] T264 [P] Run quickstart.md Scenario 19 (Import/Export Vendor Mapping) end-to-end — Export with existing mappings and with zero mappings (header-only file), edit the exported file and Import it back with a mix of valid rows, a mismatched-TemplateCode row, and a missing-VendorCode row, confirm the per-row result and that only the valid row creates a mapping; Import a non-`.xlsx` file (rejected); Import a file with 2 in-file-overlapping rows for the same vendor (first succeeds, second fails); Import a header-only file (zero rows, no error). **Verified via 2 direct smoke tests, not through the full HTTP+UI stack** (no interactive browser session available in this non-interactive environment, same limitation as Update 13's Phase 55): (1) a ClosedXML in-process test built an in-memory workbook matching the Export layout and re-parsed it with a line-for-line copy of the service's `ValidateHeader`/`TryParseExcelDate` logic — confirmed valid-file parsing, header-only-file zero-data-rows behavior, malformed-header rejection, and string-date fallback parsing all work correctly; (2) a MySqlConnector test against the live dev DB (`compliance_sys_db_260601`) confirmed the exact overlap-check/insert SQL semantics `AddAsync`/`HasOverlapAsync` already implement (unchanged by this update): insert succeeds, same-vendor-same-template overlap is correctly flagged, same-vendor-different-template is correctly NOT flagged, test row cleaned up afterward (DB left unchanged). See quickstart.md Scenario 19's recorded outcome for full detail.
+- [X] T265 [P] Verify the new Import/Export controller actions reuse the existing `EutrTemplates.Update`/`EutrTemplates.Read` policies (no new policy family introduced, consistent with how `EutrTemplateReferencesController`'s other actions already resolved this in Update 13). **Verified by code review**: `[Authorize(Policy = "EutrTemplates.Update")]` on `Import` and `[Authorize(Policy = "EutrTemplates.Read")]` on `Export` in `EutrTemplateReferencesController.cs` — identical policy strings already used by this controller's `Create`/`Update` and `GetByTemplateId` actions respectively; no new policy string introduced anywhere in this update.
+- [X] T266 [P] Verify all new UI text (Import/Export button labels, `ImportMappingResultDialog` title/columns, file-format/validation error messages) is in English per FR-017. **Verified by code review**: `ApplyCustomerPage.jsx`'s new "Import"/"Export" buttons and all new snackbar messages ("Only .xlsx files are supported.", "Failed to import/export vendor mappings") are in English; `ImportMappingResultDialog.jsx`'s title ("Import result"), chips (Total/Success/Errors), table headers (Row/TemplateCode/VendorCode/Reason), and empty-state text ("All rows imported successfully.") are in English; backend row-error messages ("TemplateCode does not match the current template", "Vendor is required", "To date must be on or after From date", "Invalid To date") are in English.
+- [X] T267 Record Scenario 19's verification outcome directly in quickstart.md (evidence of what was actually run — live UI click-through if a browser session was available, or the fallback verification method used, following the same recording convention as Scenario 18's outcome note). **Done** — see quickstart.md Scenario 19's "Outcome (2026-07-14, `/speckit-implement`)" section, recorded with the same structure/level of detail as Scenario 18's outcome note.
+
+**Checkpoint**: All Update 14 quickstart checks pass at the level achievable in this non-interactive session (ClosedXML in-process parsing smoke test, direct-DB/SQL-level overlap-check smoke test, full clean builds on both stacks, and code review — standing in for HTTP+UI-level checks where a live authenticated browser session wasn't available). **Recommended before sign-off**: restart the dev API process (currently running stale, pre-Update-14 binaries, file-locked throughout this implementation session) and the frontend dev server, then manually click through quickstart.md Scenario 19 in a real browser to close the gap between "verified by code/DB/parsing-logic" and "verified end-to-end through the UI."
+
+---
+
+## Update 14 Dependencies
+
+### Phase Dependencies
+
+- **Phase 56 (Backend Import/Export services + controller actions)**: No dependency on Phases 49-55
+  — builds on the already-shipped `EutrTemplateReferencesService`/`EutrTemplatesService` from Update
+  13. T253 (result DTO), T254 (import service), T255 (export service) are independent `[P]` (different
+  files). T256 (controller) depends on T253-T255 all existing (calls both new services, returns the
+  new DTO). T257 (DI registration) depends on T254/T255 existing.
+- **Phase 57 (Frontend API/repository/use cases)**: Depends on Phase 56 being callable (use cases
+  need real endpoints, though files can be authored in parallel). T258 (API methods) independent.
+  T259 (repository passthroughs) depends on T258. T260/T261 (use cases) depend on T259, independent
+  of each other `[P]`.
+- **Phase 58 (ApplyCustomerPage UI wiring)**: Depends on Phase 57 (T263 calls the Phase 57 use
+  cases). T262 (result dialog component) independent of T257-T261 — `[P]` candidate, but grouped
+  here since it's only meaningfully testable once T263 renders it.
+- **Phase 59 (Validation)**: Depends on Phases 56-58 all being complete.
+
+### Execution Order
+
+```
+T253, T254, T255 [P] ── T256 ── T257 ── (Phase 56 done)
+                                    │
+T258 ── T259 ── T260, T261 [P] ── (Phase 57 done)
+                                    │
+                    T262 [P] ──┬── T263 ── (Phase 58 done) ── T264, T265, T266 [P] ── T267
+                                └──┘
+```
+
+### Parallel Opportunities
+
+```
+# Phase 56 — DTO + both services independent, controller/DI sequential after:
+T253, T254, T255 [P]
+T256 → T257
+
+# Phase 57 — API layer then repository then use cases:
+T258 ── T259 ── (T260, T261 [P])
+
+# Phase 58 — result dialog can be authored while the use cases are still being wired:
+T262 [P]
+T263 (depends on Phase 57 use cases + T262)
+
+# Phase 59 — all verification tasks [P] except the final recording step:
+T264, T265, T266 in parallel (once Phases 56-58 are done)
+T267 sequentially (records the findings from T264)
+```

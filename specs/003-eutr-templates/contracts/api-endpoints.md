@@ -517,8 +517,11 @@ applied (3 columns only): `{ "value": [{ "dataAreaId", "VendorAccountNumber", "V
 ## 9. Apply to Customer — EutrTemplateReferences (new, Update 13)
 
 **Base URL**: `api/eutr-template-references`
-**Auth**: Policy-based (`EutrTemplateReferences.{Action}` — new policies, verify wiring during
-`/speckit-implement`, same open-dependency treatment as `GroupEmail.ReadAll` in Update 7)
+**Auth**: Policy-based. **Confirmed as shipped (Update 14 planning pass)**: the controller does NOT
+use a new `EutrTemplateReferences.*` policy family — it reuses `EutrTemplates.Read` (GetByTemplateId,
+Export), `EutrTemplates.Update` (Create, Update, Import), and `EutrTemplates.Delete` (Delete)
+directly. This resolves the open "verify wiring" item this section originally flagged at Update 13
+plan time.
 
 ### 9.1 Get Mappings by Template
 
@@ -633,3 +636,87 @@ DELETE api/eutr-template-references/{id}
 **Behavior**: Real `DELETE FROM eutr_template_references WHERE id = @id` — this table has no
 `IsDeleted`/`IsHide` column, so there is no soft-delete branch (FR-037). Confirmed via
 `ConfirmDialog` on the frontend before this call is made.
+
+### 9.5 Import Mappings (new, Update 14)
+
+```
+POST api/eutr-template-references/import/{templateId}
+Content-Type: multipart/form-data
+```
+
+**Auth**: `EutrTemplates.Update` (same policy as Create/Update on this controller).
+
+**Request**: Form field `file` with a `.xlsx` file. Path param `templateId` — the mapping is always
+scoped to this template (see Behavior below); no other template's mappings can be created or
+modified through this endpoint.
+
+**Expected Excel columns** (row 1 = header, data from row 2):
+
+| A | B | C | D |
+|---|---|---|---|
+| TemplateCode | VendorCode | FromDate | ToDate |
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "totalRows": 5,
+    "successCount": 3,
+    "failCount": 2,
+    "errors": [
+      { "row": 4, "templateCode": "Templates-002", "vendorCode": "V003", "message": "TemplateCode does not match the current template" },
+      { "row": 6, "templateCode": "Templates-001", "vendorCode": "", "message": "Vendor is required" }
+    ]
+  }
+}
+```
+
+**Response — template not found** (404):
+```json
+{ "success": false, "message": "Template with id {templateId} not found." }
+```
+
+**Response — invalid file** (400, non-`.xlsx` or missing/renamed required columns):
+```json
+{ "success": false, "message": "Only .xlsx files are supported." }
+```
+
+**Behavior**:
+- Each valid row is submitted to the SAME `EutrTemplateReferencesService.AddAsync` the manual
+  "Apply Vendor" dialog (Section 9.2) calls — same validation (`VendorCode`/`FromDate` required,
+  `ToDate >= FromDate`), same `HasOverlapAsync` overlap check (Section 9.2's Behavior notes), scoped
+  to `(templateId, VendorCode)`. This is a literal code-reuse of Section 9.2's Add logic, not a
+  parallel re-implementation.
+- `TemplateCode` (trimmed) must exactly match the `templateId`'s Code; a mismatched row fails with
+  `"TemplateCode does not match the current template"` and is skipped — it is never applied to any
+  other template, regardless of what Code it names (FR-046, FR-048).
+- Blank `ToDate` is treated as unlimited (`9999-12-31`), same convention as Section 9.2.
+- Because rows are processed in file order and each successful row commits immediately, a later row
+  that overlaps an earlier row's just-created mapping (same file, same vendor) is correctly rejected
+  as an overlap — no separate in-file duplicate-tracking needed.
+- Import is **Add-only** — it never updates an existing mapping, even if a row's data exactly matches
+  one already in the table (treated as an overlap error like any other overlapping range).
+- Partial import: valid rows succeed, invalid rows reported per-row (`row`, `templateCode`,
+  `vendorCode`, `message`); if the file has zero data rows, `totalRows`/`successCount`/`failCount`
+  are all `0` (not an error).
+
+### 9.6 Export Mappings (new, Update 14)
+
+```
+GET api/eutr-template-references/export/{templateId}
+```
+
+**Auth**: `EutrTemplates.Read` (same policy as GetByTemplateId, Section 9.1).
+
+**Response**: Binary file download
+(`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`), filename
+`eutr-template-references-{code}-{yyyyMMddHHmmss}.xlsx`.
+
+**Response — template not found** (404): same shape as Section 9.5.
+
+**Excel columns**: `TemplateCode`, `VendorCode`, `FromDate`, `ToDate` — deliberately excludes
+`VendorName` (unlike the Get-by-template response, Section 9.1) so the exported file's column set
+exactly matches what Import (Section 9.5) expects, letting Export double as the "file template" for
+Import with zero extra columns to strip. When the template has zero mappings, the response is a
+valid `.xlsx` with only the header row — usable directly as a blank import template.

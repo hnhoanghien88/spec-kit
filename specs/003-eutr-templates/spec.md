@@ -306,6 +306,38 @@
   rà soát và sửa toàn bộ đường dẫn dữ liệu (API response thực tế, endpoint đang được gọi, cấu hình
   serialize JSON) để cột Steps hiển thị đúng — xem FR-042.
 
+### Session 2026-07-14 (Update 14) — Import/Export vendor mapping trên ApplyCustomerPage
+
+- Input: "cập nhật 003-eutr-templates chức năng apply to customer, thêm 2 nút Import và Export,
+  file template gồm 2 cột là TemplateCode, VendorCode, FromDate, ToDate. Logic giống như Add. Khi
+  Export, import sẽ dựa vào liên kết template code để xuất, add dữ liệu, chỉ chấp nhận file excel,
+  khi thành công có thông báo dòng nào ok, dòng nào bị lỗi."
+- Q: Import trên ApplyCustomerPage (màn hình mở cho 1 template cụ thể qua route
+  `/eutr/templates/apply/:id`) chỉ áp dụng cho template đang mở, hay có thể tạo mapping cho nhiều
+  template khác nhau cùng lúc (mỗi dòng dùng TemplateCode riêng để xác định template đích, không
+  giới hạn theo :id trên URL)? → A: Chỉ áp dụng cho template đang mở. Cột TemplateCode trong file
+  dùng để đối chiếu/xác nhận — dòng nào có TemplateCode KHÔNG khớp Code của template đang mở MUST
+  bị báo lỗi cho dòng đó, KHÔNG tạo mapping cho template khác.
+- Change: Thêm 2 nút **Import** và **Export** trên toolbar của **ApplyCustomerPage**, cạnh nút
+  Apply Vendor hiện có — xem FR-043 đến FR-048.
+- Change: **Export** MUST tải xuống file Excel (.xlsx) chứa toàn bộ mapping hiện có (đang hiển thị
+  trên bảng) của template đang mở, gồm 4 cột: **TemplateCode**, **VendorCode**, **FromDate**,
+  **ToDate**. Khi bảng mapping rỗng, Export vẫn MUST trả về file .xlsx chỉ có dòng tiêu đề — file
+  này đồng thời đóng vai trò "file template" mẫu cho Import.
+- Change: **Import** MUST chỉ chấp nhận file Excel (.xlsx); các định dạng file khác (.csv, .xls,
+  .txt, ...) MUST bị từ chối kèm thông báo lỗi rõ ràng, không xử lý bất kỳ dòng nào. Mỗi dòng dữ
+  liệu trong file MUST được validate theo đúng logic giống dialog **Add Vendor** hiện hành
+  (FR-034/FR-036): TemplateCode phải khớp Code của template đang mở, VendorCode và FromDate bắt
+  buộc, ToDate tùy chọn (rỗng = không giới hạn), và không được chồng lấn ngày với mapping khác của
+  CÙNG vendor trong CÙNG template (bao gồm cả mapping đã có sẵn trong hệ thống lẫn các dòng khác
+  hợp lệ hơn trong CÙNG file Import). Mỗi dòng hợp lệ MUST tạo một bản ghi MỚI trong
+  `eutr_template_references` (Import chỉ Add, không Update mapping đã tồn tại).
+- Change: Sau khi Import xử lý xong toàn bộ các dòng trong file, hệ thống MUST hiển thị kết quả
+  chi tiết theo TỪNG dòng — dòng nào Import thành công (OK) và dòng nào bị lỗi (kèm lý do lỗi cụ
+  thể, ví dụ "TemplateCode không khớp", "VendorCode/FromDate trống", "Chồng lấn ngày với mapping
+  hiện có") — và bảng danh sách mapping MUST tự làm mới để hiển thị các mapping vừa Import thành
+  công.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Xem danh sách EUTR Templates (Priority: P1)
@@ -570,7 +602,11 @@ From date, To date (hiển thị "∞" nếu không giới hạn), và cột Act
 **Apply Vendor** trên toolbar hoặc icon **Edit** trên một dòng MỞ form popup (dialog) cho phép chọn
 Vendor từ combobox (API reference refType=13), nhập From date (bắt buộc), To date (tùy chọn), rồi
 Lưu. Icon **Delete** xóa thật (hard delete) bản ghi mapping sau khi xác nhận, vì bảng
-`eutr_template_references` không có cờ soft-delete.
+`eutr_template_references` không có cờ soft-delete. **(Update 14)** Toolbar còn có 2 nút **Import**
+và **Export**: Export tải file Excel (.xlsx, 4 cột TemplateCode/VendorCode/FromDate/ToDate) chứa
+toàn bộ mapping hiện có của template đang mở; Import chỉ chấp nhận file .xlsx theo đúng 4 cột này,
+mỗi dòng được validate và tạo mapping mới giống hệt logic Add (FR-034/FR-036), sau đó hiển thị kết
+quả từng dòng (OK/lỗi) và làm mới bảng.
 
 **Why this priority**: Đây là bước tiếp theo sau khi template đã được xây dựng hoàn chỉnh (cây
 bước) — gắn template với vendor cụ thể theo khoảng thời gian hiệu lực là điều kiện để checklist
@@ -612,6 +648,26 @@ mapping biến mất và bị xóa thật khỏi database.
    (hard delete) khỏi `eutr_template_references` và biến mất khỏi bảng.
 10. **Given** hộp thoại xác nhận xóa mapping hiện ra, **When** người dùng hủy, **Then** không có
     mapping nào bị xóa.
+11. **Given** template đang xem có 3 mapping, **When** nhấn nút **Export**, **Then** hệ thống tải
+    xuống một file .xlsx gồm đúng 4 cột TemplateCode, VendorCode, FromDate, ToDate với 3 dòng dữ
+    liệu khớp chính xác 3 mapping đang hiển thị.
+12. **Given** template đang xem chưa có mapping nào, **When** nhấn **Export**, **Then** hệ thống
+    vẫn tải xuống file .xlsx chỉ có dòng tiêu đề (không có dòng dữ liệu).
+13. **Given** đang ở ApplyCustomerPage, **When** nhấn **Import** và chọn một file KHÔNG phải .xlsx
+    (ví dụ .csv, .txt), **Then** hệ thống báo lỗi định dạng file không hợp lệ và KHÔNG xử lý bất kỳ
+    dòng dữ liệu nào.
+14. **Given** file Import .xlsx hợp lệ có 5 dòng: 3 dòng đúng TemplateCode của template đang mở với
+    VendorCode/FromDate hợp lệ và không chồng lấn, 1 dòng có TemplateCode của template KHÁC, 1 dòng
+    thiếu VendorCode, **When** Import, **Then** hệ thống tạo đúng 3 mapping mới từ 3 dòng hợp lệ,
+    hiển thị kết quả rõ ràng cho từng dòng (3 dòng OK, 1 dòng lỗi "TemplateCode không khớp", 1 dòng
+    lỗi "thiếu VendorCode"), và bảng mapping tự làm mới hiển thị 3 mapping vừa thêm.
+15. **Given** file Import chứa 2 dòng cùng VendorCode với khoảng FromDate-ToDate chồng lấn nhau
+    (trong cùng file, cùng template đang mở), **When** Import, **Then** dòng đầu tiên hợp lệ được
+    tạo thành công (OK), dòng thứ hai bị báo lỗi chồng lấn ngày (so với mapping vừa tạo từ dòng đầu
+    hoặc mapping đã có sẵn) và không được tạo.
+16. **Given** file Import .xlsx hợp lệ về định dạng nhưng không có dòng dữ liệu nào (chỉ có dòng
+    tiêu đề), **When** Import, **Then** hệ thống hiển thị thông báo không có dòng nào để xử lý,
+    không tạo mapping nào và không báo lỗi hệ thống.
 
 ---
 
@@ -696,6 +752,29 @@ mapping biến mất và bị xóa thật khỏi database.
 - **(Update 13)** Khi đánh dấu Default cho một template trong khi một template KHÁC (bất kỳ, kể cả
   khác vendor/không còn khái niệm vendor trên template) đang là default, hệ thống tự động bỏ cờ
   default trên template cũ đó theo ràng buộc default toàn cục mới (không cần xác nhận thêm).
+- **(Update 14)** Khi file Import không phải định dạng .xlsx (đuôi file hoặc nội dung không phải
+  Excel hợp lệ), hệ thống MUST từ chối ngay từ bước chọn file/upload, hiển thị lỗi rõ ràng và KHÔNG
+  đọc/xử lý nội dung file.
+- **(Update 14)** Khi file Import thiếu một hoặc nhiều cột bắt buộc (TemplateCode, VendorCode,
+  FromDate, ToDate không đúng tên cột tiêu đề), hệ thống MUST báo lỗi định dạng file ngay từ đầu
+  (trước khi xử lý dòng dữ liệu), không cố xử lý một phần.
+- **(Update 14)** Khi file Import chỉ có dòng tiêu đề, không có dòng dữ liệu nào, hệ thống MUST
+  hiển thị thông báo "không có dữ liệu để import" thay vì báo lỗi hệ thống hoặc coi là thành công
+  im lặng.
+- **(Update 14)** Khi một dòng trong file Import có TemplateCode KHÔNG khớp Code của template đang
+  mở trên ApplyCustomerPage, dòng đó MUST bị đánh dấu lỗi riêng và bị bỏ qua — KHÔNG tạo mapping
+  cho template đang mở lẫn template khác, các dòng hợp lệ khác trong cùng file vẫn được xử lý bình
+  thường.
+- **(Update 14)** Khi nhiều dòng trong cùng file Import có cùng VendorCode với khoảng FromDate-ToDate
+  chồng lấn nhau, hệ thống MUST xử lý tuần tự theo thứ tự dòng trong file: dòng hợp lệ đầu tiên
+  được tạo, các dòng sau chồng lấn với dòng đã tạo (hoặc mapping có sẵn) bị báo lỗi chồng lấn.
+- **(Update 14)** Khi ToDate trong một dòng Import nhỏ hơn FromDate của cùng dòng đó, dòng đó MUST
+  bị báo lỗi và không được tạo, các dòng khác trong file không bị ảnh hưởng.
+- **(Update 14)** Khi để trống ToDate trong file Import, hệ thống MUST hiểu là không giới hạn thời
+  gian (tương đương ToDate = 9999-12-31), giống hành vi của dialog Add Vendor thủ công.
+- **(Update 14)** Import KHÔNG cập nhật mapping đã tồn tại — nếu một dòng Import trùng hoàn toàn dữ
+  liệu (cùng Vendor, cùng khoảng ngày) với một mapping đã có, dòng đó MUST bị báo lỗi chồng lấn
+  giống mọi trường hợp chồng lấn khác, không âm thầm bỏ qua hay cập nhật đè.
 
 ## Requirements *(mandatory)*
 
@@ -1024,6 +1103,40 @@ mapping biến mất và bị xóa thật khỏi database.
   mất/đổi tên trường này, và `TemplateListPage.jsx` đọc đúng `tmpl.stepsCount` — hiện tượng cột
   Steps hiển thị sai/trống dù cả backend lẫn frontend đã có phần code liên quan là một lỗi tồn tại
   cần được khắc phục dứt điểm, không chỉ dừng ở việc rà lại code hiện có.
+- **FR-043 (Update 14)**: Toolbar của **ApplyCustomerPage** MUST bổ sung 2 nút **Import** và
+  **Export**, cạnh nút Apply Vendor hiện có (FR-034).
+- **FR-044 (Update 14)**: Nhấn nút **Export** MUST tải xuống một file Excel (.xlsx) chứa toàn bộ
+  mapping hiện có (`eutr_template_references`) của template đang mở (theo TemplateId từ route),
+  gồm đúng 4 cột theo thứ tự: **TemplateCode** (Code của template đang mở, lặp lại cho mọi dòng),
+  **VendorCode**, **FromDate**, **ToDate**. Khi danh sách mapping rỗng, Export vẫn MUST trả về file
+  .xlsx chỉ có dòng tiêu đề 4 cột trên (không có dòng dữ liệu) — file này dùng làm file mẫu
+  ("file template") cho chức năng Import.
+- **FR-045 (Update 14)**: Nhấn nút **Import** MUST mở hộp thoại chọn file, MUST chỉ chấp nhận file
+  có định dạng Excel (.xlsx). Nếu người dùng chọn file không đúng định dạng .xlsx hoặc file không
+  đủ 4 cột tiêu đề đúng tên (TemplateCode, VendorCode, FromDate, ToDate), hệ thống MUST từ chối
+  ngay, hiển thị thông báo lỗi định dạng file, và KHÔNG xử lý bất kỳ dòng dữ liệu nào.
+- **FR-046 (Update 14)**: Với mỗi dòng dữ liệu hợp lệ về định dạng trong file Import, hệ thống MUST
+  validate theo đúng logic của dialog **Add Vendor** hiện hành (giống FR-034/FR-036): (1)
+  TemplateCode của dòng phải khớp chính xác Code của template đang mở trên ApplyCustomerPage —
+  không khớp thì dòng đó bị lỗi và bị bỏ qua; (2) VendorCode và FromDate không được để trống; (3)
+  nếu có ToDate, ToDate phải >= FromDate; (4) khoảng FromDate-ToDate không được chồng lấn với mapping
+  khác của CÙNG VendorCode trong CÙNG template — bao gồm cả mapping đã có sẵn trong
+  `eutr_template_references` lẫn các dòng khác đã được tạo thành công từ CÙNG file Import (xử lý
+  tuần tự theo thứ tự dòng). Mỗi dòng vượt qua toàn bộ validate MUST tạo một bản ghi MỚI trong
+  `eutr_template_references` (TemplateId từ route, VendorCode/FromDate/ToDate từ dòng,
+  CreatedBy/CreatedDate) — Import chỉ Add, KHÔNG cập nhật (update) mapping đã tồn tại kể cả khi
+  trùng dữ liệu.
+- **FR-047 (Update 14)**: Sau khi xử lý xong toàn bộ các dòng dữ liệu trong file Import, hệ thống
+  MUST hiển thị kết quả chi tiết theo TỪNG dòng: dòng nào Import thành công (OK) và dòng nào bị lỗi
+  kèm lý do cụ thể (ví dụ "TemplateCode không khớp", "VendorCode/FromDate trống", "ToDate nhỏ hơn
+  FromDate", "Chồng lấn ngày với mapping hiện có"). Nếu file không có dòng dữ liệu nào (chỉ có dòng
+  tiêu đề), hệ thống MUST hiển thị thông báo không có dữ liệu để import, không coi là lỗi hệ thống.
+  Sau khi Import (có ít nhất 1 dòng thành công), bảng danh sách mapping trên ApplyCustomerPage MUST
+  tự làm mới để hiển thị các mapping vừa Import thành công.
+- **FR-048 (Update 14)**: Import và Export trên ApplyCustomerPage MUST chỉ thao tác trong phạm vi
+  template đang mở (TemplateId từ route `/eutr/templates/apply/:id`) — không đọc hay ghi mapping
+  của bất kỳ template nào khác, kể cả khi file Import có cột TemplateCode ghi mã của template khác
+  (các dòng đó bị coi là lỗi theo FR-046, không được xử lý sang template tương ứng).
 
 ### Key Entities *(include if feature involves data)*
 
@@ -1071,6 +1184,10 @@ mapping biến mất và bị xóa thật khỏi database.
   được map tới nhiều Template khác nhau (kể cả với khoảng thời gian chồng lấn — chỉ chồng lấn cùng
   vendor TRONG CÙNG một Template mới bị chặn, xem FR-036). VendorName hiển thị qua tra cứu API
   reference chung refType=13 dựa trên VendorCode (không lưu VendorName trực tiếp trong bảng này).
+  **(Update 14)** Có thể Export hàng loạt các bản ghi này (thuộc một TemplateId) ra file Excel
+  (.xlsx, 4 cột TemplateCode/VendorCode/FromDate/ToDate) và Import hàng loạt bản ghi mới từ cùng
+  định dạng file này (chỉ Add, không Update), áp dụng đúng ràng buộc chồng lấn/bắt buộc như khi tạo
+  thủ công qua dialog Add Vendor — xem FR-043 đến FR-048.
 - **Compl Group Email** (đã có sẵn — bảng `compl_group_email`, quản lý qua
   `ComplGroupEmailController`): Đại diện cho một nhóm email. Thuộc tính liên quan: Id, Name,
   GroupType (Responsible=1/Alert=2), IsAddition (nhóm bổ sung/không hoạt động khi true). Combobox
@@ -1177,6 +1294,16 @@ mapping biến mất và bị xóa thật khỏi database.
 - **SC-035 (Update 13)**: 100% dòng trên TemplateListPage hiển thị đúng số lượng step thật (đếm từ
   `eutr_template_details` đang hoạt động) tại cột Steps sau khi fix — không còn tình trạng hiển thị
   sai/0 cho một template thực sự có step.
+- **SC-036 (Update 14)**: 100% lượt Export trên ApplyCustomerPage tải xuống file .xlsx đúng 4 cột
+  (TemplateCode, VendorCode, FromDate, ToDate) khớp chính xác với dữ liệu mapping đang hiển thị của
+  template đang mở, kể cả khi danh sách mapping rỗng (file chỉ có dòng tiêu đề).
+- **SC-037 (Update 14)**: 100% lượt Import chọn file không đúng định dạng .xlsx hoặc sai cấu trúc
+  cột bị từ chối ngay với thông báo lỗi rõ ràng, không có dòng dữ liệu nào được xử lý.
+- **SC-038 (Update 14)**: 100% lượt Import thành công hiển thị kết quả rõ ràng cho TỪNG dòng trong
+  file (OK hoặc lỗi kèm lý do cụ thể), không có dòng nào bị xử lý âm thầm mà không có phản hồi.
+- **SC-039 (Update 14)**: 100% dòng Import có TemplateCode không khớp template đang mở bị báo lỗi
+  và không tạo mapping nào (cho cả template đang mở lẫn template khác); các dòng hợp lệ khác trong
+  cùng file vẫn được Import thành công độc lập.
 
 ## Assumptions
 
@@ -1319,3 +1446,18 @@ mapping biến mất và bị xóa thật khỏi database.
   nguồn hiện tại) — việc xác định nguyên nhân chính xác (ví dụ: endpoint controller có gọi đúng
   `GetPagedWithVendorNameAsync` hay không, cấu hình serialize JSON, dữ liệu build/deploy chưa cập
   nhật) thuộc phạm vi điều tra ở bước `/speckit-plan`/`/speckit-implement`.
+- **(Update 14)** File Import/Export mapping vendor MUST dùng cùng cơ chế đọc/ghi file Excel
+  (.xlsx) đã có sẵn trong hệ thống cho các chức năng import/export khác (ví dụ pattern tương tự
+  eutr-masters import đã nêu ở Assumption trước đó) — không cần thêm thư viện mới. Export khi
+  danh sách mapping đang rỗng vẫn MUST trả về file .xlsx chỉ có dòng tiêu đề (header), qua đó file
+  Export cũng đóng vai trò là "file template" mẫu cho người dùng tải về, điền dữ liệu rồi Import
+  lại — giải quyết đúng ý "file template" nêu trong yêu cầu gốc mà không cần một endpoint tải
+  template riêng biệt.
+- **(Update 14)** Yêu cầu gốc ghi "file template gồm 2 cột" nhưng liệt kê 4 tên cột (TemplateCode,
+  VendorCode, FromDate, ToDate) — xử lý theo 4 cột đã liệt kê tên cụ thể (số "2" trong câu gốc được
+  hiểu là nhầm lẫn diễn đạt, không phải giới hạn số cột thực tế).
+- **(Update 14)** Import KHÔNG hỗ trợ cập nhật (update) mapping đã tồn tại — mọi dòng hợp lệ trong
+  file Import đều tạo bản ghi MỚI trong `eutr_template_references` ("Logic giống như Add" theo yêu
+  cầu gốc, tức là tái sử dụng validate của FR-034/FR-036, không tái sử dụng nhánh Edit/FR-035).
+  Nếu người dùng Import cùng một cặp Vendor/khoảng ngày nhiều lần, các lần sau sẽ bị chặn bởi kiểm
+  tra chồng lấn (overlap) như một dòng lỗi, không tự động cập nhật đè.

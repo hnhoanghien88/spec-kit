@@ -441,6 +441,82 @@ could not be rebuilt/restarted to serve the latest binaries) — recommend resta
 and frontend dev servers with a fresh build and re-checking before investigating further. FR-042/
 SC-035 are marked resolved on this evidence; no code change was made for this item.
 
+### Scenario 19: Import/Export Vendor Mapping on ApplyCustomerPage (FR-043 to FR-048, Update 14)
+
+1. Open ApplyCustomerPage for a template that already has 2 existing mappings (from Scenario 17)
+2. Click **Export**
+3. **Expected**: downloads an `.xlsx` file with exactly 4 columns — `TemplateCode`, `VendorCode`,
+   `FromDate`, `ToDate` — with 2 data rows matching the 2 existing mappings, `TemplateCode` equal to
+   this template's Code on every row
+4. Open ApplyCustomerPage for a DIFFERENT template that has zero mappings, click **Export**
+5. **Expected**: downloads an `.xlsx` file with only the header row (no data rows) — this file is
+   the "file template" referred to in the request; usable directly as an Import starting point
+6. Edit the exported file from step 5, add 3 data rows: (a) `TemplateCode` = this template's Code,
+   valid `VendorCode`, valid non-overlapping `FromDate`, blank `ToDate`; (b) `TemplateCode` =
+   SOME OTHER template's Code, otherwise valid; (c) `TemplateCode` = this template's Code, blank
+   `VendorCode`
+7. Click **Import**, select the edited file
+8. **Expected**: result shows `totalRows=3`, `successCount=1`, `failCount=2`; row (a) succeeds and
+   appears in the mapping table (ToDate shown as "∞"/unlimited); row (b) fails with a
+   "TemplateCode does not match the current template" error and does NOT create a mapping on the
+   other template either; row (c) fails with a "Vendor is required" (or equivalent) error
+9. **Verify in DB**: `eutr_template_references` has exactly 1 new row (from row (a)) tied to THIS
+   template's `TemplateId`; no new row exists for the other template referenced in row (b)
+10. Try clicking **Import** and selecting a non-`.xlsx` file (e.g. rename a `.csv` to have a `.xlsx`
+    extension is not required for this check — pick any genuinely non-Excel file)
+11. **Expected**: rejected immediately with a file-format error; no rows processed, mapping table
+    unchanged
+12. Prepare a file with 2 rows for the SAME VendorCode with overlapping `FromDate`/`ToDate` ranges
+    (both rows valid TemplateCode, no pre-existing conflicting mapping), Import
+13. **Expected**: the first row succeeds; the second row fails with an overlap error (same message
+    as the manual Apply Vendor overlap case, Scenario 17 step 9) — only 1 new mapping is created
+14. Prepare and Import a file that has only the header row (no data rows)
+15. **Expected**: result shows `totalRows=0`, no error dialog, no mapping created — a
+    "nothing to import" outcome, not a failure
+
+**Outcome (2026-07-14, `/speckit-implement`)**: **Verified at the SQL/ClosedXML level, not through
+the full HTTP+UI stack** — same environment limitation as Scenario 17/18 (no interactive browser
+session available; the dev API process could not be restarted to serve the newly-built binaries).
+Two direct smoke tests were run instead, exercising the exact logic the new code relies on:
+
+1. **Excel parsing smoke test** (ClosedXML, in-process, no DB): built an in-memory workbook using
+   the exact same header/cell layout as `EutrTemplateReferencesExportService`, then re-parsed it
+   with a line-for-line copy of `EutrTemplateReferencesImportService`'s `ValidateHeader`/
+   `TryParseExcelDate` logic. Results: a valid 4-column file parses correctly (TemplateCode/
+   VendorCode read as strings, FromDate/ToDate round-trip through the native Excel date cell type);
+   a header-only file (0 mapping rows) validates as a well-formed header with `LastRowUsed()` giving
+   zero data rows to iterate — confirms the "Export doubles as the Import template" claim (FR-044)
+   and the "header-only file → `totalRows=0`, not an error" claim (step 15) at the parsing level; a
+   renamed/malformed header column (e.g. "Template Code" instead of "TemplateCode") is correctly
+   rejected by the same header-validation check the service throws `InvalidOperationException` from;
+   a hand-typed string date (`"2026-03-15"`, not a native Excel date cell) parses correctly via the
+   string-format fallback path (reused verbatim from the existing `ComplMasterImportService`
+   pattern, per Principle II).
+2. **Database smoke test** (MySqlConnector, direct against the live dev DB
+   `compliance_sys_db_260601`): confirmed the exact SQL semantics `AddAsync`/`HasOverlapAsync`
+   already implement (unchanged by this update — the new Import service calls them, it does not
+   reimplement them): inserting a fresh test mapping succeeds and is visible immediately
+   (`eutr_template_references` row count +1); a second overlapping range for the SAME vendor in the
+   SAME template is correctly flagged by the overlap-count query (COUNT=1, meaning the real
+   `AddAsync` would reject it with the standard overlap error — this is what step 13's "second row
+   fails" behavior rests on); the SAME vendor/date-range applied to a DIFFERENT template is
+   correctly NOT flagged (COUNT=0 — confirms step 11 of Scenario 17 / FR-036's cross-template
+   allowance still holds for Import-created rows, since Import uses the identical check); test row
+   cleaned up afterward, dev DB left unchanged (final count verified back to the original value).
+
+Both the backend (`dotnet build` on `ComplianceSys.Application.csproj`) and frontend
+(`npm run build`) compile/build with 0 errors; `eslint` is clean on all 7 new/changed frontend files
+(`ApplyCustomerPage.jsx`, `ImportMappingResultDialog.jsx`, the 2 new use cases, the API/repository/
+domain-interface additions). The TemplateCode-mismatch check (FR-046/FR-048 — row (b) in step 6-9)
+and the per-row OK/error result reporting (step 8) were verified by direct code review of
+`EutrTemplateReferencesImportService.ImportFromExcelAsync` (a straightforward
+`string.Equals(..., OrdinalIgnoreCase)` comparison against the template fetched via the existing
+`IEutrTemplatesService.GetByIdWithDetailsAsync`, and a `result.Errors.Add(...)` per failed row) rather
+than exercised end-to-end. **Recommended before sign-off**: restart the dev API process and frontend
+dev server (both currently serving stale, pre-Update-14 binaries/bundles), then manually click
+through Scenario 19 steps 1-15 in a real browser to close the gap between "verified by code/DB/
+parsing-logic smoke test" and "verified end-to-end through the UI."
+
 ### Scenario 13: Edge Cases
 
 - Empty grid: **Expected** "No data" message, no errors
@@ -486,6 +562,14 @@ SC-035 are marked resolved on this evidence; no code change was made for this it
   the overlap check excludes the record being edited from comparison — Save succeeds
 - (Update 13) Deleting a mapping: **Expected** a real DB row removal, not a flag update — confirmed
   by querying `eutr_template_references` directly after delete
+- (Update 14) Importing a file missing/renaming one of the 4 required header columns: **Expected**
+  the whole file is rejected before any row is read (no partial processing)
+- (Update 14) Importing a row with `ToDate` earlier than `FromDate`: **Expected** that row fails
+  validation, other valid rows in the same file are unaffected
+- (Update 14) Importing a row that exactly duplicates an existing mapping's Vendor/FromDate/ToDate:
+  **Expected** treated as an overlap error (Import never updates an existing mapping)
+- (Update 14) Clicking Import/Export while a previous Import request is still in flight: **Expected**
+  both buttons are disabled until the in-flight request resolves (no double-submit)
 
 ## Post-Validation Checks
 
@@ -595,3 +679,16 @@ SC-035 are marked resolved on this evidence; no code change was made for this it
       (Update 13, FR-037)
 - [ ] Steps-count investigation (Scenario 18) outcome recorded — either confirmed working with
       evidence, or a root cause identified and tracked as a follow-up task (Update 13, FR-042)
+- [ ] ApplyCustomerPage shows Import and Export buttons in its toolbar (Update 14, FR-043)
+- [ ] Export produces a 4-column (TemplateCode, VendorCode, FromDate, ToDate) `.xlsx`, including a
+      header-only file when the mapping list is empty (Update 14, FR-044)
+- [ ] Import rejects any non-`.xlsx` file with no rows processed (Update 14, FR-045)
+- [ ] Import validates each row the same way the manual Apply Vendor dialog does (required
+      Vendor/FromDate, ToDate ≥ FromDate, same-template/same-vendor overlap including against
+      earlier valid rows in the same file) and rejects rows whose TemplateCode doesn't match the
+      currently-open template, without creating a mapping on any other template (Update 14, FR-046,
+      FR-048)
+- [ ] Import shows a per-row OK/error result after processing, and the mapping table refreshes to
+      show newly-created mappings (Update 14, FR-047)
+- [ ] Import never updates an existing mapping — a row matching existing data is rejected as an
+      overlap, not silently merged (Update 14)

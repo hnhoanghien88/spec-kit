@@ -513,6 +513,138 @@ subquery against production data, (c) any client-side caching (React state not r
 Save). If it does NOT reproduce, FR-042/SC-035 are marked resolved with the verification evidence
 recorded in `quickstart.md`, and no code change is needed for this item.
 
+### Update 2026-07-14 (Update 14) — Import/Export Vendor Mapping on ApplyCustomerPage
+
+**Backend: two new Excel services, modeled 1:1 on the existing `EutrTemplatesImportService`/
+`EutrTemplatesExportService`, plus two new controller actions scoped by `templateId`. Frontend:
+Import/Export buttons added to the already-implemented `ApplyCustomerPage.jsx` toolbar.** No new
+DB table/columns, no new route, no new authorization policy family — the row-level "Add" logic is
+reused directly from the existing `EutrTemplateReferencesService.AddAsync` (already live in the
+codebase per Update 13), which is exactly what "Logic giống như Add" in the request means in code
+terms: call the same method, don't reimplement its validation/overlap-check.
+
+**Verified against the actual (already-implemented) code, not just the spec**: `ApplyCustomerPage.jsx`,
+`EutrTemplateReferencesController.cs`, `EutrTemplateReferencesService.cs`,
+`EutrTemplateReferencesRequestDtoValidator.cs`, and `IEutrTemplatesService.GetByIdWithDetailsAsync`
+all already exist and match plan.md's Update 13 design as shipped. One drift from the Update 13
+contracts.md draft is corrected here rather than carried forward: the controller does **not** use a
+new `EutrTemplateReferences.*` policy family (contracts.md had flagged this as "verify wiring" —
+unresolved at plan time); the shipped controller instead reuses `EutrTemplates.Read/.Update/.Delete`
+directly. The new Import/Export actions below follow that same already-resolved pattern.
+
+#### Backend
+
+- **`ComplianceSys.Application/Dtos/Response/ImportEutrTemplateReferencesResultDto.cs`** NEW —
+  mirrors `ImportEutrTemplatesResultDto.cs`'s shape exactly: `TotalRows`/`SuccessCount`/`FailCount`/
+  `Errors` (list of `ImportEutrTemplateReferencesRowError { Row, TemplateCode, VendorCode, Message }`).
+- **`ComplianceSys.Application/Interfaces/Services/IEutrTemplateReferencesImportService.cs`** +
+  **`.../Services/EutrTemplateReferencesImportService.cs`** NEW —
+  `ImportFromExcelAsync(long templateId, Stream fileStream, string userEmail, CancellationToken ct)`:
+  1. `await _eutrTemplatesService.GetByIdWithDetailsAsync(templateId, ct)` — if `null`, throw
+     `KeyNotFoundException` (controller → 404; same "template not found" condition already called
+     out as an edge case for the mapping-list load in Update 13).
+  2. Open the workbook (ClosedXML, same as `EutrTemplatesImportService`); read the header row and
+     verify it has exactly 4 columns named `TemplateCode`, `VendorCode`, `FromDate`, `ToDate`
+     (case-insensitive, trimmed) — mismatch throws `InvalidOperationException` (controller already
+     has a `catch (InvalidOperationException)` → 400 branch, same pattern as
+     `EutrTemplatesController.Import`), so no row is ever processed against a malformed file.
+  3. For each data row (row 2..last, skipping fully-empty rows), `TotalRows++`, then validate in
+     order: (a) `TemplateCode` (trimmed) must equal `template.Code` exactly — mismatch adds a row
+     error `"TemplateCode does not match the current template"` and `continue`s (FR-046, FR-048 —
+     this row is skipped entirely, never dispatched to any other template); (b) `VendorCode`/
+     `FromDate` non-blank; (c) `ToDate` blank → sentinel `9999-12-31` (same `UNLIMITED_DATE` constant
+     already used in `ApplyCustomerPage.jsx`), else parsed; (d) `ToDate >= FromDate`. Each failed
+     check adds a row error and `continue`s — no per-check throw, same flat-validation style as
+     `EutrTemplatesImportService`.
+  4. Build `new EutrTemplateReferencesRequestDto { TemplateId = templateId, VendorCode, FromDate,
+     ToDate }` and call `await _eutrTemplateReferencesService.AddAsync(dto, userEmail, ct)` inside a
+     `try/catch` — this is the literal reuse of "Logic giống như Add": the SAME `AddAsync` the manual
+     Apply Vendor dialog calls, which already runs `EutrTemplateReferencesRequestDtoValidator` and
+     `HasOverlapAsync` before inserting. Because each row's `AddAsync` commits its own transaction
+     before the next row is read, `HasOverlapAsync` on a later row automatically sees an earlier
+     row's just-inserted mapping — satisfying the in-file overlap-sequencing requirement (FR-046's
+     "earlier valid rows within the same file" clause) with **zero extra in-memory bookkeeping**,
+     simply by virtue of processing rows in file order and reusing the existing service method.
+     `ValidationException`/`InvalidOperationException` (overlap) → row error with `ex.Message`,
+     `FailCount++`; any other exception → logged, generic `"Failed to import row"` error,
+     `FailCount++`; otherwise `SuccessCount++`.
+  5. If `TotalRows == 0` after the loop (header-only file), the result still returns with
+     `TotalRows=0`/`SuccessCount=0`/`FailCount=0` — the controller's response message covers the
+     "nothing to import" case (FR-047) without a special-cased error path.
+- **`ComplianceSys.Application/Interfaces/Services/IEutrTemplateReferencesExportService.cs`** +
+  **`.../Services/EutrTemplateReferencesExportService.cs`** NEW —
+  `ExportToExcelAsync(long templateId, CancellationToken ct)`:
+  1. `await _eutrTemplatesService.GetByIdWithDetailsAsync(templateId, ct)` — `null` → throw
+     `KeyNotFoundException` (404; reuses the exact same not-found condition as Import).
+  2. `await _eutrTemplateReferencesService.GetByTemplateIdAsync(templateId, ct)` (already exists,
+     Update 13) for the mapping rows — **no D365 vendor-name resolution needed here**, since the
+     4-column export format (FR-044) doesn't include `VendorName`, only `VendorCode`; this keeps
+     Export from making any external D365 call at all.
+  3. Build a workbook with headers `TemplateCode, VendorCode, FromDate, ToDate` (ClosedXML, same
+     `sheet.Cell(...).Value = ...` + `AdjustToContents()` pattern as `EutrTemplatesExportService`);
+     one row per mapping with `TemplateCode` = `template.Code` (repeated per row) and `FromDate`/
+     `ToDate` written as real Excel date values with a `"yyyy-mm-dd"` number format (round-trips
+     cleanly back through Import's date-cell read, avoiding locale-dependent string parsing). Zero
+     mappings → header-only workbook (FR-044's "Export doubles as the template file" case).
+- **`ComplianceSys.Api/Controllers/EutrTemplateReferencesController.cs`** MODIFY — add two actions,
+  following the exact try/catch shape already used by `EutrTemplatesController.Import`/`.Export`:
+  - `[Authorize(Policy = "EutrTemplates.Update")] [HttpPost("import/{templateId:long}")]` —
+    validates `file` not null/empty and extension `.xlsx` (same check as
+    `EutrTemplatesController.Import`) before calling the import service; catches
+    `KeyNotFoundException` → 404, `InvalidOperationException` → 400, else 500. Returns
+    `ApiResponse<ImportEutrTemplateReferencesResultDto>` with a summary message (`"Import finished:
+    {SuccessCount} success, {FailCount} errors."`, same phrasing convention as the existing
+    Templates import endpoint).
+  - `[Authorize(Policy = "EutrTemplates.Read")] [HttpGet("export/{templateId:long}")]` — calls the
+    export service, catches `KeyNotFoundException` → 404, returns the file as
+    `eutr-template-references-{code}-{yyyyMMddHHmmss}.xlsx` (same `File(...)` content-type pattern
+    as `EutrTemplatesController.Export`).
+  - Policy choice reuses `EutrTemplates.Update` (Import mutates — same policy already gating
+    Create/Update on this controller) and `EutrTemplates.Read` (Export is read-only — same policy
+    already gating `GetByTemplateId`) — no new policy is introduced, matching how this controller
+    already resolved Update 13's open "verify policy wiring" item by reusing `EutrTemplates.*`
+    outright rather than seeding a new `EutrTemplateReferences.*` family.
+- **`ComplianceSys.Application/DependencyInjection.cs`** MODIFY — register
+  `IEutrTemplateReferencesImportService`/`EutrTemplateReferencesImportService` and
+  `IEutrTemplateReferencesExportService`/`EutrTemplateReferencesExportService`, alongside the
+  existing `EutrTemplateReferencesService` registration.
+
+#### Frontend
+
+- **`infrastructure/api/eutrTemplateReferencesApi.js`** MODIFY — add `importByTemplate(templateId,
+  file)` (POST multipart `FormData` to `/eutr-template-references/import/${templateId}`, same
+  `FormData`/`multipart/form-data` construction as `eutrTemplatesApi.js`'s `import`) and
+  `exportByTemplate(templateId)` (GET `/eutr-template-references/export/${templateId}` with
+  `responseType: 'blob'`, same as `eutrTemplatesApi.js`'s `export`).
+- **`infrastructure/repositories/RestEutrTemplateReferencesRepository.js`** MODIFY — add
+  `importByTemplate(templateId, file)`/`exportByTemplate(templateId)` passthrough methods, mirroring
+  `RestEutrTemplatesRepository.js`'s `import`/`export` wrapper shape.
+- **`application/usecases/eutr-template-references/ImportEutrTemplateReferencesUseCase.js`** NEW —
+  mirrors `ImportEutrTemplatesUseCase.js` verbatim shape: `execute(templateId, file)` →
+  `repository.importByTemplate(templateId, file)`.
+- **`application/usecases/eutr-template-references/ExportEutrTemplateReferencesUseCase.js`** NEW —
+  mirrors `ExportEutrTemplatesUseCase.js`'s blob-download-trigger logic (`execute(templateId)` calls
+  the repository, then builds a temporary `<a download>` link from the blob response and clicks it);
+  default filename when no `Content-Disposition` header is present:
+  `eutr-template-references-${templateId}-${timestamp}.xlsx` (same `_resolveFileName` fallback
+  pattern, just a different default prefix).
+- **`presentation/pages/eutr-templates/components/ImportMappingResultDialog.jsx`** NEW — copies
+  `ImportResultDialog.jsx`'s structure (Total/Success/Error `Chip`s + error table + Close button)
+  verbatim, with the error table's columns changed to **Row, TemplateCode, VendorCode, Reason**
+  (instead of Row/Name/Alert for/Reason) to match `ImportEutrTemplateReferencesRowError`'s shape.
+- **`presentation/pages/eutr-templates/ApplyCustomerPage.jsx`** MODIFY — add **Import** and
+  **Export** `Button`s to the existing header `Stack` (next to Back/Apply Vendor, per FR-043): a
+  hidden `<input type="file" accept=".xlsx" hidden>` wired to a `ref` + `onChange` handler that (1)
+  does a fast-fail client-side extension check (`.xlsx` only — server is still authoritative, same
+  precedent as every other validated field in this feature), (2) calls
+  `ImportEutrTemplateReferencesUseCase.execute(id, file)`, (3) opens the new
+  `ImportMappingResultDialog` with the returned result, (4) calls the existing `fetchMappings()` to
+  refresh the table regardless of partial success, and (5) resets the file `<input>`'s value so
+  re-selecting the same filename re-fires `onChange`. The Export button's `onClick` simply calls
+  `ExportEutrTemplateReferencesUseCase.execute(id)` (no dialog — direct browser download, same as
+  the Templates-list Export precedent). New local state: `importing` (disables both buttons while an
+  Import request is in flight, preventing double-submit) and `importResult`/`importDialogOpen`.
+
 ## Technical Context
 
 **Language/Version**: .NET 8 (backend), JavaScript/React 18 + Vite 7 (frontend)
@@ -645,6 +777,25 @@ new controller is flagged as a verification item for `/speckit-implement` (same 
 implementation-time confirmation). The Steps-count item introduces no code change at all pending
 verification, so it cannot violate any principle. No new dependencies.
 
+**Post-design re-check (2026-07-14 update 14)**: All principles still PASS.
+`EutrTemplateReferencesImportService`/`EutrTemplateReferencesExportService` are new Application-layer
+services modeled directly on `EutrTemplatesImportService`/`EutrTemplatesExportService` — same
+ClosedXML usage, same row-loop/error-accumulation shape, same controller-level try/catch mapping
+(Principle II — reference-pattern reuse; Principle I — layering, no business logic leaks into the
+new controller actions). Row-level "Add" reuses the EXISTING `EutrTemplateReferencesService.AddAsync`
+(validator + `HasOverlapAsync` already implemented, Update 13) instead of duplicating that logic in
+the import path (Principle III — reuse existing backend, verified in code, not just in the spec).
+No new DB table/column — Import/Export operate on the same `eutr_template_references` table via the
+same service. No new authorization policy family — the two new controller actions reuse
+`EutrTemplates.Update`/`EutrTemplates.Read`, the exact policies this controller's other actions
+already use in the shipped code (resolving, rather than reopening, Update 13's "verify policy
+wiring" item). No new route — Import/Export are buttons on the already-routed
+`/eutr/templates/apply/:id` page (Principle V — routing/menu registration unaffected, no new
+route/menu entry needed). Frontend additions (`ImportMappingResultDialog.jsx`, the two new use
+cases) are pattern-for-pattern copies of the already-working Templates-level Import/Export UI
+(Principle II). No new dependencies — reuses ClosedXML (backend) and the existing blob-download/
+`FormData` upload conventions (frontend).
+
 ## Project Structure
 
 ### Documentation (this feature)
@@ -686,7 +837,8 @@ compliance-sys-api/src/
 │   │       ├── EutrTemplatesResponseDto.cs       # NEW; MODIFY (Update 7) — add AlertForName (string?); (Update 11) add StepsCount (int); (Update 13) MODIFY — remove VendorName
 │   │       ├── EutrTemplateDetailsResponseDto.cs # NEW
 │   │       ├── ImportEutrTemplatesResultDto.cs  # NEW
-│   │       └── EutrTemplateReferencesResponseDto.cs # NEW (Update 13) — inherits EutrTemplateReferences + VendorName (D365 refType=13 lookup)
+│   │       ├── EutrTemplateReferencesResponseDto.cs # NEW (Update 13) — inherits EutrTemplateReferences + VendorName (D365 refType=13 lookup)
+│   │       └── ImportEutrTemplateReferencesResultDto.cs # NEW (Update 14) — TotalRows/SuccessCount/FailCount/Errors (Row, TemplateCode, VendorCode, Message)
 │   ├── Validators/
 │   │   ├── EutrTemplatesRequestDtoValidator.cs  # MODIFY — each detail requires StepId OR non-blank StepName; (Update 7) AlertFor rule: NotEmpty(string) → Must(v => v.HasValue && v.Value > 0); (Update 13) verified — no VendorCode rule existed, no change needed
 │   │   └── EutrTemplateReferencesRequestDtoValidator.cs # NEW (Update 13) — VendorCode NotEmpty, FromDate required, ToDate >= FromDate when present
@@ -695,7 +847,9 @@ compliance-sys-api/src/
 │   │   │   ├── IEutrTemplatesService.cs          # NEW
 │   │   │   ├── IEutrTemplatesImportService.cs    # NEW
 │   │   │   ├── IEutrTemplatesExportService.cs    # NEW
-│   │   │   └── IEutrTemplateReferencesService.cs # NEW (Update 13)
+│   │   │   ├── IEutrTemplateReferencesService.cs # NEW (Update 13)
+│   │   │   ├── IEutrTemplateReferencesImportService.cs # NEW (Update 14) — ImportFromExcelAsync(templateId, stream, userEmail, ct)
+│   │   │   └── IEutrTemplateReferencesExportService.cs # NEW (Update 14) — ExportToExcelAsync(templateId, ct)
 │   │   └── Repositories/
 │   │       ├── IEutrTemplatesRepository.cs       # MODIFY — add ReplaceDetailsAsync (in-place update) + ResolveOrCreateStepsByNameAsync (free-solo step auto-create); (Update 7) add ResolveAlertGroupIdByNameAsync (Import lookup, exact match, no auto-create); (Update 13) MODIFY — ClearIsDefaultForVendorAsync(vendorCode, excludeId) → ClearGlobalDefaultAsync(excludeId)
 │   │       └── IEutrTemplateReferencesRepository.cs # NEW (Update 13) — GetByTemplateIdAsync, HasOverlapAsync (same-template-same-vendor)
@@ -704,10 +858,12 @@ compliance-sys-api/src/
 │   │   ├── EutrTemplatesImportService.cs         # NEW — Excel import; MODIFY (Update 7) — resolve AlertFor Excel cell (group Name) to Id via ResolveAlertGroupIdByNameAsync, new "Alert for group not found" error case; (Update 13) MODIFY — drop VendorCode cell (was col C), IsDefault shifts D→C
 │   │   ├── EutrTemplatesExportService.cs         # NEW — Excel export; MODIFY (Update 7) — write AlertForName instead of raw AlertFor Id; (Update 13) MODIFY — drop "Vendor code" header/cell (was col 3), AlertForName/IsDefault/VersionId shift 4/5/6→3/4/5
 │   │   ├── ComplDynamicsService.cs              # EXISTS — VendorsV3 refType already mapped
-│   │   └── EutrTemplateReferencesService.cs     # NEW (Update 13) — AddAsync/UpdateAsync call HasOverlapAsync first (FR-036); DeleteAsync is a real hard delete (no soft-delete override)
+│   │   ├── EutrTemplateReferencesService.cs     # NEW (Update 13) — AddAsync/UpdateAsync call HasOverlapAsync first (FR-036); DeleteAsync is a real hard delete (no soft-delete override)
+│   │   ├── EutrTemplateReferencesImportService.cs # NEW (Update 14) — modeled on EutrTemplatesImportService; validates TemplateCode/VendorCode/FromDate/ToDate per row, reuses EutrTemplateReferencesService.AddAsync per valid row (no duplicated validation/overlap logic)
+│   │   └── EutrTemplateReferencesExportService.cs # NEW (Update 14) — modeled on EutrTemplatesExportService; 4 columns (TemplateCode, VendorCode, FromDate, ToDate), no D365 call needed
 │   ├── Mappings/
 │   │   └── EutrMappingProfile.cs                # MODIFY — add template mappings (AutoMapper copies AlertFor by name/type automatically — no profile change needed for the long? switch itself); (Update 13) MODIFY — add CreateMap<EutrTemplateReferencesRequestDto, EutrTemplateReferences>() (ignore Id/audit fields); verify VendorCode had no explicit .ForMember (removal needs no profile change)
-│   └── DependencyInjection.cs                   # MODIFY — register services + validator; (Update 13) MODIFY — register IEutrTemplateReferencesService + IValidator<EutrTemplateReferencesRequestDto>
+│   └── DependencyInjection.cs                   # MODIFY — register services + validator; (Update 13) MODIFY — register IEutrTemplateReferencesService + IValidator<EutrTemplateReferencesRequestDto>; (Update 14) MODIFY — register IEutrTemplateReferencesImportService/IEutrTemplateReferencesExportService
 ├── ComplianceSys.Infrastructure/
 │   ├── Repositories/
 │   │   ├── EutrTemplatesRepository.cs            # MODIFY — add ReplaceDetailsAsync (delete+insert details for in-place update) + ResolveOrCreateStepsByNameAsync (match/insert into eutr_steps); (Update 7) add `LEFT JOIN compl_group_email g ON g.Id = t.AlertFor` + `g.Name AS AlertForName` to GetPagedWithVendorNameAsync/GetByIdWithDetailsAsync; FilterMap["AlertFor"] → "g.Name"; add ResolveAlertGroupIdByNameAsync; (Update 10/11) GetPagedWithVendorNameAsync gains `(SELECT COUNT(*) FROM eutr_template_details d WHERE d.TemplateId = t.Id) AS StepsCount` + a `Keyword` column special-case → `(Code LIKE @p OR Name LIKE @p)`; (Update 13) MODIFY — drop VendorCode from SortMap/FilterMap + both header SELECT lists; rename method → GetPagedAsync; ClearIsDefaultForVendorAsync → ClearGlobalDefaultAsync (drop VendorCode predicate)
@@ -724,7 +880,7 @@ compliance-sys-api/src/
         ├── EutrTemplatesController.cs           # NEW — REST endpoints
         ├── ComplGroupEmailController.cs          # UNCHANGED (Update 7) — GET /api/group-email reused as-is by the frontend combobox
         ├── DynController.cs                     # UNCHANGED (Update 5) — GET vendors endpoint from Update 2/3 kept but no longer called by this feature
-        └── EutrTemplateReferencesController.cs   # NEW (Update 13) — GET by-template/{templateId}, POST, PUT {id}, DELETE {id}; new EutrTemplateReferences.* authz policies (verify wiring at /speckit-implement)
+        └── EutrTemplateReferencesController.cs   # NEW (Update 13) — GET by-template/{templateId}, POST, PUT {id}, DELETE {id}; policies confirmed as shipped = reuse EutrTemplates.Read/.Update/.Delete (no new policy family); (Update 14) MODIFY — add POST import/{templateId:long} (EutrTemplates.Update) and GET export/{templateId:long} (EutrTemplates.Read), same try/catch shape as EutrTemplatesController.Import/.Export
 
 compliance-client/src/
 ├── domain/
@@ -740,11 +896,11 @@ compliance-client/src/
 │   │   ├── eutrTemplatesApi.js                  # NEW
 │   │   ├── groupEmailApi.js                     # EXISTS (Update 7) — GET /group-email reused as-is via GetAllGroupEmailUseCase, no change needed
 │   │   ├── dynamicsApi.js                       # UNCHANGED (Update 5) — getVendors kept but unused by this feature; reference API client already exists
-│   │   └── eutrTemplateReferencesApi.js         # NEW (Update 13) — get-by-template, create, update, delete
+│   │   └── eutrTemplateReferencesApi.js         # NEW (Update 13) — get-by-template, create, update, delete; (Update 14) MODIFY — add importByTemplate(templateId, file)/exportByTemplate(templateId)
 │   └── repositories/
 │       ├── RestEutrTemplatesRepository.js       # NEW
 │       ├── RestDynamicsRepository.js            # UNCHANGED (Update 5) — getVendors kept but unused by this feature
-│       └── RestEutrTemplateReferencesRepository.js # NEW (Update 13) — getByTemplateId/create/update/delete, wraps EutrTemplateReferences
+│       └── RestEutrTemplateReferencesRepository.js # NEW (Update 13) — getByTemplateId/create/update/delete, wraps EutrTemplateReferences; (Update 14) MODIFY — add importByTemplate/exportByTemplate passthroughs
 ├── application/
 │   └── usecases/
 │       ├── eutr-templates/
@@ -760,7 +916,9 @@ compliance-client/src/
 │       │   ├── GetByTemplateIdEutrTemplateReferencesUseCase.js
 │       │   ├── CreateEutrTemplateReferencesUseCase.js
 │       │   ├── UpdateEutrTemplateReferencesUseCase.js
-│       │   └── DeleteEutrTemplateReferencesUseCase.js
+│       │   ├── DeleteEutrTemplateReferencesUseCase.js
+│       │   ├── ImportEutrTemplateReferencesUseCase.js # NEW (Update 14) — mirrors ImportEutrTemplatesUseCase.js
+│       │   └── ExportEutrTemplateReferencesUseCase.js # NEW (Update 14) — mirrors ExportEutrTemplatesUseCase.js's blob-download trigger
 │       └── group-email/
 │           └── GetAllGroupEmailUseCase.js         # EXISTS (Update 7) — reused as-is from ComplianceMasterForm/MasterDefaultForm, no change needed
 ├── presentation/
@@ -768,7 +926,7 @@ compliance-client/src/
 │       └── eutr-templates/
 │           ├── TemplateListPage.jsx              # RENAME (Update 9) — was index.jsx/EutrTemplatesPage; (Update 10/11) MODIFY — keep its own Table/search/chip layout, swap mock data (`mock/eutrTemplates.js`, `mock/eutrTemplateDetails.js`) for `useEutrTemplatesData`/`permissionList`/`DeleteEutrTemplatesUseCase`/`DeleteMultiEutrTemplatesUseCase`/`CreateTemplateDialog`/`ConfirmDialog`/`CustomSnackbar` (reused from TemplateListPageOld.jsx, itself unchanged); Code shown bold, Name as caption; Steps column reads real `stepsCount`; add per-row checkbox + bulk-delete toolbar button; add `TablePagination`; search box sends a debounced `{field:'keyword', operator:'contains', value}` filter item and resets to page 0; Clone/Apply-to-Customer icons kept but `disabled` (mock onClick/dialog removed); **(Update 13) MODIFY** — Apply-to-Customer icon becomes active: `onClick={() => navigate(\`/eutr/templates/apply/${tmpl.id}\`)}`, gated by the same permission check as Edit; Clone stays disabled
 │           ├── TemplateBuilderPage.jsx           # (Update 10) MODIFY — keep its own tree-view + toolbar + side-panel layout, swap mock data (`mock/eutrTemplates.js`, `mock/eutrTemplateDetails.js`, `mock/eutrSteps.js`, `utils/treeUtils.js`) for `GetEutrTemplatesUseCase`/`UpdateEutrTemplatesUseCase`/`GetEutrStepsUseCase`/`GetAllGroupEmailUseCase`/`ReferenceObjectAutocomplete` (refType=13) and the existing `useStepTree` hook (replaces its own hand-rolled tree state); Add Root/Add Child step-picker becomes free-solo Autocomplete over the real steps list; Type/FSC fields and the 8-option mock TakeFrom list removed (not in the real schema); Move Up/Down buttons call `reorderSiblings`; side panel shows the header form (Code/Name/AlertFor/Vendor/Default/Save) when no step is selected, step detail (real RequirementType/TakeFrom) when one is; Save calls `UpdateEutrTemplatesUseCase` then navigates to `/eutr/templates`; Back reuses the `isDirty` + `ConfirmDialog` pattern from EutrTemplatesAddEdit.jsx; **(Update 12) MODIFY** — Add Root Group/Add Child Step `Dialog` content swaps `<StepFormRow>` (+ `addStepFormRef`/`addStepValid`, removed) for `<BulkAddStepsDialog onAdd={addSteps} existingChildStepIds={...} />`; **(Update 13) MODIFY** — remove `vendorCode`/`vendorName` state, the two setters in the load effect, `vendorCode` from the Save payload, and the entire Vendor `ReferenceObjectAutocomplete` block + its now-unused import from the side panel (FR-041)
-│           ├── ApplyCustomerPage.jsx             # NEW-scope, EXISTS as mock (Update 13) MODIFY — rewrite from `MOCK_CUSTOMERS`/`MOCK_TEMPLATE_CUSTOMERS` (`mock/eutrTemplates.js`) + `status !== 'Published'` gate to real data: Vendor combobox via `ReferenceObjectAutocomplete`(refType=13), load/save via the new `eutr-template-references` use cases keyed by the `:id` route param, drop the Published gate (no Status concept on real templates), keep the existing `hasOverlap()` client pre-check rescoped from `customerId` to `vendorCode` (server `HasOverlapAsync` is authoritative)
+│           ├── ApplyCustomerPage.jsx             # NEW-scope, EXISTS as mock (Update 13) MODIFY — rewrite from `MOCK_CUSTOMERS`/`MOCK_TEMPLATE_CUSTOMERS` (`mock/eutrTemplates.js`) + `status !== 'Published'` gate to real data: Vendor combobox via `ReferenceObjectAutocomplete`(refType=13), load/save via the new `eutr-template-references` use cases keyed by the `:id` route param, drop the Published gate (no Status concept on real templates), keep the existing `hasOverlap()` client pre-check rescoped from `customerId` to `vendorCode` (server `HasOverlapAsync` is authoritative); **(Update 14) MODIFY** — add Import/Export `Button`s to the header `Stack` (FR-043): hidden `<input type="file" accept=".xlsx">` wired to `ImportEutrTemplateReferencesUseCase.execute(id, file)`, opens `ImportMappingResultDialog` with the result and calls `fetchMappings()` to refresh; Export button calls `ExportEutrTemplateReferencesUseCase.execute(id)` directly (no dialog); new `importing`/`importResult`/`importDialogOpen` state
 │           ├── EutrTemplatesAddEdit.jsx          # MODIFY (through Update 9) — 2-column layout (widened header/narrowed steps), vendor via ReferenceObjectAutocomplete (refType=13) (Update 5), Save button moved below Default checkbox, Back dirty-check confirm dialog; (Update 7) Alert for `Autocomplete` switches from `freeSolo`/hardcoded `ALERT_FOR_OPTIONS` to `GetAllGroupEmailUseCase`-backed, select-only, filtered to `groupType===2 && isAddition===false`, storing the selected group's `id`; (Update 9) becomes Edit-only; **(Update 10) UNCHANGED but no longer routed** — `/eutr/templates/edit/:id` now points at TemplateBuilderPage.jsx; left in place unreferenced (cleanup candidate for a future task, same precedent as the unused vendors endpoint from Update 5), not deleted by this feature
 │           ├── components/
 │           │   ├── EutrTemplatesActionCell.jsx   # NEW — row action buttons; (Update 9) verified against FR-020, no change (Edit + Delete only, already correct)
@@ -776,7 +934,8 @@ compliance-client/src/
 │           │   ├── StepTree.jsx                  # MODIFY — add inline Edit step mode; (Update 6) inline-edit Step combobox becomes freeSolo; (Update 8) delete local REQUIREMENT_TYPES/TAKE_FROM_OPTIONS/REQUIREMENT_LABELS/TAKE_FROM_LABELS, import from utils/helpers.js; (Update 10) not reused by TemplateBuilderPage.jsx (which keeps its own tree-rendering shell) — only its underlying `useStepTree` hook and `utils/helpers.js` constants are shared
 │           │   ├── StepFormRow.jsx               # NEW — add step form; (Update 6) Step combobox becomes freeSolo (pick existing or type new name); (Update 8) delete local REQUIREMENT_TYPES/TAKE_FROM_OPTIONS duplicate, import from utils/helpers.js; (Update 10) same free-solo Autocomplete pattern reused inside TemplateBuilderPage.jsx's own Add Root/Add Child dialogs; **(Update 12) no longer used by TemplateBuilderPage.jsx** (replaced there by BulkAddStepsDialog.jsx) — still used by the unrouted EutrTemplatesAddEdit.jsx, left unchanged
 │           │   ├── BulkAddStepsDialog.jsx        # NEW (Update 12) — checkbox table of available EUTR steps (per-row Requirement Type/Take From once ticked) + a single free-solo "Add new step" entry row + "{N} available - {M} selected" footer; used only by TemplateBuilderPage.jsx's Add Root Group/Add Child Step dialogs
-│           │   └── ImportResultDialog.jsx        # NEW — import result display; (Update 9) reference pattern reused by CreateTemplateDialog
+│           │   ├── ImportResultDialog.jsx        # NEW — import result display; (Update 9) reference pattern reused by CreateTemplateDialog
+│           │   └── ImportMappingResultDialog.jsx # NEW (Update 14) — copies ImportResultDialog.jsx's structure, error table columns Row/TemplateCode/VendorCode/Reason; used only by ApplyCustomerPage.jsx's Import button
 │           ├── mock/
 │           │   ├── eutrTemplates.js              # (Update 10) UNCHANGED but orphaned — no longer imported by TemplateListPage.jsx/TemplateBuilderPage.jsx after real-data wiring; left in place
 │           │   ├── eutrTemplateDetails.js        # (Update 10) UNCHANGED but orphaned — same as above
@@ -796,10 +955,10 @@ compliance-client/src/
     └── routes/
         ├── RouteResolver.jsx                     # MODIFY — add codeToComponent entry; (Update 9) lazy import path → `.../eutr-templates/TemplateListPage`; (Update 10) unchanged — already correct; (Update 13) unchanged — ApplyCustomerPage is a MainRoutes.jsx route, not a menu-resolved page
         └── groups/
-            └── MainRoutes.jsx                    # MODIFY — add add/edit routes; (Update 9) remove the `/eutr/templates/add` route entry (Create is now a dialog on the list page, not a routed page); (Update 10) unchanged — `/eutr/templates/edit/:id` already pointed at TemplateBuilderPage.jsx; (Update 13) MODIFY — add lazy `ApplyCustomerPage` import + `{ path: '/eutr/templates/apply/:id', element: <ApplyCustomerPage /> }` route entry, same pattern/array as `/eutr/templates/edit/:id`
+            └── MainRoutes.jsx                    # MODIFY — add add/edit routes; (Update 9) remove the `/eutr/templates/add` route entry (Create is now a dialog on the list page, not a routed page); (Update 10) unchanged — `/eutr/templates/edit/:id` already pointed at TemplateBuilderPage.jsx; (Update 13) MODIFY — add lazy `ApplyCustomerPage` import + `{ path: '/eutr/templates/apply/:id', element: <ApplyCustomerPage /> }` route entry, same pattern/array as `/eutr/templates/edit/:id`; (Update 14) unchanged — Import/Export are buttons inside the existing ApplyCustomerPage route, no new route
 ```
 
-**Structure Decision**: Web application (backend + frontend). Backend follows existing EUTR feature pattern (`eutr-masters` as primary reference for CRUD + import/export). Frontend follows layered Clean Architecture with `eutr-steps` as structural reference. Edit uses a full page (not modal) following `compliance-master/:id` routing pattern; Create (Update 9) uses a lightweight in-page Dialog instead, per the design reference — narrower scope than the full Edit page. **(Update 10)**: the list and Edit pages are `TemplateListPage.jsx`/`TemplateBuilderPage.jsx` (their own Table+chip / tree-view+panel visual designs, already present as reference-design files), rewired to the real data/use-cases originally built for `TemplateListPageOld.jsx`/`EutrTemplatesAddEdit.jsx` — a data-layer swap, not a new UI build. **(Update 13)**: `eutr_template_references` gets its own full CRUD stack (all four backend layers + the full frontend layer set), modeled on the existing `EutrTemplates*` stack (Principle II) since there is no usable reference implementation for that table; `ApplyCustomerPage.jsx` is likewise a data-layer swap (mock Customer data → real Vendor/API data), not a new UI build, following the same precedent as Update 10's `TemplateListPage.jsx`/`TemplateBuilderPage.jsx` rewiring.
+**Structure Decision**: Web application (backend + frontend). Backend follows existing EUTR feature pattern (`eutr-masters` as primary reference for CRUD + import/export). Frontend follows layered Clean Architecture with `eutr-steps` as structural reference. Edit uses a full page (not modal) following `compliance-master/:id` routing pattern; Create (Update 9) uses a lightweight in-page Dialog instead, per the design reference — narrower scope than the full Edit page. **(Update 10)**: the list and Edit pages are `TemplateListPage.jsx`/`TemplateBuilderPage.jsx` (their own Table+chip / tree-view+panel visual designs, already present as reference-design files), rewired to the real data/use-cases originally built for `TemplateListPageOld.jsx`/`EutrTemplatesAddEdit.jsx` — a data-layer swap, not a new UI build. **(Update 13)**: `eutr_template_references` gets its own full CRUD stack (all four backend layers + the full frontend layer set), modeled on the existing `EutrTemplates*` stack (Principle II) since there is no usable reference implementation for that table; `ApplyCustomerPage.jsx` is likewise a data-layer swap (mock Customer data → real Vendor/API data), not a new UI build, following the same precedent as Update 10's `TemplateListPage.jsx`/`TemplateBuilderPage.jsx` rewiring. **(Update 14)**: Import/Export for `eutr_template_references` follows the exact same backend Excel-service + controller-action pattern already proven by `EutrTemplatesImportService`/`EutrTemplatesExportService`/`EutrTemplatesController` — two new services + two new controller actions, no new table/route/policy family; the row-level "Add" reuses the existing `EutrTemplateReferencesService.AddAsync` instead of re-implementing validation.
 
 ### Key Differences from Reference Features
 
@@ -828,6 +987,7 @@ compliance-client/src/
 | Vendor on template (Update 13) | N/A | REMOVED — `eutr_templates` no longer has a Vendor field at all; superseded by a separate time-bound mapping table |
 | Default constraint scope (Update 13) | N/A | Changed from per-VendorCode to **global** (system-wide single default) since Vendor no longer lives on the template |
 | Apply to Customer (Update 13) | N/A | New `ApplyCustomerPage.jsx` (route `/eutr/templates/apply/:id`) manages N:N Template↔Vendor mappings with FromDate/ToDate in `eutr_template_references` — new full-stack CRUD, hard delete (no soft-delete column) |
+| Mapping Import/Export (Update 14) | Templates-level Import/Export (`eutr-templates/import`/`export`, 3-column Name/AlertFor/IsDefault layout) | Separate, per-template-scoped Import/Export on `eutr_template_references` (`eutr-template-references/import/{templateId}`/`export/{templateId}`, 4-column TemplateCode/VendorCode/FromDate/ToDate layout); Import validates TemplateCode against the currently-open template and reuses `EutrTemplateReferencesService.AddAsync` per row (no update-on-match) |
 
 ## Complexity Tracking
 
