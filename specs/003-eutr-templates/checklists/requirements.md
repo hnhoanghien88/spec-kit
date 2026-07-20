@@ -2,7 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-07-02
-**Updated**: 2026-07-14 (Update 14)
+**Updated**: 2026-07-15 (Update 15)
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -451,5 +451,51 @@
 - No new [NEEDS CLARIFICATION] markers were embedded in the spec — the one scope decision above was
   resolved interactively before writing, per the established "resolve via question, not marker"
   path used in Update 10/11/12/13.
+- Spec Quality Checklist re-validated against the updated spec: all 16/16 items remain passing (no
+  regressions, no newly-failing items).
+
+### Update 2026-07-15 (Update 15) — Clone Template + Copy eutr_template_references on Version-up
+
+- **Input**: "cập nhật 003-eutr-templates khi lên version, copy thêm cả dữ liệu
+  eutr_template_references, thêm tính năng clone, khi click vào sẽ hiển thị popup clone template từ
+  template đã chọn sang template mới, có ô cho user nhập tên template mới, alert for, user đồng ý
+  sẽ copy toàn bộ dữ liệu template cũ, tạo ra template mới."
+- **Bug fix: version-up drops vendor mappings** — FR-049 added: the >24h branch of FR-012 (creates
+  a new TemplateId, VersionId+1) previously copied only `eutr_template_details` (step tree) to the
+  new TemplateId, leaving `eutr_template_references` (vendor mappings, Update 13) attached only to
+  the now-hidden old TemplateId. FR-049 requires the same copy-to-new-TemplateId behavior for
+  `eutr_template_references`. The <24h in-place branch is unaffected (TemplateId unchanged).
+- **New: Clone Template feature** — FR-050 through FR-054 added: the previously-disabled Clone icon
+  (FR-026) becomes active, opening a popup with a read-only source-template identifier, a required
+  **New template name** field, and a required **Alert for** combobox (same `compl_group_email`
+  source as Create Template). Confirming shows a `ConfirmDialog`-style warning before the actual
+  copy runs. On confirm, the system creates a brand-new template (new auto-generated Code,
+  VersionId=1, IsDefault=0 always) and copies both the full step tree
+  (`eutr_template_details`, preserving StepId/RequirementType/TakeFrom/DisplayOrder/ParentId
+  structure) and the full vendor mapping set (`eutr_template_references`, preserving
+  VendorCode/FromDate/ToDate) from the source template. New **User Story 7** added.
+- **Two scope questions resolved via informed default (not asked back, per the spec's own
+  "reasonable defaults over blocking markers" guidance, given low ambiguity/reversibility)**:
+  (1) whether "toàn bộ dữ liệu template cũ" for Clone also includes `eutr_template_references`
+  (not just step tree) → resolved yes, since the same user message introduces
+  `eutr_template_references`-copying in the same breath as the Clone request; (2) whether the
+  cloned template inherits the source's IsDefault flag → resolved no (always IsDefault=0), to avoid
+  silently violating the FR-040 global single-default constraint.
+- FR-026 updated in place to note Clone is no longer disabled (superseded pointer to FR-050),
+  consistent with how FR-032 previously updated the Apply-to-Customer half of the same requirement.
+- Key Entities: EUTR Template, EUTR Template Detail, and EUTR Template Reference each updated with a
+  Update 15 note describing the copy-on-version-up and copy-on-clone behavior.
+- Success Criteria: SC-040 through SC-044 added (version-up mapping-copy completeness, Clone icon no
+  longer disabled, Clone copy accuracy for both step tree and mappings, Clone validation blocking,
+  Clone confirmation-dialog gating).
+- Edge cases added: empty step tree/mapping list on Clone source (not an error), no re-creation of
+  already-existing StepIds during Clone, repeated Clone from the same source is unbounded, no
+  overlap-check interference between source and cloned TemplateId (different TemplateId is out of
+  FR-036's same-template scope), full independence between source and cloned template after Clone,
+  and old (now-hidden) mapping rows are preserved (not moved/deleted) after a version-up copy.
+- No [NEEDS CLARIFICATION] markers were embedded in the spec — both scope questions above were
+  resolved as documented Assumptions with explicit rationale, consistent with this spec's
+  established pattern (e.g. Update 7, 9, 12) of using reasonable defaults for low-impact/reversible
+  UX details instead of blocking on every open question.
 - Spec Quality Checklist re-validated against the updated spec: all 16/16 items remain passing (no
   regressions, no newly-failing items).

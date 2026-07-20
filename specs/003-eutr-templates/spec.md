@@ -338,6 +338,38 @@
   hiện có") — và bảng danh sách mapping MUST tự làm mới để hiển thị các mapping vừa Import thành
   công.
 
+### Session 2026-07-15 (Update 15) — Clone template + copy eutr_template_references khi lên version
+
+- Input: "cập nhật 003-eutr-templates khi lên version, copy thêm cả dữ liệu eutr_template_references,
+  thêm tính năng clone, khi click vào sẽ hiển thị popup clone template từ template đã chọn sang
+  template mới, có ô cho user nhập tên template mới, alert for, user đồng ý sẽ copy toàn bộ dữ liệu
+  template cũ, tạo ra template mới."
+- Change: Khi hệ thống lên version cho một template ở nhánh "trên 24 giờ" của FR-012 (tạo TemplateId
+  mới, VersionId+1, ẩn dòng cũ IsHide=1), hệ thống MUST đồng thời sao chép toàn bộ bản ghi hiện có
+  trong `eutr_template_references` của template cũ sang TemplateId mới — trước đây chỉ
+  `eutr_template_details` (cây bước) được sao chép, khiến các mapping vendor (Apply to Customer) bị
+  "mất" khỏi bản ghi đang hiển thị sau khi lên version. Xem FR-049.
+- Change: Thêm tính năng **Clone template** — icon Clone trên TemplateListPage (trước đây disabled
+  theo FR-026) trở thành hoạt động. Nhấn icon Clone trên một dòng MUST mở dialog popup **Clone
+  Template**, lấy template của dòng đó làm nguồn. Dialog gồm: thông tin template nguồn (chỉ đọc),
+  ô nhập **New template name** (bắt buộc), combobox **Alert for** (bắt buộc, cùng nguồn dữ liệu
+  `compl_group_email` GroupType=Alert/IsAddition=false như dialog Create Template hiện hành).
+- Change: Khi người dùng nhập đủ Name + Alert for hợp lệ và nhấn nút xác nhận Clone, hệ thống MUST
+  hiển thị một hộp thoại cảnh báo xác nhận (alert) nêu rõ hành động sắp sao chép toàn bộ dữ liệu từ
+  template nguồn; chỉ khi người dùng đồng ý ở hộp thoại này, hệ thống mới thực sự tạo template mới
+  (Code tự sinh, VersionId=1, IsDefault=0) và sao chép **toàn bộ** cây bước
+  (`eutr_template_details`) lẫn mapping vendor (`eutr_template_references`) từ template nguồn sang
+  template mới. Xem FR-050 đến FR-054.
+- Q: "Toàn bộ dữ liệu template cũ" khi Clone có bao gồm cả mapping vendor
+  (`eutr_template_references`) hay chỉ cây bước (`eutr_template_details`)? → A: Bao gồm cả hai —
+  vì yêu cầu gốc nhắc đến việc sao chép `eutr_template_references` ngay trong cùng câu mô tả tính
+  năng Clone, nên Clone MUST sao chép đầy đủ cả step tree lẫn vendor mapping để template mới hoạt
+  động tương đương template nguồn ngay sau khi tạo.
+- Q: Template mới tạo ra từ Clone có tự động là Default (IsDefault=1) nếu template nguồn đang là
+  Default không? → A: Không — template Clone luôn có IsDefault=0 bất kể template nguồn, để tránh vi
+  phạm ràng buộc toàn cục "chỉ tối đa 1 template Default" (FR-040) mà không cần logic bỏ cờ default
+  tự động phức tạp. Người dùng tự đánh dấu Default cho template mới sau, nếu cần, qua màn hình Edit.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Xem danh sách EUTR Templates (Priority: P1)
@@ -671,6 +703,59 @@ mapping biến mất và bị xóa thật khỏi database.
 
 ---
 
+### User Story 7 - Clone template (Priority: P2, Update 15)
+
+Người dùng nhấn icon **Clone** trên một dòng của TemplateListPage (không còn disabled — xem
+FR-050), hệ thống mở dialog popup **Clone Template** hiển thị thông tin template nguồn (Code/Name,
+chỉ đọc), kèm ô nhập **New template name** (bắt buộc) và combobox **Alert for** (bắt buộc, cùng
+nguồn `compl_group_email` như dialog Create Template). Sau khi nhập đủ và nhấn nút Clone/Confirm,
+hệ thống hiển thị hộp thoại xác nhận cảnh báo sắp sao chép toàn bộ dữ liệu; khi người dùng đồng ý,
+hệ thống tạo một template hoàn toàn mới (Code tự sinh, VersionId=1, IsDefault=0) và sao chép toàn
+bộ cây bước (`eutr_template_details`) cùng toàn bộ mapping vendor (`eutr_template_references`) từ
+template nguồn sang template mới. Dialog đóng lại, danh sách tự làm mới hiển thị template vừa
+clone.
+
+**Why this priority**: Clone giúp người dùng tạo nhanh một template tương tự một template đã có
+sẵn (giữ nguyên cây bước phức tạp và các mapping vendor) mà không phải xây dựng lại từ đầu — tăng
+tốc độ tạo template mới đáng kể so với việc tạo thủ công qua dialog Create Template rồi thêm lại
+từng step/vendor.
+
+**Independent Test**: Nhấn Clone trên một template đã có sẵn step và vendor mapping, nhập tên mới +
+Alert for, xác nhận ở hộp thoại cảnh báo, kiểm tra template mới xuất hiện trong danh sách với Code
+riêng, cây bước và mapping vendor giống hệt template nguồn.
+
+**Acceptance Scenarios**:
+
+1. **Given** đang ở TemplateListPage, **When** nhấn icon **Clone** trên một dòng, **Then** hệ
+   thống mở dialog popup Clone Template hiển thị thông tin template nguồn (chỉ đọc) cùng ô New
+   template name và combobox Alert for (đều để trống ban đầu).
+2. **Given** dialog Clone đang mở, **When** để trống New template name hoặc không chọn Alert for
+   rồi nhấn Clone/Confirm, **Then** hệ thống báo lỗi validate và KHÔNG hiển thị hộp thoại xác nhận,
+   KHÔNG tạo bản ghi nào.
+3. **Given** đã nhập New template name và chọn Alert for hợp lệ, **When** nhấn Clone/Confirm,
+   **Then** hệ thống hiển thị hộp thoại cảnh báo xác nhận nêu rõ sắp sao chép toàn bộ dữ liệu từ
+   template nguồn sang template mới.
+4. **Given** hộp thoại cảnh báo xác nhận đang hiện, **When** người dùng hủy, **Then** KHÔNG có
+   template mới nào được tạo, dialog Clone vẫn giữ nguyên dữ liệu đã nhập (hoặc đóng lại tùy hành vi
+   ConfirmDialog chuẩn của hệ thống), không có dữ liệu nào bị thay đổi.
+5. **Given** hộp thoại cảnh báo xác nhận đang hiện, **When** người dùng đồng ý, **Then** hệ thống
+   tạo một bản ghi mới trong eutr_templates (Code tự sinh, Name/AlertFor theo nhập liệu, VersionId=1,
+   IsDefault=0, IsDeleted=0, IsHide=0), sao chép toàn bộ step trong eutr_template_details của template
+   nguồn sang TemplateId mới (giữ nguyên StepId, RequirementType, TakeFrom, DisplayOrder, cấu trúc
+   ParentId), sao chép toàn bộ mapping trong eutr_template_references của template nguồn sang
+   TemplateId mới (giữ nguyên VendorCode/FromDate/ToDate), đóng dialog, danh sách tự làm mới hiển
+   thị template mới, và snackbar thông báo thành công.
+6. **Given** template nguồn có 5 step (3 cấp lồng nhau) và 2 mapping vendor, **When** Clone thành
+   công, **Then** template mới có đúng 5 step với cấu trúc cha-con giống hệt và đúng 2 mapping
+   vendor giống hệt (VendorCode/FromDate/ToDate) template nguồn.
+7. **Given** template nguồn không có step nào và không có mapping vendor nào, **When** Clone thành
+   công, **Then** template mới được tạo với cây bước rỗng và không có mapping vendor nào — không
+   phải là lỗi.
+8. **Given** template nguồn đang là Default (IsDefault=1), **When** Clone thành công, **Then**
+   template mới luôn có IsDefault=0, template nguồn vẫn giữ nguyên IsDefault=1 (không bị ảnh hưởng).
+
+---
+
 ### Edge Cases
 
 - Khi danh sách rỗng, bảng hiển thị trạng thái "No data" thay vì lỗi.
@@ -775,6 +860,27 @@ mapping biến mất và bị xóa thật khỏi database.
 - **(Update 14)** Import KHÔNG cập nhật mapping đã tồn tại — nếu một dòng Import trùng hoàn toàn dữ
   liệu (cùng Vendor, cùng khoảng ngày) với một mapping đã có, dòng đó MUST bị báo lỗi chồng lấn
   giống mọi trường hợp chồng lấn khác, không âm thầm bỏ qua hay cập nhật đè.
+- **(Update 15)** Khi lên version (nhánh trên 24 giờ của FR-012) cho một template không có mapping
+  vendor nào (`eutr_template_references` rỗng), bước sao chép mapping không tạo bản ghi nào cho
+  TemplateId mới — không phải là lỗi.
+- **(Update 15)** Sau khi lên version và sao chép `eutr_template_references` sang TemplateId mới,
+  các bản ghi mapping cũ vẫn giữ nguyên gắn với TemplateId cũ (đã IsHide=1) để phục vụ truy vết lịch
+  sử — hệ thống KHÔNG xóa hay di chuyển (move) các mapping cũ đó.
+- **(Update 15)** Khi Clone một template mà một số step trong cây đã tham chiếu StepId thật (đã tồn
+  tại trong `eutr_steps`), Clone MUST dùng lại đúng StepId đó cho template mới — KHÔNG tạo lại bản
+  ghi step mới trong `eutr_steps`.
+- **(Update 15)** Khi Clone nhiều lần liên tiếp từ cùng một template nguồn, mỗi lần Clone MUST tạo
+  ra một template mới độc lập (Code riêng biệt theo quy tắc tự sinh hiện hành) — không giới hạn số
+  lần Clone từ một nguồn.
+- **(Update 15)** Việc sao chép mapping vendor khi Clone (sang TemplateId hoàn toàn mới) KHÔNG bị
+  chặn bởi kiểm tra chồng lấn ngày (FR-036) vì ràng buộc chồng lấn chỉ áp dụng cho mapping của CÙNG
+  một TemplateId — template mới và template nguồn là hai TemplateId khác nhau.
+- **(Update 15)** Sau khi Clone hoàn tất, template mới hoàn toàn độc lập với template nguồn — chỉnh
+  sửa (Edit), xóa (Delete), hoặc lên version một trong hai template KHÔNG ảnh hưởng đến template
+  còn lại.
+- **(Update 15)** Khi người dùng đóng dialog Clone Template (Cancel/đóng) mà chưa nhấn nút
+  Clone/Confirm, hoặc hủy ở hộp thoại cảnh báo xác nhận, hệ thống KHÔNG tạo template mới, KHÔNG sao
+  chép bất kỳ dữ liệu nào.
 
 ## Requirements *(mandatory)*
 
@@ -1001,11 +1107,12 @@ mapping biến mất và bị xóa thật khỏi database.
   form thêm-từng-step-một cho thao tác Add Root Group/Add Child Step bằng dialog bulk-select nhiều
   dòng — xem FR-027 đến FR-030. Thao tác Edit step trên một node đã có KHÔNG đổi, vẫn theo FR-008b/
   FR-031.)*
-- **FR-026 (Cập nhật một phần ở Update 13 — xem FR-032)**: Cột Action trên TemplateListPage MUST
-  hiển thị thêm 2 icon **Clone** và **Apply to Customer**. Icon **Clone** giữ nguyên trạng thái
-  **disabled** (không nhấn được, chưa gắn chức năng) — placeholder cho tính năng tương lai, không
-  thuộc phạm vi triển khai của đợt cập nhật này. Icon **Apply to Customer** KHÔNG còn disabled kể
-  từ Update 13 — xem FR-032 cho hành vi mới (điều hướng sang ApplyCustomerPage).
+- **FR-026 (Cập nhật một phần ở Update 13 và Update 15)**: Cột Action trên TemplateListPage MUST
+  hiển thị thêm 2 icon **Clone** và **Apply to Customer**. Icon **Apply to Customer** KHÔNG còn
+  disabled kể từ Update 13 — xem FR-032 cho hành vi mới (điều hướng sang ApplyCustomerPage). Icon
+  **Clone** KHÔNG còn disabled kể từ Update 15 — xem FR-050 cho hành vi mới (mở dialog Clone
+  Template). *(Trước Update 15, icon Clone giữ trạng thái disabled làm placeholder cho tính năng
+  tương lai.)*
 - **FR-027**: Dialog **Add Root Group** và **Add Child Step** trên TemplateBuilderPage MUST hiển
   thị dạng **bảng bulk-select** (thay cho form thêm 1 step) liệt kê toàn bộ EUTR steps master khả
   dụng (theo FR-029), mỗi dòng gồm: checkbox chọn dòng, cột **Step Master** (mã step nếu có + tên
@@ -1137,6 +1244,40 @@ mapping biến mất và bị xóa thật khỏi database.
   template đang mở (TemplateId từ route `/eutr/templates/apply/:id`) — không đọc hay ghi mapping
   của bất kỳ template nào khác, kể cả khi file Import có cột TemplateCode ghi mã của template khác
   (các dòng đó bị coi là lỗi theo FR-046, không được xử lý sang template tương ứng).
+- **FR-049 (Update 15)**: Khi hệ thống lên version cho một template ở nhánh "trên 24 giờ" của
+  FR-012 (tạo dòng mới trong eutr_templates với VersionId+1 và TemplateId mới, dòng cũ IsHide=1),
+  hệ thống MUST đồng thời sao chép toàn bộ bản ghi hiện có trong `eutr_template_references` của
+  TemplateId cũ sang TemplateId mới, giữ nguyên VendorCode/FromDate/ToDate/CreatedBy/CreatedDate
+  của từng mapping. Nhánh "dưới 24 giờ" của FR-012 (cập nhật đè, TemplateId không đổi) KHÔNG cần
+  thay đổi vì `eutr_template_references` vẫn đang liên kết đúng TemplateId hiện tại. Các bản ghi
+  mapping cũ (gắn với TemplateId cũ, đã IsHide=1) MUST được giữ nguyên, không xóa hay di chuyển.
+- **FR-050 (Update 15)**: Icon **Clone** trên mỗi dòng của TemplateListPage MUST trở thành hoạt
+  động (không còn disabled — thay thế phần tương ứng của FR-026). Nhấn icon Clone MUST mở dialog
+  popup **Clone Template**, sử dụng template của dòng đó làm nguồn (source template).
+- **FR-051 (Update 15)**: Dialog **Clone Template** MUST hiển thị: thông tin định danh template
+  nguồn (Code và/hoặc Name, chỉ đọc) để người dùng xác nhận đang clone đúng template, ô nhập **New
+  template name** (textbox, bắt buộc), combobox **Alert for** (bắt buộc, single-select, cùng nguồn
+  dữ liệu `GET /api/group-email` lọc GroupType=Alert(2)/IsAddition=false như dialog Create Template
+  — FR-005c), cùng nút Cancel và nút xác nhận Clone.
+- **FR-052 (Update 15)**: Khi người dùng đã nhập New template name (không trống) và chọn Alert for
+  hợp lệ rồi nhấn nút xác nhận Clone, hệ thống MUST hiển thị một hộp thoại cảnh báo xác nhận riêng
+  (ví dụ ConfirmDialog chuẩn của hệ thống) nêu rõ hành động sắp sao chép toàn bộ dữ liệu (step tree
+  và vendor mapping) từ template nguồn sang template mới sắp tạo. Chỉ khi người dùng đồng ý ở hộp
+  thoại này, hệ thống mới MUST thực hiện việc tạo template mới và sao chép dữ liệu theo FR-053. Nếu
+  người dùng hủy ở hộp thoại xác nhận này, hệ thống KHÔNG tạo template mới, KHÔNG sao chép dữ liệu.
+- **FR-053 (Update 15)**: Sau khi người dùng đồng ý ở hộp thoại xác nhận (FR-052), hệ thống MUST
+  thực hiện đồng thời: (1) tạo một bản ghi mới trong eutr_templates với Code tự sinh mới (theo quy
+  tắc hiện hành), Name = giá trị người dùng nhập, AlertFor = Id group đã chọn, VersionId=1,
+  IsDefault=0 (luôn = 0 bất kể template nguồn), IsDeleted=0, IsHide=0; (2) sao chép toàn bộ cây bước
+  từ `eutr_template_details` của template nguồn sang TemplateId mới, giữ nguyên StepId,
+  RequirementType, TakeFrom, DisplayOrder cho từng step và ánh xạ đúng cấu trúc phân cấp ParentId
+  sang các bản ghi mới; (3) sao chép toàn bộ mapping vendor từ `eutr_template_references` của
+  template nguồn sang TemplateId mới, giữ nguyên VendorCode/FromDate/ToDate. Sau khi hoàn tất,
+  dialog Clone MUST đóng lại, danh sách TemplateListPage MUST tự làm mới để hiển thị template mới,
+  và hệ thống MUST hiển thị snackbar thông báo thành công.
+- **FR-054 (Update 15)**: Nếu New template name để trống hoặc Alert for chưa chọn khi nhấn nút xác
+  nhận Clone (FR-051), hệ thống MUST báo lỗi validate ngay tại dialog Clone và KHÔNG hiển thị hộp
+  thoại xác nhận (FR-052), KHÔNG tạo bản ghi nào.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -1152,7 +1293,12 @@ mapping biến mất và bị xóa thật khỏi database.
   CreatedDate), tạo dòng mới với VersionId tự tăng (VersionId cũ + 1) và đánh dấu dòng cũ
   IsHide=1; nếu DƯỚI 24 giờ, cập nhật đè trực tiếp lên dòng hiện tại (giữ nguyên Id, VersionId,
   CreatedDate). Ràng buộc Is default (Update 13, FR-040): TOÀN CỤC chỉ tối đa 1 template
-  IsDefault=1 tại một thời điểm (không còn giới hạn theo vendor).
+  IsDefault=1 tại một thời điểm (không còn giới hạn theo vendor). **(Update 15)** Khi tạo dòng
+  version mới (nhánh trên 24 giờ), ngoài cây bước, hệ thống MUST đồng thời sao chép toàn bộ mapping
+  `eutr_template_references` của TemplateId cũ sang TemplateId mới (xem FR-049). **(Update 15)**
+  Template có thể được tạo mới thông qua **Clone** từ một template khác — template Clone luôn có
+  VersionId=1, IsDefault=0, Code tự sinh riêng, hoàn toàn độc lập với template nguồn sau khi tạo
+  (xem FR-050 đến FR-054).
 - **EUTR Template Detail**: Đại diện cho một bước cụ thể trong cây bước của template. Thuộc tính:
   định danh, Template Id (liên kết đến template), Step Id (liên kết đến EUTR step), Parent Id
   (liên kết đến step cha hoặc 0 nếu gốc), RequirementType (Required=1/Optional=0),
@@ -1162,7 +1308,10 @@ mapping biến mất và bị xóa thật khỏi database.
   RequirementType/TakeFrom (mảng options `{value, label}[]` cho combobox và map tra cứu label
   theo value) MUST được khai báo dùng chung tại `compliance-client/src/utils/helpers.js` (không
   khai báo cục bộ, trùng lặp trong từng component) để `StepTree.jsx`, `StepFormRow.jsx` và các
-  chức năng khác trong hệ thống có thể tái sử dụng.
+  chức năng khác trong hệ thống có thể tái sử dụng. **(Update 15)** Khi Clone một template, toàn bộ
+  bản ghi `eutr_template_details` của template nguồn MUST được sao chép sang TemplateId mới, giữ
+  nguyên StepId/RequirementType/TakeFrom/DisplayOrder và ánh xạ đúng cấu trúc ParentId sang các bản
+  ghi mới (không tái sử dụng chung Id với bản ghi nguồn).
 - **EUTR Step** (đã có sẵn — feature 001-eutr-steps): Danh sách các bước EUTR, được sử dụng làm
   nguồn dữ liệu cho combobox khi Add step/Edit step (free-solo). Khi người dùng nhập một tên step
   mới chưa tồn tại trong danh sách này và Save template, hệ thống MUST tự động tạo bản ghi mới
@@ -1187,7 +1336,12 @@ mapping biến mất và bị xóa thật khỏi database.
   **(Update 14)** Có thể Export hàng loạt các bản ghi này (thuộc một TemplateId) ra file Excel
   (.xlsx, 4 cột TemplateCode/VendorCode/FromDate/ToDate) và Import hàng loạt bản ghi mới từ cùng
   định dạng file này (chỉ Add, không Update), áp dụng đúng ràng buộc chồng lấn/bắt buộc như khi tạo
-  thủ công qua dialog Add Vendor — xem FR-043 đến FR-048.
+  thủ công qua dialog Add Vendor — xem FR-043 đến FR-048. **(Update 15)** Toàn bộ bản ghi thuộc một
+  TemplateId MUST được sao chép tự động (không cần thao tác Export/Import thủ công) sang TemplateId
+  mới trong 2 trường hợp: (1) khi template lên version ở nhánh trên 24 giờ (FR-049), và (2) khi
+  Clone một template sang template mới (FR-053) — cả hai trường hợp đều giữ nguyên
+  VendorCode/FromDate/ToDate của từng mapping, không kiểm tra chồng lấn giữa TemplateId nguồn và
+  TemplateId mới (khác TemplateId nên không thuộc phạm vi kiểm tra chồng lấn của FR-036).
 - **Compl Group Email** (đã có sẵn — bảng `compl_group_email`, quản lý qua
   `ComplGroupEmailController`): Đại diện cho một nhóm email. Thuộc tính liên quan: Id, Name,
   GroupType (Responsible=1/Alert=2), IsAddition (nhóm bổ sung/không hoạt động khi true). Combobox
@@ -1304,6 +1458,20 @@ mapping biến mất và bị xóa thật khỏi database.
 - **SC-039 (Update 14)**: 100% dòng Import có TemplateCode không khớp template đang mở bị báo lỗi
   và không tạo mapping nào (cho cả template đang mở lẫn template khác); các dòng hợp lệ khác trong
   cùng file vẫn được Import thành công độc lập.
+- **SC-040 (Update 15)**: 100% lượt lên version (nhánh trên 24 giờ của FR-012) sao chép đầy đủ và
+  chính xác toàn bộ mapping vendor (`eutr_template_references`) từ TemplateId cũ sang TemplateId
+  mới — không có mapping nào bị thiếu hoặc sai lệch sau khi Save.
+- **SC-041 (Update 15)**: Icon Clone trên TemplateListPage không còn ở trạng thái disabled cho bất
+  kỳ template nào hiển thị trên danh sách.
+- **SC-042 (Update 15)**: 100% lượt Clone thành công tạo ra một template mới với Code riêng biệt,
+  Name/Alert for đúng theo dữ liệu người dùng nhập, và sao chép chính xác 100% số step (kèm cấu
+  trúc cha-con, RequirementType, TakeFrom) cùng 100% mapping vendor (VendorCode, FromDate, ToDate)
+  từ template nguồn.
+- **SC-043 (Update 15)**: 100% lượt Clone với New template name trống hoặc Alert for chưa chọn bị
+  chặn ngay tại dialog, không hiển thị hộp thoại xác nhận và không tạo bản ghi nào.
+- **SC-044 (Update 15)**: 100% lượt nhấn nút xác nhận Clone (sau khi nhập hợp lệ) hiển thị hộp
+  thoại cảnh báo xác nhận trước khi thực sự sao chép dữ liệu; 100% lượt hủy ở hộp thoại xác nhận
+  không tạo ra template mới hay thay đổi dữ liệu nào.
 
 ## Assumptions
 
@@ -1461,3 +1629,24 @@ mapping biến mất và bị xóa thật khỏi database.
   cầu gốc, tức là tái sử dụng validate của FR-034/FR-036, không tái sử dụng nhánh Edit/FR-035).
   Nếu người dùng Import cùng một cặp Vendor/khoảng ngày nhiều lần, các lần sau sẽ bị chặn bởi kiểm
   tra chồng lấn (overlap) như một dòng lỗi, không tự động cập nhật đè.
+- **(Update 15)** Dialog Clone Template chỉ gồm 2 trường nhập liệu — **New template name** và
+  **Alert for** — theo đúng yêu cầu gốc ("có ô cho user nhập tên template mới, alert for"). Trường
+  **Set as default** (có ở dialog Create Template) KHÔNG xuất hiện ở dialog Clone vì yêu cầu gốc
+  không đề cập; template Clone luôn IsDefault=0 mặc định (xem SC-042).
+  Vendor/step tree KHÔNG hiển thị trực tiếp trong dialog Clone — người dùng chỉ xác nhận Name/Alert
+  for rồi hệ thống tự sao chép toàn bộ dữ liệu còn lại (step tree, vendor mapping) từ template
+  nguồn ở backend, không cho phép chỉnh sửa/xem trước dữ liệu sẽ sao chép ngay trong dialog này.
+- **(Update 15)** "Toàn bộ dữ liệu template cũ" khi Clone được hiểu là bao gồm cả
+  `eutr_template_details` (cây bước) lẫn `eutr_template_references` (mapping vendor) — suy luận từ
+  việc yêu cầu gốc nhắc đến `eutr_template_references` ngay trong cùng câu mô tả tính năng Clone.
+  KHÔNG bao gồm việc sao chép Code (Code luôn tự sinh mới, không copy từ nguồn) hay VersionId (luôn
+  = 1 cho template Clone, không kế thừa VersionId của nguồn).
+  StepId của các step trong cây bước được sao chép nguyên trạng (dùng lại StepId đã có trong
+  `eutr_steps`, không tạo bản ghi step mới trong quá trình Clone).
+- **(Update 15)** Hộp thoại cảnh báo xác nhận trước khi Clone (FR-052) sử dụng component
+  `ConfirmDialog` chuẩn đã có sẵn trong hệ thống (cùng loại dùng cho xác nhận Delete), không cần
+  xây dựng component cảnh báo mới riêng cho tính năng này.
+- **(Update 15)** Việc sao chép `eutr_template_references` khi lên version (FR-049) và khi Clone
+  (FR-053) đều là thao tác backend thực hiện trong cùng transaction với việc tạo TemplateId
+  mới/eutr_template_details mới, đảm bảo tính nhất quán dữ liệu (không có trường hợp tạo template
+  mới thành công nhưng thiếu step hoặc thiếu mapping do lỗi giữa chừng).

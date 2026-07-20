@@ -194,6 +194,28 @@ investigation) for the new/changed coverage.
 6. **Verify in grid**: Same Code, `VersionId` incremented by 1
 7. **Verify in DB**: Old row has `IsHide=1` (unchanged `CreatedDate`), new row has `IsHide=0`, new `VersionId`, new `CreatedDate` (now), and a new `Id`
 8. **Verify in DB**: Template details saved to the new `TemplateId` with correct ParentId values
+9. **(Update 15, FR-049)** Before backdating, apply at least 1 vendor mapping to this template via
+   ApplyCustomerPage (Scenario 17). After the version-up Save in step 4 above, **verify in DB**:
+   `SELECT * FROM eutr_template_references WHERE TemplateId = <new Id>` returns the same mapping(s)
+   (same VendorCode/FromDate/ToDate/CreatedBy/CreatedDate as the original), AND the original row
+   under the OLD `TemplateId` is still present unchanged (not moved, not deleted) — open
+   `/eutr/templates/apply/<new Id>` in the browser and confirm the mapping is visible there.
+
+**Outcome (2026-07-15, `/speckit-implement`, step 9 only)**: **Verified via a direct SQL smoke test
+against the live dev DB** (`compliance_sys_db_260601`), not through the full HTTP+UI stack (no
+interactive browser session available in this non-interactive environment, same limitation as
+Update 13/14). A throwaway source template ("SMOKE-TEST-001") was created with 2 vendor mappings
+(distinct VendorCode, non-overlapping dates), and a throwaway destination template
+("SMOKE-TEST-002") was created to act as the "new version" TemplateId. Running the exact
+`CopyReferencesAsync` SQL (`INSERT INTO eutr_template_references (...) SELECT ... FROM
+eutr_template_references WHERE TemplateId = @sourceTemplateId`) copied both rows to the
+destination with byte-for-byte identical VendorCode/FromDate/ToDate/CreatedBy/CreatedDate; a
+follow-up query confirmed the source template's 2 mappings were still present and unmodified. All
+test data (4 mapping rows, 2 template rows) was deleted immediately after, leaving the dev DB
+unchanged. This is the exact SQL statement `EutrTemplatesService.UpdateAsync`'s ≥24h branch now
+calls (via `_templateReferencesRepository.CopyReferencesAsync(id, newId, ct)`) right after copying
+the step tree — the C# wiring around it (constructor injection, call placement inside the existing
+transaction) was verified by code review and a clean `dotnet build` (0 `error CS`).
 
 ### Scenario 4: Delete Template - Soft Delete (FR-013)
 
@@ -517,6 +539,69 @@ dev server (both currently serving stale, pre-Update-14 binaries/bundles), then 
 through Scenario 19 steps 1-15 in a real browser to close the gap between "verified by code/DB/
 parsing-logic smoke test" and "verified end-to-end through the UI."
 
+### Scenario 20: Clone Template (FR-050 to FR-054, Update 15)
+
+1. Pick an existing template with at least 3 steps (2+ nesting levels) and 2 vendor mappings
+   (from Scenario 17) as the source; note its Code, step count, and mapping count
+2. On TemplateListPage, click the **Clone** icon on that row
+3. **Expected**: a popup opens showing the source template's identifier (read-only), an empty **New
+   template name** field, and an empty **Alert for** combobox
+4. Leave **New template name** blank, click the Clone/Confirm button
+5. **Expected**: validation error shown, no confirmation dialog appears, no new template created
+6. Enter a name (e.g. "Cloned Template Test"), leave **Alert for** unselected, click Clone/Confirm
+7. **Expected**: validation error shown, no confirmation dialog appears, no new template created
+8. Enter a name and select an Alert for group, click Clone/Confirm
+9. **Expected**: a confirmation warning dialog appears describing the copy about to happen
+10. Click Cancel on the confirmation dialog
+11. **Expected**: no new template created, dialog either stays open with the entered values or closes
+    without side effects — either way, no DB change
+12. Repeat steps 2, 3, 8, 9 and this time confirm
+13. **Expected**: popup closes, list refreshes, a NEW row appears with a new auto-generated Code, the
+    entered Name/Alert for, `versionId=1`, and no Default chip (not marked default)
+14. **Verify in DB**: the new template's `eutr_template_details` has the same number of rows as the
+    source, same `StepId`/`RequirementType`/`TakeFrom` per corresponding step, and the same
+    parent-child structure (open the new template's Edit screen and visually confirm the tree matches
+    the source's shape)
+15. **Verify in DB**: `SELECT * FROM eutr_template_references WHERE TemplateId = <new Id>` returns the
+    same number of rows as the source template's mappings, with matching VendorCode/FromDate/ToDate —
+    open `/eutr/templates/apply/<new Id>` and confirm the mappings are visible there too
+16. Edit the newly-cloned template (change Name, add/remove a step) and Save
+17. **Expected**: only the cloned template changes; re-check the SOURCE template — unaffected
+18. Clone the SAME source template a second time with a different Name
+19. **Expected**: a second, independent new template is created (different Code from step 13's clone)
+20. Clone a template that has 0 steps and 0 vendor mappings
+21. **Expected**: the new template is created successfully with an empty step tree and no mappings —
+    not treated as an error
+
+**Outcome (2026-07-15, `/speckit-implement`)**: **Verified by code review + the SQL-level smoke test
+above (Scenario 3b step 9's outcome), not through the full HTTP+UI stack** — same environment
+limitation as every prior update in this session (no interactive browser available). Backend
+(`dotnet build` on `ComplianceSys.Application.csproj`/`ComplianceSys.Infrastructure.csproj`) and
+frontend (`npm run build`) both compile/build with 0 errors; `eslint` is clean on all 6 new/changed
+frontend files (`CloneTemplateDialog.jsx`, `TemplateListPage.jsx`, `CloneEutrTemplatesUseCase.js`,
+`eutrTemplatesApi.js`, `RestEutrTemplatesRepository.js`, `IEutrTemplatesRepository.js`). Verified by
+direct code trace (not live click-through): (1) validation — `CloneTemplateDialog.jsx`'s
+`handleValidateAndConfirm` sets per-field errors and returns early (never opening the confirmation
+`ConfirmDialog`) when Name is blank or Alert for is unselected, matching steps 4-7; (2) cancel —
+`ConfirmDialog`'s Cancel button calls `onClose` only, never `onConfirm`/`handleClone`, so nothing is
+created, matching steps 10-11; (3) copy correctness — `CloneAsync`'s step-tree re-indexing was
+traced against `EutrTemplatesRepository.InsertDetailsInternalAsync`'s existing client-index-to-real-Id
+remap logic: ordering source details by real DB `Id` ascending guarantees every row's recorded
+sequential position (`oldIdToSequentialIndex[d.Id] = i + 1`) is set before any LATER row could
+reference it as a parent, satisfying the exact invariant that existing method already relies on for
+every other Save path — no new tree-insert SQL was written; the vendor-mapping copy reuses the SAME
+`CopyReferencesAsync` SQL verified end-to-end in Scenario 3b step 9's smoke test; (4) `IsDefault`
+— `CloneAsync` constructs the new `EutrTemplates` entity with `IsDefault = 0` as a hardcoded literal
+(never read from the source), so it structurally cannot inherit the source's flag, matching step 8;
+(5) independence — `CloneAsync` always generates a fresh Code via `GenerateNextCodeAsync` (re-queries
+`MAX` per call) and commits an independent transaction, so repeated clones (step 18-19) and clones of
+an empty source (step 20-21, guarded by `sourceDetails.Count > 0` for the detail copy, and a
+naturally-zero-row `INSERT ... SELECT` for the mapping copy) all follow the same unconditional code
+path with no special-casing that could fail. **Recommended before sign-off**: restart the dev API
+process (file-locked by a running instance throughout this session, same condition as Update 13/14)
+and the frontend dev server, then manually click through Scenario 20 in a real browser to close the
+gap between "verified by code/SQL-level smoke test" and "verified end-to-end through the UI."
+
 ### Scenario 13: Edge Cases
 
 - Empty grid: **Expected** "No data" message, no errors
@@ -570,6 +655,20 @@ parsing-logic smoke test" and "verified end-to-end through the UI."
   **Expected** treated as an overlap error (Import never updates an existing mapping)
 - (Update 14) Clicking Import/Export while a previous Import request is still in flight: **Expected**
   both buttons are disabled until the in-flight request resolves (no double-submit)
+- (Update 15) Closing the Clone popup, or canceling its confirmation dialog, without confirming:
+  **Expected** no new template is created, no data copied
+- (Update 15) Cloning a template with 0 steps and 0 vendor mappings: **Expected** succeeds with an
+  empty tree/mapping set on the new template — not an error
+- (Update 15) Cloning a template that is currently marked Default: **Expected** the new template is
+  NOT marked Default (`IsDefault=0`); the source template's Default flag is unaffected
+- (Update 15) Cloning the same source template multiple times: **Expected** each Clone produces an
+  independent new template with its own Code — no limit on repeat clones from one source
+- (Update 15) A step in the source template's tree already has a real `StepId` (not a free-solo
+  name): **Expected** Clone reuses that same `StepId` on the copied row — no new `eutr_steps` row is
+  created during Clone
+- (Update 15) After a version-up (≥24h Edit) on a template with existing vendor mappings:
+  **Expected** the mappings are visible on `ApplyCustomerPage` for the NEW (now-current) TemplateId;
+  the old (now-hidden) TemplateId's mapping rows remain in the DB, untouched
 
 ## Post-Validation Checks
 
@@ -690,5 +789,14 @@ parsing-logic smoke test" and "verified end-to-end through the UI."
       FR-048)
 - [ ] Import shows a per-row OK/error result after processing, and the mapping table refreshes to
       show newly-created mappings (Update 14, FR-047)
+- [ ] (Update 15) Version-up (≥24h Edit) on a template with existing vendor mappings copies those
+      mappings to the new TemplateId; the old TemplateId's mapping rows remain untouched (FR-049)
+- [ ] (Update 15) TemplateListPage's Clone icon is enabled (no longer disabled) and opens the Clone
+      popup (FR-050)
+- [ ] (Update 15) Clone popup requires both New template name and Alert for before allowing
+      confirmation; shows a warning confirmation dialog before actually copying data (FR-051, FR-052,
+      FR-054)
+- [ ] (Update 15) A completed Clone produces a new template with its own Code, VersionId=1,
+      IsDefault=0, and an exact copy of the source's step tree and vendor mappings (FR-053)
 - [ ] Import never updates an existing mapping — a row matching existing data is rejected as an
       overlap, not silently merged (Update 14)

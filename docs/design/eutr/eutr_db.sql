@@ -17,8 +17,8 @@ CREATE TABLE `eutr_steps`(
 );
 CREATE TABLE `eutr_templates`(
     `Id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    `Code` VARCHAR(255) NOT NULL,
-    `Name` VARCHAR(255) NULL,
+    `Code` VARCHAR(50) NOT NULL,
+    `Name` VARCHAR(400) NULL,
     `IsDefault` TINYINT NULL DEFAULT 0,
     `AlertFor` TINYINT NOT NULL,
     `IsDeleted` TINYINT NOT NULL,
@@ -29,6 +29,12 @@ CREATE TABLE `eutr_templates`(
     `UpdatedBy` VARCHAR(50) NULL,
     `UpdatedDate` DATETIME NULL
 );
+ALTER TABLE
+    `eutr_templates` ADD INDEX `eutr_templates_code_index`(`Code`);
+ALTER TABLE
+    `eutr_templates` ADD INDEX `eutr_templates_ishide_index`(`IsHide`);
+ALTER TABLE
+    `eutr_templates` ADD INDEX `eutr_templates_isdeleted_index`(`IsDeleted`);
 CREATE TABLE `eutr_template_details`(
     `Id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     `TemplateId` BIGINT UNSIGNED NULL,
@@ -118,3 +124,16 @@ CREATE TABLE `eutr_template_references`(
 );
 ALTER TABLE
     `eutr_template_references` ADD CONSTRAINT `eutr_template_references_templateid_foreign` FOREIGN KEY(`TemplateId`) REFERENCES `eutr_templates`(`Id`);    
+
+CREATE TABLE `eutr_purchase_attachments`(
+    `Id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    `SalesId` VARCHAR(50) NOT NULL,
+    `PurchId` VARCHAR(50) NOT NULL,
+    `TemplateCode` VARCHAR(50) NOT NULL,
+    `CreatedBy` VARCHAR(50) NOT NULL,
+    `CreatedDate` DATETIME NOT NULL,
+    `UpdatedBy` VARCHAR(50) NOT NULL,
+    `UpdatedDate` DATETIME NOT NULL
+);
+ALTER TABLE
+    `eutr_purchase_attachments` ADD CONSTRAINT `eutr_purchase_attachments_templatecode_foreign` FOREIGN KEY(`TemplateCode`) REFERENCES `eutr_templates`(`Code`);

@@ -1168,3 +1168,133 @@ path persists row-by-row and the other batches everything into one client-side S
 
 **Implementation**: see plan.md's "Update 2026-07-14 (Update 14)" section for the full file-by-file
 backend/frontend design; contracts/api-endpoints.md Section 9.5/9.6; quickstart.md Scenario 19.
+
+## 30. Copy `eutr_template_references` on Version-up (spec Update 15, FR-049)
+
+**Decision**: Add one new repository method, `IEutrTemplateReferencesRepository.CopyReferencesAsync(
+long sourceTemplateId, long newTemplateId, CancellationToken ct)`, implemented as a single
+`INSERT INTO eutr_template_references (TemplateId, VendorCode, FromDate, ToDate, CreatedBy,
+CreatedDate, UpdatedBy, UpdatedDate) SELECT @newTemplateId, VendorCode, FromDate, ToDate, CreatedBy,
+CreatedDate, UpdatedBy, UpdatedDate FROM eutr_template_references WHERE TemplateId =
+@sourceTemplateId` (set-based copy, no per-row round trip). Inject `IEutrTemplateReferencesRepository`
+into `EutrTemplatesService`'s constructor (a new cross-repository dependency) and call
+`CopyReferencesAsync(id, newId, ct)` inside the existing transaction of `UpdateAsync`'s ≥24h branch,
+right after `BulkInsertDetailsAsync(newId, details, ct)`.
+
+**Rationale**: The ≥24h branch already copies the step tree to the new `TemplateId` but never touched
+`eutr_template_references` (introduced later, Update 13, after the versioning branch was written) —
+this is a genuine gap, not a design choice, confirmed by re-reading `EutrTemplatesService.UpdateAsync`
+during this planning pass: the ≥24h branch calls `SetIsHideAsync(id)` (hide old) and
+`BulkInsertDetailsAsync(newId, ...)` (copy steps) but has no equivalent call for mappings, so a
+freshly-versioned template silently loses its Apply-to-Customer mappings from the user's point of
+view (they're still in the DB, just attached to the now-hidden old `TemplateId`, invisible on
+`ApplyCustomerPage` for the new version). A set-based `INSERT ... SELECT` is preferred over reusing
+`EutrTemplateReferencesService.AddAsync` per row (as Update 14's Import does) because the source rows
+are, by construction, already mutually non-overlapping (they passed `HasOverlapAsync` when created
+under the old `TemplateId`) — re-validating each one against an overlap check that can only ever pass
+is pure overhead with no correctness benefit, unlike Import where the rows come from an untrusted
+external file. Preserving the original `CreatedBy`/`CreatedDate` (rather than stamping the copy with
+the current user/now) keeps the audit trail honest: the mapping's real origin is the user who applied
+that vendor originally, not the user who happened to trigger a version bump later.
+
+**Alternatives considered**:
+- Reuse `EutrTemplateReferencesService.AddAsync` per source row (Update 14's Import pattern) —
+  rejected: correct but pays for an overlap check that's provably always a no-op here (destination
+  `TemplateId` starts empty, source rows don't overlap each other), and would stamp fresh
+  `CreatedBy`/`CreatedDate` unless explicitly overridden per row, complicating a simple copy into an
+  N-call loop with per-call validation overhead for no behavioral gain.
+- Do the copy in `EutrTemplateReferencesService` and have `EutrTemplatesService` call a
+  service-to-service method instead of injecting the repository directly — rejected: `Application`
+  services calling into each other's repository interfaces directly (not through a second service
+  layer) is the existing pattern in this codebase for cross-entity reads (e.g., the vendor lookup via
+  `IComplDynamicsService` was previously a direct repository/service field, not routed through another
+  domain service); adding a `IEutrTemplateReferencesService` dependency instead of the repository would
+  work equally well but the repository-level dependency keeps the responsibility narrowly scoped to
+  "copy rows," not "run business rules," matching this method's actual behavior (no validation to run).
+- Only copy references on version-up, leave Clone (Section 31) to re-derive its own copy logic —
+  rejected: both operations need the exact same "duplicate N mapping rows under a new TemplateId,
+  preserving Vendor/date/audit fields" behavior, so the same `CopyReferencesAsync` method is reused by
+  both `EutrTemplatesService.UpdateAsync` (≥24h branch) and `EutrTemplatesService.CloneAsync` (Section
+  31) — one method, two call sites, per Principle II.
+
+**Implementation**: see plan.md's "Update 2026-07-15 (Update 15)" section; data-model.md's
+`EutrTemplateReferences` entity note; contracts/api-endpoints.md Section 4 (Update Template) note;
+quickstart.md Scenario 20.
+
+## 31. Clone Template — Reuse the Existing Detail-Insert Pipeline, No New Tree-Building Logic (spec Update 15, FR-050 to FR-054)
+
+**Decision**: Add `EutrTemplatesService.CloneAsync(long sourceId, CloneEutrTemplatesRequestDto dto,
+string userEmail, CancellationToken ct)`, a new Application-layer method (not a variant of
+`AddAsync`/`UpdateAsync`, since its inputs/outputs differ enough — no `Details[]`/`IsDefault` in the
+request — to warrant its own method rather than overloading the existing ones with clone-specific
+branches):
+1. Load the source template with its full detail tree via the EXISTING
+   `GetByIdWithDetailsAsync(sourceId, ct)` (already returns real DB `Id`/`ParentId` values per detail
+   row) — 404 (`KeyNotFoundException`) if not found, same not-found convention as every other
+   `templateId`-scoped lookup in this feature (Import/Export, Apply-to-Customer).
+2. Auto-generate a new `Code` via the SAME `GetMaxCodeNumberAsync` + zero-padding logic `AddAsync`
+   already uses — extracted into one shared private helper (`GenerateNextCodeAsync`) reused by both,
+   rather than duplicating the format string a second time.
+3. Insert the new `eutr_templates` row: `Name`/`AlertFor` from `dto`, `IsDefault = 0` (always,
+   regardless of the source's flag — FR-053), `VersionId = 1`, `IsDeleted = 0`, `IsHide = 0`,
+   `CreatedBy`/`CreatedDate` = current user/now (this IS a new, user-triggered action, unlike the
+   preserved-audit copy in Section 30).
+4. Re-index the source's DB-Id-based detail tree into the SAME "1-based sequential position,
+   0 = root" `ParentId` convention `EutrTemplatesAddEdit.jsx`/`useStepTree`'s `flattenForSave()`
+   already produces for every normal Save (source rows ordered by `Id` ascending — always
+   parent-before-child, since a step can only be chosen as a parent after it already exists), then
+   pass the resulting list straight into the EXISTING `BuildDetailEntitiesAsync` +
+   `BulkInsertDetailsAsync(newId, details, ct)` pipeline unchanged. Because every source `StepId` is
+   already a real, resolved Id (never a free-solo `StepName`), `BuildDetailEntitiesAsync`'s
+   name-resolution branch is naturally skipped for every row — no eutr_steps writes happen during
+   Clone.
+5. Call `CopyReferencesAsync(sourceId, newId, ct)` (Section 30's method — reused verbatim, second call
+   site) to duplicate the source's vendor mappings under the new `TemplateId`.
+6. Single transaction wraps steps 3-5 (same `IUnitOfWork.BeginTransactionAsync`/`CommitAsync` pattern
+   as `AddAsync`/`UpdateAsync`) so a Clone either fully succeeds or leaves no partial template behind.
+
+New `EutrTemplatesController` action: `POST api/eutr-templates/{id}/clone`, `[Authorize(Policy =
+"EutrTemplates.Create")]` (Clone creates a template — same policy as the Create dialog, not a new
+policy family), request body `{ name, alertFor }`, response shape identical to Create's
+(`{ id, code, versionId }`).
+
+**Rationale**: Re-deriving the sequential-index conversion instead of writing a new DB-Id-preserving
+bulk-insert SQL keeps ALL of the tree-insertion logic (parent-before-child ordering, `ParentId`
+remapping, step-name resolution short-circuit) in exactly one place
+(`InsertDetailsInternalAsync`/`BuildDetailEntitiesAsync`) that every write path already goes through —
+adding a second, parallel tree-copy implementation would be the same Principle II violation flagged in
+Section 30's rejected alternative, just for the detail table instead of the reference table. The
+frontend never has to send the source template's tree back to the server for Clone (unlike a normal
+Save) — the backend already has it in hand from `GetByIdWithDetailsAsync`, so the conversion is a pure
+backend-side transform, not a new frontend responsibility.
+
+**Alternatives considered**:
+- Have the frontend load the source template (via the existing `GetEutrTemplatesUseCase`), let the
+  user land on a pre-filled `TemplateBuilderPage` for the new template, and Save it like any other Edit
+  — rejected: contradicts FR-051/FR-052 (a lightweight popup with only Name + Alert for, plus a single
+  confirmation step) and would force the user through the full tree-view/side-panel UI just to
+  duplicate something that already exists exactly as-is; also foregoes reusing `CopyReferencesAsync`
+  since a fresh `TemplateBuilderPage` load has no knowledge of `eutr_template_references` at all.
+- Write a dedicated SQL copy for `eutr_template_details` (mirroring Section 30's `INSERT ... SELECT`
+  for references, using a self-join or a stored procedure to remap `ParentId` in one set-based
+  statement) instead of re-using the sequential-index/`BulkInsertDetailsAsync` pipeline — rejected:
+  MySQL has no simple native "insert with self-referential Id remap" in one statement without a
+  temporary mapping table or a procedural loop; the existing C#-side `clientIdToDbId` dictionary
+  approach in `InsertDetailsInternalAsync` already solves exactly this problem row-by-row inside a
+  transaction, so reusing it needs zero new SQL, only a small re-indexing transform in C#.
+- Let the cloned template inherit the source's `IsDefault` flag — rejected during `/speckit-specify`
+  (spec Update 15's Q2): would silently violate the global single-default constraint (FR-040) the
+  moment a Default template is cloned, requiring an extra `ClearGlobalDefaultAsync` call that adds
+  complexity for a behavior nobody asked for; `IsDefault = 0` always is simpler and matches how a
+  brand-new Create-dialog template also always starts as non-default.
+- Reuse `AddAsync` directly by first converting the source into an `EutrTemplatesRequestDto` (with a
+  full `Details[]` built from the source tree) and calling the existing method as-is — rejected:
+  `AddAsync` takes `IsDefault`/expects `Details[]` already in request shape but has no hook for
+  "also copy `eutr_template_references`," so `CloneAsync` would still need its own post-`AddAsync` step
+  for Section 30's copy; keeping `CloneAsync` as its own method (internally calling the same lower-level
+  helpers `AddAsync` also calls) is clearer than layering Clone-only behavior on top of `AddAsync`'s
+  public contract.
+
+**Implementation**: see plan.md's "Update 2026-07-15 (Update 15)" section for the full file-by-file
+backend/frontend design; contracts/api-endpoints.md Section 10 (new); data-model.md's Clone lifecycle
+note; quickstart.md Scenario 21.

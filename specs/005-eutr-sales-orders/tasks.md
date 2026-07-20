@@ -1,4 +1,4 @@
----
+﻿---
 
 description: "Task list for feature implementation"
 ---
@@ -271,3 +271,581 @@ Task: "Add case 11 to MapDynamicsResponse in ComplDynamicsService.cs"
   path — validation is manual via quickstart.md (T017/T018), not a TDD red/green cycle.
 - Total scope is intentionally small: 2 backend files, 1 frontend file — this is a data-source
   swap on an already-built, already-routed page, not new feature scaffolding.
+
+---
+
+## Update 2026-07-16 — Template Column Real Data (`eutr_purchase_attachments`)
+
+**Context**: Per spec Update 1, the Template column stops showing a fixed demo value (old
+FR-007) and instead MUST show real data from `eutr_purchase_attachments` (joined with
+`eutr_templates` for the display name), keyed by `SalesId`, including the case where one
+`SalesId` has multiple templates (multiple `PurchId` rows with different `TemplateCode`s). Per
+research.md Decisions 5-8 and plan.md's updated Project Structure, `eutr_purchase_attachments` has
+**zero existing backend surface**, so this update adds one small new backend feature end to end
+(cloned from `EutrTemplates`) plus a matching new frontend read path (cloned from the
+`eutr-templates` frontend layering). Progress is unaffected (still fixed demo, FR-008).
+
+**Changes**: Backend — new `EutrPurchaseAttachments` entity/repository/service/controller (new
+`POST /api/eutr-purchase-attachments/by-sales-ids` endpoint). Frontend — new domain
+interface/api client/REST repository/use case, wired into the already-existing
+`SalesOrderOverviewPage.jsx` to replace its hardcoded `DEMO_TEMPLATE_LABEL`.
+
+**Prerequisites for this update**: [research.md Decisions 5-8](./research.md),
+[data-model.md "Entity: Purchase Attachment"](./data-model.md),
+[contracts/eutr-purchase-attachments.md](./contracts/eutr-purchase-attachments.md),
+[quickstart.md backend steps 4-7 / frontend steps 4-5](./quickstart.md).
+
+---
+
+## Phase 7: Backend — `EutrPurchaseAttachments` Entity, Repository, Service, Controller
+
+**Purpose**: Build the new, currently-nonexistent read path over `eutr_purchase_attachments` +
+`eutr_templates`, following the exact 4-layer pattern already used by `EutrTemplates`.
+
+- [X] T021 [P] Create entity `EutrPurchaseAttachments` in
+  `compliance-sys-api/src/ComplianceSys.Domain/Entities/EutrPurchaseAttachments.cs` —
+  `[Table("eutr_purchase_attachments")]`, `EutrPurchaseAttachments : BaseEntity`, `[Key] public int
+  Id { get; set; }` (table PK is `INT UNSIGNED`, not `BIGINT UNSIGNED` like `EutrTemplates`), plus
+  `SalesId`, `PurchId`, `TemplateCode` (all `string`). Vietnamese comment per Constitution
+  Principle IV, matching `EutrTemplates.cs`'s comment style.
+- [X] T022 [P] Create DTO `SalesOrderTemplateDto` in
+  `compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/SalesOrderTemplateDto.cs` — flat
+  record/class with `SalesId`, `TemplateCode`, `TemplateName` (all `string`), per data-model.md.
+- [X] T023 Create repository interface `IEutrPurchaseAttachmentsRepository` in
+  `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/
+  IEutrPurchaseAttachmentsRepository.cs`, adding `Task<List<SalesOrderTemplateDto>>
+  GetTemplatesBySalesIdsAsync(IEnumerable<string> salesIds, CancellationToken ct = default);`
+  (depends on T021, T022).
+  *(Implemented as a **standalone** interface, not extending generic `IRepository<,>` — matching
+  the established `IEutrReferencesRepository`/`IEutrReferenceDetailsRepository` precedent for
+  read-only JOIN-query repositories in this codebase, since nothing here needs generic
+  Create/Update/Delete. Return type is `List<T>`, matching this codebase's actual convention
+  (`IEutrReferencesRepository`'s methods), not `IReadOnlyList<T>` as originally drafted.)*
+- [X] T024 Create repository implementation `EutrPurchaseAttachmentsRepository` in
+  `compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/
+  EutrPurchaseAttachmentsRepository.cs`, extending `DapperRepository<EutrPurchaseAttachments, int>`,
+  implementing `GetTemplatesBySalesIdsAsync` with `SELECT DISTINCT pa.SalesId, pa.TemplateCode,
+  t.Name AS TemplateName FROM eutr_purchase_attachments pa INNER JOIN eutr_templates t ON t.Code =
+  pa.TemplateCode WHERE pa.SalesId IN @SalesIds` (research.md Decision 6 — `DISTINCT` dedupes
+  repeated templates per Sales ID, `INNER JOIN` silently skips orphaned `TemplateCode`s) (depends
+  on T023).
+- [X] T025 [P] Create service interface `IEutrPurchaseAttachmentsService` in
+  `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Services/
+  IEutrPurchaseAttachmentsService.cs` — `Task<List<SalesOrderTemplateDto>>
+  GetTemplatesBySalesIdsAsync(IEnumerable<string> salesIds, CancellationToken ct = default);`
+  (depends on T022).
+- [X] T026 Create service implementation `EutrPurchaseAttachmentsService` in
+  `compliance-sys-api/src/ComplianceSys.Application/Services/EutrPurchaseAttachmentsService.cs` —
+  thin pass-through to `IEutrPurchaseAttachmentsRepository.GetTemplatesBySalesIdsAsync`.
+  *(Implemented as a **standalone** service, not extending `BaseService`/`IBaseService` — matching
+  the precedent of other non-full-CRUD services in this codebase such as
+  `EutrConditionAssignmentService`, since `BaseService<TEntity,TKey,TRequestDto>` requires a
+  Create/Update request DTO this read-only feature doesn't have.)* (depends on T023, T025).
+- [X] T027 [P] Register `services.AddScoped<IEutrPurchaseAttachmentsService,
+  EutrPurchaseAttachmentsService>();` in
+  `compliance-sys-api/src/ComplianceSys.Application/DependencyInjection.cs`, next to the existing
+  `IEutrTemplatesService` registration (depends on T025, T026).
+- [X] T028 [P] Register `services.AddScoped<IEutrPurchaseAttachmentsRepository,
+  EutrPurchaseAttachmentsRepository>();` in
+  `compliance-sys-api/src/ComplianceSys.Infrastructure/DependencyInjection.cs`, next to the existing
+  `IEutrTemplatesRepository` registration (depends on T023, T024).
+- [X] T029 Create controller `EutrPurchaseAttachmentsController` in
+  `compliance-sys-api/src/ComplianceSys.Api/Controllers/EutrPurchaseAttachmentsController.cs` —
+  `[Authorize] [ApiController] [Route("api/eutr-purchase-attachments")]`, one action:
+  `[Authorize(Policy = "EutrPurchaseAttachments.Read")] [HttpPost("by-sales-ids")]` accepting
+  `[FromBody] List<string> salesIds`, returning empty list for empty/null input (not an error), else
+  calling `IEutrPurchaseAttachmentsService.GetTemplatesBySalesIdsAsync` and wrapping the result in
+  `ApiResponse<List<SalesOrderTemplateDto>>.Ok(...)`, per contracts/eutr-purchase-attachments.md
+  (depends on T025-T028).
+- [ ] T030 Manually verify the new endpoint per quickstart.md backend steps 4-7: seed rows in
+  `eutr_purchase_attachments` for a known Sales ID with (a) two distinct `TemplateCode`s, (b) a
+  duplicate `PurchId` row reusing one of those `TemplateCode`s, (c) a `TemplateCode` not present in
+  `eutr_templates`; confirm `POST /api/eutr-purchase-attachments/by-sales-ids` returns exactly the
+  2 distinct, non-orphaned templates, and returns an empty list for a Sales ID with no attachment
+  rows (depends on T029).
+  *(NOT run — requires a live `compliance-sys-api` process with a real/seedable MySQL DB, not
+  available in this environment. `dotnet build` on the affected projects compiles with 0 `error CS`
+  — the only build failures were `MSB3027`/`MSB3021` file-lock errors from a separately-running
+  `ComplianceSys.Api.exe` instance already holding its own output DLLs open, not a code defect.
+  Someone with DB/API access must run the actual seed-and-call steps before sign-off.)*
+
+**Checkpoint**: `POST /api/eutr-purchase-attachments/by-sales-ids` returns deduped, orphan-free
+template data for any batch of Sales IDs — ready for the frontend to consume.
+
+---
+
+## Phase 8: Frontend — Purchase Attachments Read Path (domain/infrastructure/application layers)
+
+**Purpose**: Add the frontend layers needed to call the new endpoint, cloned from the existing
+`eutr-templates` feature's layering (Constitution Principle I/II).
+
+- [X] T031 [P] Create `compliance-client/src/domain/interfaces/IEutrPurchaseAttachmentsRepository.js`
+  — abstract-class-style interface with one method, `getTemplatesBySalesIds(salesIds)`, mirroring
+  the style of `IEutrTemplatesRepository.js`.
+- [X] T032 [P] Create `compliance-client/src/infrastructure/api/eutrPurchaseAttachmentsApi.js` —
+  one method calling `POST /eutr-purchase-attachments/by-sales-ids` with the Sales ID array as the
+  request body, mirroring `eutrTemplatesApi.js`'s axios-call style.
+- [X] T033 Create `compliance-client/src/infrastructure/repositories/
+  RestEutrPurchaseAttachmentsRepository.js` — implements `IEutrPurchaseAttachmentsRepository`,
+  calls `eutrPurchaseAttachmentsApi`, returns `res.data` (the full `ApiResponse` envelope, unwrapped
+  by the caller) — matching `RestEutrTemplatesRepository.getAllPaging`'s exact same
+  return-envelope-as-is convention, not a pre-unwrapped array (depends on T031, T032).
+- [X] T034 Create `compliance-client/src/application/usecases/eutr-purchase-attachments/
+  GetTemplatesBySalesIdsUseCase.js` — `execute(salesIds)` delegates to
+  `repository.getTemplatesBySalesIds(salesIds)`, mirroring `GetEutrTemplatesUseCase.js`'s shape
+  (depends on T033).
+- [X] T035 [P] Register `eutrPurchaseAttachments: new RestEutrPurchaseAttachmentsRepository()` in
+  `compliance-client/src/di/repositories.js`, next to the existing `dynamics`/`eutrTemplates`
+  entries (depends on T033).
+
+**Verification**: `npm run build` (Vite) succeeds, producing a clean `SalesOrderOverviewPage.*.js`
+chunk with all new imports resolved — confirms the DI wiring and alias paths are correct.
+
+**Checkpoint**: `GetTemplatesBySalesIdsUseCase.execute([...salesIds])` resolves with the deduped
+template list from the new endpoint — ready to wire into the grid.
+
+---
+
+## Phase 9: User Story 1 (continued) — Wire Template Column to Real Data
+
+**Goal**: Replace the fixed `DEMO_TEMPLATE_LABEL` in `SalesOrderOverviewPage.jsx` with real,
+possibly multi-valued template data per row, sourced from Phase 7/8's new read path.
+
+**Independent Test**: Open `/eutr/sales-orders`; a Sales ID with 2 distinct templates in
+`eutr_purchase_attachments` shows both template names on its row; a Sales ID with none shows a
+clear empty state ("-"); no row shows the old fixed `DEMO_TEMPLATE_LABEL` text.
+
+### Implementation for User Story 1 (Template column)
+
+- [X] T036 [US1] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/SalesOrderOverviewPage.jsx`, remove
+  the `DEMO_TEMPLATE_LABEL` constant and its `Chip label={DEMO_TEMPLATE_LABEL}` usage in the
+  Template `TableCell` (leave the Progress cell/`DEMO_PROGRESS` untouched — out of scope for this
+  update).
+- [X] T037 [US1] In the same file, after the existing `refType=11` fetch resolves for the current
+  page, collect that page's Sales IDs (the same `code`/`id` field already used for the Sales ID
+  column) and call `GetTemplatesBySalesIdsUseCase.execute(salesIds)` once per page load (depends on
+  T034, T036).
+  *(Implemented as a dedicated `fetchTemplatesForRows(items)` callback, called from
+  `fetchSalesOrders` right after `setRows`/`setTotalCount` — fetch and grouping (T038) are combined
+  into one function rather than two separate steps, to avoid an intermediate raw-array state and a
+  stale-closure risk between them; the net behavior matches this task's intent.)*
+- [X] T038 [US1] In the same file, derive a `{ [salesId]: string[] }` map from that state (group by
+  `salesId`, collect `templateName` — already deduped server-side, no client-side dedup needed)
+  (depends on T037).
+  *(Done inside `fetchTemplatesForRows` directly — builds the map and calls
+  `setTemplatesBySalesId(map)` — rather than a separate `useMemo` derivation, per the T037 note
+  above.)*
+- [X] T039 [US1] In the same file, render the Template `TableCell` from that map: one `Chip` per
+  template name for the row's Sales ID (reusing the existing single-`Chip` visual, just repeated),
+  or a clear `"-"` state when the map has no entry for that Sales ID (FR-007b) (depends on T038).
+- [X] T040 [US1] In the same file, ensure the Phase 9 template fetch (T037) re-runs whenever the
+  set of visible Sales IDs changes — i.e. on the existing page-change (US3, T015/T016) and
+  search-filter (US2, T012/T013) handlers — so the Template column stays correct when paging or
+  searching (depends on T037).
+  *(Satisfied for free: `fetchTemplatesForRows` is called from inside the shared `fetchSalesOrders`
+  function, which US2's debounced search handler and US3's page/page-size handlers already both
+  call — no separate wiring needed.)*
+
+**Verification**: `npm run build` succeeds with a clean `SalesOrderOverviewPage.*.js` chunk;
+`npx eslint` on the changed/new files reports no errors.
+
+**Checkpoint**: Template column shows real, deduped, possibly multi-valued data per row; Progress
+column is unaffected; old demo label is fully removed.
+
+---
+
+## Phase 10: Polish & Validation (Template Column Update)
+
+- [ ] T041 [P] Run the backend verification steps 4-7 in `specs/005-eutr-sales-orders/quickstart.md`
+  (multi-template, duplicate-`PurchId`-same-template dedup, orphaned-`TemplateCode` skip, and
+  no-attachment-rows empty case) (depends on T030).
+  *(NOT run — same reason as T030: no live, seedable MySQL DB / running API in this environment.)*
+- [ ] T042 [P] Run the frontend verification steps 3-5 in `specs/005-eutr-sales-orders/quickstart.md`
+  (multi-template row renders both names, no-attachment row renders "-", no row shows the old fixed
+  demo label) (depends on T039, T040).
+  *(NOT run — requires a browser against a live backend with seeded `eutr_purchase_attachments`
+  data, unavailable here. `npm run build` succeeds and `npx eslint` reports no issues on all
+  changed/new files as a proxy check; a human needs to click through quickstart.md's steps 3-5
+  before sign-off.)*
+- [X] T043 [P] Review all new backend files from Phase 7
+  (`EutrPurchaseAttachments.cs`/`SalesOrderTemplateDto.cs`/`IEutrPurchaseAttachmentsRepository.cs`/
+  `EutrPurchaseAttachmentsRepository.cs`/`IEutrPurchaseAttachmentsService.cs`/
+  `EutrPurchaseAttachmentsService.cs`/`EutrPurchaseAttachmentsController.cs`) to confirm any added
+  comments are in Vietnamese, per Constitution Principle IV (depends on T021-T029).
+  *(Verified: all comments in these 7 new files are Vietnamese, unaccented ASCII, matching the
+  existing `EutrTemplates`/`EutrReferences` comment style in this codebase.)*
+- [X] T044 Confirm `MapFilePage.jsx`/`ViewSalesOrderPage.jsx` still load without errors and that no
+  file under `mock/` was touched by this update (same check as the original T019, re-run after
+  Phase 9's edits) (depends on T039).
+  *(Verified: `npm run build` output includes clean `MapFilePage.*.js`/`ViewSalesOrderPage.*.js`
+  chunks with no errors; `git status` inside `compliance-client/` confirms this update touched only
+  `SalesOrderOverviewPage.jsx` plus the new Phase 8 files — no file under `mock/` was changed by
+  Update 1 specifically. Note: `git status` also shows a handful of unrelated pre-existing
+  modified/untracked files, e.g. `mock/eutrSalesOrders.js`, `TemplateListPage.jsx`,
+  `CloneTemplateDialog.jsx` — these predate this session's work and are out of scope for this
+  update.)*
+- [X] T045 Note as an ops follow-up (not a code task): the new `EutrPurchaseAttachments.Read`
+  authorization policy (research.md Decision 8) must be seeded in the DB for any role that needs to
+  see real Template data, the same way the `eutr-sales-orders` menu permission already needs to be
+  seeded (per the original plan.md Constitution Check, Principle V).
+  *(Done — this note is recorded in research.md Decision 8, plan.md's Constitution Check
+  (Principle V), and quickstart.md's Prerequisites.)*
+
+**Checkpoint**: All Update 1 quickstart.md checks pass — Template column is fully real-data-backed,
+no regressions to Progress, search, pagination, or the other two Sales Order sub-pages.
+
+---
+
+## Update 1 Dependencies
+
+### Phase Dependencies
+
+- **Phase 7 (Backend)**: No dependency on Phases 1-6 (separate files/table). T021/T022 can start
+  immediately and run in parallel; T023 depends on both; T024 depends on T023; T025 depends on T022
+  and can run parallel to T023/T024; T026 depends on T023 and T025; T027/T028 depend on T025/T026
+  and T023/T024 respectively and can run in parallel; T029 depends on T025-T028; T030 depends on
+  T029.
+- **Phase 8 (Frontend infra)**: No dependency on Phase 7 completion to *start* (frontend files can
+  be scaffolded in parallel), but T030's manual verification implies Phase 7 should be functionally
+  done before Phase 9 integration is meaningfully testable. T031/T032 can run in parallel; T033
+  depends on both; T034 depends on T033; T035 depends on T033.
+- **Phase 9 (US1 continued)**: Depends on Phase 8 (T034) and, functionally, Phase 7 (a working
+  endpoint to call). T036 has no code dependency (pure removal) but is grouped first for clarity;
+  T037 depends on T034 and T036; T038 depends on T037; T039 depends on T038; T040 depends on T037.
+- **Phase 10 (Polish)**: Depends on Phases 7-9 all being complete.
+
+### Parallel Opportunities
+
+- T021 and T022 (different files, no shared dependency) can run in parallel.
+- T027 and T028 (different files — Application vs Infrastructure `DependencyInjection.cs`) can run
+  in parallel.
+- T031 and T032 (different files) can run in parallel.
+- T041, T042, T043 (Polish) are independent verification passes and can run in parallel.
+
+### Implementation Strategy
+
+1. Complete Phase 7 (backend read path) — verify via T030 before moving on.
+2. Complete Phase 8 (frontend infra layers) — can be scaffolded in parallel with Phase 7.
+3. Complete Phase 9 (wire into the grid) — this is the user-visible change.
+4. Complete Phase 10 (polish/validation) — full quickstart.md re-pass for the Template column.
+
+---
+
+## Update 2026-07-16 — `MapFilePage.jsx` Real Data (User Story 4)
+
+**Context**: Per spec Update 2, `MapFilePage.jsx` (currently 100% mock-driven) MUST switch to real
+data for: the `if (!so)` existence check + Header card (same `refType=11` source as
+`SalesOrderOverviewPage.jsx`), Step 1's PO list (`refType=16`, filtered by
+`InterCompanyOriginalSalesId`) + "Save PO Mapping" (now persists to `eutr_purchase_attachments`),
+and Step 2's template tree (`eutr_template_details` via `EutrTemplatesController`) + AVAILABLE FILES
+(`eutr_references`/`eutr_documents` via `EutrDocumentsController`'s `list-po-references`). Step 2's
+Upload/Save stay display-only (no backend call) — spec FR-029/FR-030, out of scope to implement.
+
+Per research.md Decisions 9-14, three of the four data sources need **zero backend change** —
+`refType=16`, `list-po-references`, and `EutrTemplatesController`'s `get-all`/`GetById` are already
+fully wired and already return every field needed. The only new backend work is two actions
+(one read, one write) added to the already-existing `EutrPurchaseAttachmentsController`.
+
+**Prerequisites for this update**: [research.md Decisions 9-15](./research.md),
+[data-model.md "Update 2"](./data-model.md),
+[contracts/eutr-purchase-attachments-map-file.md](./contracts/eutr-purchase-attachments-map-file.md),
+[contracts/map-file-reused-endpoints.md](./contracts/map-file-reused-endpoints.md),
+[quickstart.md "Update 2"](./quickstart.md).
+
+---
+
+## Phase 11: Backend — `EutrPurchaseAttachments` New Read + Write Actions
+
+**Purpose**: Add the one genuinely new backend capability — `GetBySalesIdAsync` (raw per-`PurchId`
+rows, backing Step 1's pre-check and Step 2's template list) and `SavePoMappingAsync`
+(transactional delete-then-reinsert for "Save PO Mapping") — as new methods on the controller/
+service/repository Update 1 already created. No new controller, no migration.
+
+- [X] T046 [P] Create DTO `PurchaseAttachmentDto` in
+  `compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/PurchaseAttachmentDto.cs` — flat
+  class with `SalesId`, `PurchId`, `TemplateCode` (all `string`), per data-model.md/contracts/
+  eutr-purchase-attachments-map-file.md.
+- [X] T047 [P] Create DTO `PurchaseAttachmentItemDto` in
+  `compliance-sys-api/src/ComplianceSys.Application/Dtos/Request/PurchaseAttachmentItemDto.cs` —
+  flat class with `PurchId`, `TemplateCode` (both `string`).
+- [X] T048 Create DTO `SavePoMappingRequestDto` in
+  `compliance-sys-api/src/ComplianceSys.Application/Dtos/Request/SavePoMappingRequestDto.cs` —
+  `SalesId` (string) + `Items` (`List<PurchaseAttachmentItemDto>`, default `[]`) (depends on T047).
+- [X] T049 Add `Task<List<PurchaseAttachmentDto>> GetBySalesIdAsync(string salesId,
+  CancellationToken ct = default);` to `IEutrPurchaseAttachmentsRepository` in
+  `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/
+  IEutrPurchaseAttachmentsRepository.cs`, alongside the existing `GetTemplatesBySalesIdsAsync`
+  (depends on T046).
+- [X] T050 Add `Task DeleteBySalesIdAsync(string salesId, CancellationToken ct = default);` to the
+  same `IEutrPurchaseAttachmentsRepository.cs` interface (same file as T049, apply after it).
+- [X] T051 Implement `GetBySalesIdAsync` in `EutrPurchaseAttachmentsRepository.cs`
+  (`compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/
+  EutrPurchaseAttachmentsRepository.cs`) — `SELECT PurchId, TemplateCode FROM
+  eutr_purchase_attachments WHERE SalesId = @SalesId;` (no join needed — `TemplateName` isn't
+  required for this caller), returning `[]` for a blank `salesId` (depends on T049).
+- [X] T052 Implement `DeleteBySalesIdAsync` in the same `EutrPurchaseAttachmentsRepository.cs` —
+  `DELETE FROM eutr_purchase_attachments WHERE SalesId = @SalesId;`, cloned from
+  `EutrReferencesRepository.DeleteByDocumentIdAsync`'s raw-SQL shape (same file as T051, apply after
+  it; depends on T050).
+- [X] T053 Add `Task<List<PurchaseAttachmentDto>> GetBySalesIdAsync(string salesId, CancellationToken
+  ct = default);` and `Task SavePoMappingAsync(string salesId, List<PurchaseAttachmentItemDto>
+  items, string userEmail, CancellationToken ct = default);` to `IEutrPurchaseAttachmentsService` in
+  `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Services/
+  IEutrPurchaseAttachmentsService.cs` (depends on T048, T049).
+- [X] T054 Implement both new methods in `EutrPurchaseAttachmentsService.cs`
+  (`compliance-sys-api/src/ComplianceSys.Application/Services/EutrPurchaseAttachmentsService.cs`):
+  - Inject `IUnitOfWork` and `IRepository<EutrPurchaseAttachments, int>` (generic — resolves via the
+    same open-generic DI registration already backing `IRepository<EutrReferences, long>` in
+    `EutrUploadService`, no new DI registration needed) as two new constructor parameters, alongside
+    the existing `IEutrPurchaseAttachmentsRepository`.
+  - `GetBySalesIdAsync`: pass-through to `_repository.GetBySalesIdAsync(salesId, ct)`.
+  - `SavePoMappingAsync`: validate every `items[i].TemplateCode` is non-empty first — throw
+    `InvalidOperationException` (or equivalent) if any is blank (spec FR-022) before opening a
+    transaction; else `_unitOfWork.BeginTransactionAsync(IsolationLevel.ReadCommitted)`, call
+    `_repository.DeleteBySalesIdAsync(salesId, ct)`, loop `items` calling
+    `_genericRepository.AddAsync(new EutrPurchaseAttachments { SalesId = salesId, PurchId =
+    i.PurchId, TemplateCode = i.TemplateCode, CreatedBy = userEmail, CreatedDate = DateTime.UtcNow,
+    UpdatedBy = userEmail, UpdatedDate = DateTime.UtcNow }, ct)`, then `CommitAsync()`;
+    `RollbackAsync()` in a `catch` that rethrows — clone of `EutrDocumentsService.DeleteAsync`'s
+    Update 9 transaction shape + `EutrUploadService`'s Update 7 per-row `AddAsync` loop (research.md
+    Decision 11) (depends on T051, T052, T053).
+- [X] T055 Add two new actions to `EutrPurchaseAttachmentsController.cs`
+  (`compliance-sys-api/src/ComplianceSys.Api/Controllers/EutrPurchaseAttachmentsController.cs`):
+  - `[Authorize(Policy = "EutrPurchaseAttachments.Read")] [HttpGet("by-sales-id/{salesId}")]` calling
+    `GetBySalesIdAsync`, returning `ApiResponse<List<PurchaseAttachmentDto>>.Ok(...)`.
+  - `[Authorize(Policy = "EutrPurchaseAttachments.Update")] [HttpPost("save-po-mapping")]` accepting
+    `[FromBody] SavePoMappingRequestDto request`, resolving the caller's email the same way other
+    `Eutr*Controller` write actions do (`HttpContext.Items["UserEmail"]`), calling
+    `SavePoMappingAsync`, returning `400 Bad Request`/`ApiResponse<string>.Fail(...)` if the service
+    throws the FR-022 validation exception, else `ApiResponse<string>.Ok("", "PO mapping saved
+    successfully")` — per contracts/eutr-purchase-attachments-map-file.md (depends on T054).
+- [ ] T056 Manually verify per quickstart.md Update 2 backend steps 1-7: `refType=16` filter
+  behavior (no code change expected), `GET by-sales-id/{salesId}` empty/populated cases, `POST
+  save-po-mapping` save + replace-on-resave semantics, and the empty-`TemplateCode` rejection
+  (depends on T055).
+  *(NOT run — requires a live `compliance-sys-api` process with a real D365 connection and a
+  seedable MySQL DB, unavailable in this environment. As a proxy check: `dotnet build` on
+  `ComplianceSys.Application` and `ComplianceSys.Infrastructure` succeeds with 0 errors (the
+  `ComplianceSys.Api` exe target hit a pre-existing `MSB3027`/`MSB3021` file-lock error from an
+  already-running `ComplianceSys.Api.exe` instance holding its own output DLLs open — not a code
+  defect, same category of issue noted in T030). Someone with D365/DB access must run the actual
+  HTTP round-trips (backend steps 1-7 in quickstart.md) before sign-off.)*
+
+**Checkpoint**: `eutr_purchase_attachments` now supports read-by-`SalesId` and a transactional
+save/replace — ready for the frontend to consume for Step 1's pre-check and Save PO Mapping.
+
+---
+
+## Phase 12: Frontend — Extend Purchase Attachments Layer + 2 New Use Cases
+
+**Purpose**: Add the frontend methods/use cases for the two new backend actions, on top of the
+already-existing `eutr-purchase-attachments` frontend layering from Update 1 — no new
+domain/infrastructure files, just new methods on the existing ones plus two new use case files.
+
+- [X] T057 [P] Add `getBySalesId(_salesId)` and `savePoMapping(_salesId, _items)` method stubs to
+  `compliance-client/src/domain/interfaces/IEutrPurchaseAttachmentsRepository.js`, alongside the
+  existing `getTemplatesBySalesIds`.
+- [X] T058 [P] Add `getBySalesId: (salesId) => axiosInstance.get(\`/eutr-purchase-attachments/by-sales-id/${salesId}\`)`
+  and `savePoMapping: (payload) => axiosInstance.post('/eutr-purchase-attachments/save-po-mapping',
+  payload)` to `compliance-client/src/infrastructure/api/eutrPurchaseAttachmentsApi.js`.
+- [X] T059 Implement both new methods in
+  `compliance-client/src/infrastructure/repositories/RestEutrPurchaseAttachmentsRepository.js` —
+  `getBySalesId(salesId)` calls `eutrPurchaseAttachmentsApi.getBySalesId(salesId)` and returns
+  `res.data`; `savePoMapping(salesId, items)` calls `eutrPurchaseAttachmentsApi.savePoMapping({
+  salesId, items })` and returns `res.data` (depends on T057, T058).
+- [X] T060 [P] Create `compliance-client/src/application/usecases/eutr-purchase-attachments/
+  GetPurchaseAttachmentsBySalesIdUseCase.js` — `execute(salesId)` delegates to
+  `repository.getBySalesId(salesId)`, mirroring `GetTemplatesBySalesIdsUseCase.js`'s shape (depends
+  on T059).
+- [X] T061 [P] Create `compliance-client/src/application/usecases/eutr-purchase-attachments/
+  SavePoMappingUseCase.js` — `execute(salesId, items)` delegates to
+  `repository.savePoMapping(salesId, items)` (depends on T059).
+
+**Verification**: `npm run build` (Vite) succeeds with all new imports resolved.
+
+**Checkpoint**: `GetPurchaseAttachmentsBySalesIdUseCase.execute(salesId)` and
+`SavePoMappingUseCase.execute(salesId, items)` are ready to wire into `MapFilePage.jsx`.
+
+---
+
+## Phase 13: User Story 4 - Chọn Purchase Order và xem hồ sơ tài liệu cho Sales Order (Map File) (Priority: P2)
+
+**Goal**: Replace every mock data source in `MapFilePage.jsx` with the real sources from Phase 11/12
+(and the already-existing `refType=11`/`refType=16`/`EutrTemplatesController`/
+`GetEutrDocumentsPoReferencesUseCase` chains), while Step 2's Upload/Save stay display-only.
+
+**Independent Test**: Open Map File for a Sales Order that already has a saved PO mapping; confirm
+the header matches Overview data, Step 1 shows the real PO(s) with the saved one(s) pre-checked,
+Step 2 shows the real template tree for the saved `TemplateCode`, and AVAILABLE FILES shows the real
+documents for the saved PO(s) mapped to the correct step(s); change the Step 1 selection, Save, and
+confirm the change persists across a reload.
+
+### Implementation for User Story 4
+
+- [X] T062 [US4] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/MapFilePage.jsx`, replace `const so =
+  MOCK_SALES_ORDERS.find(s => s.salesId === salesId)` with a fetch through
+  `GetReferenceDataUseCase.execute(1, 1, 'Code', 'asc', 11, [{ column: 'Code', operator: 'eq',
+  value: salesId }])` (same use case `SalesOrderOverviewPage.jsx` already uses); store the single
+  result (or `null`) in component state; keep the existing `if (!so) return <Card>...</Card>` guard
+  but drive it off this fetched state instead of the mock array (research.md Decision 9).
+- [X] T063 [US4] In the same file, update the Header card (`Sales ID`/`Customer`/`Customer name`
+  `Typography`s) to read `so.code`/`so.custAccount`/`so.name` (the `refType=11` field names, matching
+  `SalesOrderOverviewPage.jsx`'s existing mapping) instead of `so.salesId`/`so.customerId`/
+  `so.customerName` (depends on T062).
+- [X] T064 [US4] In the same file, replace `const poList = MOCK_SO_POS[salesId] || []` with a fetch
+  through `GetReferenceDataUseCase.execute(1, <pageSize>, 'Code', 'asc', 16, [{ column:
+  'InterCompanyOriginalSalesId', operator: 'eq', value: salesId }])`, storing the result in component
+  state (research.md Decision 10).
+- [X] T065 [US4] In the same file, update the Step 1 PO `Table`'s columns from Vendor/Vendor
+  Name/Rate/Material to **PO** (`po.code`), **Name** (`po.name`), **Order account**
+  (`po.orderAccount`), **Qty** (`po.qty`) — the real fields available on a `refType=16` row (depends
+  on T064; per data-model.md's Purchase Order entity table).
+- [X] T066 [US4] In the same file, on mount (alongside T062/T064's fetches), call
+  `GetPurchaseAttachmentsBySalesIdUseCase.execute(salesId)`; replace `useState(() => new
+  Set(MOCK_SO_PO_MAPPINGS[salesId] || []))` for `selectedPOs` with a `Set` built from this result's
+  `purchId` values, and set `poSaved` to `true` when the result is non-empty (else `false`) — replaces
+  the `MOCK_SO_PO_MAPPINGS`-based initial state (depends on T060; research.md Decision 12).
+- [X] T067 [US4] In the same file, replace `handleSavePOMapping`'s body (`setPoSaved(true)` only)
+  with: build `items` = the currently-selected `purchId`s each paired with that PO's own
+  `eutrTemplate` value from T064's fetched `poList`; call
+  `SavePoMappingUseCase.execute(salesId, items)`; on success call `setPoSaved(true)` (existing
+  behavior) and re-fetch T066's data (or update local state) so the pre-checked set matches what was
+  just saved; on failure (e.g. a PO missing `eutrTemplate`), show a clear error instead of silently
+  calling `setPoSaved(true)` (depends on T061, T064, T066; spec FR-020/FR-021/FR-022).
+- [X] T068 [US4] In the same file, disable (or omit from selection) any PO row in Step 1 whose
+  `eutrTemplate` is empty/null, with a visible tooltip/hint explaining why it can't be selected (spec
+  Edge Cases — a PO without a template can't be saved) (depends on T065).
+- [X] T069 [US4] In the same file, replace the `tree` `useMemo` (currently built from
+  `EUTR_TEMPLATE_DETAILS_MAP[so.templateId]`) with logic that: takes the distinct `templateCode`
+  values from T066's result; for each, calls `GetPagingEutrTemplatesUseCase.execute(1, 1, 'Code',
+  'asc', [{ column: 'Code', operator: 'eq', value: templateCode }])` to resolve the template's `id`,
+  then `GetEutrTemplatesUseCase.execute(id)` to get `Details`; feeds each template's `Details`
+  through the existing `flatToTree()` util; stores the result as an array of `{ templateCode,
+  templateName, tree }` (research.md Decision 13).
+- [X] T070 [US4] In the same file, update the Step 2 tree rendering to loop over T069's array,
+  rendering one labeled tree section per distinct template (mirrors how the Overview grid already
+  shows multiple Template chips for one Sales ID) instead of the single `tree.map(root => ...)` over
+  one mock template (depends on T069; spec FR-024).
+- [X] T071 [US4] In the same file, render a clear "chưa có cây template" empty state in the Step 2
+  panel when T066's result is empty (no PO mapping saved yet for this Sales Order), instead of an
+  empty/broken tree render (depends on T066, T069; spec FR-025).
+- [X] T072 [US4] In the same file, replace `const allFiles = useMemo(() => [...MOCK_AVAILABLE_FILES,
+  ...newlyUploadedFiles], ...)`'s mock half with a fetch through
+  `GetEutrDocumentsPoReferencesUseCase.execute([...selectedPOs])` (the same use case
+  `EutrDocumentsAdd.jsx` already uses for its List PO panel), flattening the returned `documents[]`
+  across all selected/saved POs into the AVAILABLE FILES list — keep `newlyUploadedFiles` (local-only
+  state, unaffected) appended after it (research.md Decision 14).
+- [X] T073 [US4] In the same file, update `TreeNode`'s "already mapped" detection (currently keyed by
+  `fileMappings[node.id]`, sourced from `MOCK_FILE_MAPPINGS`) to instead match each AVAILABLE FILES
+  document's `stepNames` array against `node.stepName` (string match) to decide which node(s) show it
+  as mapped (depends on T070, T072; spec FR-026/FR-027).
+- [X] T074 [US4] In the same file, render a clear empty state in AVAILABLE FILES for a selected PO
+  with no `eutr_references` rows (T072's result has `documents: []` for that `poCode`), instead of
+  falling back to mock files (depends on T072; spec FR-028).
+- [X] T075 [US4] In the same file, remove the now-unused imports (`MOCK_SALES_ORDERS`, `MOCK_SO_POS`,
+  `MOCK_SO_PO_MAPPINGS`, `MOCK_AVAILABLE_FILES`, `MOCK_FILE_MAPPINGS`, `EUTR_TEMPLATE_DETAILS_MAP`,
+  `EUTR_TEMPLATES`) from `./mock/eutrSalesOrders`, `./mock/eutrTemplateDetails`, `./mock/eutrTemplates`
+  once T062-T074 no longer reference them (depends on T062-T074).
+- [X] T076 [US4] Confirm the Step 2 **Upload** button (`UploadDialog`/`handleUpload`) and the footer
+  **Save** button still only touch local component state (`newlyUploadedFiles`, `fileMappings`) —
+  verify no new API call was introduced for either during T062-T075 (spec FR-029/FR-030; this is a
+  verification/guardrail task, not expected to require a code change).
+
+**Checkpoint**: User Story 4 is fully functional and independently testable — Map File's header,
+Step 1, and Step 2 (tree + AVAILABLE FILES) all reflect real data; Save PO Mapping persists; Upload/
+Save remain no-op.
+
+---
+
+## Phase 14: Polish & Cross-Cutting Concerns (Update 2)
+
+**Purpose**: Final validation across the `MapFilePage.jsx` update; no new functionality.
+
+- [ ] T077 [P] Run the backend verification steps in `specs/005-eutr-sales-orders/quickstart.md`
+  "Update 2" section (steps 1-7: `refType=16` filter check, `GetBySalesIdAsync` empty/populated,
+  `SavePoMappingAsync` save/replace/reject-empty-template, Update 1 no-regression check) (depends on
+  T056).
+  *(NOT run — same reason as T056: no live D365-connected, seedable-DB `compliance-sys-api`
+  instance in this environment.)*
+- [ ] T078 [P] Run the frontend manual verification steps in `specs/005-eutr-sales-orders/
+  quickstart.md` "Update 2" section (steps 1-9: header, Step 1 columns + pre-check, Save PO Mapping
+  persistence, Step 2 tree, AVAILABLE FILES + step mapping, empty states, Upload/Save no-op,
+  `ViewSalesOrderPage.jsx` unaffected) (depends on T075, T076).
+  *(NOT run — requires a browser against a live backend with real D365 POs and seeded
+  `eutr_purchase_attachments`/`eutr_references` data, unavailable here. `npm run build` succeeds
+  (clean `MapFilePage.*.js` chunk, all new use-case imports resolved) and `npx eslint` reports no
+  issues on every changed/new file, as proxy checks. A human with that environment needs to click
+  through quickstart.md's Update 2 steps 1-9 before sign-off.)*
+- [X] T079 [P] Review all new/changed backend code from Phase 11
+  (`PurchaseAttachmentDto.cs`/`PurchaseAttachmentItemDto.cs`/`SavePoMappingRequestDto.cs`/
+  `IEutrPurchaseAttachmentsRepository.cs`/`EutrPurchaseAttachmentsRepository.cs`/
+  `IEutrPurchaseAttachmentsService.cs`/`EutrPurchaseAttachmentsService.cs`/
+  `EutrPurchaseAttachmentsController.cs`) to confirm any added comments are in Vietnamese, per
+  Constitution Principle IV (depends on T046-T055).
+  *(Verified: all added/changed comments across these 8 files are Vietnamese, unaccented ASCII,
+  matching the existing `EutrPurchaseAttachments*`/`EutrReferences*` comment style from Update 1.)*
+- [X] T080 Confirm `ViewSalesOrderPage.jsx` still loads without errors and that no file under
+  `mock/` was deleted (only stopped being *imported* by `MapFilePage.jsx`, per plan.md's Project
+  Structure) (depends on T075).
+  *(Verified: `npm run build` output includes a clean `ViewSalesOrderPage.*.js` chunk with no
+  errors; `git status` inside `compliance-client/` confirms this update touched only
+  `MapFilePage.jsx`, `utils/treeUtils.js`, and the `eutr-purchase-attachments` frontend layer/use
+  cases — `ViewSalesOrderPage.jsx` and every file under `mock/` are absent from that diff. Note:
+  `git status` also shows several unrelated pre-existing modified/untracked files — e.g.
+  `certs/*.pem`, `TemplateListPage.jsx`, `CloneTemplateDialog.jsx`,
+  `mock/eutrSalesOrders.js` — these predate this session's work and are out of scope, same as noted
+  in T044.)*
+- [X] T081 Note as an ops follow-up (not a code task): the new `EutrPurchaseAttachments.Update`
+  authorization policy (research.md Decision 15) must be seeded in the DB for any role that needs to
+  use Save PO Mapping, alongside the existing `EutrPurchaseAttachments.Read` policy (Update 1) and
+  the `eutr-sales-orders` menu permission (original plan.md Constitution Check, Principle V).
+  *(Done — this note is recorded in research.md Decision 15, plan.md's Constitution Check
+  (Principle V), and quickstart.md's Update 2 section.)*
+
+**Checkpoint**: All Update 2 quickstart.md checks pass — `MapFilePage.jsx` is fully real-data-backed
+for header/Step 1/Step 2 read+save paths, with no regressions to `SalesOrderOverviewPage.jsx`,
+`ViewSalesOrderPage.jsx`, or the Update 1 Template column.
+
+---
+
+## Update 2 Dependencies
+
+### Phase Dependencies
+
+- **Phase 11 (Backend)**: No dependency on Phases 1-10 (new methods on existing files, unrelated to
+  the D365 reference/Template-column paths). T046/T047 can start immediately in parallel; T048
+  depends on T047; T049/T050 depend on T046 (same file, sequential); T051/T052 depend on T049/T050
+  (same file, sequential); T053 depends on T048, T049; T054 depends on T051-T053; T055 depends on
+  T054; T056 depends on T055.
+- **Phase 12 (Frontend infra)**: No dependency on Phase 11 completion to *start* scaffolding, but
+  T059 depends on T057/T058; T060/T061 depend on T059. Functionally needs Phase 11 done before Phase
+  13 integration is meaningfully testable end-to-end.
+- **Phase 13 (US4)**: Depends on Phase 12 (T060/T061) and, functionally, Phase 11 (working endpoints
+  to call). Within the phase: T062 has no dependency; T063 depends on T062; T064 has no dependency on
+  T062/T063 (independent fetch) but is sequenced after for file-diff clarity; T065 depends on T064;
+  T066 depends on T060; T067 depends on T061, T064, T066; T068 depends on T065; T069 depends on
+  T066; T070 depends on T069; T071 depends on T066, T069; T072 depends on T066 (needs
+  `selectedPOs`); T073 depends on T070, T072; T074 depends on T072; T075 depends on all of
+  T062-T074; T076 depends on T075 (final guardrail check).
+- **Phase 14 (Polish)**: Depends on Phases 11-13 all being complete.
+
+### Parallel Opportunities
+
+- T046 and T047 (different files) can run in parallel.
+- T057 and T058 (different files) can run in parallel.
+- T060 and T061 (different files, both depend only on T059) can run in parallel.
+- T062 and T064 (independent fetches, though conventionally sequenced in the same file) could be
+  fetched concurrently in the implementation (e.g. `Promise.all`) even though listed sequentially
+  here for review clarity.
+- T077, T078, T079 (Polish) are independent verification passes and can run in parallel.
+
+### Implementation Strategy
+
+1. Complete Phase 11 (backend read+write actions) — verify via T056 before moving on.
+2. Complete Phase 12 (frontend infra extensions) — can be scaffolded in parallel with Phase 11.
+3. Complete Phase 13 (wire `MapFilePage.jsx`) — this is the user-visible change; T062-T068 (header +
+   Step 1) can be demoed before T069-T074 (Step 2) are finished, since Step 1 is independently
+   observable even with Step 2 still on old data.
+4. Complete Phase 14 (polish/validation) — full quickstart.md "Update 2" re-pass.

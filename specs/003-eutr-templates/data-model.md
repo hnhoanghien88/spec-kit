@@ -8,6 +8,13 @@ existing values); `IsDefault` uniqueness becomes global instead of per-VendorCod
 feature — a separate time-bound Template↔Vendor mapping, replacing the old direct Vendor field on
 the template itself.
 
+**Update 15 (2026-07-15)**: (1) Bug fix — the version-up (≥24h) branch now also copies
+`EutrTemplateReferences` rows to the new `TemplateId` (previously only `EutrTemplateDetails` was
+copied, silently orphaning vendor mappings on the now-hidden old row). (2) New **Clone** operation —
+duplicates a template's header (new Code, new Name/AlertFor from user input, VersionId=1,
+IsDefault=0), full detail tree, and full reference-mapping set into a brand-new, fully independent
+template row.
+
 ## Entities
 
 ### 1. EutrTemplates
@@ -51,10 +58,19 @@ approach).
   via the Apply-to-Customer screen (`eutr_template_references`) — not via a subsequent Edit anymore.
 - On edit, versioning is conditional on `(now - CreatedDate)` of the row being edited:
   - **≥ 24 hours**: new row created with `VersionId + 1`, details inserted under the new
-    `TemplateId`, old row set `IsHide = 1`
+    `TemplateId`, old row set `IsHide = 1`. **(Update 15)** `EutrTemplateReferences` rows belonging to
+    the old `TemplateId` are ALSO copied to the new `TemplateId` (see Entity 6, FR-049) — previously
+    only the detail tree was copied, leaving vendor mappings attached only to the now-hidden old row.
   - **< 24 hours**: existing row updated in place (same `Id`, same `VersionId`, `CreatedDate`
     unchanged) — header fields overwritten, `eutr_template_details` for this `TemplateId` replaced
-    (delete + re-insert), `IsHide` untouched
+    (delete + re-insert), `IsHide` untouched. No `EutrTemplateReferences` change needed — `TemplateId`
+    is unchanged in this branch, so existing mappings already stay correctly linked.
+- **Clone (new, Update 15)**: creates an entirely new, independent row — new auto-generated `Code`,
+  `Name`/`AlertFor` from the Clone dialog's input, `VersionId = 1`, `IsDefault = 0` (always, never
+  inherited from the source), `IsDeleted = 0`, `IsHide = 0`, `CreatedBy`/`CreatedDate` = current
+  user/now. The full detail tree and full reference-mapping set of the source template are copied to
+  the new `TemplateId` (see Entity 2/Entity 6). The new template has no relationship back to its
+  source after creation — editing, deleting, or versioning either one does not affect the other.
 - On delete: set `IsDeleted = 1` on the visible row only
 - **IsDefault constraint (Update 13 — changed from per-VendorCode to global)**: max 1 template
   `IsDefault = 1` **across the entire table** (among active records: `IsDeleted=0, IsHide=0`);
@@ -116,6 +132,15 @@ approach).
   this adds: a master step already present as a **direct child of the same target ParentId** is
   excluded from the dialog's selectable list, to avoid two `eutr_template_details` rows with the
   same `(ParentId, StepId)` pair; a step remains selectable again under a different ParentId.
+- **Clone (new, Update 15)**: the backend re-indexes the source template's DB-Id-based detail tree
+  (as returned by `GetByIdWithDetailsAsync`) into the same 1-based sequential-position `ParentId`
+  convention the frontend already sends on every normal Save, then reuses the existing
+  insert-and-remap pipeline (`BuildDetailEntitiesAsync` + `BulkInsertDetailsAsync`) to write the
+  copied rows under the new `TemplateId` — no new tree-insert SQL. Every copied row keeps its source
+  `StepId` (never re-resolved by name, since Clone never carries a free-solo `StepName`), its
+  `RequirementType`/`TakeFrom`/`DisplayOrder`, and gets fresh `CreatedBy`/`CreatedDate` (current
+  user/now — this IS a new row, unlike the reference-mapping copy in Entity 6 which preserves
+  original audit fields).
 
 ### 3. EutrStep (existing — feature 001-eutr-steps; read + write from this feature)
 
@@ -203,6 +228,16 @@ resolution. Domain model: `ComplianceSys.Domain.Entities.ComplGroupEmail` (alrea
   fails that row, it does NOT route the row to a different template. Import always creates a NEW row
   per valid line (reuses `AddAsync`'s existing validation + overlap-check) — it never updates an
   existing mapping, even on an exact data match (FR-043 to FR-048).
+- **Copy-to-new-TemplateId (new, Update 15)**: a new repository method,
+  `CopyReferencesAsync(sourceTemplateId, newTemplateId, ct)`, duplicates every mapping row of a source
+  `TemplateId` under a new `TemplateId` via a single set-based `INSERT ... SELECT` — preserving
+  `VendorCode`/`FromDate`/`ToDate` AND the original `CreatedBy`/`CreatedDate`/`UpdatedBy`/`UpdatedDate`
+  (unlike the detail-tree copy, which stamps fresh audit fields — see Entity 2). No overlap
+  re-validation is performed for this copy: the source rows are already mutually non-overlapping
+  (they passed `HasOverlapAsync` when originally created) and the destination `TemplateId` always
+  starts with zero mappings, so an overlap can never occur. Used by two call sites: (1)
+  `EutrTemplatesService.UpdateAsync`'s ≥24h version-up branch (FR-049), and (2) the new
+  `EutrTemplatesService.CloneAsync` (FR-053) — same method, no duplicated copy logic.
 
 ## Relationships
 
@@ -228,8 +263,13 @@ EutrTemplateDetails ──self-ref── EutrTemplateDetails (via ParentId → I
 [Create — quick-create dialog, Update 9] ──→ Active (IsDeleted=0, IsHide=0, VersionId=1,
                                                CreatedDate=now, 0 details)
                 │
+[Clone — Update 15, from any existing template] ──→ Active (IsDeleted=0, IsHide=0, VersionId=1,
+                                               IsDefault=0, CreatedDate=now, details + references
+                                               copied from source; no link back to source)
+                │
                 ├──[Edit/Save, CreatedDate ≥24h ago]──→ New Version (IsDeleted=0, IsHide=0, VersionId=N+1)
                 │                                         Old version → (IsHide=1)
+                │                                         (Update 15) references also copied to new Id
                 │
                 ├──[Edit/Save, CreatedDate <24h ago]──→ Same row updated in place
                 │                                         (Id, VersionId, CreatedDate unchanged;
@@ -254,6 +294,10 @@ EutrTemplateDetails ──self-ref── EutrTemplateDetails (via ParentId → I
 [Import — ApplyCustomerPage "Import" button, Update 14]  ──┘ (TemplateId, VendorCode, FromDate, ToDate)
                 │                                             one row created per valid Excel row
                 │                                             (same AddAsync path as manual Apply)
+[Version-up copy — Update 15, FR-049] ──→ Row duplicated under the new TemplateId when the source
+                │                          template versions up (≥24h branch); original row untouched
+[Clone copy — Update 15, FR-053]      ──→ Row duplicated under the newly-cloned template's TemplateId
+                │                          (both via the same CopyReferencesAsync method)
                 ├──[Edit]──→ Same row updated in place (no versioning — this table has no VersionId)
                 │
                 └──[Delete]──→ Row hard-deleted (no IsDeleted flag on this table)
@@ -277,6 +321,8 @@ EutrTemplateDetails ──self-ref── EutrTemplateDetails (via ParentId → I
 | EutrTemplateReferences Import (Update 14) | File format | Must be `.xlsx` with header columns exactly `TemplateCode`, `VendorCode`, `FromDate`, `ToDate`; any other extension or missing/renamed column rejects the whole file before any row is processed |
 | EutrTemplateReferences Import (Update 14) | Row: TemplateCode | Must equal the Code of the template currently open (route `:id`) — mismatch fails only that row (FR-046, FR-048) |
 | EutrTemplateReferences Import (Update 14) | Row: VendorCode/FromDate/ToDate | Same rules as FR-036/the validator above, enforced by re-using `AddAsync` per row — not duplicated |
+| Clone request (Update 15) | Name | Required, not empty (same rule as EutrTemplates.Name) |
+| Clone request (Update 15) | AlertFor | Required — must be a positive Id (same rule as EutrTemplates.AlertFor); not validated for existence in `compl_group_email`, same treatment as the main entity |
 
 ## Enums
 

@@ -9,6 +9,11 @@ request/response shape below (no migration of existing values); the `IsDefault` 
 from per-`VendorCode` to global; Import/Export Excel column layouts shift left by one column. A new
 `api/eutr-template-references` contract (Section 9) is added for the Apply-to-Customer feature.
 
+**Update 15 (2026-07-15)**: Update Template (Section 4)'s ≥24h branch now also copies
+`eutr_template_references` to the new TemplateId (bug fix, FR-049). A new Clone endpoint (Section 10)
+is added: `POST api/eutr-templates/{id}/clone` duplicates a template's header, full detail tree, and
+full mapping set into a brand-new template.
+
 ---
 
 ## 1. Get Paged List
@@ -286,6 +291,11 @@ Note: `id` and `versionId` are unchanged from before the update in this case.
   Save click; the request body shape, per-detail fields (`stepId`/`stepName`/`parentId`/
   `requirementType`/`takeFrom`/`displayOrder`), and free-solo step auto-create resolution (Update 6)
   are all unchanged. No contract change.
+- **Update 15 (2026-07-15, bug fix — FR-049)**: in the ≥24h branch, the backend now ALSO copies every
+  `eutr_template_references` row of the old `TemplateId` to the new `TemplateId` (same
+  VendorCode/FromDate/ToDate/CreatedBy/CreatedDate, see contracts Section 9 / data-model.md Entity 6)
+  — previously only the step tree was copied, leaving vendor mappings attached to the now-hidden old
+  row. Request/response shape unchanged; this is a server-side-only behavior fix, not a new field.
 
 ---
 
@@ -720,3 +730,65 @@ GET api/eutr-template-references/export/{templateId}
 exactly matches what Import (Section 9.5) expects, letting Export double as the "file template" for
 Import with zero extra columns to strip. When the template has zero mappings, the response is a
 valid `.xlsx` with only the header row — usable directly as a blank import template.
+
+---
+
+## 10. Clone Template (new, Update 15)
+
+```
+POST api/eutr-templates/{id}/clone
+```
+
+**Auth**: `EutrTemplates.Create` (Clone creates a new template — same policy as Section 3, no new
+policy family).
+
+**Request Body**:
+```json
+{
+  "name": "Template A (Copy)",
+  "alertFor": 3
+}
+```
+Only `name` and `alertFor` are accepted — no `details[]`, no `isDefault`. `{id}` in the path identifies
+the **source** template being cloned from.
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": { "id": 42, "code": "Templates-015", "versionId": 1 },
+  "message": "Template cloned successfully."
+}
+```
+
+**Response — source template not found** (404):
+```json
+{ "success": false, "message": "Template with id {id} not found." }
+```
+
+**Response — validation error** (400, `name` blank or `alertFor` missing/not positive):
+```json
+{ "success": false, "message": "Name is required." }
+```
+
+**Behavior**:
+- Loads the source template (via the existing `GetByIdWithDetailsAsync`) including its full detail
+  tree; 404 if the source doesn't exist or is soft-deleted/hidden.
+- Creates a brand-new `eutr_templates` row: new auto-generated `Code` (same generation logic as
+  Section 3), `Name`/`AlertFor` from the request body, `VersionId = 1`, `IsDefault = 0` (always,
+  regardless of the source's `IsDefault` — FR-053), `IsDeleted = 0`, `IsHide = 0`.
+- Copies the ENTIRE detail tree (`eutr_template_details`) from the source template to the new
+  template's Id — same `StepId`, `RequirementType`, `TakeFrom`, `DisplayOrder` per row, and the same
+  parent-child (`ParentId`) structure, reusing the existing detail-insert pipeline (see research.md
+  Section 31). No `eutr_steps` writes occur (every copied `StepId` is already resolved).
+- Copies the ENTIRE mapping set (`eutr_template_references`) from the source template to the new
+  template's Id via the same `CopyReferencesAsync` method used by Section 4's version-up fix (research
+  .md Section 30) — same `VendorCode`/`FromDate`/`ToDate`/audit fields, no overlap re-check (the
+  destination starts empty and the source rows are already mutually non-overlapping).
+- The whole operation is one transaction — a failure partway through leaves no new template behind.
+- The new template has no ongoing relationship to its source — subsequent Edit/Delete/version-up on
+  either template does not affect the other.
+- Frontend calling convention: `CloneTemplateDialog.jsx` (new, on `TemplateListPage.jsx`) collects
+  `name`/`alertFor`, shows a `ConfirmDialog`-style warning, then on confirm calls this endpoint via a
+  new `CloneEutrTemplatesUseCase`; on success the dialog closes and the list refetches (same
+  refresh convention as `CreateTemplateDialog.jsx`, Section 3).

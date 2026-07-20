@@ -1878,3 +1878,150 @@ T263 (depends on Phase 57 use cases + T262)
 T264, T265, T266 in parallel (once Phases 56-58 are done)
 T267 sequentially (records the findings from T264)
 ```
+
+---
+
+## Update 2026-07-15 (Update 15) — Copy `eutr_template_references` on Version-up + Clone Template
+
+**Context**: Per spec Update 15: (1) bug fix — the version-up (≥24h) branch of `UpdateAsync` copies
+the step tree to the new `TemplateId` but never copied `eutr_template_references` (added later, in
+Update 13), silently orphaning vendor mappings on the now-hidden old row; (2) new **Clone** feature —
+the Clone icon on `TemplateListPage.jsx` (disabled since Update 10) opens a popup collecting a new
+template Name + Alert for, and on confirmation duplicates the source template's header, full step
+tree, and full vendor-mapping set into a brand-new, independent template (new Code, VersionId=1,
+IsDefault=0 always).
+
+**Changes**: Backend — one new repository method (`CopyReferencesAsync`, a single set-based
+`INSERT ... SELECT`) reused by two call sites: the existing `UpdateAsync`'s ≥24h branch (bug fix) and
+a new `EutrTemplatesService.CloneAsync` method backing a new `POST api/eutr-templates/{id}/clone`
+endpoint. `CloneAsync` reuses the existing `BuildDetailEntitiesAsync`/`BulkInsertDetailsAsync`
+detail-insert pipeline by re-indexing the source's DB-Id-based tree into the same sequential-`ParentId`
+convention the frontend already sends on every Save — no new tree-insert SQL. Frontend — a new
+`CloneTemplateDialog.jsx` (modeled on `CreateTemplateDialog.jsx`'s Alert-for combobox + the existing
+`ConfirmDialog` for the warning step), a new use case/API/repository method, and wiring to enable the
+previously-disabled Clone icon on `TemplateListPage.jsx`. See research.md §30–31, data-model.md's
+Entity 1/2/6 Update 15 notes, contracts/api-endpoints.md Section 4's note + new Section 10, and
+plan.md's "Update 2026-07-15 (Update 15)" section for the full rationale and file-by-file design this
+phase set implements.
+
+---
+
+## Phase 60: Backend — Copy `eutr_template_references` on Version-up (US3, FR-049)
+
+**Purpose**: Fix the version-up (≥24h) branch so vendor mappings follow the template to its new `TemplateId`, not just the step tree
+
+- [X] T268 [P] [US3] Add `Task CopyReferencesAsync(long sourceTemplateId, long newTemplateId, CancellationToken ct = default)` to compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrTemplateReferencesRepository.cs
+- [X] T269 [US3] Implement `CopyReferencesAsync` in compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrTemplateReferencesRepository.cs — single set-based `INSERT INTO eutr_template_references (TemplateId, VendorCode, FromDate, ToDate, CreatedBy, CreatedDate, UpdatedBy, UpdatedDate) SELECT @newTemplateId, VendorCode, FromDate, ToDate, CreatedBy, CreatedDate, UpdatedBy, UpdatedDate FROM eutr_template_references WHERE TemplateId = @sourceTemplateId` — preserves the ORIGINAL audit fields (this is a straight copy, not a new user action per row); no overlap re-validation (destination starts empty, source rows are already mutually non-overlapping) (depends on T268)
+- [X] T270 [US3] Modify compliance-sys-api/src/ComplianceSys.Application/Services/EutrTemplatesService.cs — add an `IEutrTemplateReferencesRepository` constructor dependency; in `UpdateAsync`'s ≥24h branch, call `await _templateReferencesRepository.CopyReferencesAsync(id, newId, ct);` immediately after `BulkInsertDetailsAsync(newId, details, ct)`, inside the existing transaction. The <24h branch is unchanged (`TemplateId` doesn't change in that branch) (depends on T269)
+
+**Checkpoint**: Editing a template ≥24h old that has existing vendor mappings creates a new version whose `TemplateId` shows the same mappings on `ApplyCustomerPage`; the old (now-hidden) `TemplateId`'s mapping rows remain in the DB, untouched. **Verified**: `dotnet build` on `ComplianceSys.Application.csproj` and `ComplianceSys.Infrastructure.csproj` both show 0 `error CS` (the `ComplianceSys.Api.csproj` build hits the same pre-existing DLL file-lock from a running dev API process documented in Update 13/14 — 0 `error CS` there too, only `MSB3027`/`MSB3021` copy-lock errors). The exact `CopyReferencesAsync` SQL was smoke-tested directly against the live dev DB (`compliance_sys_db_260601`) with a throwaway source/destination template pair: 2 mapping rows were copied with identical VendorCode/FromDate/ToDate/CreatedBy/CreatedDate, the source rows remained untouched (still 2 rows after the copy), and all test data was cleaned up afterward (DB left unchanged) — see quickstart.md Scenario 3b step 9's recorded outcome.
+
+---
+
+## Phase 61: Backend — Clone Template Service + Endpoint (US7, FR-050 to FR-054)
+
+**Purpose**: Add the Clone service method and REST endpoint that duplicate a template's header, step tree, and vendor mappings into a brand-new template
+
+- [X] T271 [P] [US7] Create compliance-sys-api/src/ComplianceSys.Application/Dtos/Request/CloneEutrTemplatesRequestDto.cs — `Name` (string), `AlertFor` (long?)
+- [X] T272 [P] [US7] Create compliance-sys-api/src/ComplianceSys.Application/Validators/CloneEutrTemplatesRequestDtoValidator.cs — `Name` NotEmpty; `AlertFor` `Must(v => v.HasValue && v.Value > 0)` (same two rules `EutrTemplatesRequestDtoValidator` already enforces) (depends on T271)
+- [X] T273 [US7] Extract a shared private helper `GenerateNextCodeAsync` in compliance-sys-api/src/ComplianceSys.Application/Services/EutrTemplatesService.cs from `AddAsync`'s existing `GetMaxCodeNumberAsync` + zero-pad `"Templates-{n:000}"` logic, and call it from `AddAsync` (replacing the inline logic there)
+- [X] T274 [US7] Implement `CloneAsync(long sourceId, CloneEutrTemplatesRequestDto dto, string userEmail, CancellationToken ct)` in compliance-sys-api/src/ComplianceSys.Application/Services/EutrTemplatesService.cs — (1) `GetByIdWithDetailsAsync(sourceId, ct)`, throw `KeyNotFoundException` if null; (2) generate the new Code via T273's `GenerateNextCodeAsync`; (3) insert the new header row (`Name`/`AlertFor` from `dto`, `IsDefault = 0` always, `VersionId = 1`, `IsDeleted = 0`, `IsHide = 0`, `CreatedBy`/`CreatedDate` = current user/now); (4) re-index the source's DB-Id-based detail tree into the same 1-based sequential-`ParentId` convention `flattenForSave()` already produces (source rows ordered by `Id` ascending), then pass the result into the EXISTING `BuildDetailEntitiesAsync` + `BulkInsertDetailsAsync(newId, details, ct)` pipeline unchanged; (5) call `_templateReferencesRepository.CopyReferencesAsync(sourceId, newId, ct)` (T269); (6) wrap steps 2-5 in one transaction (same `IUnitOfWork.BeginTransactionAsync`/`CommitAsync` pattern as `AddAsync`/`UpdateAsync`) (depends on T269, T272, T273)
+- [X] T275 [US7] Add `[Authorize(Policy = "EutrTemplates.Create")] [HttpPost("{id:long}/clone")]` action to compliance-sys-api/src/ComplianceSys.Api/Controllers/EutrTemplatesController.cs — accepts `CloneEutrTemplatesRequestDto`, calls `CloneAsync`, same try/catch shape as the existing Create action (`KeyNotFoundException` → 404, `ValidationException` → 400), returns `ApiResponse` with `{ id, code, versionId }` and message `"Template cloned successfully."` (depends on T274)
+- [X] T276 [US7] Register `IValidator<CloneEutrTemplatesRequestDto>`/`CloneEutrTemplatesRequestDtoValidator` in compliance-sys-api/src/ComplianceSys.Application/DependencyInjection.cs, alongside the existing `EutrTemplatesRequestDtoValidator` registration (depends on T272)
+
+**Checkpoint**: `POST api/eutr-templates/{id}/clone` creates a new template with a new Code, `VersionId=1`, `IsDefault=0`, an exact copy of the source's step tree (correct `ParentId` structure), and an exact copy of the source's vendor mappings. **Verified**: `dotnet build` 0 `error CS` on `ComplianceSys.Application.csproj`/`ComplianceSys.Infrastructure.csproj`/`ComplianceSys.Api.csproj` (Api build hits only the pre-existing DLL file-lock copy errors, same as every prior update in this non-interactive session). `CloneAsync`'s tree re-indexing was verified by code trace against `InsertDetailsInternalAsync`'s existing client-index remap logic: source details are ordered by real DB `Id` ascending (parent always created before child, so parent Id < child Id), each row's sequential position is recorded in `oldIdToSequentialIndex` BEFORE the next row is processed, and a row's `ParentId` only ever looks up an EARLIER row's already-recorded position — exactly the invariant `InsertDetailsInternalAsync` requires. `CopyReferencesAsync` reuse (same method as Phase 60) was directly smoke-tested (see Phase 60's checkpoint) — see quickstart.md Scenario 20's recorded outcome.
+
+---
+
+## Phase 62: Frontend — Clone API, Repository, Use Case (US7)
+
+**Purpose**: Add the frontend infrastructure/application layers for calling the new Clone endpoint
+
+- [X] T277 [P] [US7] Add `clone(id, payload)` method to compliance-client/src/infrastructure/api/eutrTemplatesApi.js (POST `eutr-templates/${id}/clone`), mirroring the existing `create`/`update` method shapes
+- [X] T278 [US7] Add `clone(id, payload)` passthrough method to compliance-client/src/infrastructure/repositories/RestEutrTemplatesRepository.js, delegating to the T277 API method (mirrors `create`/`update`) (depends on T277)
+- [X] T279 [P] [US7] Create compliance-client/src/application/usecases/eutr-templates/CloneEutrTemplatesUseCase.js — `execute(sourceId, { name, alertFor })` calls `repository.clone(sourceId, { name, alertFor })` (mirrors `CreateEutrTemplatesUseCase.js`'s shape) (depends on T278)
+
+**Checkpoint**: `CloneEutrTemplatesUseCase` is ready to call from `TemplateListPage.jsx`. **Verified**: `eslint` clean on all 3 new/changed files (`eutrTemplatesApi.js`, `RestEutrTemplatesRepository.js`, `CloneEutrTemplatesUseCase.js`); the API/repository method shapes mirror `create`/`update`, already proven working. `npm run build` succeeds (see Phase 63's checkpoint for the full build result).
+
+---
+
+## Phase 63: Frontend — CloneTemplateDialog + TemplateListPage Wiring (US7)
+
+**Purpose**: Add the Clone popup UI and wire the previously-disabled Clone icon to open it
+
+- [X] T280 [US7] Create compliance-client/src/presentation/pages/eutr-templates/components/CloneTemplateDialog.jsx — MUI `Dialog` showing the source template's Code/Name (read-only), a required **New template name** `TextField`, a required **Alert for** `Autocomplete` (reuses `CreateTemplateDialog.jsx`'s `GetAllGroupEmailUseCase`-backed, `groupType===2 && isAddition===false`-filtered combobox pattern), and Cancel/Clone buttons; clicking Clone with valid input opens the existing `ConfirmDialog` component with a warning message describing the copy about to happen, and only on confirming that calls `CloneEutrTemplatesUseCase.execute(sourceId, { name, alertFor })`
+- [X] T281 [US7] Wire the Clone `IconButton` in compliance-client/src/presentation/pages/eutr-templates/TemplateListPage.jsx — remove `disabled`, `onClick={() => setCloneDialogTemplate(row)}` opens `CloneTemplateDialog` (T280) for that row; on successful Clone, close the dialog and re-run the existing list-refresh call (same `fetchData()` `CreateTemplateDialog` already triggers) so the new template appears (depends on T279, T280)
+
+**Checkpoint**: Clicking Clone on a template row opens the popup; entering a Name + Alert for and confirming creates a new template and refreshes the list to show it. **Verified**: `eslint` clean on `CloneTemplateDialog.jsx`/`TemplateListPage.jsx`; full `npm run build` succeeds (produces an updated `TemplateListPage.[hash].js` chunk, 11.29 kB, and no build errors). Live click-through navigation/dialog interaction not run in this session (no interactive browser available, same limitation as every prior update in this non-interactive environment) — see Phase 64/T283 for the fallback verification performed instead.
+
+---
+
+## Phase 64: Validation — Update 15 (Version-up Reference Copy + Clone Template)
+
+**Purpose**: End-to-end validation of both Update 15 changes
+
+- [X] T282 [P] Run quickstart.md Scenario 3b (step 9) — apply a vendor mapping to a template, backdate its `CreatedDate` >24h, Edit and Save, verify `eutr_template_references` rows appear under the new `TemplateId` (same VendorCode/FromDate/ToDate/CreatedBy/CreatedDate) and the old `TemplateId`'s mapping rows remain unchanged. **Verified via a direct SQL smoke test against the live dev DB** (`compliance_sys_db_260601`), not through the full HTTP+UI stack (no interactive browser session available, same limitation as Update 13/14): a throwaway source template with 2 vendor mappings and a throwaway destination template were created; running the exact `CopyReferencesAsync` SQL copied both mappings to the destination with identical VendorCode/FromDate/ToDate/CreatedBy/CreatedDate; the source template's mappings were confirmed still present (2 rows) and unmodified after the copy; all test data was deleted afterward (dev DB left unchanged). This exercises the real SQL statement `UpdateAsync`'s ≥24h branch now calls — the only new logic in this path.
+- [X] T283 [P] Run quickstart.md Scenario 20 (Clone Template) end-to-end — blank Name/unselected Alert for block confirmation; canceling the warning dialog creates nothing; a confirmed Clone copies the full step tree (correct `ParentId` structure) and full vendor-mapping set, with `IsDefault=0` regardless of the source's flag; editing the clone doesn't affect the source and vice versa; repeated clones from the same source are independent; cloning a 0-step/0-mapping template succeeds cleanly. **Verified by code review + the T282 SQL smoke test, not through the full HTTP+UI stack** (no interactive browser session available in this non-interactive environment): `CloneTemplateDialog.jsx`'s `handleValidateAndConfirm` blocks opening the `ConfirmDialog` when Name is blank or Alert for is unselected (setting per-field `errors` instead); the `ConfirmDialog`'s Cancel path (`onClose`) never calls `handleClone`, so no use case call happens; `CloneAsync`'s SQL-level copy behavior (mappings) is the same code path verified in T282; `CloneAsync`'s detail-tree re-indexing was verified by tracing the exact index/parent-lookup invariant `InsertDetailsInternalAsync` requires (see Phase 61's checkpoint); `IsDefault = 0` is a hardcoded literal in `CloneAsync`'s new-entity construction, not derived from the source at all, so it cannot inherit the source's flag; each `CloneAsync` call independently generates a new Code via `GenerateNextCodeAsync` (re-queries `MAX` each time) and commits its own transaction, so repeated/independent clones and clones of an empty (0-step/0-mapping) source all follow the same unconditional code path with no special-casing that could fail on empty input (`sourceDetails.Count > 0` guards the detail-copy block; `CopyReferencesAsync`'s `INSERT ... SELECT` naturally inserts 0 rows when the source has none).
+- [X] T284 [P] Verify the new `POST {id}/clone` endpoint reuses the existing `EutrTemplates.Create` authorization policy (no new policy family introduced). **Verified by code review**: `[Authorize(Policy = "EutrTemplates.Create")]` on the new `Clone` action in `EutrTemplatesController.cs` — identical policy string already used by this controller's existing `Create` action; no new policy string introduced anywhere in this update.
+- [X] T285 [P] Verify all new UI text (Clone dialog labels, validation errors, the Clone confirmation warning message) is in English per FR-017. **Verified by code review**: `CloneTemplateDialog.jsx`'s title ("Clone Template"), field labels ("New template name", "Alert for"), helper/error text ("New template name is required", "Alert for is required"), buttons ("Cancel", "Clone"), and the `ConfirmDialog` warning ("Confirm clone" / "This will copy the entire step tree and vendor mappings from ... Continue?") are all in English; `TemplateListPage.jsx`'s Clone tooltip text ("Clone", previously "Clone (coming soon)") and the new success snackbar ("Template cloned successfully") are in English; backend error messages ("Name is required", "Alert for is required", `KeyNotFoundException`'s "Template with id {id} not found.") are in English.
+- [X] T286 Record Scenario 20's (and Scenario 3b step 9's) verification outcome in quickstart.md, following the same recording convention as Scenario 18/19's outcome notes (depends on T282, T283). **Done** — see quickstart.md's Scenario 3b (step 9 note) and Scenario 20 "Outcome" sections, recorded with the same structure/level of detail as Scenario 18/19's outcome notes.
+
+**Checkpoint**: All Update 15 quickstart checks pass at the level achievable in this non-interactive session (direct SQL smoke test against the live dev DB, full clean builds on both stacks with 0 `error CS`/0 eslint errors, and code review tracing the exact invariants the reused insert pipeline requires — standing in for HTTP+UI-level checks where a live authenticated browser session wasn't available). **Recommended before sign-off**: restart the dev API process (currently running and file-locking the Api build output throughout this implementation session, same condition noted in Update 13/14) and the frontend dev server, then manually click through quickstart.md Scenario 3b (step 9) and Scenario 20 in a real browser to close the gap between "verified by code/DB-level smoke test" and "verified end-to-end through the UI."
+
+---
+
+## Update 15 Dependencies
+
+### Phase Dependencies
+
+- **Phase 60 (Copy references on version-up)**: No dependency on Phases 56-59 — builds on the
+  already-shipped `EutrTemplateReferencesRepository`/`EutrTemplatesService` (Update 13). T268
+  (interface method) is independent. T269 (implementation) depends on T268. T270 (wire into
+  `UpdateAsync`) depends on T269.
+- **Phase 61 (Clone service + endpoint)**: Depends on Phase 60's T269 (`CopyReferencesAsync` must
+  exist before `CloneAsync` can call it). T271 (DTO) and T272 (validator, depends on T271) are
+  independent of T273 (extracted Code-generation helper, standalone refactor of existing `AddAsync`
+  logic). T274 (`CloneAsync`) depends on T269, T272, T273. T275 (controller action) depends on T274.
+  T276 (DI registration) depends on T272, independent of T273-T275 — `[P]` candidate but listed
+  sequentially here since it's most naturally done right after the validator exists.
+- **Phase 62 (Frontend API/repository/use case)**: Depends on Phase 61 being callable (the use case
+  needs a real endpoint, though files can be authored in parallel). T277 (API method) independent.
+  T278 (repository passthrough) depends on T277. T279 (use case) depends on T278.
+- **Phase 63 (Dialog + wiring)**: Depends on Phase 62 (T281 calls the Phase 62 use case). T280
+  (dialog component) is independent of T277-T279 — `[P]` candidate, but grouped here since it's only
+  meaningfully testable once T281 renders it.
+- **Phase 64 (Validation)**: Depends on Phases 60-63 all being complete.
+
+### Execution Order
+
+```
+T268 ── T269 ── T270 ── (Phase 60 done)
+           │
+T271, T273 [P] ── T272 ── T274 ── T275 ── T276 ── (Phase 61 done)
+                                    │
+T277 ── T278 ── T279 ── (Phase 62 done)
+                    │
+        T280 [P] ──┴── T281 ── (Phase 63 done) ── T282, T283, T284, T285 [P] ── T286
+```
+
+### Parallel Opportunities
+
+```
+# Phase 60 — strictly sequential (each step depends on the previous):
+T268 → T269 → T270
+
+# Phase 61 — DTO/helper independent, then validator/service/controller/DI sequential:
+T271, T273 [P]
+T272 (depends on T271) → T274 (depends on T269, T272, T273) → T275 → T276
+
+# Phase 62 — API layer then repository then use case:
+T277 ── T278 ── T279
+
+# Phase 63 — dialog component can be authored while the use case is still being wired:
+T280 [P]
+T281 (depends on Phase 62's T279 + T280)
+
+# Phase 64 — all verification tasks [P] except the final recording step:
+T282, T283, T284, T285 in parallel (once Phases 60-63 are done)
+T286 sequentially (records the findings from T282/T283)
+```

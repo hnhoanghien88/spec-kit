@@ -645,6 +645,86 @@ directly. The new Import/Export actions below follow that same already-resolved 
   the Templates-list Export precedent). New local state: `importing` (disables both buttons while an
   Import request is in flight, preventing double-submit) and `importResult`/`importDialogOpen`.
 
+### Update 2026-07-15 (Update 15) — Copy `eutr_template_references` on Version-up + Clone Template
+
+**Backend: one new cross-repository call (bug fix) + one new service method/endpoint reusing
+existing insert pipelines. Frontend: one new dialog + use case, wired to the existing Clone icon
+that Update 10 already added (disabled) to `TemplateListPage.jsx`.** No new DB table/column, no new
+route, no new authorization policy family.
+
+#### Bug fix: copy `eutr_template_references` on version-up (FR-049)
+
+- **`ComplianceSys.Application/Interfaces/Repositories/IEutrTemplateReferencesRepository.cs`**
+  MODIFY — add `Task CopyReferencesAsync(long sourceTemplateId, long newTemplateId, CancellationToken ct = default)`.
+- **`ComplianceSys.Infrastructure/Repositories/EutrTemplateReferencesRepository.cs`** MODIFY —
+  implement `CopyReferencesAsync` as a single set-based `INSERT INTO eutr_template_references
+  (TemplateId, VendorCode, FromDate, ToDate, CreatedBy, CreatedDate, UpdatedBy, UpdatedDate) SELECT
+  @newTemplateId, VendorCode, FromDate, ToDate, CreatedBy, CreatedDate, UpdatedBy, UpdatedDate FROM
+  eutr_template_references WHERE TemplateId = @sourceTemplateId` — preserves original audit fields
+  (this is a straight copy, not a new user action on each row). See research.md Section 30.
+- **`ComplianceSys.Application/Services/EutrTemplatesService.cs`** MODIFY — constructor gains a new
+  `IEutrTemplateReferencesRepository` dependency; `UpdateAsync`'s ≥24h branch calls
+  `await _templateReferencesRepository.CopyReferencesAsync(id, newId, ct);` immediately after
+  `BulkInsertDetailsAsync(newId, details, ct)`, inside the same transaction. The <24h branch is
+  unchanged (TemplateId doesn't change, so no copy is needed).
+- **`ComplianceSys.Application/DependencyInjection.cs`** — no change needed;
+  `IEutrTemplateReferencesRepository` is already registered (Update 13); `EutrTemplatesService`'s
+  constructor injection is resolved automatically by the existing DI container wiring.
+
+#### New: Clone Template (FR-050 to FR-054)
+
+- **`ComplianceSys.Application/Dtos/Request/CloneEutrTemplatesRequestDto.cs`** NEW — `Name` (string),
+  `AlertFor` (long?).
+- **`ComplianceSys.Application/Validators/CloneEutrTemplatesRequestDtoValidator.cs`** NEW — `Name`
+  NotEmpty; `AlertFor` must be a positive value (same two rules `EutrTemplatesRequestDtoValidator`
+  already enforces, extracted as a small standalone validator since the Clone DTO has no other
+  fields to validate).
+- **`ComplianceSys.Application/Services/EutrTemplatesService.cs`** MODIFY — add
+  `CloneAsync(long sourceId, CloneEutrTemplatesRequestDto dto, string userEmail, CancellationToken ct)`:
+  1. `GetByIdWithDetailsAsync(sourceId, ct)` → `KeyNotFoundException` if not found (same 404
+     convention as every other `templateId`-scoped lookup in this feature).
+  2. Generate the new Code via a small shared private helper `GenerateNextCodeAsync` (extracted from
+     `AddAsync`'s existing `GetMaxCodeNumberAsync` + zero-pad logic, now called from both places — no
+     format-string duplication).
+  3. Insert the new header row: `Name`/`AlertFor` from `dto`, `IsDefault = 0` (always — FR-053),
+     `VersionId = 1`, `IsDeleted = 0`, `IsHide = 0`, `CreatedBy`/`CreatedDate` = current user/now.
+  4. Re-index the source's DB-Id-based detail tree into the same 1-based sequential-`ParentId`
+     convention the frontend's `flattenForSave()` already produces (source rows ordered by `Id`
+     ascending — always parent-before-child), then pass the result straight into the EXISTING
+     `BuildDetailEntitiesAsync` + `BulkInsertDetailsAsync(newId, details, ct)` pipeline — no new
+     tree-insert SQL (see research.md Section 31 for the full rationale).
+  5. `await _templateReferencesRepository.CopyReferencesAsync(sourceId, newId, ct);` (same method as
+     the version-up fix above — second call site, no duplicated copy logic).
+  6. Single transaction wraps steps 3-5.
+- **`ComplianceSys.Api/Controllers/EutrTemplatesController.cs`** MODIFY — add
+  `[Authorize(Policy = "EutrTemplates.Create")] [HttpPost("{id:long}/clone")]` action, same
+  try/catch shape as the existing Create action (`KeyNotFoundException` → 404,
+  `ValidationException` → 400), returns `{ id, code, versionId }` (same response shape as Create).
+
+#### Frontend
+
+- **`presentation/pages/eutr-templates/components/CloneTemplateDialog.jsx`** NEW — MUI `Dialog`
+  showing the source template's Code/Name (read-only), a required **New template name** `TextField`,
+  a required **Alert for** `Autocomplete` (reuses the exact same `GetAllGroupEmailUseCase`-backed,
+  `groupType===2 && isAddition===false`-filtered combobox pattern already implemented in
+  `CreateTemplateDialog.jsx` — Principle II), and Cancel/Clone buttons. Clicking Clone (with valid
+  input) opens the existing `ConfirmDialog` component with a warning message before actually calling
+  the use case — reusing `ConfirmDialog` exactly as Delete/Bulk-Delete already do, not a new
+  confirmation component.
+- **`application/usecases/eutr-templates/CloneEutrTemplatesUseCase.js`** NEW — mirrors
+  `CreateEutrTemplatesUseCase.js`'s shape: `execute(sourceId, { name, alertFor })` → POST
+  `eutr-templates/{sourceId}/clone`.
+- **`infrastructure/api/eutrTemplatesApi.js`** MODIFY — add `clone(id, payload)` (POST
+  `eutr-templates/${id}/clone`), mirroring the existing `create`/`update` method shapes.
+- **`infrastructure/repositories/RestEutrTemplatesRepository.js`** MODIFY — add `clone(id, payload)`
+  passthrough, mirroring `create`/`update`.
+- **`presentation/pages/eutr-templates/TemplateListPage.jsx`** MODIFY — the Clone `IconButton`
+  (currently `disabled`, per Update 10/FR-026) becomes active: `onClick={() =>
+  setCloneDialogTemplate(row)}` opening `CloneTemplateDialog` for that row; on successful Clone, the
+  dialog closes and the existing `fetchData()`/list-refresh call (same one `CreateTemplateDialog`
+  already triggers) re-runs so the new template appears. Apply-to-Customer icon is unaffected by
+  this update.
+
 ## Technical Context
 
 **Language/Version**: .NET 8 (backend), JavaScript/React 18 + Vite 7 (frontend)
@@ -796,6 +876,22 @@ cases) are pattern-for-pattern copies of the already-working Templates-level Imp
 (Principle II). No new dependencies — reuses ClosedXML (backend) and the existing blob-download/
 `FormData` upload conventions (frontend).
 
+**Post-design re-check (2026-07-15 update 15)**: All principles still PASS.
+`EutrTemplatesService.CloneAsync` stays in the Application layer and reuses the existing
+`BuildDetailEntitiesAsync`/`BulkInsertDetailsAsync` pipeline instead of writing a second, parallel
+tree-insert implementation (Principle I — layering; Principle II — reference-pattern reuse, the same
+insert/ParentId-remap logic `AddAsync`/`UpdateAsync` already rely on). The new
+`CopyReferencesAsync` repository method is a single set-based SQL statement added to the existing
+`EutrTemplateReferencesRepository` (Update 13) — no new table/repository stack. `EutrTemplatesService`
+gaining a constructor dependency on `IEutrTemplateReferencesRepository` is a same-layer,
+Application-to-Infrastructure-interface dependency, matching how this service already depends on its
+own `IEutrTemplatesRepository` (no new layer crossed). The new Clone endpoint reuses the
+`EutrTemplates.Create` policy (Principle V is unaffected — no new route/menu entry; Clone is a row
+action on the already-routed `TemplateListPage.jsx`, same pattern as Apply-to-Customer's icon in
+Update 13). `CloneTemplateDialog.jsx` reuses `CreateTemplateDialog.jsx`'s Alert-for combobox pattern
+and the existing `ConfirmDialog` component for the warning step (Principle II — no new dialog
+paradigm introduced). No new dependencies.
+
 ## Project Structure
 
 ### Documentation (this feature)
@@ -832,7 +928,8 @@ compliance-sys-api/src/
 │   │   ├── Request/
 │   │   │   ├── EutrTemplatesRequestDto.cs        # NEW; MODIFY (Update 7) — AlertFor: string → long?; (Update 13) MODIFY — remove VendorCode
 │   │   │   ├── EutrTemplateDetailsRequestDto.cs # MODIFY — add StepName (used when StepId is null)
-│   │   │   └── EutrTemplateReferencesRequestDto.cs # NEW (Update 13) — TemplateId, VendorCode, FromDate, ToDate
+│   │   │   ├── EutrTemplateReferencesRequestDto.cs # NEW (Update 13) — TemplateId, VendorCode, FromDate, ToDate
+│   │   │   └── CloneEutrTemplatesRequestDto.cs # NEW (Update 15) — Name, AlertFor (used by POST {id}/clone)
 │   │   └── Response/
 │   │       ├── EutrTemplatesResponseDto.cs       # NEW; MODIFY (Update 7) — add AlertForName (string?); (Update 11) add StepsCount (int); (Update 13) MODIFY — remove VendorName
 │   │       ├── EutrTemplateDetailsResponseDto.cs # NEW
@@ -841,7 +938,8 @@ compliance-sys-api/src/
 │   │       └── ImportEutrTemplateReferencesResultDto.cs # NEW (Update 14) — TotalRows/SuccessCount/FailCount/Errors (Row, TemplateCode, VendorCode, Message)
 │   ├── Validators/
 │   │   ├── EutrTemplatesRequestDtoValidator.cs  # MODIFY — each detail requires StepId OR non-blank StepName; (Update 7) AlertFor rule: NotEmpty(string) → Must(v => v.HasValue && v.Value > 0); (Update 13) verified — no VendorCode rule existed, no change needed
-│   │   └── EutrTemplateReferencesRequestDtoValidator.cs # NEW (Update 13) — VendorCode NotEmpty, FromDate required, ToDate >= FromDate when present
+│   │   ├── EutrTemplateReferencesRequestDtoValidator.cs # NEW (Update 13) — VendorCode NotEmpty, FromDate required, ToDate >= FromDate when present
+│   │   └── CloneEutrTemplatesRequestDtoValidator.cs # NEW (Update 15) — Name NotEmpty, AlertFor positive value (same two rules as EutrTemplatesRequestDtoValidator)
 │   ├── Interfaces/
 │   │   ├── Services/
 │   │   │   ├── IEutrTemplatesService.cs          # NEW
@@ -852,9 +950,9 @@ compliance-sys-api/src/
 │   │   │   └── IEutrTemplateReferencesExportService.cs # NEW (Update 14) — ExportToExcelAsync(templateId, ct)
 │   │   └── Repositories/
 │   │       ├── IEutrTemplatesRepository.cs       # MODIFY — add ReplaceDetailsAsync (in-place update) + ResolveOrCreateStepsByNameAsync (free-solo step auto-create); (Update 7) add ResolveAlertGroupIdByNameAsync (Import lookup, exact match, no auto-create); (Update 13) MODIFY — ClearIsDefaultForVendorAsync(vendorCode, excludeId) → ClearGlobalDefaultAsync(excludeId)
-│   │       └── IEutrTemplateReferencesRepository.cs # NEW (Update 13) — GetByTemplateIdAsync, HasOverlapAsync (same-template-same-vendor)
+│   │       └── IEutrTemplateReferencesRepository.cs # NEW (Update 13) — GetByTemplateIdAsync, HasOverlapAsync (same-template-same-vendor); (Update 15) MODIFY — add CopyReferencesAsync(sourceTemplateId, newTemplateId, ct)
 │   ├── Services/
-│   │   ├── EutrTemplatesService.cs               # MODIFY — conditional versioning (24h threshold) in UpdateAsync; resolve/auto-create free-solo step names before saving details (AddAsync + both UpdateAsync branches); (Update 13) MODIFY — remove D365 vendor-name resolution block from GetPagedAsync + IComplDynamicsService ctor dependency; AddAsync/UpdateAsync (3 call sites) switch ClearIsDefaultForVendorAsync → ClearGlobalDefaultAsync
+│   │   ├── EutrTemplatesService.cs               # MODIFY — conditional versioning (24h threshold) in UpdateAsync; resolve/auto-create free-solo step names before saving details (AddAsync + both UpdateAsync branches); (Update 13) MODIFY — remove D365 vendor-name resolution block from GetPagedAsync + IComplDynamicsService ctor dependency; AddAsync/UpdateAsync (3 call sites) switch ClearIsDefaultForVendorAsync → ClearGlobalDefaultAsync; (Update 15) MODIFY — constructor gains IEutrTemplateReferencesRepository dependency; UpdateAsync's ≥24h branch calls CopyReferencesAsync(id, newId, ct) after BulkInsertDetailsAsync (FR-049); add CloneAsync(sourceId, dto, userEmail, ct) reusing BuildDetailEntitiesAsync/BulkInsertDetailsAsync + CopyReferencesAsync (FR-050 to FR-054)
 │   │   ├── EutrTemplatesImportService.cs         # NEW — Excel import; MODIFY (Update 7) — resolve AlertFor Excel cell (group Name) to Id via ResolveAlertGroupIdByNameAsync, new "Alert for group not found" error case; (Update 13) MODIFY — drop VendorCode cell (was col C), IsDefault shifts D→C
 │   │   ├── EutrTemplatesExportService.cs         # NEW — Excel export; MODIFY (Update 7) — write AlertForName instead of raw AlertFor Id; (Update 13) MODIFY — drop "Vendor code" header/cell (was col 3), AlertForName/IsDefault/VersionId shift 4/5/6→3/4/5
 │   │   ├── ComplDynamicsService.cs              # EXISTS — VendorsV3 refType already mapped
@@ -867,7 +965,7 @@ compliance-sys-api/src/
 ├── ComplianceSys.Infrastructure/
 │   ├── Repositories/
 │   │   ├── EutrTemplatesRepository.cs            # MODIFY — add ReplaceDetailsAsync (delete+insert details for in-place update) + ResolveOrCreateStepsByNameAsync (match/insert into eutr_steps); (Update 7) add `LEFT JOIN compl_group_email g ON g.Id = t.AlertFor` + `g.Name AS AlertForName` to GetPagedWithVendorNameAsync/GetByIdWithDetailsAsync; FilterMap["AlertFor"] → "g.Name"; add ResolveAlertGroupIdByNameAsync; (Update 10/11) GetPagedWithVendorNameAsync gains `(SELECT COUNT(*) FROM eutr_template_details d WHERE d.TemplateId = t.Id) AS StepsCount` + a `Keyword` column special-case → `(Code LIKE @p OR Name LIKE @p)`; (Update 13) MODIFY — drop VendorCode from SortMap/FilterMap + both header SELECT lists; rename method → GetPagedAsync; ClearIsDefaultForVendorAsync → ClearGlobalDefaultAsync (drop VendorCode predicate)
-│   │   └── EutrTemplateReferencesRepository.cs   # NEW (Update 13) — extends DapperRepository<EutrTemplateReferences, long>; GetByTemplateIdAsync, HasOverlapAsync (date-range overlap query, same TemplateId + VendorCode only)
+│   │   └── EutrTemplateReferencesRepository.cs   # NEW (Update 13) — extends DapperRepository<EutrTemplateReferences, long>; GetByTemplateIdAsync, HasOverlapAsync (date-range overlap query, same TemplateId + VendorCode only); (Update 15) MODIFY — add CopyReferencesAsync (single INSERT ... SELECT, preserves original audit fields)
 │   ├── Sqls/
 │   │   ├── Tables/
 │   │   │   └── eutr_db.sql                       # (Update 13) MODIFY — add CREATE TABLE eutr_template_references (fresh-install parity; only auto-executed by DatabaseInitializer.InitTables() on a brand-new DB). Note: this file is already drifted from the live schema (missing Code/AlertFor/IsDeleted/IsHide on eutr_templates) — pre-existing gap.
@@ -877,7 +975,7 @@ compliance-sys-api/src/
 │   └── DependencyInjection.cs                   # MODIFY — register repository; (Update 13) MODIFY — register IEutrTemplateReferencesRepository
 └── ComplianceSys.Api/
     └── Controllers/
-        ├── EutrTemplatesController.cs           # NEW — REST endpoints
+        ├── EutrTemplatesController.cs           # NEW — REST endpoints; (Update 15) MODIFY — add POST {id:long}/clone (EutrTemplates.Create policy, same try/catch shape as Create)
         ├── ComplGroupEmailController.cs          # UNCHANGED (Update 7) — GET /api/group-email reused as-is by the frontend combobox
         ├── DynController.cs                     # UNCHANGED (Update 5) — GET vendors endpoint from Update 2/3 kept but no longer called by this feature
         └── EutrTemplateReferencesController.cs   # NEW (Update 13) — GET by-template/{templateId}, POST, PUT {id}, DELETE {id}; policies confirmed as shipped = reuse EutrTemplates.Read/.Update/.Delete (no new policy family); (Update 14) MODIFY — add POST import/{templateId:long} (EutrTemplates.Update) and GET export/{templateId:long} (EutrTemplates.Read), same try/catch shape as EutrTemplatesController.Import/.Export
@@ -893,12 +991,12 @@ compliance-client/src/
 │       └── IEutrTemplateReferencesRepository.js # NEW (Update 13)
 ├── infrastructure/
 │   ├── api/
-│   │   ├── eutrTemplatesApi.js                  # NEW
+│   │   ├── eutrTemplatesApi.js                  # NEW; (Update 15) MODIFY — add clone(id, payload) (POST eutr-templates/{id}/clone)
 │   │   ├── groupEmailApi.js                     # EXISTS (Update 7) — GET /group-email reused as-is via GetAllGroupEmailUseCase, no change needed
 │   │   ├── dynamicsApi.js                       # UNCHANGED (Update 5) — getVendors kept but unused by this feature; reference API client already exists
 │   │   └── eutrTemplateReferencesApi.js         # NEW (Update 13) — get-by-template, create, update, delete; (Update 14) MODIFY — add importByTemplate(templateId, file)/exportByTemplate(templateId)
 │   └── repositories/
-│       ├── RestEutrTemplatesRepository.js       # NEW
+│       ├── RestEutrTemplatesRepository.js       # NEW; (Update 15) MODIFY — add clone(id, payload) passthrough
 │       ├── RestDynamicsRepository.js            # UNCHANGED (Update 5) — getVendors kept but unused by this feature
 │       └── RestEutrTemplateReferencesRepository.js # NEW (Update 13) — getByTemplateId/create/update/delete, wraps EutrTemplateReferences; (Update 14) MODIFY — add importByTemplate/exportByTemplate passthroughs
 ├── application/
@@ -911,7 +1009,8 @@ compliance-client/src/
 │       │   ├── GetEutrTemplatesUseCase.js         # NEW
 │       │   ├── GetPagingEutrTemplatesUseCase.js  # NEW
 │       │   ├── ImportEutrTemplatesUseCase.js     # NEW
-│       │   └── ExportEutrTemplatesUseCase.js     # NEW
+│       │   ├── ExportEutrTemplatesUseCase.js     # NEW
+│       │   └── CloneEutrTemplatesUseCase.js      # NEW (Update 15) — execute(sourceId, {name, alertFor}) → POST eutr-templates/{sourceId}/clone
 │       ├── eutr-template-references/             # NEW (Update 13) — one file per operation
 │       │   ├── GetByTemplateIdEutrTemplateReferencesUseCase.js
 │       │   ├── CreateEutrTemplateReferencesUseCase.js
@@ -924,7 +1023,7 @@ compliance-client/src/
 ├── presentation/
 │   └── pages/
 │       └── eutr-templates/
-│           ├── TemplateListPage.jsx              # RENAME (Update 9) — was index.jsx/EutrTemplatesPage; (Update 10/11) MODIFY — keep its own Table/search/chip layout, swap mock data (`mock/eutrTemplates.js`, `mock/eutrTemplateDetails.js`) for `useEutrTemplatesData`/`permissionList`/`DeleteEutrTemplatesUseCase`/`DeleteMultiEutrTemplatesUseCase`/`CreateTemplateDialog`/`ConfirmDialog`/`CustomSnackbar` (reused from TemplateListPageOld.jsx, itself unchanged); Code shown bold, Name as caption; Steps column reads real `stepsCount`; add per-row checkbox + bulk-delete toolbar button; add `TablePagination`; search box sends a debounced `{field:'keyword', operator:'contains', value}` filter item and resets to page 0; Clone/Apply-to-Customer icons kept but `disabled` (mock onClick/dialog removed); **(Update 13) MODIFY** — Apply-to-Customer icon becomes active: `onClick={() => navigate(\`/eutr/templates/apply/${tmpl.id}\`)}`, gated by the same permission check as Edit; Clone stays disabled
+│           ├── TemplateListPage.jsx              # RENAME (Update 9) — was index.jsx/EutrTemplatesPage; (Update 10/11) MODIFY — keep its own Table/search/chip layout, swap mock data (`mock/eutrTemplates.js`, `mock/eutrTemplateDetails.js`) for `useEutrTemplatesData`/`permissionList`/`DeleteEutrTemplatesUseCase`/`DeleteMultiEutrTemplatesUseCase`/`CreateTemplateDialog`/`ConfirmDialog`/`CustomSnackbar` (reused from TemplateListPageOld.jsx, itself unchanged); Code shown bold, Name as caption; Steps column reads real `stepsCount`; add per-row checkbox + bulk-delete toolbar button; add `TablePagination`; search box sends a debounced `{field:'keyword', operator:'contains', value}` filter item and resets to page 0; Clone/Apply-to-Customer icons kept but `disabled` (mock onClick/dialog removed); **(Update 13) MODIFY** — Apply-to-Customer icon becomes active: `onClick={() => navigate(\`/eutr/templates/apply/${tmpl.id}\`)}`, gated by the same permission check as Edit; Clone stays disabled; **(Update 15) MODIFY** — Clone icon becomes active: `onClick={() => setCloneDialogTemplate(row)}` opens `CloneTemplateDialog` for that row; on successful Clone, closes the dialog and re-runs the existing list-refresh (same `fetchData()` call `CreateTemplateDialog` already triggers)
 │           ├── TemplateBuilderPage.jsx           # (Update 10) MODIFY — keep its own tree-view + toolbar + side-panel layout, swap mock data (`mock/eutrTemplates.js`, `mock/eutrTemplateDetails.js`, `mock/eutrSteps.js`, `utils/treeUtils.js`) for `GetEutrTemplatesUseCase`/`UpdateEutrTemplatesUseCase`/`GetEutrStepsUseCase`/`GetAllGroupEmailUseCase`/`ReferenceObjectAutocomplete` (refType=13) and the existing `useStepTree` hook (replaces its own hand-rolled tree state); Add Root/Add Child step-picker becomes free-solo Autocomplete over the real steps list; Type/FSC fields and the 8-option mock TakeFrom list removed (not in the real schema); Move Up/Down buttons call `reorderSiblings`; side panel shows the header form (Code/Name/AlertFor/Vendor/Default/Save) when no step is selected, step detail (real RequirementType/TakeFrom) when one is; Save calls `UpdateEutrTemplatesUseCase` then navigates to `/eutr/templates`; Back reuses the `isDirty` + `ConfirmDialog` pattern from EutrTemplatesAddEdit.jsx; **(Update 12) MODIFY** — Add Root Group/Add Child Step `Dialog` content swaps `<StepFormRow>` (+ `addStepFormRef`/`addStepValid`, removed) for `<BulkAddStepsDialog onAdd={addSteps} existingChildStepIds={...} />`; **(Update 13) MODIFY** — remove `vendorCode`/`vendorName` state, the two setters in the load effect, `vendorCode` from the Save payload, and the entire Vendor `ReferenceObjectAutocomplete` block + its now-unused import from the side panel (FR-041)
 │           ├── ApplyCustomerPage.jsx             # NEW-scope, EXISTS as mock (Update 13) MODIFY — rewrite from `MOCK_CUSTOMERS`/`MOCK_TEMPLATE_CUSTOMERS` (`mock/eutrTemplates.js`) + `status !== 'Published'` gate to real data: Vendor combobox via `ReferenceObjectAutocomplete`(refType=13), load/save via the new `eutr-template-references` use cases keyed by the `:id` route param, drop the Published gate (no Status concept on real templates), keep the existing `hasOverlap()` client pre-check rescoped from `customerId` to `vendorCode` (server `HasOverlapAsync` is authoritative); **(Update 14) MODIFY** — add Import/Export `Button`s to the header `Stack` (FR-043): hidden `<input type="file" accept=".xlsx">` wired to `ImportEutrTemplateReferencesUseCase.execute(id, file)`, opens `ImportMappingResultDialog` with the result and calls `fetchMappings()` to refresh; Export button calls `ExportEutrTemplateReferencesUseCase.execute(id)` directly (no dialog); new `importing`/`importResult`/`importDialogOpen` state
 │           ├── EutrTemplatesAddEdit.jsx          # MODIFY (through Update 9) — 2-column layout (widened header/narrowed steps), vendor via ReferenceObjectAutocomplete (refType=13) (Update 5), Save button moved below Default checkbox, Back dirty-check confirm dialog; (Update 7) Alert for `Autocomplete` switches from `freeSolo`/hardcoded `ALERT_FOR_OPTIONS` to `GetAllGroupEmailUseCase`-backed, select-only, filtered to `groupType===2 && isAddition===false`, storing the selected group's `id`; (Update 9) becomes Edit-only; **(Update 10) UNCHANGED but no longer routed** — `/eutr/templates/edit/:id` now points at TemplateBuilderPage.jsx; left in place unreferenced (cleanup candidate for a future task, same precedent as the unused vendors endpoint from Update 5), not deleted by this feature
@@ -935,7 +1034,8 @@ compliance-client/src/
 │           │   ├── StepFormRow.jsx               # NEW — add step form; (Update 6) Step combobox becomes freeSolo (pick existing or type new name); (Update 8) delete local REQUIREMENT_TYPES/TAKE_FROM_OPTIONS duplicate, import from utils/helpers.js; (Update 10) same free-solo Autocomplete pattern reused inside TemplateBuilderPage.jsx's own Add Root/Add Child dialogs; **(Update 12) no longer used by TemplateBuilderPage.jsx** (replaced there by BulkAddStepsDialog.jsx) — still used by the unrouted EutrTemplatesAddEdit.jsx, left unchanged
 │           │   ├── BulkAddStepsDialog.jsx        # NEW (Update 12) — checkbox table of available EUTR steps (per-row Requirement Type/Take From once ticked) + a single free-solo "Add new step" entry row + "{N} available - {M} selected" footer; used only by TemplateBuilderPage.jsx's Add Root Group/Add Child Step dialogs
 │           │   ├── ImportResultDialog.jsx        # NEW — import result display; (Update 9) reference pattern reused by CreateTemplateDialog
-│           │   └── ImportMappingResultDialog.jsx # NEW (Update 14) — copies ImportResultDialog.jsx's structure, error table columns Row/TemplateCode/VendorCode/Reason; used only by ApplyCustomerPage.jsx's Import button
+│           │   ├── ImportMappingResultDialog.jsx # NEW (Update 14) — copies ImportResultDialog.jsx's structure, error table columns Row/TemplateCode/VendorCode/Reason; used only by ApplyCustomerPage.jsx's Import button
+│           │   └── CloneTemplateDialog.jsx       # NEW (Update 15) — read-only source Code/Name, required New template name field, required Alert for combobox (reuses CreateTemplateDialog's GetAllGroupEmailUseCase-backed pattern), Cancel/Clone buttons; Clone opens the existing ConfirmDialog warning before calling CloneEutrTemplatesUseCase
 │           ├── mock/
 │           │   ├── eutrTemplates.js              # (Update 10) UNCHANGED but orphaned — no longer imported by TemplateListPage.jsx/TemplateBuilderPage.jsx after real-data wiring; left in place
 │           │   ├── eutrTemplateDetails.js        # (Update 10) UNCHANGED but orphaned — same as above
@@ -958,7 +1058,7 @@ compliance-client/src/
             └── MainRoutes.jsx                    # MODIFY — add add/edit routes; (Update 9) remove the `/eutr/templates/add` route entry (Create is now a dialog on the list page, not a routed page); (Update 10) unchanged — `/eutr/templates/edit/:id` already pointed at TemplateBuilderPage.jsx; (Update 13) MODIFY — add lazy `ApplyCustomerPage` import + `{ path: '/eutr/templates/apply/:id', element: <ApplyCustomerPage /> }` route entry, same pattern/array as `/eutr/templates/edit/:id`; (Update 14) unchanged — Import/Export are buttons inside the existing ApplyCustomerPage route, no new route
 ```
 
-**Structure Decision**: Web application (backend + frontend). Backend follows existing EUTR feature pattern (`eutr-masters` as primary reference for CRUD + import/export). Frontend follows layered Clean Architecture with `eutr-steps` as structural reference. Edit uses a full page (not modal) following `compliance-master/:id` routing pattern; Create (Update 9) uses a lightweight in-page Dialog instead, per the design reference — narrower scope than the full Edit page. **(Update 10)**: the list and Edit pages are `TemplateListPage.jsx`/`TemplateBuilderPage.jsx` (their own Table+chip / tree-view+panel visual designs, already present as reference-design files), rewired to the real data/use-cases originally built for `TemplateListPageOld.jsx`/`EutrTemplatesAddEdit.jsx` — a data-layer swap, not a new UI build. **(Update 13)**: `eutr_template_references` gets its own full CRUD stack (all four backend layers + the full frontend layer set), modeled on the existing `EutrTemplates*` stack (Principle II) since there is no usable reference implementation for that table; `ApplyCustomerPage.jsx` is likewise a data-layer swap (mock Customer data → real Vendor/API data), not a new UI build, following the same precedent as Update 10's `TemplateListPage.jsx`/`TemplateBuilderPage.jsx` rewiring. **(Update 14)**: Import/Export for `eutr_template_references` follows the exact same backend Excel-service + controller-action pattern already proven by `EutrTemplatesImportService`/`EutrTemplatesExportService`/`EutrTemplatesController` — two new services + two new controller actions, no new table/route/policy family; the row-level "Add" reuses the existing `EutrTemplateReferencesService.AddAsync` instead of re-implementing validation.
+**Structure Decision**: Web application (backend + frontend). Backend follows existing EUTR feature pattern (`eutr-masters` as primary reference for CRUD + import/export). Frontend follows layered Clean Architecture with `eutr-steps` as structural reference. Edit uses a full page (not modal) following `compliance-master/:id` routing pattern; Create (Update 9) uses a lightweight in-page Dialog instead, per the design reference — narrower scope than the full Edit page. **(Update 10)**: the list and Edit pages are `TemplateListPage.jsx`/`TemplateBuilderPage.jsx` (their own Table+chip / tree-view+panel visual designs, already present as reference-design files), rewired to the real data/use-cases originally built for `TemplateListPageOld.jsx`/`EutrTemplatesAddEdit.jsx` — a data-layer swap, not a new UI build. **(Update 13)**: `eutr_template_references` gets its own full CRUD stack (all four backend layers + the full frontend layer set), modeled on the existing `EutrTemplates*` stack (Principle II) since there is no usable reference implementation for that table; `ApplyCustomerPage.jsx` is likewise a data-layer swap (mock Customer data → real Vendor/API data), not a new UI build, following the same precedent as Update 10's `TemplateListPage.jsx`/`TemplateBuilderPage.jsx` rewiring. **(Update 14)**: Import/Export for `eutr_template_references` follows the exact same backend Excel-service + controller-action pattern already proven by `EutrTemplatesImportService`/`EutrTemplatesExportService`/`EutrTemplatesController` — two new services + two new controller actions, no new table/route/policy family; the row-level "Add" reuses the existing `EutrTemplateReferencesService.AddAsync` instead of re-implementing validation. **(Update 15)**: no new backend stack — a bug fix (one new repository method, `CopyReferencesAsync`, called from the existing `UpdateAsync`'s ≥24h branch) and one new service method/endpoint (`CloneAsync`/`POST {id}/clone`) that reuses the existing detail-insert pipeline (`BuildDetailEntitiesAsync`/`BulkInsertDetailsAsync`) end to end; frontend adds one new dialog (`CloneTemplateDialog.jsx`, modeled on `CreateTemplateDialog.jsx`) wired to the Clone icon Update 10 already placed (disabled) on `TemplateListPage.jsx` — no new route.
 
 ### Key Differences from Reference Features
 
@@ -988,6 +1088,8 @@ compliance-client/src/
 | Default constraint scope (Update 13) | N/A | Changed from per-VendorCode to **global** (system-wide single default) since Vendor no longer lives on the template |
 | Apply to Customer (Update 13) | N/A | New `ApplyCustomerPage.jsx` (route `/eutr/templates/apply/:id`) manages N:N Template↔Vendor mappings with FromDate/ToDate in `eutr_template_references` — new full-stack CRUD, hard delete (no soft-delete column) |
 | Mapping Import/Export (Update 14) | Templates-level Import/Export (`eutr-templates/import`/`export`, 3-column Name/AlertFor/IsDefault layout) | Separate, per-template-scoped Import/Export on `eutr_template_references` (`eutr-template-references/import/{templateId}`/`export/{templateId}`, 4-column TemplateCode/VendorCode/FromDate/ToDate layout); Import validates TemplateCode against the currently-open template and reuses `EutrTemplateReferencesService.AddAsync` per row (no update-on-match) |
+| Version-up mapping copy (Update 15) | N/A | The ≥24h version-up branch now also copies `eutr_template_references` to the new TemplateId (bug fix, FR-049) — previously only the step tree was copied |
+| Clone (Update 15) | N/A | New `POST api/eutr-templates/{id}/clone` — duplicates a template's header (new Code, user-entered Name/AlertFor, VersionId=1, IsDefault=0), full step tree, and full vendor-mapping set into a brand-new, independent template; TemplateListPage's Clone icon (disabled since Update 10) becomes active |
 
 ## Complexity Tracking
 

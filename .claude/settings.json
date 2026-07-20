@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -NoProfile -Command \"Get-Process -Id 22628 -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,Path\")",
+      "Bash(grep -rn \"IRepository<>\\\\|typeof\\(IRepository<>\\)\\\\|AddScoped\\(typeof\\(IRepository\" \"e:/Working/Eutr/compliance-sys-api/src/ComplianceSys.Infrastructure/DependencyInjection.cs\" 2>/dev/null *)",
+      "Read(//e//**)"
+    ]
+  }
+}
