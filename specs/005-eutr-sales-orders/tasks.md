@@ -849,3 +849,373 @@ for header/Step 1/Step 2 read+save paths, with no regressions to `SalesOrderOver
    Step 1) can be demoed before T069-T074 (Step 2) are finished, since Step 1 is independently
    observable even with Step 2 still on old data.
 4. Complete Phase 14 (polish/validation) — full quickstart.md "Update 2" re-pass.
+
+---
+
+## Update 2026-07-20 — Select-more-POs Confirmation + Back Button (User Story 4 continued)
+
+**Context**: Per spec Update 3 (FR-031/FR-032/FR-033), Step 1 must keep letting the user tick POs
+that don't yet have a saved `eutr_purchase_attachments` row (as long as D365 supplies a template for
+them), Save PO Mapping must persist those newly-ticked POs alongside the already-saved ones, and the
+Back button must navigate to EUTR Sales Orders. Per research.md Decision 16, the existing Update 2
+implementation (T067's `handleSavePOMapping`, T068's `disabled = !po.eutrTemplate` checkbox
+condition) **already satisfies FR-031/FR-032 exactly as written** — there is nothing to change,
+only to verify and record. Per research.md Decision 17, the Back button (rendered with no `onClick`
+since it was first scaffolded) is the one genuine gap, fixed by reusing the exact `navigate(...)`
+call the page's own breadcrumb link already uses.
+
+**Prerequisites for this update**: [research.md Decisions 16-17](./research.md),
+[quickstart.md "Update 3"](./quickstart.md).
+
+---
+
+## Phase 15: User Story 4 (continued) — Confirm Select-More-POs, Fix Back Button
+
+**Goal**: Confirm FR-031/FR-032 already hold (no code change) and close the one real gap — the
+inert Back button — per spec Update 3.
+
+**Independent Test**: Open Map File for a Sales Order with one PO already saved and a second,
+never-saved PO that has a real D365 template; tick the second PO in addition to the first and Save;
+reload and confirm both are pre-checked. Click Back and confirm navigation lands on
+`/eutr/sales-orders`.
+
+### Implementation for User Story 4 (Update 3)
+
+- [X] T082 [US4] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/MapFilePage.jsx`, inspect T068's
+  checkbox `disabled` condition and confirm it evaluates to `false` (selectable) for any PO row
+  whose `eutrTemplate` is non-empty, regardless of whether that PO's `purchId` is already in the
+  `selectedPOs` `Set` built by T066 — i.e. confirm there is no additional condition anywhere gating
+  selection on "already has a saved `eutr_purchase_attachments` row". No code change expected; if a
+  gate like that is found, remove it (spec FR-031, research.md Decision 16).
+  *(Confirmed, no change needed: `const disabled = !po.eutrTemplate;` (line ~1248) is the only
+  gating condition on the checkbox/row; `handleTogglePO` (line ~922) unconditionally toggles
+  `selectedPOs` for any `purchId` passed to it — nothing checks prior `eutr_purchase_attachments`
+  membership before allowing a toggle.)*
+- [X] T083 [US4] In the same file, inspect T067's `handleSavePOMapping` and confirm the `items` array
+  it builds/sends to `SavePoMappingUseCase.execute` is derived directly from the current
+  `selectedPOs` `Set` at click time (not filtered to only previously-saved `purchId`s), so a newly
+  ticked, never-before-saved PO is included in the payload the same way an already-saved one is. No
+  code change expected; if newly-ticked POs are being dropped before the call, fix the filter (spec
+  FR-032, research.md Decision 16).
+  *(Confirmed, no change needed: `handleSavePOMapping` (line ~933) builds `items` from
+  `poList.filter(po => selectedPOs.has(po.purchId))` — the live `selectedPOs` state at click time,
+  with no distinction between previously-saved and newly-ticked `purchId`s.)*
+- [X] T084 [US4] In the same file, add `onClick={() => navigate('/eutr/sales-orders')}` to the Back
+  `<Button>` (currently renders with no `onClick` — verified inert), reusing the same `navigate`
+  (from `useNavigate()`) already imported and already used by this page's breadcrumb link (spec
+  FR-033, research.md Decision 17).
+  *(Done: added `onClick={() => navigate('/eutr/sales-orders')}` to the Back `<Button>` at line
+  ~1188, matching the breadcrumb `Link`'s existing `onClick` one section above it. Verified via
+  `npx eslint` (no issues) and `npm run build` (clean `MapFilePage.*.js` chunk).)*
+
+**Checkpoint**: Step 1 keeps allowing additional, not-yet-saved-but-templated POs to be ticked and
+saved alongside existing ones (confirmed, unchanged); Back now reliably returns to EUTR Sales Orders.
+
+---
+
+## Phase 16: Polish & Cross-Cutting Concerns (Update 3)
+
+**Purpose**: Final validation for the Update 3 changes; no new functionality.
+
+- [ ] T085 [P] Run the frontend manual verification steps in `specs/005-eutr-sales-orders/
+  quickstart.md` "Update 3" section (steps 1-6: not-yet-saved-but-templated PO stays selectable,
+  Save PO Mapping persists the additional selection alongside the prior one, template-less PO stays
+  disabled, Back navigates to `/eutr/sales-orders` both with and without unsaved changes) (depends on
+  T082-T084).
+  *(NOT run — requires a browser against a live backend with real D365 POs/`eutr_purchase_attachments`
+  data, unavailable in this environment. `npm run build` succeeds (clean `MapFilePage.*.js` chunk)
+  and `npx eslint` reports no issues on the changed file, as proxy checks. A human with that
+  environment needs to click through quickstart.md's Update 3 steps 1-6 before sign-off.)*
+- [X] T086 Confirm `git diff`/`git status` for this update touches only
+  `compliance-client/src/presentation/pages/eutr-sales-orders/MapFilePage.jsx` (the `onClick` from
+  T084, plus no other line changed if T082/T083 found no gap) — no backend file, no other frontend
+  file (depends on T082-T084).
+  *(Verified: `git diff` for this update shows exactly one changed file,
+  `MapFilePage.jsx` (the T084 `onClick` addition) — no backend file, no other frontend file. The
+  `certs/*.pem` changes visible in `git status` predate this session's work, same as noted in
+  T044/T080.)*
+- [X] T087 If T082 or T083 uncovers an actual gap requiring a code fix, review that fix's added/
+  changed comments for Vietnamese wording, per Constitution Principle IV (depends on T082, T083); if
+  no fix was needed (expected outcome per research.md Decision 16), mark this task as not-applicable.
+  *(Not applicable — T082/T083 confirmed no gap existed, per research.md Decision 16; no fix was
+  needed and no new comment was added for either.)*
+
+**Checkpoint**: Update 3's quickstart.md checks pass — Step 1 selection behavior is confirmed
+correct, Back button reliably returns to EUTR Sales Orders, no unrelated files were touched.
+
+---
+
+## Update 3 Dependencies
+
+### Phase Dependencies
+
+- **Phase 15**: Depends on Phase 13 (T066, T067, T068 must exist to inspect/confirm). T082 and T083
+  are independent read-only inspections and can run in parallel; T084 is independent of both (touches
+  a different part of the same file — the Back button, not the checkbox/save logic) and can also run
+  in parallel with T082/T083.
+- **Phase 16 (Polish)**: Depends on Phase 15 (T082-T084) being complete.
+
+### Parallel Opportunities
+
+- T082, T083, T084 can all run in parallel — each inspects/edits a distinct, non-overlapping piece of
+  `MapFilePage.jsx` (checkbox condition, save handler, Back button) with no shared state between
+  them.
+
+### Implementation Strategy
+
+1. Complete Phase 15 — expect T082/T083 to confirm "already correct, no change" (research.md
+   Decision 16) and T084 to be the only actual edit.
+2. Complete Phase 16 (polish/validation) — quickstart.md "Update 3" re-pass.
+
+---
+
+## Update 2026-07-20 — `ViewSalesOrderPage.jsx` Real Data, Read-Only (User Story 5)
+
+**Context**: Per spec Update 4 (FR-034..FR-046), `ViewSalesOrderPage.jsx` (currently 100%
+mock-driven, the last remaining consumer of `eutr-sales-orders/mock/*`) MUST switch to the same real
+data `MapFilePage.jsx` already reads (existence/header via `refType=11`, saved-PO list via
+`GetBySalesIdAsync` + `refType=16` for display fields, Template Checklist tree via `EutrTemplates`
+get-all/GetById, per-step mapped/missing status via `list-po-references`), rendered strictly
+**read-only** — no PO tick/Save, no file map/unmap/upload. Per research.md Update 4 Decisions 18-22,
+**zero backend change** is needed: every read this screen requires already exists and is already
+frontend-wired from Update 1/2. This is a frontend-only rewrite plus deletion of the now-fully-unused
+mock fixtures (`eutrSalesOrders.js`, `eutrTemplateDetails.js`, `eutrTemplates.js` — `eutrSteps.js`
+stays, still imported by the shared `utils/treeUtils.js`).
+
+**Prerequisites for this update**: [research.md Update 4 Decisions 18-22](./research.md),
+[data-model.md "Update 4"](./data-model.md),
+[contracts/view-sales-order-reused-endpoints.md](./contracts/view-sales-order-reused-endpoints.md),
+[quickstart.md "Update 4"](./quickstart.md).
+
+---
+
+## Phase 17: User Story 5 - Xem tổng quan hồ sơ EUTR của Sales Order, chỉ đọc (View Sales Order) (Priority: P2)
+
+**Goal**: Replace every mock data source in `ViewSalesOrderPage.jsx` with the same real sources
+`MapFilePage.jsx` already uses, rendered read-only (no Save/tick/map/unmap/upload anywhere on this
+screen).
+
+**Independent Test**: Open View for a Sales Order that already has a saved PO mapping with at least
+one Required step mapped and one still missing; confirm the header matches Overview/Map File data,
+"Purchase Orders đã chọn" lists exactly the saved PO(s) with real display fields, the Template
+Checklist tree matches Map File's Step 2 tree for the same Sales Order (including correct
+mapped/missing status per step), and the Validation Summary reflects that same data; confirm no
+control on the page can tick/map/unmap/upload/save anything; confirm Edit/Map File navigates to Map
+File and Download is a no-op.
+
+### Implementation for User Story 5
+
+- [X] T088 [US5] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/ViewSalesOrderPage.jsx`, replace
+  `const so = MOCK_SALES_ORDERS.find(s => s.salesId === salesId)` with a fetch through
+  `GetReferenceDataUseCase.execute(1, 1, 'Code', 'asc', 11, [{ column: 'Code', operator: 'eq', value:
+  salesId }])` (same call `MapFilePage.jsx`'s T062 already makes); store the single result (or
+  `null`) plus a loading flag in component state; keep the existing `if (!so) return <Card>...`
+  guard, gated on this fetched state instead of the mock array (research.md Decision 18, mirrors
+  Decision 9).
+  *(Done: `so`/`soLoading` state + `useEffect` calling `getReferenceDataUseCase.execute(1, 1, 'Code',
+  'asc', EUTR_SALES_ORDER_REF_TYPE, [...])`; a full-page `CircularProgress` renders while `soLoading`,
+  then the existing `if (!so)` error card, both gated on real state.)*
+- [X] T089 [US5] In the same file, update the header `Typography`s (`Sales ID`/`Customer`/`Customer
+  name`) to read `so.code`/`so.custAccount`/`so.name` (the `refType=11` field names, matching
+  `SalesOrderOverviewPage.jsx`/`MapFilePage.jsx`'s existing mapping) instead of
+  `so.salesId`/`so.customerId`/`so.customerName` (depends on T088).
+  *(Done: header now renders `so.code`, `so.custAccount — so.name`; Delivery Date renders only when
+  `so.deliveryDate` is present; the old `so.templateVersionId` field — mock-only, not part of
+  `refType=11` — was dropped from the header.)*
+- [X] T090 [US5] In the same file, replace `const selectedPOIds = MOCK_SO_PO_MAPPINGS[salesId] || []`
+  and `const poList = (MOCK_SO_POS[salesId] || []).filter(po =>
+  selectedPOIds.includes(po.purchId))` with: (a) `GetPurchaseAttachmentsBySalesIdUseCase.execute(
+  salesId)` for the saved `PurchId` set, and (b) `GetReferenceDataUseCase.execute(1, <pageSize>,
+  'Code', 'asc', 16, [{ column: 'InterCompanyOriginalSalesId', operator: 'eq', value: salesId }])`
+  for display fields; derive the displayed `poList` by filtering (b)'s items to only those whose
+  `code` is in (a)'s `purchId` set (research.md Decision 19).
+  *(Done, with one refinement over the task's literal wording: `poList` is derived by **mapping over
+  (a)'s saved `purchId`s** and looking up each one's display fields in (b) (`Map` keyed by `purchId`),
+  rather than filtering (b) down to (a)'s set. This is the superset-safe direction — it satisfies the
+  spec Edge Case where a saved `PurchId` no longer has a matching D365 row: the row still renders with
+  `purchId` populated and `name`/`orderAccount`/`qty` as `null` ("-" in the UI), instead of silently
+  disappearing as a plain filter would produce.)*
+- [X] T091 [US5] In the same file, update the "Purchase Orders đã chọn" `Table`'s columns from
+  Vendor/Vendor Name/Rate/Material to **PO** (`po.code`), **Name** (`po.name`), **Order account**
+  (`po.orderAccount`), **Qty** (`po.qty`) — the same real field set `MapFilePage.jsx`'s Step 1 table
+  already uses (depends on T090; per data-model.md Update 4).
+  *(Done: columns are PO/Name/Order account/Qty, each rendering `?? '-'` for a missing value per
+  T090's join semantics.)*
+- [X] T092 [US5] In the same file, replace the `tree`/`allDetails` `useMemo`s (currently built from
+  `EUTR_TEMPLATE_DETAILS_MAP[so.templateId]`) with logic that: takes the distinct `templateCode`
+  values from T090(a)'s result; for each, calls `GetPagingEutrTemplatesUseCase.execute(1, 1, 'Code',
+  'asc', [{ column: 'Code', operator: 'eq', value: templateCode }])` to resolve the template's `id`,
+  then `GetEutrTemplatesUseCase.execute(id)` to get `Details`; feeds each template's `Details` through
+  the existing `flatToTree()` util; stores the result as an array of `{ templateCode, templateName,
+  tree, flatDetails }`, and derives combined `allTrees`/`allDetails` from it (mirrors
+  `MapFilePage.jsx`'s T069, research.md Decision 18).
+  *(Done: `templatesData` state built in a `useEffect` keyed on `purchaseAttachments`, using the same
+  `normalizeTemplateDetail`/`flatToTree` pipeline as `MapFilePage.jsx`; `allTrees`/`allDetails`
+  derived via `useMemo` flat-mapping over it.)*
+- [X] T093 [US5] In the same file, render a clear "chưa có cây template" empty state in the Template
+  Checklist panel when T090(a)'s result is empty (no PO mapping ever saved for this Sales Order),
+  instead of an empty/broken tree render (depends on T090, T092; spec FR-040).
+  *(Done: `allTrees.length === 0` renders "Chưa có cây template — hãy Map File và Save PO Mapping cho
+  Sales Order này." instead of an empty tree.)*
+- [X] T094 [US5] In the same file, replace `fileMappings` (currently `MOCK_FILE_MAPPINGS[salesId] ||
+  {}`) with a derivation from real documents: call `GetEutrDocumentsPoReferencesUseCase.execute([
+  ...T090(a)'s purchId set])`, flatten the returned `documents[]`, and match each document's
+  `stepNames` against each tree node's `stepName` (string match) to build the `{ [nodeId]:
+  fileId[] }`-shaped map `ViewNode` already consumes — same derivation `MapFilePage.jsx`'s
+  `derivedFileMappings` already computes (depends on T092; research.md Decision 18, mirrors Decision
+  14).
+  *(Done: `poReferenceDocs` state (raw) → `realAvailableFiles` `useMemo` (flattened, `size`/
+  `uploadedDate`/`expiredDate` explicitly `null` since this endpoint doesn't carry them) →
+  `fileMappings` `useMemo` (step-name string match against `allDetails`). Also adjusted `ViewNode`'s
+  file-name caption to only render the size/uploaded-date sub-line when at least one of those fields
+  is present, so a real (null-metadata) mapped file doesn't render a literal "null · null" string.)*
+- [X] T095 [US5] In the same file, confirm `ViewNode` (the page's own pre-existing read-only tree-row
+  component) is reused as-is with the real `tree`/`fileMappings` from T092/T094 — verify no
+  `onClick`/`onSelect`/`onUnmap` handler is added anywhere in this render path (spec FR-042,
+  research.md Decision 21; this is a guardrail/verification task, not expected to require new code
+  beyond passing the new data through).
+  *(Confirmed: `ViewNode` is unchanged in shape (only the file-caption tweak from T094) — no
+  `onSelect`/`onUnmap` prop exists on it, and the only `onClick` in its render tree is the
+  collapse/expand toggle (`onToggle`), which mutates local `collapsedIds` UI state only, not any
+  server data.)*
+- [X] T096 [US5] In the same file, update the Validation Summary calculation: `hasMinOnePO` from
+  T090(a)'s result length; `requiredDetails`/`mappedRequired`/`missingRequired`/`pct` recomputed from
+  T092/T094's real `allDetails`/`fileMappings` (same `computeProgress`-shaped logic
+  `MapFilePage.jsx` already has); **remove** the `noExpiredFiles` check and its `ValidationRow`
+  entirely (real documents from `list-po-references` carry no expiry field) and update `canSubmit` to
+  `hasMinOnePO && allRequiredMapped` only (depends on T090, T092, T094; spec FR-045/FR-046,
+  research.md Decision 20).
+  *(Done: `hasMinOnePO = purchaseAttachments.length > 0`; `requiredDetails`/`mappedRequired`/
+  `missingRequired`/`pct` computed from real `allDetails`/`fileMappings`; the `noExpiredFiles`
+  variable and its `ValidationRow` were removed entirely; `canSubmit = hasMinOnePO &&
+  allRequiredMapped`.)*
+- [X] T097 [US5] In the same file, remove the now-unused imports (`MOCK_SALES_ORDERS`, `MOCK_SO_POS`,
+  `MOCK_SO_PO_MAPPINGS`, `MOCK_AVAILABLE_FILES`, `MOCK_FILE_MAPPINGS`, `EUTR_TEMPLATE_DETAILS_MAP`,
+  `EUTR_TEMPLATES`) from `./mock/eutrSalesOrders`, `./mock/eutrTemplateDetails`,
+  `./mock/eutrTemplates` once T088-T096 no longer reference them (depends on T088-T096).
+  *(Done: the file was rewritten from scratch with no import of any `mock/*` module except none at
+  all — `utils/treeUtils`'s `flatToTree` is still imported, `getStepName` is not (real `stepName` is
+  always present on normalized details, so the missing-steps list renders `d.stepName` directly).
+  Confirmed via `grep` that no `MOCK_*`/`EUTR_TEMPLATE*` identifier remains in the file.)*
+- [X] T098 [US5] In the same file, confirm the **Edit / Map File** button(s) still call
+  `navigate(`/eutr/sales-orders/${salesId}/map-file`)` unchanged — no new behavior needed, this is a
+  guardrail check that T088-T097's edits didn't disturb it (spec FR-043).
+  *(Confirmed: both the header action button and the right-panel Validation Summary button still call
+  `navigate(`/eutr/sales-orders/${salesId}/map-file`)`, byte-for-byte the same target as before.)*
+- [X] T099 [US5] In the same file, confirm the **Download** button still has no `onClick`/handler
+  attached (stays a visual-only button) — guardrail check that no accidental no-op-breaking code was
+  added during T088-T097 (spec FR-044).
+  *(Confirmed: the Download `<Button>` has no `onClick` prop, unchanged from before.)*
+
+**Checkpoint**: User Story 5 is fully functional and independently testable — View Sales Order's
+header, Purchase Orders đã chọn, Template Checklist, and Validation Summary all reflect real data
+read-only; Edit/Map File and Download behave exactly as before.
+
+---
+
+## Phase 18: Cleanup — Delete Now-Dead Mock Fixtures
+
+**Purpose**: Once `ViewSalesOrderPage.jsx` (the last remaining importer) stops referencing them,
+delete the mock fixtures that no file in the repo imports anymore (research.md Decision 22).
+
+- [X] T100 [P] Full-repo search (e.g. `grep -rl "mock/eutrSalesOrders\|mock/eutrTemplateDetails\|
+  mock/eutrTemplates" compliance-client/src`) to confirm zero remaining imports of
+  `mock/eutrSalesOrders.js`, `mock/eutrTemplateDetails.js`, and `mock/eutrTemplates.js` anywhere in
+  the repo (depends on T097).
+  *(Confirmed: the search returned zero matches anywhere under `compliance-client/src`. A separate
+  search for `mock/eutrSteps` found it imported by two files —
+  `eutr-sales-orders/utils/treeUtils.js` and `eutr-templates/utils/treeUtils.js` — confirming that
+  file must stay.)*
+- [X] T101 [P] Delete
+  `compliance-client/src/presentation/pages/eutr-sales-orders/mock/eutrSalesOrders.js`,
+  `.../mock/eutrTemplateDetails.js`, and `.../mock/eutrTemplates.js` (depends on T100 confirming zero
+  importers). **Do NOT** delete `.../mock/eutrSteps.js` — `utils/treeUtils.js`'s `getStepName()`
+  still imports `EUTR_STEPS` from it directly, and that util is shared by `MapFilePage.jsx` too
+  (plan.md Project Structure, research.md Decision 22).
+  *(Done: all three files deleted; `eutr-sales-orders/mock/` now contains only `eutrSteps.js`.)*
+
+**Checkpoint**: `eutr-sales-orders/mock/` contains only `eutrSteps.js`; `npm run build` still succeeds
+with no unresolved-import errors.
+
+---
+
+## Phase 19: Polish & Cross-Cutting Concerns (Update 4)
+
+**Purpose**: Final validation across the `ViewSalesOrderPage.jsx` update; no new functionality.
+
+- [ ] T102 [P] Run the frontend manual verification steps in `specs/005-eutr-sales-orders/
+  quickstart.md` "Update 4" section (steps 1-12: header, PO list, Template Checklist tree +
+  mapped/missing status, no interactive control anywhere, Edit/Map File navigation, Download no-op,
+  Validation Summary contents, no-PO-mapping empty state, nonexistent-Sales-ID error state) (depends
+  on T088-T099, T101).
+  *(NOT run — requires a browser against a live backend with real D365 POs and seeded
+  `eutr_purchase_attachments`/`eutr_references` data, unavailable in this environment. As proxy
+  checks: `npm run build` succeeds with a clean `ViewSalesOrderPage.*.js` chunk (14.77 kB) and no
+  unresolved imports; `npx eslint` on the changed file reports no issues. A human with that
+  environment needs to click through quickstart.md's Update 4 steps 1-12 before sign-off.)*
+- [X] T103 [P] Review all new/changed lines in
+  `compliance-client/src/presentation/pages/eutr-sales-orders/ViewSalesOrderPage.jsx` to confirm any
+  added comments are in Vietnamese, matching `MapFilePage.jsx`'s existing comment style, per
+  Constitution Principle IV (depends on T088-T097).
+  *(Verified: every comment added in this rewrite is Vietnamese, unaccented ASCII, matching
+  `MapFilePage.jsx`'s existing comment style (e.g. "Tai Sales Order (header/existence check)...",
+  "Purchase Orders da chon: nguon la Purchase Attachments da luu...").)*
+- [X] T104 Confirm `MapFilePage.jsx` and `SalesOrderOverviewPage.jsx` still load without errors and
+  are unaffected by this update (`git diff`/`git status` should show only `ViewSalesOrderPage.jsx`
+  changed plus the two files deleted in Phase 18) (depends on T097, T101).
+  *(Verified: `npm run build` output includes clean `MapFilePage.*.js`/`SalesOrderOverviewPage.*.js`
+  chunks with no errors; `git status` inside `compliance-client/` shows this update touched only
+  `ViewSalesOrderPage.jsx` (modified) plus the 3 mock files (deleted) — `MapFilePage.jsx` also shows
+  as modified in `git status`, but `git diff` confirms that change is the pre-existing, already-
+  uncommitted Update 3 Back-button fix (T084, `onClick={() => navigate('/eutr/sales-orders')}`),
+  predating this session's work, same as the `certs/*.pem` files noted in T044/T080/T086.
+  `SalesOrderOverviewPage.jsx` shows no diff at all.)*
+- [X] T105 Note as a (non-)follow-up: confirm no new authorization policy is required for this
+  update — `ViewSalesOrderPage.jsx` only calls already-read-authorized endpoints
+  (`EutrPurchaseAttachments.Read` plus whatever the D365/`EutrTemplates`/`EutrDocuments` endpoints
+  already require), so there is nothing new for an operator to seed (plan.md Constitution Check,
+  Principle V, Update 4).
+  *(Done — this note is recorded in plan.md's Constitution Check (Principle V, Update 4); no code or
+  ops action follows from it.)*
+
+**Checkpoint**: All Update 4 quickstart.md checks pass — `ViewSalesOrderPage.jsx` is fully
+real-data-backed and strictly read-only, with no regressions to `MapFilePage.jsx`,
+`SalesOrderOverviewPage.jsx`, or any prior update.
+
+---
+
+## Update 4 Dependencies
+
+### Phase Dependencies
+
+- **Phase 17 (US5)**: Depends on Update 1/2's already-existing frontend infra (`GetReferenceDataUseCase`,
+  `GetPurchaseAttachmentsBySalesIdUseCase`, `GetPagingEutrTemplatesUseCase`, `GetEutrTemplatesUseCase`,
+  `GetEutrDocumentsPoReferencesUseCase` — all already created in Phase 8/12, no new frontend
+  infrastructure files needed). Within the phase: T088 has no dependency; T089 depends on T088; T090
+  has no dependency on T088/T089 (independent fetch) but is sequenced after for file-diff clarity;
+  T091 depends on T090; T092 depends on T090(a); T093 depends on T090, T092; T094 depends on T092;
+  T095 depends on T092, T094; T096 depends on T090, T092, T094; T097 depends on all of T088-T096; T098
+  and T099 depend on T097 (final guardrail checks).
+- **Phase 18 (Cleanup)**: Depends on Phase 17 (T097) confirming no remaining mock references in
+  `ViewSalesOrderPage.jsx`. T100 depends on T097; T101 depends on T100.
+- **Phase 19 (Polish)**: Depends on Phases 17-18 all being complete.
+
+### Parallel Opportunities
+
+- T090's two fetches (saved-PurchId set and `refType=16` display fields) are independent and could be
+  issued concurrently (e.g. `Promise.all`) even though described as one sequenced task above.
+- T100 and T101 are sequential (T101 depends on T100's confirmation), but both are independent of
+  T102/T103's verification passes and could run in parallel with them.
+- T102, T103 (Polish) are independent verification passes and can run in parallel.
+
+### Implementation Strategy
+
+1. Complete Phase 17 (rewrite `ViewSalesOrderPage.jsx` to real, read-only data) — this is the
+   user-visible change; T088-T091 (header + PO list) can be demoed before T092-T096 (Template
+   Checklist + Validation Summary) are finished, since the header/PO list are independently
+   observable even with the tree still on old data.
+2. Complete Phase 18 (delete now-dead mock fixtures) — only after Phase 17 confirms zero remaining
+   imports.
+3. Complete Phase 19 (polish/validation) — full quickstart.md "Update 4" re-pass.

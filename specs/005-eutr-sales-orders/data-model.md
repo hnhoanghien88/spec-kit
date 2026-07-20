@@ -275,3 +275,74 @@ the `AUTO_SOURCES`-driven "auto-detect" icon have no real equivalent; `isAuto` s
 | Step 2 tree | `EUTR_TEMPLATE_DETAILS_MAP[so.templateId]` | Per-`TemplateCode` `get-all`+`GetById` (Decision 13) |
 | Step 2 AVAILABLE FILES | `MOCK_AVAILABLE_FILES` / `MOCK_FILE_MAPPINGS` | `list-po-references` flattened (Decision 14) |
 | Step 2 Upload / Save (footer) | no-op (adds to local `newlyUploadedFiles` state / no-op) | **unchanged** — still local-state-only, no API call (spec FR-029/FR-030) |
+
+---
+
+## Update 4 (2026-07-20): `ViewSalesOrderPage.jsx` data model (read-only)
+
+> Covers spec User Story 5 / FR-034..FR-046. Reuses every entity/DTO/endpoint already documented above
+> for `MapFilePage.jsx` (Update 2) — no new entity, no new DTO, no new endpoint. This section only maps
+> those same sources onto `ViewSalesOrderPage.jsx`'s read-only UI.
+
+### Purchase Orders "đã chọn" (read-only subset of Step 1's PO entity)
+
+Two calls, joined client-side (research.md Decision 19):
+
+1. `GET /api/eutr-purchase-attachments/by-sales-id/{salesId}` → `PurchaseAttachmentDto[]`
+   (`SalesId`, `PurchId`, `TemplateCode`) — same contract as Update 2's `MapFilePage.jsx` Step 1
+   default-checked state; here it defines the **entire** displayed set (no toggling).
+2. `POST /api/dynamics/reference?refType=16` filtered by `InterCompanyOriginalSalesId = salesId` (same
+   as Update 2's Step 1 PO table) → `ComplDynReferenceResponseDto[]` with `code`, `name`,
+   `orderAccount`, `qty`.
+
+Displayed rows = (2) filtered to only `code` values present in (1)'s `PurchId` set. Columns: **PO**
+(`code`), **Name** (`name`), **Order account** (`orderAccount`), **Qty** (`qty`) — identical column set
+to Step 1 of Map File (no Vendor/Vendor Name/Rate/Material, per Update 2's Decision 10).
+
+### Template Checklist (read-only render of Step 2's tree entity)
+
+Identical source and shape to Update 2's "Reused entity: Template tree" section above: distinct
+`TemplateCode`s from (1) above → `EutrTemplates` `get-all` (resolve `Id` by `Code`) → `GetById` →
+`EutrTemplateDetailsResponseDto[]` → `flatToTree()`. Rendered via this page's own pre-existing
+`ViewNode` component (non-interactive by construction — research.md Decision 21), not `MapFilePage.jsx`'s
+interactive `TreeNode`.
+
+### Per-step mapped/missing status (read-only render of AVAILABLE FILES' derivation)
+
+Identical source to Update 2's "Reused entity: Reference" section: `POST /api/eutr-documents/
+list-po-references` called with the `PurchId`s from the Purchase Orders table above. Each document's
+`stepNames` matched against tree node `stepName` (same string-match derivation `MapFilePage.jsx`'s
+`derivedFileMappings` already computes) to mark a node "đã có tài liệu"; a `Required` node with no
+match is "còn thiếu" (FR-041).
+
+### Validation Summary (derived, no new entity)
+
+Computed locally from the data above (research.md Decision 20) — no new DTO/entity:
+
+| Check | Source | Pass condition |
+|---|---|---|
+| Đã chọn ít nhất 1 PO | `PurchaseAttachmentDto[]` from (1) above | `length > 0` |
+| Required steps đủ file | `computeProgress(allDetails, effectiveFileMappings)` (ported from `MapFilePage.jsx`) | `completed === total` |
+| (list) Steps còn thiếu | `allDetails` filtered `requirementType === 'Required'` AND no mapped file | rendered as a list, not pass/fail |
+
+"File không hết hạn" (the mock version's third check) is **not** ported — real documents from
+`list-po-references` carry no expiry field (research.md Decision 20).
+
+### Navigation (no data, UI-only)
+
+- **Edit / Map File** button → `navigate(`/eutr/sales-orders/${salesId}/map-file`)` — same target
+  `SalesOrderOverviewPage.jsx`'s row action and this page's own pre-existing button already use;
+  unchanged by this update.
+- **Download** button → no handler added; stays a visual-only button (spec FR-044).
+
+### Frontend row/tree shapes (`ViewSalesOrderPage.jsx`)
+
+| UI area | Before (mock) | After (Update 4) |
+|---|---|---|
+| `if (!so)` / Header card | `MOCK_SALES_ORDERS.find(...)` | Single-row `refType=11` fetch (same as `MapFilePage.jsx` Decision 9) |
+| Purchase Orders đã chọn | `MOCK_SO_POS[salesId]` filtered by `MOCK_SO_PO_MAPPINGS[salesId]` (Vendor/Vendor Name/Rate/Material) | `by-sales-id/{salesId}` ∩ `refType=16` (Decision 19) — columns PO/Name/Order account/Qty |
+| Template Checklist tree | `EUTR_TEMPLATE_DETAILS_MAP[so.templateId]` | Per-`TemplateCode` `get-all`+`GetById` (same as Decision 13) |
+| Step mapped/missing status | `MOCK_FILE_MAPPINGS[salesId]` | `list-po-references` flattened + step-name match (same as Decision 14) |
+| Validation Summary | 3 checks incl. "File không hết hạn" (always computable against mock dates) | 2 checks + missing-steps list (Decision 20) — expiry check dropped |
+| Edit / Map File button | `navigate` to Map File (already real) | unchanged |
+| Download button | visual-only | unchanged (still visual-only, spec FR-044) |

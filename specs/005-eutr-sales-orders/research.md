@@ -423,6 +423,62 @@ deliberately tiny (one new read action + one new write action, both on the alrea
     `Eutr*Controller` in this codebase, which distinguishes `.Read`/`.Create`/`.Update`/`.Delete`
     rather than collapsing mutations into one code.
 
+---
+
+## Update 3 (2026-07-20) — Step 1 "select more" confirmation + Back button fix
+
+Spec Update 3 adds FR-031/FR-032/FR-033. Before writing any code, the existing `MapFilePage.jsx`
+(shipped under Update 2) was re-inspected line-by-line to check whether it already satisfies the new
+requirements or genuinely needs a change.
+
+## Decision 16 — FR-031/FR-032 require no code change; already satisfied by the Update 2 implementation
+
+- **Decision**: No change to the Step 1 checkbox rendering, its disable condition, or the
+  `save-po-mapping` write path.
+- **Rationale**: The existing `MapFilePage.jsx` checkbox disable condition is `disabled =
+  !po.eutrTemplate` — it only disables a PO when D365 itself returns no template value for that PO
+  (the genuine FR-022 case). It never disables a PO merely because that PO has no prior
+  `eutr_purchase_attachments` row. So any PO that has a real `eutrTemplate` from D365 but hasn't been
+  saved before is **already** checkable today — exactly what FR-031 asks for. Separately, Save PO
+  Mapping's existing write path (Decision 11) is delete-then-reinsert of *whatever is currently
+  checked* at the moment Save is clicked, built from `poList` filtered by `selectedPOs` (not filtered
+  by "was this PO previously saved") — so a newly-checked, previously-unsaved PO is written to
+  `eutr_purchase_attachments` on Save exactly the same way an already-saved one is, satisfying FR-032
+  with zero additional logic.
+- **Alternatives considered**:
+  - *Add an explicit `isNewlySelected` flag/branch to distinguish "add" from "re-save" POs*: rejected
+    — there is nothing to distinguish; the existing replace-the-whole-set semantics (FR-021, kept
+    unchanged per Update 3's spec text) already produce the correct end state for both previously-saved
+    and newly-added POs in a single Save action.
+  - *Loosen the `disabled = !po.eutrTemplate` condition further (e.g. allow selecting POs with no D365
+    template and let the user type a Template code)*: rejected — out of scope; the spec's Update 3
+    clarification (confirmed directly with the requester before drafting) keeps `TemplateCode` sourced
+    only from the PO's own `eutrTemplate` field, so the FR-022 block for template-less POs stays exactly
+    as Update 2 left it.
+
+## Decision 17 — Back button: reuse the existing breadcrumb's `navigate` call
+
+- **Decision**: Add `onClick={() => navigate('/eutr/sales-orders')}` to the Back `<Button>` in
+  `MapFilePage.jsx`, using the same `navigate` (from `useNavigate()`) already imported and already
+  used by this page's breadcrumb link one section above it — not a new navigation helper, not
+  `window.history.back()`.
+- **Rationale**: The breadcrumb link already proves this exact target/mechanism works correctly on
+  this page; reusing it verbatim is the smallest possible change and guarantees identical behavior
+  between the two affordances (Principle II — model on an existing, already-correct pattern in the
+  same file, rather than inventing a second way to express "go back to the Overview").
+- **Alternatives considered**:
+  - *`navigate(-1)` (browser history back)*: rejected — spec FR-033 explicitly requires landing on
+    **EUTR Sales Orders**, not "wherever the user came from" (which could be an external link, a
+    refresh, or direct URL entry with no history entry) — `navigate(-1)` cannot guarantee that target.
+
+## Updated non-goals (Update 3)
+
+- No backend change of any kind (no new/edited controller, service, repository, entity, or DTO).
+- No change to the Step 1 checkbox-disable condition or to `SavePoMappingAsync`'s
+  delete-then-reinsert behavior — both already do what FR-031/FR-032 require.
+- No manual-Template-selection UI added for POs without a D365 `eutrTemplate` value — FR-022's block
+  for those stays exactly as Update 2 implemented it.
+
 ## Updated non-goals (Update 2)
 
 - Upload (new file) and Save (file↔step mapping) on Step 2 remain display-only/no-op — no backend
@@ -432,3 +488,129 @@ deliberately tiny (one new read action + one new write action, both on the alrea
   Update 1's non-goals).
 - No change to `SalesOrderOverviewPage.jsx` or the Update 1 `by-sales-ids` (plural) endpoint/contract —
   Update 2 only adds two new actions alongside it on the same controller.
+
+---
+
+## Update 4 (2026-07-20) — `ViewSalesOrderPage.jsx` real data, read-only
+
+Spec Update 4 adds User Story 5 / FR-034..FR-046: wire `ViewSalesOrderPage.jsx` (currently 100%
+mock-driven, the last remaining consumer of the `eutr-sales-orders/mock/*` fixtures) to the same real
+data `MapFilePage.jsx` already reads, rendered strictly read-only. Because every read this screen needs
+was already built and verified working for `MapFilePage.jsx` (Update 2/3), this update's investigation
+is short: there is no backend gap to fill at all, only a frontend orchestration/rendering question.
+
+## Decision 18 — Reuse every one of `MapFilePage.jsx`'s real-data effects verbatim, minus the write path
+
+- **Decision**: `ViewSalesOrderPage.jsx` gets the same four data-loading `useEffect`/`useCallback`
+  blocks `MapFilePage.jsx` already has (Decisions 9, 10, 12, 13, 14 combined): (1) `refType=11`
+  single-row fetch for existence/header, (2) `GET /api/eutr-purchase-attachments/by-sales-id/{salesId}`
+  for the saved `PurchId`/`TemplateCode` pairs, (3) per-distinct-`TemplateCode` `EutrTemplates`
+  get-all/GetById tree lookup, (4) `list-po-references` for AVAILABLE-FILES-shaped step-mapped status.
+  **Not** carried over: `selectedPOs` as mutable state (it becomes a plain derived `Set`/array from (2),
+  never ticked by the user), `handleSavePOMapping`/`SavePoMappingUseCase` (no Save button on this
+  screen), and every map/unmap/upload handler (`handleMapClick`, `handleUnmapFile`, `handleUpload`,
+  dialog state) — none of it applies to a read-only screen.
+- **Rationale**: Principle II — `MapFilePage.jsx` is the closest possible model (same Sales Order,
+  same tables, same endpoints), already verified correct in production use since Update 2/3; cloning
+  its read effects is strictly less risky than re-deriving the same queries independently. Principle
+  III — every one of the four calls already exists; nothing new to build.
+- **Alternatives considered**:
+  - *Build a single new aggregate read endpoint (e.g. `GET /api/eutr-sales-orders/{salesId}/summary`)
+    that bundles all four reads server-side*: rejected — would be new backend surface for a capability
+    that already works as four small, independently-reusable calls; Principle III favors reusing what
+    exists over consolidating it into something new for marginal round-trip savings the spec's
+    performance goals (SC-001/SC-005, ~3s) don't require.
+
+## Decision 19 — Purchase Orders "đã chọn" table: join `GetBySalesIdAsync`'s saved `PurchId`s against the `refType=16` PO list for display fields
+
+- **Decision**: `GetBySalesIdAsync`'s response (`PurchaseAttachmentDto[]`: `SalesId`, `PurchId`,
+  `TemplateCode`) has no `Name`/`OrderAccount`/`Qty` — those only exist on the `refType=16` D365 rows
+  (Decision 10). So: fetch `refType=16` filtered by `InterCompanyOriginalSalesId = salesId` (same call
+  `MapFilePage.jsx`'s Step 1 already makes), then filter that result client-side to only the rows whose
+  `code` (`PurchId`) is present in `GetBySalesIdAsync`'s saved set — producing exactly the "Purchase
+  Orders đã chọn" list (spec FR-037), with the same columns already decided for Step 1 (PO / Name /
+  Order account / Qty, Decision 10's "column mapping consequence").
+- **Rationale**: no backend change needed — both calls already exist and already return everything
+  required; the join is a trivial client-side `Array.prototype.filter` by membership in a `Set`, not a
+  new query.
+- **Alternatives considered**:
+  - *New backend endpoint that joins `eutr_purchase_attachments` to `RSVNEutrSalesOrderPurchases`
+    server-side*: rejected — `eutr_purchase_attachments` is a local MySQL table and
+    `RSVNEutrSalesOrderPurchases` is a live D365 OData entity; joining across that boundary in SQL is
+    not possible (different data sources), and joining in C# would just move the same client-side
+    filter into a new, unnecessary controller action (Principle III).
+
+## Decision 20 — Validation Summary: recompute the same three checks locally, dropped to two (no real expiry data)
+
+- **Decision**: Port `MapFilePage.jsx`'s existing `computeProgress(details, fileMappings)` pure
+  function (small, no side effects) into `ViewSalesOrderPage.jsx` and drive the Validation Summary from
+  it: "đã chọn ít nhất 1 PO" (saved `PurchId`s count > 0), "Required steps đủ file" (`computeProgress`'s
+  `completed`/`total`), and a per-step missing list (`allDetails` filtered by
+  `requirementType === 'Required'` and no mapped file, same predicate `MapFilePage.jsx`'s own
+  `missingRequired` already uses). The old mock version's third check ("File không hết hạn") is
+  **dropped** — real documents from `list-po-references` carry no `validFrom`/`expiredDate` field at
+  all (Decision 14/`data-model.md`'s "Field-availability note"), so there is no real data to check
+  against; keeping a check that can only ever evaluate to "pass" would misrepresent it as a real
+  validation (spec Assumptions, Update 4).
+- **Rationale**: matches spec FR-045/FR-046 exactly (2 conditions: PO selected, Required steps
+  complete) and avoids fabricating a signal the backend doesn't provide.
+- **Alternatives considered**:
+  - *Extract `computeProgress` into a shared util module instead of duplicating it in both pages*:
+    considered reasonable but treated as optional polish, not required for spec compliance — the
+    function is a handful of lines with no external dependency; duplicating it is a smaller diff than
+    introducing a new shared file for a two-caller function, and either is compliant with the spec.
+    Left as an implementation-time choice, not a decision this update mandates.
+  - *Keep the "File không hết hạn" row, always green*: rejected — spec Update 4's own Assumptions
+    section explicitly says this condition doesn't apply until a real expiry data source exists;
+    showing an always-true check would be misleading, not merely redundant.
+
+## Decision 21 — Read-only rendering: reuse this page's own existing `ViewNode`, not `MapFilePage.jsx`'s `TreeNode`
+
+- **Decision**: `ViewSalesOrderPage.jsx` already has its own tree-row component, `ViewNode` (distinct
+  from `MapFilePage.jsx`'s interactive `TreeNode`) — no `onClick`/`onSelect`/`onUnmap` handlers, purely
+  presentational (status icon, chips, mapped-file name). Keep using it, just feed it the real
+  `templatesData`-derived tree(s) and real `fileMappings` (derived from `list-po-references`' matched
+  `stepNames`, same derivation `MapFilePage.jsx`'s `derivedFileMappings` already computes) instead of
+  the mock tree/mappings. Expand/collapse state (`collapsedIds`) stays exactly as already implemented
+  (local UI state only, not a write).
+- **Rationale**: satisfies spec FR-042 (read-only) by construction — `ViewNode` was never given
+  interactive handlers to begin with, so there is nothing to strip out or disable; reusing it is less
+  code than adapting `TreeNode` (which would require deleting several props/handlers) and keeps this
+  page's own established component instead of pulling in one built for a different (editable) screen.
+- **Alternatives considered**:
+  - *Reuse `MapFilePage.jsx`'s `TreeNode` with all interactive props stubbed to no-ops*: rejected —
+    more code (passing dummy handlers) for a worse outcome (a component built for interactivity,
+    artificially neutered) than this page's own already-correct read-only component.
+
+## Decision 22 — Delete the now-fully-unused `eutr-sales-orders/mock/*` fixtures (except `eutrSteps.js`)
+
+- **Decision**: Once `ViewSalesOrderPage.jsx` no longer imports `MOCK_SALES_ORDERS`/`MOCK_SO_POS`/
+  `MOCK_SO_PO_MAPPINGS`/`MOCK_AVAILABLE_FILES`/`MOCK_FILE_MAPPINGS` (`mock/eutrSalesOrders.js`),
+  `EUTR_TEMPLATE_DETAILS_MAP` (`mock/eutrTemplateDetails.js`), or `EUTR_TEMPLATES`
+  (`mock/eutrTemplates.js`), a full-repo search confirms no other file imports any of these three —
+  delete them. `mock/eutrSteps.js` is the one exception: `utils/treeUtils.js`'s `getStepName()` still
+  imports `EUTR_STEPS` from it directly as a fallback inside `flatToTree()`, and `treeUtils.js` is
+  shared by both `MapFilePage.jsx` and `ViewSalesOrderPage.jsx` — deleting it would break that shared
+  util's import unless `treeUtils.js` itself is also edited to drop the fallback (out of this update's
+  scope; noted as a candidate for a later small cleanup, not required for spec compliance).
+- **Rationale**: this repo's own convention (and Principle-adjacent good practice already followed
+  elsewhere in this feature, e.g. Update 1/2's "no dead mock left behind for a removed consumer")
+  favors deleting verified-unused code over leaving it as an orphaned fixture nobody imports.
+- **Alternatives considered**:
+  - *Keep all four mock files "just in case" a future screen needs them again*: rejected — this repo's
+    conventions favor deleting confirmed-dead code over speculative retention; if a future feature
+    needs similar fixtures it can add them fresh, informed by whatever that feature actually needs
+    (which may differ from this now-obsolete mock shape).
+
+## Updated non-goals (Update 4)
+
+- No backend change of any kind (no new/edited controller, service, repository, entity, or DTO) — every
+  read this screen needs already exists (Decisions 9/10/13/14 from Update 2, reused as-is).
+- No PO tick/Save Mapping, no file map/unmap, no Upload — `ViewSalesOrderPage.jsx` never imports
+  `SavePoMappingUseCase` or any of `MapFilePage.jsx`'s write-path handlers (spec FR-042).
+- No change to `MapFilePage.jsx` itself — this update only reads the same tables/endpoints it already
+  reads, from a second, independent page component.
+- No "File không hết hạn" check in the Validation Summary — dropped for lack of real expiry data
+  (Decision 20), not silently kept as an always-passing check.
+- `mock/eutrSteps.js` and its one remaining consumer (`utils/treeUtils.js`'s `getStepName` fallback)
+  are left untouched — cleaning that up is out of scope for this update (Decision 22).

@@ -59,3 +59,23 @@
   Step 1, "Save PO Mapping" replace-semantics, template-per-PO-not-user-chosen) are resolved as
   Assumptions with reasonable defaults grounded in the existing D365 entity/table shapes, deferred
   implementation-column-mapping specifics explicitly pushed to the planning phase where they belong.
+- **2026-07-20 (Update 3)**: Re-validated after adding FR-031..FR-033 and related acceptance
+  scenarios/edge cases — Step 1 keeps not-yet-attached POs selectable (checkbox enabled) as long as
+  D365 supplies a template value, Save PO Mapping additively records newly selected POs while keeping
+  the existing replace-to-match-UI semantics from Update 2 (FR-021), and the Back button now
+  navigates to EUTR Sales Orders. The one open question (what `TemplateCode` to persist for newly
+  selected POs) was resolved directly with the requester before drafting — confirmed to reuse the
+  existing `eutrTemplate` field from the Step 1 PO data source (reference type = 16), the same source
+  already used by FR-020 — so no [NEEDS CLARIFICATION] marker was needed in the spec text.
+- **2026-07-20 (Update 4)**: Re-validated after adding User Story 5 and FR-034..FR-046, covering the
+  **View Sales Order** screen (`ViewSalesOrderPage`) — existence check/header sourced from reference
+  type = 11 (same as Overview/Map File), the "Purchase Orders đã chọn" list and Template Checklist
+  reuse the same real data sources already wired for Map File (`eutr_purchase_attachments`,
+  reference type = 16, `eutr_references`), the screen is explicitly read-only (no PO
+  select/map/unmap/upload), Edit/Map File navigates to Map File, Download stays a no-op, and
+  Validation Summary is recomputed from real step data (selected POs, steps with/without files). No
+  new [NEEDS CLARIFICATION] markers introduced: this update closely mirrors the already-validated
+  Update 2/3 pattern for a sibling screen reading the same tables, so the same precedent applies —
+  the one previously-mock-only condition ("File không hết hạn") that has no real data source yet is
+  resolved as a documented Assumption (dropped until an expiry data source exists), not an open
+  question.

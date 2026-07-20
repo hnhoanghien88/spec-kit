@@ -152,3 +152,89 @@
 - SC-006 (PO list real + correctly pre-checked) → frontend step 3.
 - SC-007 (Save PO Mapping persists across reloads) → frontend step 4.
 - SC-008 (AVAILABLE FILES documents correctly step-mapped) → frontend step 7.
+
+---
+
+## Update 3 (2026-07-20) — Select-more-POs + Back button verification
+
+No backend steps — this update is frontend-only (research.md Decision 16/17).
+
+### Frontend verification (manual)
+
+1. Open Map File for a Sales ID that already has **one** PO saved from a previous Save PO Mapping
+   (e.g. reuse Update 2's frontend step 4 result), and confirm D365 has at least a **second** PO for
+   the same Sales ID that has never been saved but does have a non-empty `eutrTemplate` value.
+2. **Expected**: the previously-saved PO's checkbox is pre-checked; the second, never-saved PO's
+   checkbox is **unchecked but not disabled** — it can be ticked (FR-031).
+3. Tick the second PO (in addition to the already-checked one) and click **Save PO Mapping**.
+   **Expected**: no error; reload the page — both POs now show pre-checked (FR-032/SC-009). Call
+   `GET /api/eutr-purchase-attachments/by-sales-id/<SalesId>` (or re-check via the UI) to confirm both
+   `PurchId`s are present with `TemplateCode` equal to each PO's own `eutrTemplate` value from Step 1.
+4. If any PO in Step 1 has a genuinely empty `eutrTemplate` from D365, confirm its checkbox is still
+   disabled with the existing tooltip — unchanged behavior (FR-022, not affected by this update).
+5. Click the **Back** button (top of the Map File screen, not the breadcrumb link).
+   **Expected**: navigates to `/eutr/sales-orders` (SC-010) — same destination as clicking the
+   breadcrumb link.
+6. Repeat step 5 after making an unsaved checkbox change in Step 1 (do not click Save PO Mapping
+   first). **Expected**: Back still navigates immediately to `/eutr/sales-orders`, with no save
+   prompt/confirmation dialog (per spec Update 3's Edge Cases — no auto-save, no confirmation gate).
+
+### Success criteria mapping (Update 3)
+
+- SC-009 (not-yet-saved POs with a real template stay selectable; Save reconciles the full set) →
+  frontend steps 2-3.
+- SC-010 (Back always returns to EUTR Sales Orders) → frontend steps 5-6.
+
+---
+
+## Update 4 (2026-07-20) — `ViewSalesOrderPage.jsx` real data, read-only verification
+
+No new backend steps — every endpoint this update touches was already verified working in Update 2's
+backend steps 1-7. This is a frontend-only rewrite (research.md Update 4 Decisions).
+
+### Frontend verification (manual)
+
+1. Pick the same Sales ID used in Update 2/3's frontend testing — one that has at least 2 saved POs
+   (from Update 3's frontend step 3) where at least one Required step already has a matching document
+   (Update 2's frontend step 7) and at least one Required step still has none.
+2. From `/eutr/sales-orders`, click "View" on that row (or navigate directly to
+   `/eutr/sales-orders/<SalesId>/view`).
+3. **Expected**: header shows the same Sales ID/Customer/Customer name as Overview/Map File for this
+   row — not a mock value (FR-034/FR-036/SC-011).
+4. **Expected**: "Purchase Orders đã chọn" table lists exactly the PO(s) saved in
+   `eutr_purchase_attachments` for this Sales ID (same set Map File's Step 1 shows pre-checked), with
+   columns PO / Name / Order account / Qty — no Vendor/Vendor Name/Rate/Material (FR-037/SC-012).
+5. **Expected**: Template Checklist shows the same tree(s)/`TemplateCode`(s) as Map File's Step 2 for
+   this Sales ID (FR-039).
+6. **Expected**: the Required step known to have a matching document (from step 1 above) shows as
+   "đã map"; the Required step known to have none shows as "thiếu" — matching Map File's Step 2 status
+   for the same Sales Order exactly (FR-041/SC-013).
+7. Click on a tree node, then click on a listed file (if any interactive-looking element exists).
+   **Expected**: nothing happens — no checkbox, no Map/Unmap button, no Save button anywhere on this
+   screen; only expand/collapse of tree nodes responds (FR-042/SC-015).
+8. Click **Edit / Map File**.
+   **Expected**: navigates to `/eutr/sales-orders/<SalesId>/map-file` for the same Sales ID (FR-043/
+   SC-014).
+9. Go back to View, click **Download**.
+   **Expected**: nothing is downloaded, no network call fires (check browser dev tools Network tab) —
+   confirms FR-044.
+10. Check the **Validation Summary** panel.
+    **Expected**: shows "Đã chọn N PO" (N = the count from step 4), "Required steps đủ file"
+    (completed/total matching step 6's tally), and a list of the specific missing step names — no
+    "File không hết hạn" row (FR-045/FR-046).
+11. Open View for a Sales ID that has **never** had a PO mapping saved (no rows in
+    `eutr_purchase_attachments`).
+    **Expected**: header still shows correctly (Sales Order exists at refType=11), "Purchase Orders đã
+    chọn" shows an empty state ("Chưa chọn PO nào"), Template Checklist shows "chưa có cây template",
+    and Validation Summary shows "đã chọn PO" as not-yet-met (FR-038/FR-040).
+12. Open View for a Sales ID that does not exist at all (invalid `salesId` in the URL).
+    **Expected**: shows the "Sales Order không tồn tại" error, no Purchase Orders/Template Checklist/
+    Validation Summary rendered (FR-035).
+
+### Success criteria mapping (Update 4)
+
+- SC-011 (header matches real data) → frontend step 3.
+- SC-012 (PO list matches saved records exactly) → frontend step 4.
+- SC-013 (step status matches Map File's own tree) → frontend step 6.
+- SC-014 (Edit/Map File navigates correctly) → frontend step 8.
+- SC-015 (no write operation possible from this screen) → frontend step 7.

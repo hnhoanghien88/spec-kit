@@ -3,7 +3,17 @@
     "allow": [
       "Bash(powershell -NoProfile -Command \"Get-Process -Id 22628 -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,Path\")",
       "Bash(grep -rn \"IRepository<>\\\\|typeof\\(IRepository<>\\)\\\\|AddScoped\\(typeof\\(IRepository\" \"e:/Working/Eutr/compliance-sys-api/src/ComplianceSys.Infrastructure/DependencyInjection.cs\" 2>/dev/null *)",
-      "Read(//e//**)"
+      "Read(//e//**)",
+      "Bash(exit 0)",
+      "PowerShell(powershell -File \"e:\\\\Working\\\\Eutr\\\\.specify\\\\scripts\\\\powershell\\\\setup-plan.ps1\" -Json)",
+      "PowerShell(powershell -File \"e:\\\\Working\\\\Eutr\\\\.specify\\\\scripts\\\\powershell\\\\setup-tasks.ps1\" -Json)",
+      "PowerShell(powershell -File \"e:\\\\Working\\\\Eutr\\\\.specify\\\\scripts\\\\powershell\\\\check-prerequisites.ps1\" -Json -RequireTasks -IncludeTasks)",
+      "Bash(grep -c '\"- \\\\[ \\\\]\"' /dev/null; grep -n '\\\\- \\\\[ \\\\]\\\\|\\\\- \\\\[X\\\\]\\\\|\\\\- \\\\[x\\\\]' \"e:/Working/Eutr/specs/005-eutr-sales-orders/checklists/requirements.md\" | tail -30)",
+      "Read(//dev/**)",
+      "PowerShell(pwsh -NoProfile -ExecutionPolicy Bypass -File \"e:\\\\Working\\\\Eutr\\\\.specify\\\\scripts\\\\powershell\\\\setup-plan.ps1\" -Json)",
+      "PowerShell(powershell -NoProfile -ExecutionPolicy Bypass -File \"e:\\\\Working\\\\Eutr\\\\.specify\\\\scripts\\\\powershell\\\\setup-plan.ps1\" -Json)",
+      "PowerShell(powershell -NoProfile -ExecutionPolicy Bypass -File \"e:\\\\Working\\\\Eutr\\\\.specify\\\\scripts\\\\powershell\\\\setup-tasks.ps1\" -Json)",
+      "PowerShell(powershell -NoProfile -ExecutionPolicy Bypass -File \"e:\\\\Working\\\\Eutr\\\\.specify\\\\scripts\\\\powershell\\\\check-prerequisites.ps1\" -Json -RequireTasks -IncludeTasks)"
     ]
   }
 }

@@ -10,6 +10,45 @@
 
 ## Clarifications
 
+### Session 2026-07-20 (Update 4) — Màn hình View Sales Order (ViewSalesOrderPage) lấy dữ liệu thật, chỉ đọc
+
+- Change: Màn hình **View Sales Order** (`ViewSalesOrderPage`, mở từ nút "View" ở Overview, route
+  `/eutr/sales-orders/:salesId/view`) hiện đang dùng toàn bộ dữ liệu mock (`MOCK_SALES_ORDERS`,
+  `MOCK_SO_POS`, `MOCK_SO_PO_MAPPINGS`, `MOCK_AVAILABLE_FILES`, `MOCK_FILE_MAPPINGS`,
+  `EUTR_TEMPLATE_DETAILS_MAP`, `EUTR_TEMPLATES`). Update này chuyển màn hình sang dữ liệu thật, dùng
+  lại đúng các nguồn dữ liệu/cơ chế đã áp dụng cho `MapFilePage` ở Update 2/3, nhưng ở chế độ **chỉ
+  xem (read-only)** — không có bất kỳ chỉnh sửa nào:
+  - Kiểm tra Sales Order có tồn tại hay không (`if (!so)`) MUST dùng cùng nguồn tham chiếu dùng chung
+    reference type = 11 theo Sales ID trên URL (giống Map File FR-014), không dùng `MOCK_SALES_ORDERS`.
+  - Header (Sales ID, Customer, Customer name) MUST lấy dữ liệu thật từ cùng bản ghi reference type =
+    11 vừa tra được.
+  - Danh sách **Purchase Orders đã chọn** MUST lấy từ các bản ghi đã lưu trong
+    `eutr_purchase_attachments` của Sales ID này (không phải toàn bộ PO khả dụng như Step 1 Map File,
+    chỉ những PO đã Save), tra cứu thêm thông tin hiển thị (tên, order account, số lượng...) từ nguồn
+    tham chiếu dùng chung reference type = 16 — không dùng `MOCK_SO_POS`/`MOCK_SO_PO_MAPPINGS`. Các
+    cột demo cũ (Vendor/Vendor Name/Rate/Material) không còn nguồn dữ liệu thật tương ứng nên được
+    thay bằng các trường thật sẵn có (PO, Name, Order account, Qty) — đúng bộ cột đã dùng ở Step 1
+    Map File.
+  - **Template Checklist** MUST được xây dựng dựa trên (các) `TemplateCode` lấy từ các bản ghi
+    `eutr_purchase_attachments` của Sales ID này, theo đúng cơ chế xây cây đã dùng ở Step 2 Map File
+    (FR-023/FR-024) — không dùng `EUTR_TEMPLATE_DETAILS_MAP`/`so.templateId` mock.
+  - Trạng thái từng step trong Template Checklist (đã có tài liệu / còn thiếu) MUST dựa trên tài liệu
+    thật lấy từ `eutr_references` cho (các) PO đã lưu của Sales Order này, theo đúng cơ chế đã dùng ở
+    Map File Step 2 (FR-026/FR-027) — không dùng `MOCK_AVAILABLE_FILES`/`MOCK_FILE_MAPPINGS`.
+  - Toàn bộ màn hình View MUST ở chế độ **chỉ đọc**: không có chức năng tick chọn PO, map/unmap tài
+    liệu, hay upload tài liệu mới (khác với Map File). Người dùng chỉ có thể mở rộng/thu gọn cây để
+    xem, không thay đổi dữ liệu.
+  - Nút **Edit / Map File** MUST điều hướng người dùng sang màn hình **Map File**
+    (`/eutr/sales-orders/:salesId/map-file`) của đúng Sales Order đang xem — đây là nơi duy nhất để
+    chỉnh sửa PO/mapping tài liệu.
+  - Nút **Download** tiếp tục hiển thị nhưng **tạm thời KHÔNG xử lý tải file thật** — giữ hành vi
+    demo/no-op, việc xử lý thật để lại cho một cập nhật sau (ngoài phạm vi Update 4).
+  - Phần **Validation Summary** MUST tính toán dựa trên dữ liệu step thật: liệt kê (các) Purchase
+    Order đã chọn (từ `eutr_purchase_attachments`), số step Required đã đủ tài liệu, và số/step
+    Required còn thiếu tài liệu (kèm tên step thiếu) — không dùng dữ liệu demo. Điều kiện "File không
+    hết hạn" ở bản mock trước đây tạm thời không áp dụng được vì dữ liệu tài liệu thật hiện chưa có
+    thông tin ngày hết hạn.
+
 ### Session 2026-07-16 (Update 1) — Cột Template lấy dữ liệu thật
 
 - Change: Cột **Template** trên màn hình **EUTR Sales Orders** (SalesOrderOverviewPage) KHÔNG còn
@@ -23,6 +62,31 @@
   cùng dùng chung 1 template).
 - Cột **Progress** không thuộc phạm vi thay đổi này — vẫn tiếp tục hiển thị giá trị demo cố định
   như hiện tại (FR-008 giữ nguyên).
+
+### Session 2026-07-20 (Update 3) — Step 1: cho phép chọn thêm PO chưa gắn Template; nút Back về Sales Orders
+
+- Change: Ở **Step 1** của Map File, các PO **chưa có bản ghi nào trong `eutr_purchase_attachments`**
+  (chưa từng được Save PO Mapping trước đó cho Sales Order này) vẫn PHẢI hiển thị checkbox ở trạng
+  thái **có thể tick chọn** (không bị vô hiệu hóa), miễn là PO đó có sẵn giá trị template từ D365
+  (trường `eutrTemplate` trả về từ nguồn tham chiếu reference type = 16 dùng để hiển thị danh sách PO
+  ở Step 1) — nghĩa là người dùng có thể tick chọn **thêm** các PO này bên cạnh các PO đã được tick
+  sẵn từ lần Save trước, không bị giới hạn chỉ được chọn lại đúng các PO cũ.
+  - PO chỉ thực sự bị vô hiệu hóa (không cho tick) khi bản thân D365 không trả về giá trị template
+    nào cho PO đó (`eutrTemplate` rỗng) — trường hợp này giữ nguyên theo FR-022 hiện có, vì
+    `TemplateCode` là trường bắt buộc (`NOT NULL`) của `eutr_purchase_attachments`.
+  - Khi nhấn **Save PO Mapping**, các PO mới được tick chọn thêm (trước đó chưa có bản ghi) MUST được
+    lưu (ghi thêm bản ghi mới) vào `eutr_purchase_attachments` cùng với các PO đã chọn từ trước, với
+    `TemplateCode` lấy đúng từ giá trị `eutrTemplate` trả về bởi nguồn dữ liệu PO ở Step 1 (reference
+    type = 16) — người dùng không tự nhập/chọn Template thủ công cho các PO này, giữ đúng cơ chế lấy
+    TemplateCode đã áp dụng từ Update 2 (FR-020).
+  - Hành vi lưu này vẫn tuân theo nguyên tắc "đồng bộ đúng lựa chọn hiện tại trên UI" đã có ở FR-021:
+    sau khi Save, tập bản ghi trong `eutr_purchase_attachments` của Sales ID này phải khớp chính xác
+    với toàn bộ các PO đang được tick (bao gồm cả PO cũ đã chọn từ trước và PO mới chọn thêm ở lần
+    này); PO nào đang tick nhưng bị bỏ tick thì bản ghi tương ứng bị xóa.
+- Change: Nút **Back** ở đầu màn hình Map File hiện chưa có hành vi (không gắn xử lý khi nhấn). Update
+  này bổ sung: nhấn nút Back MUST điều hướng người dùng quay lại màn hình **EUTR Sales Orders**
+  (Overview, route `/eutr/sales-orders`) — cùng đích đến với liên kết breadcrumb đã có sẵn trên màn
+  hình này.
 
 ### Session 2026-07-16 (Update 2) — Màn hình Map File (MapFilePage) lấy dữ liệu thật
 
@@ -147,7 +211,10 @@ Sales Order đó. Màn hình hiển thị đúng thông tin Sales Order (Sales I
 khớp với dữ liệu đã thấy ở Overview. Ở **Step 1**, người dùng thấy danh sách Purchase Order (PO)
 thật liên quan tới Sales Order đó (lấy từ D365 theo điều kiện PO có `InterCompanyOriginalSalesId`
 khớp Sales ID này), tick chọn (các) PO áp dụng cho hồ sơ EUTR rồi nhấn **Save PO Mapping** để lưu lại
-lựa chọn; nếu Sales Order đã từng được lưu PO trước đó, các PO đó tự động được tick sẵn khi mở lại. Ở
+lựa chọn; nếu Sales Order đã từng được lưu PO trước đó, các PO đó tự động được tick sẵn khi mở lại, và
+người dùng vẫn có thể tick chọn thêm các PO khác chưa từng được lưu (miễn PO đó có sẵn template từ
+D365) trước khi Save lại. Người dùng cũng có thể nhấn nút **Back** để quay lại màn hình EUTR Sales
+Orders bất cứ lúc nào. Ở
 **Step 2**, người dùng thấy cây thư mục của (các) template gắn với PO đã lưu, cùng danh sách tài
 liệu (AVAILABLE FILES) đã có sẵn cho các PO đó, mỗi tài liệu hiển thị đúng vị trí (step) trong cây mà
 nó thuộc về. Chức năng Upload tài liệu mới và Save mapping tài liệu ở Step 2 vẫn chỉ ở dạng hiển thị,
@@ -161,9 +228,11 @@ trước các cải tiến khả dụng như tìm kiếm/phân trang (User Story
 **Independent Test**: Mở Map File cho một Sales Order hợp lệ đã có sẵn PO/template trong
 `eutr_purchase_attachments`, xác nhận header hiển thị đúng dữ liệu thật, Step 1 hiển thị đúng các PO
 lấy từ D365 với (các) PO đã lưu trước được tick sẵn, Step 2 hiển thị đúng cây theo `TemplateCode` đã
-lưu và danh sách tài liệu thật lấy từ `eutr_references` cho các PO đó, đúng vị trí step. Sau đó đổi
-lựa chọn PO ở Step 1 và Save, xác nhận `eutr_purchase_attachments` được cập nhật và khi tải lại
-trang, lựa chọn mới vẫn được giữ.
+lưu và danh sách tài liệu thật lấy từ `eutr_references` cho các PO đó, đúng vị trí step. Sau đó tick
+chọn thêm một PO khác chưa từng được lưu (còn có template từ D365) và Save, xác nhận
+`eutr_purchase_attachments` được cập nhật để bao gồm cả PO mới chọn thêm lẫn các PO đã chọn trước đó,
+và khi tải lại trang, toàn bộ lựa chọn mới vẫn được giữ. Cuối cùng nhấn nút Back, xác nhận điều hướng
+về đúng màn hình EUTR Sales Orders.
 
 **Acceptance Scenarios**:
 
@@ -184,6 +253,72 @@ trang, lựa chọn mới vẫn được giữ.
    **Then** danh sách tài liệu hiển thị đúng file thật, mỗi file gắn đúng step tương ứng trong cây.
 8. **Given** nút Upload hoặc Save ở Step 2 được nhấn, **When** xử lý, **Then** giao diện chỉ phản
    hồi ở mức hiển thị (demo), không có dữ liệu thật nào được lưu hoặc tải lên.
+9. **Given** Sales Order đã có sẵn một số PO được tick từ lần Save trước, và còn (các) PO khác chưa
+   từng được lưu nhưng có sẵn template từ D365, **When** người dùng mở Step 1, **Then** các PO chưa
+   lưu đó vẫn hiển thị checkbox ở trạng thái có thể tick (không bị vô hiệu hóa), cho phép chọn thêm
+   bên cạnh các PO đã tick sẵn.
+10. **Given** người dùng tick chọn thêm một PO chưa từng được lưu (có template từ D365) bên cạnh các
+    PO đã tick sẵn, rồi nhấn Save PO Mapping, **When** lưu thành công, **Then**
+    `eutr_purchase_attachments` MUST có thêm bản ghi mới cho PO vừa chọn thêm, với `TemplateCode` lấy
+    đúng từ giá trị template của PO đó trả về ở Step 1 (không yêu cầu người dùng chọn Template thủ
+    công), đồng thời vẫn giữ nguyên các bản ghi của các PO đã chọn từ trước đó chưa bị bỏ tick.
+11. **Given** đang ở màn hình Map File (Step 1 hoặc Step 2), **When** người dùng nhấn nút **Back**,
+    **Then** hệ thống điều hướng về màn hình **EUTR Sales Orders** (Overview).
+
+---
+
+### User Story 5 - Xem tổng quan hồ sơ EUTR của Sales Order, chỉ đọc (View Sales Order) (Priority: P2)
+
+Từ màn hình EUTR Sales Orders, người dùng nhấn nút "View" trên một dòng để mở màn hình **View Sales
+Order** của Sales Order đó. Màn hình kiểm tra Sales Order có tồn tại hay không (cùng nguồn tham chiếu
+dùng chung với Overview/Map File), hiển thị đúng thông tin Sales ID/Customer/Customer name ở header,
+danh sách các **Purchase Order đã chọn** (lấy từ `eutr_purchase_attachments`, tra cứu thêm thông tin
+PO thật từ D365), và **Template Checklist** — cây các bước của (các) template gắn với Sales Order đó,
+mỗi bước hiển thị đúng trạng thái đã có tài liệu hay còn thiếu (dựa trên `eutr_references`). Toàn bộ
+màn hình chỉ ở chế độ xem — không có thao tác tick chọn PO, map/unmap tài liệu hay upload nào. Muốn
+thay đổi, người dùng nhấn nút **Edit / Map File** để chuyển sang màn hình Map File. Nút **Download**
+hiển thị nhưng chưa xử lý tải file thật. Phần **Validation Summary** tổng hợp từ dữ liệu step thật:
+liệt kê (các) PO đã chọn, số step đã đủ tài liệu, số step còn thiếu tài liệu.
+
+**Why this priority**: Đây là góc nhìn tổng quan (read-only) song song với Map File — giúp người dùng
+kiểm tra nhanh tình trạng hồ sơ EUTR của một Sales Order mà không rủi ro làm thay đổi dữ liệu; phụ
+thuộc vào cùng dữ liệu thật đã có ở Map File (User Story 4) nên xếp cùng mức ưu tiên, sau khi xem được
+danh sách (User Story 1).
+
+**Independent Test**: Mở View cho một Sales Order đã Save PO Mapping với một số step đã có tài liệu
+và một số step còn thiếu, xác nhận header/danh sách PO/Template Checklist/Validation Summary hiển thị
+đúng dữ liệu thật, không có control chỉnh sửa nào hoạt động; nhấn Edit/Map File xác nhận điều hướng
+đúng sang Map File của Sales Order đó; nhấn Download xác nhận không có xử lý tải file thật nào xảy ra.
+
+**Acceptance Scenarios**:
+
+1. **Given** Sales ID hợp lệ tồn tại ở nguồn tham chiếu type = 11, **When** mở View, **Then** header
+   hiển thị đúng Sales ID/Customer/Customer name khớp với dữ liệu ở Overview/Map File.
+2. **Given** Sales ID không tồn tại ở nguồn tham chiếu type = 11, **When** mở View, **Then** màn hình
+   hiển thị lỗi "Sales Order không tồn tại", không hiển thị danh sách PO/Template Checklist/Validation
+   Summary.
+3. **Given** Sales Order đã Save PO Mapping với một số PurchId, **When** mở View, **Then** danh sách
+   "Purchase Orders đã chọn" hiển thị đúng các PO đó với thông tin thật (PO, Name, Order account, Qty)
+   tra cứu từ D365 — không hiển thị các cột demo Vendor/Vendor Name/Rate/Material.
+4. **Given** Sales Order chưa Save PO Mapping nào (chưa có bản ghi trong `eutr_purchase_attachments`),
+   **When** mở View, **Then** danh sách PO hiển thị trạng thái trống rõ ràng ("Chưa chọn PO nào") và
+   Template Checklist hiển thị trạng thái "chưa có cây template".
+5. **Given** (các) PO đã lưu gắn với một hoặc nhiều `TemplateCode`, **When** xem Template Checklist,
+   **Then** cây hiển thị đúng theo (các) `TemplateCode` đó, mỗi template hiển thị một lần duy nhất.
+6. **Given** một step trong cây có tài liệu thật trong `eutr_references`, **When** xem Template
+   Checklist, **Then** step đó hiển thị trạng thái "đã map"; step Required chưa có tài liệu hiển thị
+   trạng thái "thiếu".
+7. **Given** đang ở màn hình View, **When** người dùng click vào node cây hoặc vào file, **Then**
+   không có hành vi tick chọn PO/map/unmap/upload nào xảy ra (chỉ cho phép expand/collapse cây để
+   xem).
+8. **Given** đang ở màn hình View, **When** nhấn nút Edit / Map File, **Then** hệ thống điều hướng
+   sang màn hình Map File (route `/eutr/sales-orders/:salesId/map-file`) của đúng Sales Order đang
+   xem.
+9. **Given** đang ở màn hình View, **When** nhấn nút Download, **Then** không có xử lý tải file thật
+   nào xảy ra (giữ hành vi demo/no-op).
+10. **Given** Validation Summary đang hiển thị, **When** xem, **Then** thông tin hiển thị đúng: (các)
+    PO đã chọn, số step Required đã đủ tài liệu, số step Required còn thiếu tài liệu kèm tên các step
+    thiếu.
 
 ---
 
@@ -221,6 +356,32 @@ trang, lựa chọn mới vẫn được giữ.
   — không gây lỗi hiển thị.
 - Một PO đã chọn ở Step 1 chưa có bản ghi nào trong `eutr_references`: AVAILABLE FILES hiển thị trạng
   thái trống rõ ràng cho phần tài liệu của PO đó, không hiển thị file mock.
+- PO chưa có bản ghi trong `eutr_purchase_attachments` nhưng có sẵn giá trị template từ D365
+  (`eutrTemplate` không rỗng): checkbox của PO đó ở Step 1 vẫn ở trạng thái có thể tick chọn (không bị
+  vô hiệu hóa) — không được coi là "chưa gắn Template" theo nghĩa bị chặn chọn của FR-022, vì FR-022
+  chỉ áp dụng cho trường hợp D365 hoàn toàn không có giá trị template cho PO đó.
+- Người dùng bỏ tick một PO đã lưu trước đó và đồng thời tick thêm một PO mới chưa từng lưu, rồi nhấn
+  Save PO Mapping một lần: kết quả sau khi lưu MUST khớp chính xác với toàn bộ tập PO đang được tick
+  tại thời điểm nhấn Save (PO bị bỏ tick bị xóa bản ghi, PO mới tick có bản ghi mới) — không phân biệt
+  xử lý theo thứ tự tick chọn trước/sau.
+- Người dùng nhấn nút Back khi đang có thay đổi lựa chọn PO ở Step 1 nhưng **chưa** nhấn Save PO
+  Mapping: hệ thống vẫn điều hướng về EUTR Sales Orders ngay khi nhấn Back — không tự động lưu, cũng
+  không cần xác nhận rời trang (đúng hành vi read/act đơn giản đã áp dụng cho các thao tác điều hướng
+  khác trong hệ thống).
+- Sales Order tồn tại (ref type = 11) nhưng chưa từng Save PO Mapping: màn hình View hiển thị danh
+  sách Purchase Orders đã chọn ở trạng thái trống, Template Checklist hiển thị "chưa có cây template",
+  Validation Summary hiển thị điều kiện "đã chọn PO" ở trạng thái chưa đạt — không hiển thị dữ liệu
+  mock đè lên.
+- Một PurchId đã lưu trong `eutr_purchase_attachments` nhưng D365 (reference type = 16) không còn trả
+  về bản ghi khớp tại thời điểm xem (ví dụ PO đã bị hủy/thay đổi bên D365): màn hình View vẫn hiển thị
+  PurchId đó, các trường thông tin bổ sung (tên, order account, qty) hiển thị trống nếu không tra cứu
+  được — không gây lỗi toàn màn hình.
+- Nhiều PO đã lưu của cùng Sales Order trỏ tới cùng một `TemplateCode`: Template Checklist ở màn hình
+  View chỉ hiển thị một cây duy nhất cho template đó, theo đúng nguyên tắc dedup đã áp dụng ở Overview
+  và Step 2 Map File.
+- Người dùng thử tương tác (click) vào node cây hoặc file ở màn hình View: hệ thống chỉ cho phép
+  expand/collapse để xem, không phát sinh bất kỳ thay đổi dữ liệu nào (không có API ghi nào được gọi
+  từ màn hình này).
 
 ## Requirements *(mandatory)*
 
@@ -304,6 +465,60 @@ trang, lựa chọn mới vẫn được giữ.
 - **FR-030**: Chức năng **Save** ở footer Step 2 (lưu mapping tài liệu↔step) MUST tiếp tục hiển thị
   nhưng KHÔNG lưu mapping thật — khác với Save PO Mapping ở Step 1 (đã lưu thật theo FR-020/FR-021),
   giữ hành vi demo/no-op tạm thời.
+- **FR-031**: Tại Step 1, các PO chưa có bản ghi nào trong `eutr_purchase_attachments` (chưa từng
+  được Save PO Mapping) MUST tiếp tục hiển thị checkbox ở trạng thái có thể tick chọn (không bị vô
+  hiệu hóa), miễn là D365 có trả về giá trị template cho PO đó — cho phép người dùng chọn thêm các PO
+  này bên cạnh các PO đã tick sẵn từ lần Save trước, không chỉ giới hạn tick lại đúng các PO cũ. Điều
+  kiện vô hiệu hóa checkbox theo FR-022 (PO không có template từ D365) vẫn được giữ nguyên.
+- **FR-032**: Khi Save PO Mapping với (các) PO mới được tick chọn thêm ở FR-031, hệ thống MUST lưu
+  thêm bản ghi mới vào `eutr_purchase_attachments` cho các PO đó với `TemplateCode` lấy từ giá trị
+  template (`eutrTemplate`) do nguồn dữ liệu PO ở Step 1 (reference type = 16) trả về — không yêu cầu
+  người dùng tự chọn Template thủ công; hành vi đồng bộ toàn bộ tập bản ghi theo đúng lựa chọn hiện
+  tại trên UI (FR-021) vẫn áp dụng cho các PO mới chọn thêm này.
+- **FR-033**: Nút **Back** trên màn hình Map File MUST điều hướng người dùng quay lại màn hình **EUTR
+  Sales Orders** (Overview, route `/eutr/sales-orders`) khi được nhấn — không để trống không phản
+  hồi như hiện tại.
+- **FR-034**: Màn hình **View Sales Order** (`ViewSalesOrderPage`) MUST kiểm tra Sales Order có tồn
+  tại hay không bằng cách tra cứu cùng nguồn tham chiếu dùng chung reference type = 11 (giống Map File
+  FR-014) theo Sales ID trên URL — không dùng dữ liệu mock (`MOCK_SALES_ORDERS`).
+- **FR-035**: Nếu Sales ID không tồn tại ở nguồn tham chiếu type = 11, màn hình View MUST hiển thị
+  thông báo lỗi rõ ràng ("Sales Order không tồn tại") và không hiển thị danh sách Purchase Orders,
+  Template Checklist, hay Validation Summary.
+- **FR-036**: Header của màn hình View (Sales ID, Customer, Customer name) MUST lấy dữ liệu thật từ
+  cùng bản ghi reference type = 11 đã tra được ở FR-034 — không dùng dữ liệu mock.
+- **FR-037**: Danh sách **Purchase Orders đã chọn** ở màn hình View MUST lấy từ các bản ghi đã lưu
+  trong `eutr_purchase_attachments` của Sales ID này, tra cứu thêm thông tin hiển thị (tên, order
+  account, số lượng) từ nguồn tham chiếu dùng chung reference type = 16 — không dùng
+  `MOCK_SO_POS`/`MOCK_SO_PO_MAPPINGS` và không hiển thị các cột demo cũ (Vendor/Vendor Name/Rate/
+  Material) không có nguồn dữ liệu thật tương ứng.
+- **FR-038**: Nếu Sales ID chưa có bản ghi nào trong `eutr_purchase_attachments`, danh sách Purchase
+  Orders đã chọn ở màn hình View MUST hiển thị trạng thái trống rõ ràng ("Chưa chọn PO nào").
+- **FR-039**: **Template Checklist** ở màn hình View MUST được xây dựng dựa trên (các) `TemplateCode`
+  lấy từ các bản ghi `eutr_purchase_attachments` của Sales ID này, theo đúng cơ chế xây cây đã áp dụng
+  ở Step 2 Map File (FR-023/FR-024) — không dùng `EUTR_TEMPLATE_DETAILS_MAP`/`so.templateId` mock.
+- **FR-040**: Nếu Sales ID chưa Save PO Mapping nào (chưa có bản ghi trong `eutr_purchase_attachments`),
+  Template Checklist ở màn hình View MUST hiển thị trạng thái "chưa có cây template" rõ ràng (giống
+  Map File FR-025), không hiển thị cây mock.
+- **FR-041**: Mỗi step trong Template Checklist ở màn hình View MUST hiển thị đúng trạng thái "đã có
+  tài liệu"/"còn thiếu" dựa trên tài liệu thật lấy từ `eutr_references` cho (các) PO đã lưu của Sales
+  Order này, theo đúng cơ chế đã dùng ở Map File Step 2 (FR-026/FR-027) — không dùng
+  `MOCK_AVAILABLE_FILES`/`MOCK_FILE_MAPPINGS`.
+- **FR-042**: Toàn bộ màn hình View MUST ở chế độ **chỉ đọc** — không cung cấp chức năng tick chọn PO,
+  map/unmap tài liệu, hay upload tài liệu mới; chỉ cho phép mở rộng/thu gọn (expand/collapse) cây để
+  xem, không làm thay đổi dữ liệu.
+- **FR-043**: Nút **Edit / Map File** trên màn hình View MUST điều hướng người dùng sang màn hình
+  **Map File** (route `/eutr/sales-orders/:salesId/map-file`) của đúng Sales Order đang xem.
+- **FR-044**: Nút **Download** trên màn hình View MUST tiếp tục hiển thị nhưng KHÔNG xử lý tải file
+  thật — giữ hành vi demo/no-op tạm thời, việc xử lý thật để lại cho một cập nhật sau.
+- **FR-045**: Phần **Validation Summary** ở màn hình View MUST được tính toán từ dữ liệu step thật
+  (không dùng dữ liệu mock): liệt kê (các) Purchase Order đã chọn (từ `eutr_purchase_attachments`), số
+  step Required đã có tài liệu (đủ file), và số step Required còn thiếu tài liệu (kèm tên các step
+  thiếu).
+- **FR-046**: Validation Summary ở màn hình View MUST hiển thị trạng thái "chưa đạt" khi Sales Order
+  chưa chọn PO nào hoặc còn ít nhất 1 step Required thiếu tài liệu — theo đúng nguyên tắc điều kiện đã
+  áp dụng ở phiên bản mock trước đây, nay dựa trên dữ liệu thật; điều kiện "File không hết hạn" của
+  bản mock trước đây tạm thời không áp dụng vì dữ liệu tài liệu thật hiện chưa có thông tin ngày hết
+  hạn.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -332,6 +547,11 @@ trang, lựa chọn mới vẫn được giữ.
   đã có sẵn cho (các) PO đã chọn ở Step 1, và tài liệu đó thuộc step nào trong cây ở Step 2.
 - **Document** (bảng `eutr_documents`, tham chiếu qua `eutr_references.DocumentId`): cung cấp thông
   tin hiển thị (tên file...) cho mỗi tài liệu liệt kê ở AVAILABLE FILES.
+- **View Sales Order** (màn hình `ViewSalesOrderPage`) — **cập nhật từ Update 4**: dùng lại đúng các
+  entity đã mô tả ở trên (Sales Order, Purchase Attachment, Purchase Order, Template, Reference,
+  Document) theo chế độ **chỉ đọc** — màn hình này không ghi/sửa/xóa bất kỳ bản ghi nào ở
+  `eutr_purchase_attachments`, `eutr_references`, hay các bảng liên quan; mọi thao tác ghi được
+  chuyển hướng sang màn hình Map File qua nút Edit / Map File.
 
 ## Success Criteria *(mandatory)*
 
@@ -358,6 +578,24 @@ trang, lựa chọn mới vẫn được giữ.
 - **SC-008**: 100% tài liệu hiển thị ở AVAILABLE FILES gắn đúng Step trong cây template, dựa trên dữ
   liệu thật ở `eutr_references` cho (các) PO đã chọn — không có tài liệu nào gắn sai step hoặc bị
   bỏ sót.
+- **SC-009**: 100% PO có sẵn template từ D365 hiển thị ở Step 1 đều có thể tick chọn được, bất kể PO
+  đó đã có bản ghi trong `eutr_purchase_attachments` hay chưa; sau khi Save PO Mapping, tập bản ghi
+  trong `eutr_purchase_attachments` luôn khớp chính xác với toàn bộ PO đang được tick tại thời điểm
+  Save (không thiếu, không thừa).
+- **SC-010**: 100% lượt nhấn nút Back trên màn hình Map File điều hướng đúng về màn hình EUTR Sales
+  Orders, không có trường hợp không phản hồi.
+- **SC-011**: 100% Sales ID hợp lệ mở màn hình View đều thấy đúng header thật (Sales ID/Customer/
+  Customer name) khớp với dữ liệu đã thấy ở Overview/Map File — không có trường hợp hiển thị dữ liệu
+  mock.
+- **SC-012**: 100% Purchase Order hiển thị ở danh sách "đã chọn" trên màn hình View khớp chính xác với
+  các bản ghi đang có trong `eutr_purchase_attachments` tại thời điểm xem — không thiếu, không thừa.
+- **SC-013**: 100% step trong Template Checklist ở màn hình View phản ánh đúng trạng thái đã có tài
+  liệu/còn thiếu dựa theo tài liệu thật ở `eutr_references` — khớp với trạng thái tương ứng ở Step 2
+  Map File của cùng Sales Order.
+- **SC-014**: 100% lượt nhấn Edit / Map File từ màn hình View điều hướng đúng sang Map File của đúng
+  Sales Order đang xem.
+- **SC-015**: 0% thao tác click/tương tác trên màn hình View (ngoài expand/collapse cây) gây ra thay
+  đổi dữ liệu (không có bản ghi nào bị ghi/sửa/xóa từ màn hình này trong 100% các phép thử).
 
 ## Assumptions
 
@@ -399,3 +637,31 @@ trang, lựa chọn mới vẫn được giữ.
   PO mới chọn được thêm mới) — không tích lũy lịch sử các lần Save trước đó.
 - Nút Upload và Save ở Step 2 (Map Files vào Template) tiếp tục ở trạng thái hiển thị/demo, chưa gọi
   API thật trong phạm vi cập nhật này — để lại cho một tính năng sau xử lý.
+- "PO chưa gắn vào Template" trong yêu cầu Update 3 được hiểu là PO **chưa có bản ghi** trong
+  `eutr_purchase_attachments` (chưa từng được Save PO Mapping cho Sales Order này) — khác với trường
+  hợp PO hoàn toàn không có giá trị template từ D365 (trường hợp này vẫn bị chặn chọn theo FR-022).
+  Miễn PO có sẵn template từ D365, PO đó luôn có thể được tick chọn dù đã lưu hay chưa.
+- TemplateCode lưu cho các PO mới chọn thêm vẫn lấy từ cột `eutrTemplate` của nguồn dữ liệu PO ở
+  Step 1 (reference type = 16) — theo đúng xác nhận của người yêu cầu tính năng, không có cơ chế nhập
+  Template thủ công nào được bổ sung ở Update 3.
+- Nút Back điều hướng thẳng về màn hình EUTR Sales Orders, tương đương hành vi đã có sẵn của liên kết
+  breadcrumb trên cùng màn hình Map File — không cần xác nhận rời trang dù có thay đổi chưa lưu.
+- Màn hình View chỉ hiển thị các Purchase Order **đã lưu** (đã Save PO Mapping) cho Sales Order đó —
+  khác với Step 1 Map File vốn hiển thị toàn bộ PO khả dụng từ D365 để người dùng chọn; View không
+  cần hiển thị các PO chưa được chọn/lưu vì đây là màn hình xem tổng quan hồ sơ đã hoàn thiện, không
+  phải màn hình chọn PO.
+- Các cột hiển thị cho Purchase Orders đã chọn ở màn hình View (PO, Name, Order account, Qty) dùng lại
+  đúng bộ trường thật đã có sẵn từ nguồn tham chiếu reference type = 16 (giống Step 1 Map File) — các
+  cột demo cũ (Vendor/Vendor Name/Rate/Material) không còn nguồn dữ liệu thật tương ứng nên được thay
+  thế, việc ánh xạ cột cụ thể (giữ/đổi tên) là quyết định kỹ thuật ở giai đoạn plan, không thuộc phạm
+  vi đặc tả nghiệp vụ ở đây.
+- Do dữ liệu tài liệu thật hiện lấy từ `eutr_references`/`eutr_documents` chưa có thông tin ngày hết
+  hạn (validFrom/expiredDate), điều kiện "File không hết hạn" trong Validation Summary phiên bản mock
+  trước đây tạm thời không áp dụng được với dữ liệu thật; Validation Summary màn hình View chỉ còn 2
+  điều kiện chính: đã chọn ít nhất 1 PO, và Required steps đủ file — cho tới khi có nguồn dữ liệu hạn
+  sử dụng tài liệu thật ở một cập nhật sau.
+- Nút Submit EUTR (nếu còn giữ trên giao diện màn hình View) không thuộc phạm vi Update 4 — tiếp tục ở
+  trạng thái demo/disabled, tính theo 2 điều kiện Validation Summary nêu trên; xử lý submit thật để
+  lại cho một tính năng sau.
+- Việc mở rộng/thu gọn (expand/collapse) node cây ở Template Checklist của màn hình View không được
+  coi là hành vi chỉnh sửa dữ liệu — chỉ là tương tác hiển thị cục bộ trên UI, không gọi API ghi nào.
