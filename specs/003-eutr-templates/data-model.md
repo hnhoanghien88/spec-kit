@@ -15,6 +15,25 @@ duplicates a template's header (new Code, new Name/AlertFor from user input, Ver
 IsDefault=0), full detail tree, and full reference-mapping set into a brand-new, fully independent
 template row.
 
+**Update 16 (2026-07-21)**: (1) New `Status` field (`0`=Draft/`1`=Approved, `TINYINT`, default `0`)
+on `EutrTemplates`. **Implementation note**: the spec/plan originally called for a `VARCHAR(20)`
+string column (`'Draft'`/`'Approved'`) — during `/speckit-implement`, the live dev DB was found to
+already have an unused `Status TINYINT NULL DEFAULT 0` column (present in no design doc, migration,
+or code) with `AlertFor` also still `tinyint` (migration 08 never applied there), confirming this
+dev DB predates several documented migrations. The user decided to keep the existing column's type
+rather than convert it, so `Status` is `TINYINT` (0=Draft, 1=Approved) backed by a
+`TemplateStatusEnum : byte` in `ComplianceSys.Application.Constants`, mirrored on the frontend as a
+numeric `TEMPLATE_STATUS` plus a `TEMPLATE_STATUS_LABELS` display map (the same
+value/label-map split already used for `RequirementType`/`TakeFrom`). This section and the rest of
+this doc describe the AS-BUILT numeric design. (2) The 24-hour age-based versioning branch is
+REMOVED entirely — edit while `Status=0` (Draft) always updates in place, regardless of
+`CreatedDate` age. (3) VersionId now only increments via the new explicit **Request change** action
+(`Status: 1→0`, Approved→Draft), which reuses the same detail-tree/reference copy pipeline **Clone**
+already established (Update 15) instead of the old age-based branch's payload-rebuild logic. (4) New
+**Approve** action (`Status: 0→1`, Draft→Approved, same row, no version change). (5) A template with
+`Status=1` (Approved) is read-only — `UpdateAsync` rejects direct edits server-side, not just via a
+disabled frontend control.
+
 ## Entities
 
 ### 1. EutrTemplates
@@ -28,7 +47,8 @@ template row.
 | Name | VARCHAR(255) | YES | NULL | — | Template name. Required by validation. |
 | ~~VendorCode~~ | ~~VARCHAR(50)~~ | — | — | — | **Removed (Update 13)**. Existing values discarded, no migration. Vendor↔Template linkage now lives in `EutrTemplateReferences` (time-bound, many-to-many) instead of a single field on the template. |
 | IsDefault | TINYINT | YES | 0 | Max 1 **globally** among active records (Update 13 — was max 1 per VendorCode) | Default template flag |
-| VersionId | TINYINT | NO | 1 | — | Version counter. Starts at 1, increments on edit only if CreatedDate is >24h old. |
+| VersionId | TINYINT | NO | 1 | — | Version counter. Starts at 1. **(Superseded by Update 16)** ~~increments on edit only if CreatedDate is >24h old~~ → increments ONLY when Request change transitions the row from Approved to Draft (see Status below and State Transitions). |
+| Status | TINYINT | YES | 0 | Values: `0`=Draft, `1`=Approved (Update 16; `TemplateStatusEnum` backend, `TEMPLATE_STATUS`/`TEMPLATE_STATUS_LABELS` frontend `helpers.js`) | Approval lifecycle flag. Defaults to `0` (Draft) on Create and Clone. `1` (Approved) rows are read-only (server-enforced) until Request change moves them back to `0` (Draft) on a NEW version row. Column pre-existed on the dev DB (unused, no prior migration) — see Update 16 note above. |
 | AlertFor | BIGINT UNSIGNED | YES | NULL | Logical ref → compl_group_email.Id (no DB FK — see Update 7) | Selected Alert group's Id. Required by validation (must be > 0). Was VARCHAR(50) free text before Update 7 (2026-07-07). |
 | IsDeleted | TINYINT | YES | 0 | — | Soft delete flag (0=active, 1=deleted) |
 | IsHide | TINYINT | YES | 0 | — | Version hide flag (0=current, 1=superseded) |
@@ -56,21 +76,39 @@ approach).
   Name/AlertFor/IsDefault. **Update 13**: `vendorCode: null` is no longer sent because `VendorCode`
   no longer exists on the entity/DTO at all. Vendor↔template linkage is set up later, separately,
   via the Apply-to-Customer screen (`eutr_template_references`) — not via a subsequent Edit anymore.
-- On edit, versioning is conditional on `(now - CreatedDate)` of the row being edited:
-  - **≥ 24 hours**: new row created with `VersionId + 1`, details inserted under the new
-    `TemplateId`, old row set `IsHide = 1`. **(Update 15)** `EutrTemplateReferences` rows belonging to
-    the old `TemplateId` are ALSO copied to the new `TemplateId` (see Entity 6, FR-049) — previously
-    only the detail tree was copied, leaving vendor mappings attached only to the now-hidden old row.
-  - **< 24 hours**: existing row updated in place (same `Id`, same `VersionId`, `CreatedDate`
+  **Update 16**: `Status` is never accepted from the client on Create — the backend always sets
+  `Status = Draft` on the new row.
+- **(Superseded by Update 16 — see below)** ~~On edit, versioning is conditional on
+  `(now - CreatedDate)` of the row being edited:~~
+  - ~~**≥ 24 hours**: new row created with `VersionId + 1`, details inserted under the new
+    `TemplateId`, old row set `IsHide = 1`. (Update 15) `EutrTemplateReferences` rows belonging to
+    the old `TemplateId` are ALSO copied to the new `TemplateId` (see Entity 6, FR-049).~~
+  - ~~**< 24 hours**: existing row updated in place (same `Id`, same `VersionId`, `CreatedDate`
     unchanged) — header fields overwritten, `eutr_template_details` for this `TemplateId` replaced
-    (delete + re-insert), `IsHide` untouched. No `EutrTemplateReferences` change needed — `TemplateId`
-    is unchanged in this branch, so existing mappings already stay correctly linked.
+    (delete + re-insert), `IsHide` untouched.~~
+- **On edit (Update 16)**: allowed ONLY when `Status = Draft` (the backend rejects an edit attempt
+  on an `Approved` row with a validation error, per FR-061 — this is enforced server-side, not just
+  a disabled frontend button). When allowed, the existing row is ALWAYS updated in place (same `Id`,
+  same `VersionId`, `CreatedDate` unchanged) — header fields overwritten, `eutr_template_details`
+  for this `TemplateId` replaced (delete + re-insert), `IsHide` untouched, regardless of how long ago
+  the row was created. No new row is ever created by a normal edit/Save.
+- **Approve (new, Update 16)**: `Status: Draft → Approved` on the SAME row — `Id`/`VersionId`/
+  `CreatedDate`/`eutr_template_details`/`eutr_template_references` all unchanged, only `Status` (+
+  `UpdatedBy`/`UpdatedDate`) is written.
+- **Request change (new, Update 16)**: `Status: Approved → Draft`, and THIS is now the only trigger
+  for a version bump: a new row is created with `VersionId + 1`, `Status = Draft`, and the SAME
+  `Name`/`AlertFor`/`IsDefault` as the row it supersedes (copied verbatim — Request change carries no
+  payload, unlike a normal edit); `eutr_template_details` and `eutr_template_references` are copied to
+  the new `TemplateId` using the exact same copy pipeline Clone (Update 15) already uses, NOT the old
+  age-based branch's rebuild-from-submitted-payload logic (see research.md §32); the old row is set
+  `IsHide = 1` and otherwise left untouched — an immutable historical snapshot of what was Approved.
 - **Clone (new, Update 15)**: creates an entirely new, independent row — new auto-generated `Code`,
   `Name`/`AlertFor` from the Clone dialog's input, `VersionId = 1`, `IsDefault = 0` (always, never
-  inherited from the source), `IsDeleted = 0`, `IsHide = 0`, `CreatedBy`/`CreatedDate` = current
-  user/now. The full detail tree and full reference-mapping set of the source template are copied to
-  the new `TemplateId` (see Entity 2/Entity 6). The new template has no relationship back to its
-  source after creation — editing, deleting, or versioning either one does not affect the other.
+  inherited from the source), `Status = Draft` (Update 16, always, regardless of the source's
+  Status), `IsDeleted = 0`, `IsHide = 0`, `CreatedBy`/`CreatedDate` = current user/now. The full
+  detail tree and full reference-mapping set of the source template are copied to the new
+  `TemplateId` (see Entity 2/Entity 6). The new template has no relationship back to its source after
+  creation — editing, deleting, approving, or versioning either one does not affect the other.
 - On delete: set `IsDeleted = 1` on the visible row only
 - **IsDefault constraint (Update 13 — changed from per-VendorCode to global)**: max 1 template
   `IsDefault = 1` **across the entire table** (among active records: `IsDeleted=0, IsHide=0`);
@@ -108,16 +146,25 @@ approach).
 **Business rules**:
 - ParentId = 0 means root-level step
 - ParentId > 0 references another EutrTemplateDetail.Id within the same template
-- DisplayOrder is auto-set from the reordering interaction (0-based within siblings) — drag-and-drop
-  on `StepTree.jsx`/`EutrTemplatesAddEdit.jsx`, or Move Up/Down buttons calling the same
-  `reorderSiblings` function on `TemplateBuilderPage.jsx` (Update 10) — both write the same field
-  the same way, only the trigger gesture differs by screen
+- DisplayOrder is auto-set from the reordering interaction (0-based within siblings), always via the
+  same `reorderSiblings` function on `TemplateBuilderPage.jsx` — either Move Up/Down toolbar buttons
+  (Update 10) or **(Update 17)** real drag-and-drop on the same tree, restricted to reordering among
+  siblings sharing the same `ParentId` (dropping onto a different branch is a no-op, FR-065); both
+  gestures write the field the same way, only the trigger differs. **Correction**: an earlier version
+  of this note claimed drag-and-drop already existed on `StepTree.jsx`/`EutrTemplatesAddEdit.jsx` —
+  verified false during Update 17's code audit (`@dnd-kit` was installed but imported nowhere in this
+  feature); Update 17 is the first real drag-and-drop implementation for this feature, not a reuse of
+  a pre-existing pattern.
 - No `Type`/`FSC` columns exist on this table — `TemplateBuilderPage.jsx`'s mock-only Type
   (Cá nhân/Tổ chức) and FSC (Yes/No) fields have no backend counterpart and are removed when the
   screen is wired to real data (Update 10)
-- On template edit: if the template row is ≥24h old, all details are copied to the new template
-  version (new TemplateId); if <24h old, existing details for the current TemplateId are replaced
-  (delete + re-insert) in place
+- **(Superseded by Update 16)** ~~On template edit: if the template row is ≥24h old, all details are
+  copied to the new template version (new TemplateId); if <24h old, existing details for the current
+  TemplateId are replaced (delete + re-insert) in place~~ → On template edit (only allowed while
+  Status=Draft), existing details for the current TemplateId are ALWAYS replaced (delete +
+  re-insert) in place — no age check. Details are copied to a NEW TemplateId only via **Request
+  change** (Status: Approved → Draft), reusing the same copy pipeline as Clone (see Entity 1,
+  research.md §32).
 - Cascade deletion: removing a parent step removes all descendants (client-side, before save)
 - **StepId resolution (Update 6)**: the request DTO also accepts a request-only `StepName` field
   (not a DB column) used only when `StepId` is null — the Step combobox is free-solo, so a step
@@ -259,21 +306,36 @@ EutrTemplateDetails ──self-ref── EutrTemplateDetails (via ParentId → I
 
 ### Template Lifecycle
 
+**(Superseded by Update 16 — see the Status-driven diagram below)** ~~the age-based (24h) versioning
+diagram that previously lived here is removed; Edit/Save no longer branches on CreatedDate age at
+all.~~
+
 ```
-[Create — quick-create dialog, Update 9] ──→ Active (IsDeleted=0, IsHide=0, VersionId=1,
-                                               CreatedDate=now, 0 details)
+[Create — quick-create dialog, Update 9] ──→ Active, Status=Draft (IsDeleted=0, IsHide=0,
+                                               VersionId=1, CreatedDate=now, 0 details)
                 │
-[Clone — Update 15, from any existing template] ──→ Active (IsDeleted=0, IsHide=0, VersionId=1,
-                                               IsDefault=0, CreatedDate=now, details + references
-                                               copied from source; no link back to source)
+[Clone — Update 15, from any existing template] ──→ Active, Status=Draft (Update 16) (IsDeleted=0,
+                                               IsHide=0, VersionId=1, IsDefault=0, CreatedDate=now,
+                                               details + references copied from source; no link
+                                               back to source)
                 │
-                ├──[Edit/Save, CreatedDate ≥24h ago]──→ New Version (IsDeleted=0, IsHide=0, VersionId=N+1)
-                │                                         Old version → (IsHide=1)
-                │                                         (Update 15) references also copied to new Id
+                ├──[Edit/Save, Status=Draft]──→ Same row updated in place, ALWAYS (Update 16 — no
+                │                                 age check). Id, VersionId, CreatedDate unchanged;
+                │                                 header + details overwritten.
                 │
-                ├──[Edit/Save, CreatedDate <24h ago]──→ Same row updated in place
-                │                                         (Id, VersionId, CreatedDate unchanged;
-                │                                          header + details overwritten)
+                ├──[Approve, Status=Draft]──→ Same row, Status=Approved (Update 16). Id, VersionId,
+                │                                 CreatedDate, details, references all unchanged —
+                │                                 only Status (+ UpdatedBy/UpdatedDate) changes.
+                │                                 Edit/Save is now rejected server-side until
+                │                                 Request change runs.
+                │
+                ├──[Request change, Status=Approved]──→ New Version, Status=Draft (Update 16)
+                │                                 (IsDeleted=0, IsHide=0, VersionId=N+1, same Code/
+                │                                 Name/AlertFor/IsDefault copied verbatim from the
+                │                                 old row; details + references copied via the same
+                │                                 pipeline Clone uses — see research.md §32).
+                │                                 Old version (Status=Approved) → IsHide=1, otherwise
+                │                                 untouched — an immutable historical snapshot.
                 │
                 └──[Delete]──→ Soft Deleted (IsDeleted=1)
 ```
@@ -311,6 +373,10 @@ EutrTemplateDetails ──self-ref── EutrTemplateDetails (via ParentId → I
 | EutrTemplates | AlertFor | Required — must be a positive Id (Update 7: numeric, was "not empty string" pre-Update 7). Not validated for existence in `compl_group_email` server-side. |
 | ~~EutrTemplates~~ | ~~VendorCode~~ | **Removed (Update 13)** — field no longer exists on this entity |
 | EutrTemplates | Code | System-generated, not user-editable |
+| EutrTemplates | Status | System-controlled, not user-editable via Create/Update — only changes via the dedicated Approve (Draft→Approved) and Request change (Approved→Draft) actions (Update 16) |
+| EutrTemplates Update (Update 16) | Status | Backend rejects the request with a validation error if `existing.Status == Approved` — edits are only accepted while Draft |
+| Approve request (Update 16) | Status | Backend rejects with a validation error if `existing.Status != Draft` |
+| Request change request (Update 16) | Status | Backend rejects with a validation error if `existing.Status != Approved` |
 | EutrTemplateDetails | StepId or StepName | Must provide `StepId` (existing eutr_steps record) OR a non-blank `StepName` (Update 6 — resolved to an existing or newly-created eutr_steps record on Save) |
 | EutrTemplateDetails | RequirementType | Must be 0 (Optional) or 1 (Required) |
 | EutrTemplateDetails | TakeFrom | Must be 0 (PO) or 1 (Upload manual) |
@@ -332,3 +398,5 @@ EutrTemplateDetails ──self-ref── EutrTemplateDetails (via ParentId → I
 | RequirementType | 1 | Required |
 | TakeFrom | 0 | PO |
 | TakeFrom | 1 | Upload manual |
+| Status (Update 16) | 0 | Draft |
+| Status (Update 16) | 1 | Approved |

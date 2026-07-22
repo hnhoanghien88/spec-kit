@@ -2025,3 +2025,252 @@ T281 (depends on Phase 62's T279 + T280)
 T282, T283, T284, T285 in parallel (once Phases 60-63 are done)
 T286 sequentially (records the findings from T282/T283)
 ```
+
+---
+
+## Phase 65: Backend — Status Column, TemplateStatus Constants, Repository Copy/SetStatus Helpers (US3)
+
+**Purpose**: Add the `Status` column and the low-level repository primitives (`CopyDetailTreeAsync`, `SetStatusAsync`) that Phase 66's Approve/Request-change logic builds on
+
+- [X] T287 [P] [US3] Create compliance-sys-api/src/ComplianceSys.Infrastructure/Sqls/Migration/13_add_status_to_eutr_templates.sql — `ALTER TABLE eutr_templates ADD COLUMN Status TINYINT NULL DEFAULT 0`. **Done** — file created; not run against the shared dev DB, which already has this exact column (`TINYINT NULL DEFAULT 0`, confirmed via `DESCRIBE eutr_templates`) — this migration only applies to environments that don't already have it (fresh installs).
+- [X] T288 [P] [US3] Modify compliance-sys-api/src/ComplianceSys.Infrastructure/Sqls/Tables/eutr_db.sql — add `Status TINYINT NULL DEFAULT 0` to the fresh-install `CREATE TABLE eutr_templates` statement. **Done**.
+- [X] T289 [P] [US3] Modify compliance-sys-api/src/ComplianceSys.Domain/Entities/EutrTemplates.cs — add `public byte? Status { get; set; } = 0;` (revised from `string` to `byte?` to match the pre-existing `TINYINT` DB column — see research.md §33). **Done**.
+- [X] T290 [P] [US3] Create compliance-sys-api/src/ComplianceSys.Application/Constants/TemplateStatus.cs — `public enum TemplateStatusEnum : byte { Draft = 0, Approved = 1 }`, mirroring the frontend's numeric `TEMPLATE_STATUS`/`TEMPLATE_STATUS_LABELS` (revised from a string-based constants class to match the pre-existing `TINYINT` DB column found during implementation — see research.md §33). **Done**.
+- [X] T291 [US3] Add `Task CopyDetailTreeAsync(...)` — **Deviation, recorded**: implemented as a **private method on `EutrTemplatesService`**, not a repository interface/implementation pair. Reason: the copy logic needs `BuildDetailEntitiesAsync`, an existing *private service* helper (step-name resolution + audit-field stamping), which a repository method has no access to; keeping the copy at the service layer avoids leaking that dependency across layers. See T292/T293.
+- [X] T292 [US3] Implement `CopyDetailTreeAsync(EutrTemplatesResponseDto source, long newTemplateId, DateTime now, string userEmail, CancellationToken ct)` as a private method in compliance-sys-api/src/ComplianceSys.Application/Services/EutrTemplatesService.cs — extracted verbatim from `CloneAsync`'s inline re-index-then-`BuildDetailEntitiesAsync`+`BulkInsertDetailsAsync` block (same algorithm, same behavior). **Done**.
+- [X] T293 [US3] Modify `CloneAsync` (T274) to call the new `CopyDetailTreeAsync` (T292) instead of its own inline block; behavior confirmed unchanged via code diff (same StepId/RequirementType/TakeFrom/DisplayOrder/ParentId structure copied) (depends on T292). **Done**.
+- [X] T294 [US3] Add `Task SetStatusAsync(long id, byte status, string userEmail, CancellationToken ct = default)` to compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrTemplatesRepository.cs — single-column `UPDATE eutr_templates SET Status = @status, UpdatedBy = @userEmail, UpdatedDate = @now WHERE Id = @id` (param type `byte`, not `string` — see research.md §33). **Done**.
+- [X] T295 [US3] Implement `SetStatusAsync` in compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrTemplatesRepository.cs (depends on T294). **Done**.
+
+**Checkpoint**: **Verified**. `dotnet build` on `ComplianceSys.Domain.csproj`/`ComplianceSys.Application.csproj`/`ComplianceSys.Infrastructure.csproj`/`ComplianceSys.Api.csproj` all show 0 `error CS`. `CloneAsync`'s refactor was confirmed behavior-preserving by code diff (the extracted `CopyDetailTreeAsync` body is byte-for-byte the same re-index/build/insert logic, just moved into its own method).
+
+---
+
+## Phase 66: Backend — Remove 24h Branch, Add Approve/Request-Change Service Methods + Endpoints (US3, US8, US9)
+
+**Purpose**: Delete the age-based versioning branch from `UpdateAsync`, default new/cloned templates to Draft, and add the Approve/Request-change service methods + REST endpoints
+
+- [X] T296 [P] [US2] Modify compliance-sys-api/src/ComplianceSys.Application/Services/EutrTemplatesService.cs — `AddAsync` sets `Status = (byte)TemplateStatusEnum.Draft` (T290) unconditionally on the new row, never accepted from the client (depends on T290). **Done**.
+- [X] T297 [P] [US7] Modify the same file's `CloneAsync` — set `Status = (byte)TemplateStatusEnum.Draft` unconditionally on the new row, regardless of the source template's Status (depends on T290, T293). **Done**.
+- [X] T298 [US3] Modify the same file's `UpdateAsync` — DELETE the `(DateTime.UtcNow - existing.CreatedDate) >= TimeSpan.FromHours(24)` branch entirely (both the new-row-creation path and its `BuildDetailEntitiesAsync`/`BulkInsertDetailsAsync`/`CopyReferencesAsync` calls — removed, not commented out). Replaced with: (1) load `existing`; (2) if `existing.Status == (byte)TemplateStatusEnum.Approved`, throw `ValidationException("Template is Approved — use Request change before editing.")`; (3) otherwise, run the in-place update the old <24h branch already implemented (generic repository `UpdateAsync` + `ReplaceDetailsAsync`) — unconditionally, regardless of `CreatedDate` age (depends on T290). **Done**. Also added `ValidationException`/`KeyNotFoundException` catch blocks to the `Update` controller action (previously only caught `InvalidOperationException`) so the new Approved-rejection surfaces as HTTP 400, not an unhandled 500 — a gap this update needed to close, not present in the original task description.
+- [X] T299 [US8] Add `ApproveAsync(long id, string userEmail, CancellationToken ct)` to compliance-sys-api/src/ComplianceSys.Application/Services/EutrTemplatesService.cs — load `existing`; if `Status != (byte)TemplateStatusEnum.Draft`, throw `ValidationException("Only a Draft template can be Approved.")`; else call `SetStatusAsync(id, (byte)TemplateStatusEnum.Approved, userEmail, ct)` (T295); no VersionId change, no detail/reference copy (depends on T290, T295). **Done**.
+- [X] T300 [US9] Add `RequestChangeAsync(long id, string userEmail, CancellationToken ct)` to the same file — load `existing`; if `Status != (byte)TemplateStatusEnum.Approved`, throw `ValidationException("Only an Approved template can request change.")`; else, in one transaction: (1) insert a new `eutr_templates` row with the SAME `Code`/`Name`/`AlertFor`/`IsDefault` as `existing` (copied verbatim — no payload), `VersionId = existing.VersionId + 1`, `Status = (byte)TemplateStatusEnum.Draft`, `IsHide = 0`, `IsDeleted = 0`; (2) `CopyDetailTreeAsync(existing, newId, now, userEmail, ct)` (T292, private-method form); (3) `_templateReferencesRepository.CopyReferencesAsync(existing.Id, newId, ct)` (existing method, Phase 60/T269); (4) `SetIsHideAsync(id, ct)` on the OLD row (reused as-is, not a new "`SetStatusAsync`-adjacent" method — `Status` stays `Approved` on that row, only `IsHide` changes); returns the new row's response DTO (depends on T290, T292, T295, and existing T269). **Done**.
+- [X] T301 [US8] [US9] Add `ApproveAsync`/`RequestChangeAsync` signatures to compliance-sys-api/src/ComplianceSys.Application/Interfaces/Services/IEutrTemplatesService.cs (depends on T299, T300). **Done**.
+- [X] T302 [US8] Add `[Authorize(Policy = "EutrTemplates.Update")] [HttpPost("{id:long}/approve")]` action to compliance-sys-api/src/ComplianceSys.Api/Controllers/EutrTemplatesController.cs — no request body, calls `ApproveAsync`, same try/catch shape as the existing `{id}/clone` action (`KeyNotFoundException` → 404, `ValidationException` → 400), returns `{ id, code, versionId, status }` with message `"Template approved successfully."` (depends on T301). **Done**.
+- [X] T303 [US9] Add `[Authorize(Policy = "EutrTemplates.Update")] [HttpPost("{id:long}/request-change")]` action to the same controller — no request body, calls `RequestChangeAsync`, same try/catch shape, returns `{ id, code, versionId, status }` with message `"Change requested successfully."` (depends on T301). **Done**.
+
+**Checkpoint**: **Verified**. `dotnet build` on all 4 backend projects: 0 `error CS`. End-to-end mechanics verified via a direct SQL smoke test against the live dev DB (`compliance_sys_db_260601`, throwaway `SMOKE16-001` template + 2 steps + 1 vendor mapping, cleaned up after): Approve (`UPDATE ... SET Status=1`) left `Id`/`VersionId`/details(2)/references(1) unchanged; Request change created a new row (`VersionId=2`, `Status=0`, `IsHide=0`) with the step tree correctly re-parented (root `ParentId=0`→child `ParentId=<new root's real Id>`) and the vendor mapping copied exactly, while the old row became `IsHide=1` with `Status` still `1` (Approved) and its own 2 details/1 reference rows fully intact; cleanup confirmed 0 rows remaining. HTTP-level testing via `curl` was attempted but not completed — the dev API requires a JWT (validated against `keys/public.pem`, no matching private key available) plus an `XApiKey` header whose real value is `"REPLACED_BY_KEY_VAULT"` in this environment; this is the same category of limitation Update 13/14/15 hit with "no interactive browser session available."
+
+---
+
+## Phase 67: Frontend — Status Enum, Domain Entity, API/Repository/Use Cases (US8, US9)
+
+**Purpose**: Add the shared frontend enum and the infrastructure/application layers for calling the two new endpoints
+
+- [X] T304 [P] [US8] Add `TEMPLATE_STATUS`/`TEMPLATE_STATUS_LABELS` to compliance-client/src/utils/helpers.js. **Done** — shipped as `export const TEMPLATE_STATUS = Object.freeze({ DRAFT: 0, APPROVED: 1 });` **plus** `export const TEMPLATE_STATUS_LABELS = { 0: 'Draft', 1: 'Approved' };` (the label map wasn't in the original task description — it became necessary once `Status` turned out to be numeric, mirroring `REQUIREMENT_LABELS`/`TAKE_FROM_LABELS`).
+- [X] T305 [P] [US8] Modify compliance-client/src/domain/entities/EutrTemplates.js — add `status` to the constructor-destructuring list (same pattern as the existing `versionId`/`isDefault` fields). **Done**.
+- [X] T306 [P] [US8] [US9] Add `approve(id)` (POST `eutr-templates/${id}/approve`) and `requestChange(id)` (POST `eutr-templates/${id}/request-change`) methods to compliance-client/src/infrastructure/api/eutrTemplatesApi.js, mirroring the existing `clone(id, payload)` shape (no payload needed for either). **Done**.
+- [X] T307 [US8] [US9] Add `approve(id)`/`requestChange(id)` passthrough methods to compliance-client/src/infrastructure/repositories/RestEutrTemplatesRepository.js, delegating to T306's API methods (depends on T306). **Done** — also added the same two method stubs to `IEutrTemplatesRepository.js` (the abstract interface class), matching every other repository method's `throw new Error('Not implemented')` placeholder pattern; not called out in the original task list but required for consistency with the existing interface file.
+- [X] T308 [P] [US8] Create compliance-client/src/application/usecases/eutr-templates/ApproveEutrTemplatesUseCase.js — `execute(id)` calls `repository.approve(id)` (mirrors `CloneEutrTemplatesUseCase.js`'s one-line shape) (depends on T307). **Done**.
+- [X] T309 [P] [US9] Create compliance-client/src/application/usecases/eutr-templates/RequestChangeEutrTemplatesUseCase.js — `execute(id)` calls `repository.requestChange(id)` (depends on T307). **Done**.
+
+**Checkpoint**: **Verified**. `npx eslint` on all 9 touched frontend files: 0 errors (only a pre-existing, unrelated `MODULE_TYPELESS_PACKAGE_JSON` warning). `ApproveEutrTemplatesUseCase`/`RequestChangeEutrTemplatesUseCase` are ready to call from `TemplateListPage.jsx`.
+
+---
+
+## Phase 68: Frontend — TemplateListPage Status Chip + Approve/Request-Change Toolbar (US8, US9)
+
+**Purpose**: Show the Status Chip per row and wire the two new toolbar actions to the existing single-row-selection + `ConfirmDialog` pattern
+
+- [X] T310 [US8] Modify compliance-client/src/presentation/pages/eutr-templates/TemplateListPage.jsx — replace the pre-existing hardcoded `<Chip label="Draft" .../>` placeholder with a real Status `Chip` per row: label via `TEMPLATE_STATUS_LABELS[tmpl.status ?? TEMPLATE_STATUS.DRAFT]`, color `tmpl.status === TEMPLATE_STATUS.APPROVED ? 'success' : 'warning'`, positioned next to the existing Default chip (depends on T304, T305). **Done**.
+- [X] T311 [US8] [US9] Modify the same file — add **Approve** and **Request change** `Button`s. **Done, with a placement deviation, recorded**: the file already had non-functional Approve/Request change placeholder `Button`s (always visible, no `onClick`, gated by `permissionList.includes('Create')` alongside the Create Template button) left over from an earlier scaffold. Rewired those instead of adding new ones: moved out of the `Create`-gated block into their own `canUpdate` (`permissionList.includes('Update')`) gated block — matching the `Update` permission every other mutating row action (Edit/Apply) on this page already uses, rather than `Create` — and wired `disabled={!canApprove}`/`disabled={!canRequestChange}` where `canApprove`/`canRequestChange` require `selectionModel.length === 1` AND the selected row's `status` matching (depends on T304, T310).
+- [X] T312 [US8] [US9] Modify the same file — clicking Approve/Request change opens the existing `ConfirmDialog` component (`labelConfirm="Yes"`) with a Yes/No prompt naming the template's Code/Name; confirming calls `ApproveEutrTemplatesUseCase`/`RequestChangeEutrTemplatesUseCase.execute(selectedRow.id)` (T308/T309), then clears the selection, re-runs the existing `fetchData()` list refresh, and shows a `CustomSnackbar` success/error message (same pattern as every other mutating action on this page) (depends on T308, T309, T311). **Done**.
+
+**Checkpoint**: **Verified**. `npx eslint` clean; full `npm run build` succeeds (updated `TemplateListPage.[hash].js` chunk, no build errors). Logic confirmed by code review: selecting exactly 1 Draft row enables Approve only; selecting exactly 1 Approved row enables Request change only; 0 or 2+ selected disables both. Live click-through not performed (no interactive browser in this session — see Phase 66's checkpoint for the same auth-related limitation); the direct SQL smoke test (Phase 66) exercised the underlying data mechanics these buttons trigger.
+
+---
+
+## Phase 69: Frontend — TemplateBuilderPage Read-Only Gate (US3)
+
+**Purpose**: Lock the Edit screen when the loaded template is Approved
+
+- [X] T313 [US3] Modify compliance-client/src/presentation/pages/eutr-templates/TemplateBuilderPage.jsx — read `template.status` into new `status` state; `isReadOnly = status === TEMPLATE_STATUS.APPROVED` renders a warning `Alert` banner (same placement pattern the reference mockup uses for its `isReadOnly` case) and disables: every header field (Name `TextField`, Alert for `Autocomplete`, Set-as-default `Checkbox`), the Save button, the Root Group/Child Step/Move Up/Move Down/Delete-step toolbar buttons, the empty-state "Add Root Group" button, and the step-configuration panel's Step/Requirement Type/Take From fields + Save step/Delete step buttons. All corresponding handlers (`handleSave`, `openAddRoot`, `openAddChild`, `moveNode`, `handleDeleteNode`, `handleStepFormSave`) also early-return when `isReadOnly`, as defense-in-depth alongside the `disabled` props (depends on T304, T305). **Done** — broader than the original task description's list of controls (which didn't explicitly mention Move Up/Down or the empty-state Add Root Group button), extended for consistency since FR-061 covers "every step-tree action" including reordering.
+
+**Checkpoint**: **Verified**. `npx eslint` clean; `npm run build` succeeds (updated `TemplateBuilderPage.[hash].js` chunk). Code review confirms every mutating control checks `isReadOnly`; read-only viewing (tree node selection, Expand/Collapse All) remains enabled by design.
+
+---
+
+## Phase 70: Validation — Update 16 (Status Draft/Approved + Versioning Replacement)
+
+**Purpose**: End-to-end validation of the Status field, the removed 24h logic, and the new Approve/Request-change actions
+
+- [X] T314 [P] Run quickstart.md Scenario 3'a — create a template (verify `Status=0` (Draft)), backdate `CreatedDate` by 100+ hours, Edit and Save, verify the row is updated in place (same Id/VersionId/CreatedDate, no new row) despite being far older than the old 24h threshold. **Verified**: by code review of `UpdateAsync` (T298 — the age check was deleted, not merely bypassed) plus the Phase 66 SQL smoke test's Approve step, which confirmed a same-row update leaves `Id`/`VersionId` unchanged regardless of any age condition (there is none left to check).
+- [X] T315 [P] Run quickstart.md Scenario 3'b — Approve toolbar gating/confirm-dialog Yes/No behavior, verify Status flips on the same row with no other data changed, verify `TemplateBuilderPage` becomes read-only for the Approved row, and verify `PUT api/eutr-templates/{id}` returns HTTP 400 against an Approved template. **Verified**: Approve mechanics via the Phase 66 SQL smoke test (Status 0→1, `Id`/`VersionId`/2 details/1 reference all unchanged); toolbar gating and read-only rendering via code review (Phase 68/69); the HTTP 400 path verified by code review of `UpdateAsync`'s `ValidationException` throw + the `Update` controller action's new `catch (ValidationException ex) → BadRequest` block (T298) — not exercised live (see Phase 66 checkpoint's auth limitation).
+- [X] T316 [P] Run quickstart.md Scenario 3'c — Request change toolbar gating/confirm-dialog Yes/No behavior, verify a new Draft row is created (VersionId+1) with the step tree and vendor mappings copied from the Approved row, and verify the old row is preserved with `IsHide=1` (not deleted). **Verified**: by the Phase 66 SQL smoke test end-to-end (new row VersionId=2/Status=0/IsHide=0 with correctly re-parented details + copied mapping; old row IsHide=1/Status still 1, its own 2 details/1 reference untouched) plus code review of the toolbar gating (Phase 68).
+- [X] T317 [P] Run quickstart.md Scenario 3'd — toolbar button enable/disable matrix (0 rows, 2+ rows, 1 Draft row, 1 Approved row). **Verified by code review**: `canApprove`/`canRequestChange` in `TemplateListPage.jsx` both require `selectionModel.length === 1` before checking `status`, so 0 or 2+ selected rows always evaluate both to `false`.
+- [X] T318 [P] Verify clean builds: `dotnet build` on the touched backend projects (0 `error CS`) and `npm run build`/`eslint` on the touched frontend files. **Verified**: all 4 backend projects (Domain/Application/Infrastructure/Api) 0 `error CS`; frontend `eslint` 0 errors on all 9 touched files; `npm run build` succeeded (produced updated `TemplateListPage`/`TemplateBuilderPage` chunks, no build errors — only the pre-existing >500kB main-chunk size warning, unrelated to this update).
+- [X] T319 [P] Verify all new UI text (Status chip labels, Approve/Request change button labels, the two new confirmation dialog messages, the read-only banner text) is in English per FR-017. **Verified by code review**: Chip labels ("Draft"/"Approved" via `TEMPLATE_STATUS_LABELS`), button labels ("Approve", "Request change"), `ConfirmDialog` titles/content ("Confirm approve", "Confirm request change", and their body text), and the `TemplateBuilderPage` warning banner text are all in English; backend messages ("Template approved successfully.", "Change requested successfully.", "Only a Draft template can be Approved.", "Only an Approved template can request change.", "Template is Approved — use Request change before editing.") are all in English.
+- [X] T320 [P] Verify `POST {id}/approve` and `POST {id}/request-change` reuse the existing `EutrTemplates.Update` authorization policy (no new policy family introduced). **Verified by code review**: both new controller actions use `[Authorize(Policy = "EutrTemplates.Update")]` — the identical policy string already used by the existing `Update` action on this controller; no new policy string introduced anywhere in this update.
+- [X] T321 Record Scenario 3'a–3'd verification outcomes in quickstart.md, following the same recording convention as Scenario 18/19/20's outcome notes (depends on T314, T315, T316, T317). **Done** — see quickstart.md's Scenario 3' outcome note (added alongside this task).
+
+**Checkpoint**: All Update 16 quickstart checks pass at the level achievable in this non-interactive session (direct SQL smoke test against the live dev DB reproducing the exact Approve/Request-change mechanics, full clean builds on both stacks with 0 `error CS`/0 eslint errors, and code review confirming every guard clause/gating condition — standing in for HTTP+UI-level checks where neither a live authenticated API session nor a browser was available). **Recommended before sign-off**: obtain a valid `XApiKey` value and a signed JWT (or restart the dev environment with real auth configured) and manually click through quickstart.md Scenario 3'a–3'd in a real browser to close the gap between "verified by code/DB-level smoke test" and "verified end-to-end through the UI" — the same recommendation Update 15 recorded for its own Phase 64.
+
+---
+
+## Update 16 Dependencies
+
+### Phase Dependencies
+
+- **Phase 65 (Status column + copy/set-status helpers)**: No dependency on Phases 60-64 other than
+  the already-shipped `CloneAsync` (Phase 61) that T292/T293 refactor. T287-T290 are independent
+  `[P]` tasks. T291 (interface) → T292 (impl, depends on T291) → T293 (refactor `CloneAsync` to use
+  it, depends on T292). T294 (interface) → T295 (impl, depends on T294); T294/T295 are independent of
+  T291-T293's chain (different method, same files).
+- **Phase 66 (Remove 24h branch, Approve/Request-change)**: Depends on Phase 65 (`TemplateStatus`
+  constants, `CopyDetailTreeAsync`, `SetStatusAsync` must exist first). T296/T297/T298 all touch
+  `EutrTemplatesService.cs` independently (different methods) but are listed sequentially since
+  they're the same file. T299 (Approve) depends on T295. T300 (RequestChange) depends on T292, T295,
+  and the existing `CopyReferencesAsync` (T269, Phase 60). T301 (interface) depends on T299, T300.
+  T302/T303 (controller actions) depend on T301.
+- **Phase 67 (Frontend API/repository/use cases)**: Depends on Phase 66 being callable (the use
+  cases need real endpoints, though files can be authored in parallel). T304-T306 are independent
+  `[P]` tasks. T307 depends on T306. T308/T309 depend on T307.
+- **Phase 68 (TemplateListPage wiring)**: Depends on Phase 67 (T312 calls T308/T309's use cases).
+  T310 depends on T304/T305. T311 depends on T304, T310. T312 depends on T308, T309, T311.
+- **Phase 69 (TemplateBuilderPage read-only gate)**: Depends on T304/T305 (Phase 67) — independent
+  of Phase 68, can be done in parallel with it.
+- **Phase 70 (Validation)**: Depends on Phases 65-69 all being complete.
+
+### Execution Order
+
+```
+T287, T288, T289, T290 [P] ── (Phase 65 setup done)
+T291 ── T292 ── T293 (Clone refactor)
+T294 ── T295
+                                        (Phase 65 done)
+T296 [P], T297 [P] ── (independent of T298 in practice, same file)
+T298
+T299 (needs T295) ── T300 (needs T292, T295, T269) ── T301 ── T302, T303
+                                        (Phase 66 done)
+T304, T305, T306 [P] ── T307 ── T308 [P], T309 [P]
+                                        (Phase 67 done)
+T310 ── T311 ── T312                    T313 (Phase 69, parallel with Phase 68)
+                                        (Phases 68-69 done)
+T314, T315, T316, T317, T318, T319, T320 [P] ── T321
+                                        (Phase 70 done)
+```
+
+### Parallel Opportunities
+
+```
+# Phase 65 — two independent chains:
+T287, T288, T289, T290 [P]
+T291 → T292 → T293
+T294 → T295
+
+# Phase 66 — Status-default tweaks are file-adjacent but logically independent, then sequential:
+T296 [P], T297 [P]
+T298 (same file, done alongside T296/T297)
+T299 (depends on T295) → T300 (depends on T292, T295, T269) → T301 → T302, T303 [P]
+
+# Phase 67 — enum/entity/API independent, then repository, then use cases:
+T304, T305, T306 [P]
+T307 (depends on T306) → T308 [P], T309 [P]
+
+# Phase 68 — sequential (same file, each step builds on the previous)
+# Phase 69 — fully independent of Phase 68 (different file), can run concurrently
+T310 → T311 → T312          ‖          T313
+
+# Phase 70 — all verification tasks [P] except the final recording step:
+T314, T315, T316, T317, T318, T319, T320 in parallel (once Phases 65-69 are done)
+T321 sequentially (records the findings from T314-T320)
+```
+
+---
+
+## Update 2026-07-22 (Update 17) — Drag-and-Drop Step Reorder, Additive to Move Up/Down
+
+**Context**: Per spec Update 17, reordering sibling steps on `TemplateBuilderPage.jsx`'s step tree
+currently only works via the **Move Up**/**Move Down** toolbar buttons (`moveNode()` calling
+`reorderSiblings()` from `useStepTree.js`). A code audit during `/speckit-specify`/`/speckit-plan`
+confirmed `@dnd-kit/core`/`@dnd-kit/sortable`/`@dnd-kit/utilities` are installed in `package.json`
+but imported nowhere in this codebase — a prior claim in this feature's own docs that drag-and-drop
+already existed elsewhere (e.g. `StepTree.jsx`) was aspirational and has been corrected in
+plan.md/data-model.md. This update adds real drag-and-drop, additive to Move Up/Move Down (both
+remain available), scoped to same-`ParentId` siblings only (no reparenting via drag).
+
+**Changes**: Frontend-only, no backend/DB/contract change — a reordered tree is saved through the
+exact same `flattenForSave()` → `UpdateEutrTemplatesUseCase` path Move Up/Move Down already use.
+`TemplateBuilderPage.jsx` gains a `DndContext` wrapping its `SimpleTreeView`, one `SortableContext`
+per sibling group (mirroring `renderTree()`'s existing recursion, so no new grouping logic), a small
+drag-handle icon per step row wired to `useSortable`, and a `handleDragEnd` that resolves the
+dragged/target nodes and calls the existing `reorderSiblings` — the same function `moveNode()`
+already calls. `useStepTree.js` needs no change. See research.md §34 and plan.md's "Update
+2026-07-22 (Update 17)" section for full rationale.
+
+---
+
+## Phase 71: Frontend — TemplateBuilderPage Drag-and-Drop Wiring (US3)
+
+**Purpose**: Add real drag-and-drop reordering to the step tree, additive to the existing Move
+Up/Move Down buttons, scoped to same-level siblings only and disabled when read-only
+
+- [X] T322 [P] [US3] In compliance-client/src/presentation/pages/eutr-templates/TemplateBuilderPage.jsx, add imports: `DndContext`, `closestCenter`, `PointerSensor`, `KeyboardSensor`, `useSensor`, `useSensors` from `@dnd-kit/core`; `SortableContext`, `verticalListSortingStrategy`, `sortableKeyboardCoordinates` from `@dnd-kit/sortable`; `DragIndicator as DragIndicatorIcon` from `@mui/icons-material` (added to the existing icon import block). Inside the component, add `const sensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));`. **Done**.
+- [X] T323 [US3] In the same file, add a new module-level component `SortableStepLabel({ node, selectedId, onSelect, disabled })` (placed alongside the existing `renderTree`/`getDescendantCount` module-level functions) that calls `useSortable({ id: node._id, disabled })` (imported from `@dnd-kit/sortable`) and `CSS` from `@dnd-kit/utilities`, applies `style = { transform: CSS.Transform.toString(transform), transition }` to a wrapping `Box` (`ref={setNodeRef}`) around the existing label content currently inlined in `renderTree` (the `Typography` name + Requirement/TakeFrom `Chip`s), and renders a `DragIndicatorIcon` handle with `{...attributes} {...listeners}` spread only on the icon (`sx={{ cursor: disabled ? 'default' : 'grab' }}`) so the row's existing `onClick={() => onSelect(node._id)}` and the tree's own expand/collapse chevron are unaffected (depends on T322). **Done** — `useSortable`'s `id` passed as `String(node._id)` to match the string ids used elsewhere in the tree (`itemId={String(node._id)}`); the drag handle also stops click propagation (`onClick={e => e.stopPropagation()}`) so grabbing the handle never also fires row selection.
+- [X] T324 [US3] Modify `renderTree(nodes, selectedId, onSelect, isReadOnly)` in the same file — add the new `isReadOnly` parameter (threaded through the existing recursive call for `node.children`), replace the inline label `Box` with `<SortableStepLabel node={node} selectedId={selectedId} onSelect={onSelect} disabled={isReadOnly} />`, and wrap the function's returned `nodes.map(...)` array in `<SortableContext items={nodes.map(n => String(n._id))} strategy={verticalListSortingStrategy}>...</SortableContext>` — one context per recursion call, i.e. one per sibling group, since `nodes` at any given call already share the same `ParentId` by construction (depends on T323). **Done**.
+- [X] T325 [US3] In the component body, add `const handleDragEnd = (event) => { const { active, over } = event; if (isReadOnly || !over || active.id === over.id) return; const activeNode = stepItems.find(s => String(s._id) === String(active.id)); const overNode = stepItems.find(s => String(s._id) === String(over.id)); if (!activeNode || !overNode || activeNode.parentId !== overNode.parentId) return; const siblings = stepItems.filter(s => s.parentId === activeNode.parentId).sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0)); const fromIndex = siblings.findIndex(s => s._id === activeNode._id); const toIndex = siblings.findIndex(s => s._id === overNode._id); if (fromIndex === -1 || toIndex === -1) return; reorderSiblings(activeNode.parentId, fromIndex, toIndex); };` — mirrors `moveNode()`'s existing sibling-lookup logic, reusing the same `reorderSiblings` call (depends on T322). **Done**.
+- [X] T326 [US3] In the JSX render section, wrap the existing `<SimpleTreeView>...</SimpleTreeView>` block in `<DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>...</DndContext>`, and update the `renderTree(treeData, selectedId, handleSelect)` call to `renderTree(treeData, selectedId, handleSelect, isReadOnly)` to match T324's new signature (depends on T324, T325). **Done**.
+
+**Checkpoint**: Dragging a step row to a new position among its same-`ParentId` siblings reorders it immediately and marks the tree dirty, via the same `reorderSiblings` function Move Up/Move Down already call; Move Up/Move Down remain unchanged and functional; dragging onto a node under a different parent produces no change; the drag handle is inert whenever `isReadOnly` is true (Status=Approved).
+
+---
+
+## Phase 72: Validation — Update 17 (Drag-and-Drop Step Reorder)
+
+**Purpose**: End-to-end validation that drag-and-drop matches Move Up/Move Down's result, is
+same-level-only, and is disabled when read-only
+
+- [X] T327 [P] Verify drag reorder matches Move Up/Move Down: on a Draft template with 3+ root-level steps, drag the last one to a new position among its siblings, confirm the tree updates immediately and the screen is marked dirty (same indicator as any other unsaved tree edit); Save and re-open Edit, confirm the persisted `DisplayOrder` values match what reaching the same position via Move Up/Move Down would produce (FR-064, FR-066). **Verified via code review** (no live browser session in this environment): `handleDragEnd` computes `fromIndex`/`toIndex` within the same-`parentId` sibling list (identical computation to `moveNode()`) and calls the exact same `reorderSiblings(parentId, fromIndex, toIndex)`, which already flips `isDirty` (unchanged by this update) and is only persisted via the existing `flattenForSave()`/Save path. Live browser confirmation still recommended before sign-off.
+- [X] T328 [P] Verify Move Up/Move Down still work unchanged after this update — clicking them reorders siblings exactly as before (FR-064). **Verified via code review**: `moveNode()` and its toolbar `IconButton`s (T325's surrounding code) were not modified by this update — only comments were adjusted; `handleDragEnd` is additive, wired solely through the new `DndContext`/`onDragEnd` prop.
+- [X] T329 [P] Verify no reparenting via drag: attempt to drag a root-level step and drop it onto a step that is a child of a different root step; confirm the dragged step's `ParentId` is unchanged and no reorder occurs, with no error shown (FR-065). **Verified via code review**: `handleDragEnd` returns early (no call to `reorderSiblings`) whenever `activeNode.parentId !== overNode.parentId`; separately, since each sibling group is wrapped in its own `SortableContext` (T324), `@dnd-kit`'s default sortable collision/index logic only produces a same-group `over` match in the first place — the explicit `parentId` guard is the backstop for the remaining edge case. Live browser confirmation still recommended.
+- [X] T330 [P] Verify drag-and-drop is disabled when Status=Approved: Approve a template, re-open Edit, confirm the drag handle produces no reorder (same disabled state as Move Up/Move Down); use Request change to return it to Draft and confirm dragging works again (FR-067). **Verified via code review**: `SortableStepLabel` passes `disabled={isReadOnly}` straight into `useSortable({ id, disabled })` — `@dnd-kit`'s own per-item disable, the same `isReadOnly` flag (`status === TEMPLATE_STATUS.APPROVED`, Phase 69) that already disables Move Up/Move Down's `IconButton`s; no separate gate was written. Live browser confirmation still recommended.
+- [X] T331 [P] Verify clean builds: `npm run build` and `eslint` on `TemplateBuilderPage.jsx` (and any new module-level component added by T323) — 0 errors, no new dependency added (confirm `@dnd-kit/*` imports resolve against the already-installed `package.json` versions). **Verified — actually run**: `npx eslint src/presentation/pages/eutr-templates/TemplateBuilderPage.jsx` → 0 errors (only the pre-existing, unrelated `MODULE_TYPELESS_PACKAGE_JSON` warning). `npm run build` → succeeded in 22.28s, produced an updated `TemplateBuilderPage.[hash].js` chunk (103.50 kB, up from before due to `@dnd-kit` now actually being bundled); only the pre-existing >500kB main-chunk size warning, unrelated to this change. No `package.json`/`package-lock.json` change was needed — `node_modules/@dnd-kit/core` was already present.
+- [X] T332 [P] Verify all new/changed UI has no user-facing text regressions — the drag handle is icon-only (no new label text to check against FR-017); confirm no existing Move Up/Move Down/step-tree labels changed. **Verified via code review**: the only new visible element is the `DragIndicatorIcon` (no text/label); "Move Up"/"Move Down" `Tooltip` titles and all step-tree `Chip`/`Typography` text are byte-for-byte unchanged.
+- [ ] T333 Run quickstart.md Scenario 2b'' end-to-end (drag reorder, Save/reload persistence check, cross-parent no-op, Approved disabled state, Draft-after-Request-change re-enabled state) (depends on T327, T328, T329, T330). **Not run** — requires a live dev server, backend API, and seeded MySQL database (a Draft template with 3+ root steps, plus Approve/Request-change round-trip), none of which are available in this non-interactive session. `npm run build` and `eslint` both pass clean (T331). Full interactive quickstart validation is the recommended next step before considering this update production-ready — same limitation recorded by Update 12 (T208), Update 15 (T286), and Update 16 (T321/T314-T317) for this feature.
+
+**Checkpoint**: All Update 17 quickstart checks pass at the level achievable in this non-interactive session (code review confirming every guard clause/gating condition, plus a real clean `npm run build`/`eslint` pass — standing in for a live click-through where neither a dev server nor a browser was available). **Recommended before sign-off**: manually click through quickstart.md Scenario 2b'' in a real browser to close the gap between "verified by code review" and "verified end-to-end through the UI" — the same recommendation Update 16 recorded for its own Phase 70.
+
+---
+
+## Update 17 Dependencies
+
+### Phase Dependencies
+
+- **Phase 71 (Drag-and-drop wiring)**: No dependency on Phases 1-70 other than the already-shipped
+  `stepItems`/`reorderSiblings`/`isReadOnly` state in `TemplateBuilderPage.jsx` (Phase 42/69). T322
+  (imports/sensors) is independent `[P]`. T323 (`SortableStepLabel` component) depends on T322's
+  imports. T324 (`renderTree` signature + `SortableContext` wrapping) depends on T323. T325
+  (`handleDragEnd`) depends on T322's imports, independent of T323/T324. T326 (JSX wiring) depends
+  on both T324 and T325.
+- **Phase 72 (Validation)**: Depends on Phase 71 being complete (T326 is what makes drag-and-drop
+  reachable in the UI).
+
+### Execution Order
+
+```
+T322 [P] ── T323 ── T324 ──┐
+        └── T325 ──────────┴── T326 ── T327-T332 ([P]) ── T333 (E2E)
+```
+
+### Parallel Opportunities
+
+```
+# Phase 71 — T322 first (shared imports/sensors), then T323→T324 and T325 in parallel:
+T322
+T323 → T324          ‖          T325
+T326 (after both T324 and T325)
+
+# Phase 72 — all verification tasks [P] except the final E2E:
+T327, T328, T329, T330, T331, T332 in parallel (once T326 is done)
+T333 sequentially (end-to-end)
+```

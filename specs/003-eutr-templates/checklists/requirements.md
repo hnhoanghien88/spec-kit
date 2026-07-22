@@ -2,7 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-07-02
-**Updated**: 2026-07-15 (Update 15)
+**Updated**: 2026-07-22 (Update 17)
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -497,5 +497,115 @@
   resolved as documented Assumptions with explicit rationale, consistent with this spec's
   established pattern (e.g. Update 7, 9, 12) of using reasonable defaults for low-impact/reversible
   UX details instead of blocking on every open question.
+- Spec Quality Checklist re-validated against the updated spec: all 16/16 items remain passing (no
+  regressions, no newly-failing items).
+
+### Update 2026-07-21 (Update 16) — Status Draft/Approved, replaces 24h versioning with Approved→Draft trigger
+
+- **Input**: "cập nhật 003-eutr-templates thêm 1 cột Status là enum sẽ định nghĩa trong helpers.js
+  gồm 2 trạng thái Draft, Approved, cập nhật lại logic, khi vừa tạo template, mặc định status =
+  Draft. Khi user nhấn nút Approve, có hiện box xác nhận Yes/No, Yes dữ liệu chuyển sang Approved,
+  No đóng box. User muốn chỉnh sửa sẽ bấm nút Request change cũng hiển thị box xác nhận Yes/No.
+  Đồng thời logic lên version sẽ bỏ sau 24h, chỉ lên version khi user chuyển từ trạng thái Approve
+  sang Draft."
+- **Three scope questions resolved interactively (AskUserQuestion) before writing**, per this
+  spec's established "resolve via question, not marker" path for UX-impacting decisions (Update
+  9/10/11/13/14/15): (1) where the Approve/Request change controls live → answered: toolbar buttons
+  on TemplateListPage, next to Create Template (not per-row icons, not on TemplateBuilderPage); (2)
+  how TemplateBuilderPage should behave when Status=Approved → answered: fully read-only (mirrors
+  the reference mockup's `isReadOnly` behavior); (3) when the version bump actually happens on
+  Request change confirm → answered: immediately on Yes (not deferred to the next Save).
+- **New: Status enum (Draft/Approved)** — FR-055 adds a `Status` column to `eutr_templates`, enum
+  defined in `compliance-client/src/utils/helpers.js` following the feature's existing shared-enum
+  convention (REQUIREMENT_TYPES, TAKE_FROM_OPTIONS, groupEmailType). FR-056 defaults new templates
+  (Create Template and Clone) to Status=Draft. FR-062 adds a Status Chip to each TemplateListPage
+  row (next to the Default chip).
+- **Replaced: FR-012's 24-hour versioning branch removed entirely** — FR-057 (supersedes FR-012):
+  Save on TemplateBuilderPage (only available when Draft) now always overwrites the current row in
+  place, regardless of CreatedDate age. VersionId increments exactly once in the template's entire
+  lifecycle: at the moment Request change is confirmed (Approved → Draft transition), which
+  immediately creates a new row (VersionId+1, Status=Draft), copies the full step tree
+  (`eutr_template_details`) and vendor mapping (`eutr_template_references`) from the old Approved
+  row, and hides the old row (IsHide=1) as an immutable historical snapshot. Approve (Draft →
+  Approved, FR-059) does NOT create a new version — it only flips Status on the same row.
+- **New: Approve / Request change toolbar actions** — FR-058 adds both buttons to the
+  TemplateListPage toolbar, reusing the existing per-row checkbox selection (FR-022); each button
+  is enabled only when exactly 1 row is selected and its Status matches (Draft for Approve,
+  Approved for Request change). FR-059/FR-060 define the Yes/No `ConfirmDialog` behavior for each
+  action. New **User Story 8** (Approve) and **User Story 9** (Request change) added.
+- **New: Approved templates are read-only** — FR-061: when Status=Approved, TemplateBuilderPage
+  shows a warning banner and disables all header fields, Save, and every step-tree action (Add
+  Root/Child, Edit step, Delete step) — mirrors the reference mockup's `isReadOnly` treatment for
+  non-Draft templates.
+- User Story 3 (Edit) updated in place: the old 24h-branch narrative and acceptance scenarios
+  1/1a/1b are marked superseded (struck through, kept for history) and replaced with new scenario
+  1c (Draft always overwrites in place) and 1d (Approved opens read-only); scenarios 2/3/5/6/7b/8/10
+  had their "new row if >24h, overwrite if <24h" phrasing replaced with "always overwrites in
+  place (Update 16)".
+- Key Entities: EUTR Template updated with the Status attribute and the new versioning narrative
+  (24h branch struck through, kept for history); EUTR Template Reference updated to note the
+  version-bump trigger is now Request change, not the ">24h" branch of the old FR-012.
+- Success Criteria: SC-007 and SC-013 marked superseded (pointing to the new SC-045/SC-046);
+  SC-040 updated to point at the new trigger; SC-045 through SC-050 added (Status defaults to Draft
+  on create, Draft Save never versions, Approve/Request change confirm-dialog behavior, Approved
+  read-only enforcement, toolbar button enable/disable rules).
+- Edge Cases: the two 24h-boundary edge cases replaced with Update 16 notes (Approved templates
+  reject direct API updates outside the Request change flow; Approve/Request change are single-row
+  actions only, disabled for 0 or 2+ selected rows; Request change on a 0-step/0-mapping template is
+  not an error).
+- Assumptions: the 24h-based versioning assumption marked superseded (struck through, kept for
+  history); two new Update 16 assumptions added (versioning tied to the Draft/Approved lifecycle
+  instead of a time threshold; Approve/Request change are single-record actions, no bulk mode). Also
+  corrected a stale Update 13 assumption that claimed "the real EUTR Template has no Status concept"
+  — now noted that Update 16 reintroduces Status, but it does not gate Apply to Customer.
+- No [NEEDS CLARIFICATION] markers were embedded in the spec — the three scope questions above were
+  all resolved interactively via AskUserQuestion before writing, consistent with this spec's
+  established "resolve via question, not marker" pattern for UX-impacting decisions.
+- Spec Quality Checklist re-validated against the updated spec: all 16/16 items remain passing (no
+  regressions, no newly-failing items). Historical FR/SC/Assumption text describing the removed
+  24-hour logic was kept (struck through) rather than deleted, consistent with this spec's
+  established layered-update convention (e.g. how FR-001/FR-002/FR-020 retain superseded text with
+  forward pointers).
+
+### Update 2026-07-22 (Update 17) — Drag-and-drop Step Reorder Alongside Move Up/Down
+
+- **Input**: "cập nhật 003-eutr-templates màn hình edit. hiện tại muốn di chuyển step lên xuống
+  phải bấm move up, move down, giờ thêm tính năng cho user kéo step lên xuống." (TemplateBuilderPage
+  currently only supports reordering sibling steps via Move Up/Move Down toolbar buttons; add
+  drag-and-drop as an additional way to reorder.)
+- **Pre-write code audit**: confirmed `TemplateBuilderPage.jsx`'s `moveNode()` calls
+  `reorderSiblings()` from `useStepTree.js` (same-parent-only reorder, updates local state +
+  `isDirty`, persisted only on Save) — no drag-and-drop exists anywhere in `StepTree.jsx` or
+  `TemplateBuilderPage.jsx` today, despite the original FR-006 text (Update 9 era) having already
+  described drag-and-drop aspirationally. This update makes that description real and explicit.
+- **One scope question asked back to the user before writing (answered via AskUserQuestion)**:
+  whether dragging a step should be restricted to reordering among same-level siblings (matching
+  Move Up/Down's existing constraint) or should also support dropping onto another step to reparent
+  it (change ParentId) → **answered: same-level reorder only, no reparenting via drag** (the
+  Recommended option).
+- **Change: FR-006 updated in place** — annotated "(Cập nhật ở Update 17 — xem FR-064 đến FR-066)",
+  body preserved describing the existing Move Up/Move Down mechanism, now cross-referencing the new
+  drag-and-drop FRs as an additional (not replacement) interaction.
+- **New: FR-064 through FR-067 added** — FR-064 requires TemplateBuilderPage to add drag-and-drop
+  reordering on step rows, additive to Move Up/Down (both remain available). FR-065 restricts valid
+  drop targets to same-ParentId siblings only — dropping onto a different branch MUST NOT change
+  ParentId. FR-066 requires DisplayOrder to update immediately in the UI on a valid drop (reusing
+  `reorderSiblings`), marking the screen dirty, persisted only on the next Save (no auto-save on
+  drop). FR-067 requires drag-and-drop to be disabled whenever Status=Approved (read-only per
+  FR-061), matching Move Up/Down's existing disabled state.
+- User Story 3 intro updated to mention drag-and-drop as an equivalent second way (alongside Move
+  Up/Move Down) to reorder sibling steps. Three new acceptance scenarios (16-18) added: drag-drop
+  reorder produces the same result as Move Up/Down and stays unsaved until Save; dragging onto a
+  different branch is a no-op (no reparenting); drag-and-drop is disabled when Status=Approved.
+- Success Criteria: SC-051 added (100% of same-level drag-drop reorders update DisplayOrder
+  correctly and match Move Up/Down's result; 0% change ParentId or apply while Approved).
+- Assumptions: 2 new bullets added — this is a frontend-only change (no backend/API changes needed,
+  since the drop result is saved through the existing Save flow, reusing `reorderSiblings` from
+  `useStepTree.js`; specific drag library/technique choice deferred to `/speckit-plan`); and because
+  scope is same-level-only, no cycle-detection/reparent-validation logic is needed (complexity stays
+  equivalent to the existing Move Up/Down feature).
+- No [NEEDS CLARIFICATION] markers were embedded in the spec — the one scope question above was
+  resolved interactively via AskUserQuestion before writing, consistent with this spec's established
+  "resolve via question, not marker" pattern (Update 10/11/12/13/14/15/16).
 - Spec Quality Checklist re-validated against the updated spec: all 16/16 items remain passing (no
   regressions, no newly-failing items).

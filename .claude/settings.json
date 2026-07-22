@@ -13,7 +13,22 @@
       "PowerShell(pwsh -NoProfile -ExecutionPolicy Bypass -File \"e:\\\\Working\\\\Eutr\\\\.specify\\\\scripts\\\\powershell\\\\setup-plan.ps1\" -Json)",
       "PowerShell(powershell -NoProfile -ExecutionPolicy Bypass -File \"e:\\\\Working\\\\Eutr\\\\.specify\\\\scripts\\\\powershell\\\\setup-plan.ps1\" -Json)",
       "PowerShell(powershell -NoProfile -ExecutionPolicy Bypass -File \"e:\\\\Working\\\\Eutr\\\\.specify\\\\scripts\\\\powershell\\\\setup-tasks.ps1\" -Json)",
-      "PowerShell(powershell -NoProfile -ExecutionPolicy Bypass -File \"e:\\\\Working\\\\Eutr\\\\.specify\\\\scripts\\\\powershell\\\\check-prerequisites.ps1\" -Json -RequireTasks -IncludeTasks)"
+      "PowerShell(powershell -NoProfile -ExecutionPolicy Bypass -File \"e:\\\\Working\\\\Eutr\\\\.specify\\\\scripts\\\\powershell\\\\check-prerequisites.ps1\" -Json -RequireTasks -IncludeTasks)",
+      "Bash(xargs grep -l \"EutrTemplates\")",
+      "Bash(mysql -h localhost -u root -pDev@123 -e \"SELECT 1;\")",
+      "Read(//c/Program Files/MySQL/**)",
+      "PowerShell($env:MYSQL_PWD = \"Dev@123\"; & \"C:\\\\Program Files\\\\MySQL\\\\MySQL Server 8.0\\\\bin\\\\mysql.exe\" -h localhost -u root -e \"SELECT 1 AS ok;\" 2>&1)",
+      "PowerShell($env:MYSQL_PWD = \"Dev@123\"; & \"C:\\\\Program Files\\\\MySQL\\\\MySQL Server 8.0\\\\bin\\\\mysql.exe\" -h localhost -u root -e \"DESCRIBE compliance_sys_db_260601.eutr_templates;\" 2>&1)",
+      "PowerShell($env:MYSQL_PWD = \"Dev@123\"; & \"C:\\\\Program Files\\\\MySQL\\\\MySQL Server 8.0\\\\bin\\\\mysql.exe\" -h localhost -u root -e \"SHOW DATABASES LIKE '%compliance%';\" 2>&1)",
+      "PowerShell(Get-NetTCPConnection -LocalPort 5103,7141 -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Process -Name \"ComplianceSysApi\",\"dotnet\" -ErrorAction SilentlyContinue)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:5103/swagger/index.html)",
+      "Bash(curl -s http://localhost:5103/api/eutr-templates/1 -w \"\\\\nHTTP:%{http_code}\\\\n\")",
+      "Bash(dotnet user-secrets *)",
+      "Bash(tasklist //FI \"IMAGENAME eq dotnet.exe\" //FO CSV)",
+      "Bash(sed -i 's/`\"Draft\"`/`0` \\(Draft\\)/g; s/`\"Approved\"`/`1` \\(Approved\\)/g' specs/003-eutr-templates/contracts/api-endpoints.md)",
+      "Bash(grep -n '`\"Draft\"`\\\\|`\"Approved\"`\\\\|status.*Draft\\\\|status.*Approved' specs/003-eutr-templates/contracts/api-endpoints.md)",
+      "Bash(git status *)"
     ]
   }
 }

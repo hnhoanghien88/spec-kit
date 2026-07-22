@@ -9,13 +9,25 @@ uniqueness constraint (Scenario 5) is now global, not per-VendorCode. See Scenar
 (VendorCode-removal verification), Scenario 17 (Apply to Customer), and Scenario 18 (Steps-count
 investigation) for the new/changed coverage.
 
+**Update 16 (2026-07-21) note**: FR-012's 24-hour age-based versioning is removed entirely.
+`eutr_templates` gains a `Status` column (`Draft`/`Approved`); editing is always in-place while
+Draft, and a version bump now happens ONLY via the new explicit **Request change** action
+(Approved → Draft). See Scenario 3' (replaces Scenario 3's superseded age-based flow).
+
+**Update 17 (2026-07-22) note**: TemplateBuilderPage's step tree now ALSO supports drag-and-drop
+reordering, additive to the existing Move Up/Move Down buttons — both produce the same
+`DisplayOrder` result via the same `reorderSiblings` function. Drag is restricted to same-level
+siblings only (no reparenting) and disabled when Status=Approved, same as Move Up/Move Down. See
+**Scenario 2b''**.
+
 ## Prerequisites
 
 - Backend (`compliance-sys-api`) running on configured port
 - Frontend (`compliance-client`) dev server running (`npm run dev`)
 - MySQL database with EUTR tables created (see [eutr_db.sql](../../docs/design/eutr/eutr_db.sql)),
   including the new `eutr_template_references` table (Update 13 — see
-  `Sqls/Migration/11_create_eutr_template_references.sql`)
+  `Sqls/Migration/11_create_eutr_template_references.sql`) and the `Status` column on
+  `eutr_templates` (Update 16 — see `Sqls/Migration/13_add_status_to_eutr_templates.sql`)
 - D365 VendorsV3 accessible via the generic reference API (`POST /api/dynamics/reference` with
   `refType = 13`) — **Update 13**: now used by ApplyCustomerPage's Vendor combobox, not by
   TemplateBuilderPage (Vendor field removed from the template itself)
@@ -152,7 +164,8 @@ investigation) for the new/changed coverage.
 9. Add a third root-level step
 10. Select the third step, click **Move Up** twice
 11. **Expected**: the step moves above the first step in the tree, `DisplayOrder` updates
-    accordingly (via `reorderSiblings` — no drag gesture on this screen, buttons only) (FR-006)
+    accordingly (via `reorderSiblings`) (FR-006) — **Update 17**: this screen now ALSO supports a
+    drag gesture for the same result, see **Scenario 2b''**
 12. Click **Save** (in the header form panel)
 13. **Expected**: navigates back to `/eutr/templates`; since this template was created moments ago
     (well under 24h), this Save updates the SAME row in place — Version stays 1
@@ -162,7 +175,40 @@ investigation) for the new/changed coverage.
     panel switches to that step's detail (Step Master via free-solo, RequirementType, TakeFrom —
     no Type/FSC fields), with Save/Delete actions
 
-### Scenario 3: Edit Template with Conditional Versioning (FR-011, FR-012, FR-005b)
+### Scenario 2b'': Drag-and-Drop Step Reorder (FR-064 to FR-067, Update 17)
+
+> Uses the same template from Scenario 2b' (Draft, 3 root-level steps A/B/C after the Move Up steps
+> above, plus at least one child step under one of them). Verifies the drag gesture is equivalent to
+> Move Up/Move Down, is scoped to same-level siblings only, and is disabled when Approved.
+
+1. On the tree, drag the third root-level step and drop it between the first and second root-level
+   steps
+2. **Expected**: the step reorders immediately in the UI to the dropped position; the screen is
+   marked dirty (same indicator/behavior as after a Move Up/Down click or any other unsaved tree
+   edit) — nothing is persisted yet
+3. Click **Save**, then re-open Edit on the same template
+4. **Expected**: the new order persisted — matches exactly what Move Up/Move Down would have
+   produced to reach the same position (FR-064, FR-066); **Verify in DB**:
+   `eutr_template_details.DisplayOrder` for the affected root-level rows is 0/1/2 in the new order
+5. Attempt to drag a root-level step and drop it onto a step that is a **child** of a different
+   root step (i.e. a different `ParentId` branch)
+6. **Expected**: no-op — the dragged step's `ParentId` is unchanged, no reorder happens, no error
+   shown (FR-065 — this feature does not support reparenting via drag)
+7. Navigate to TemplateListPage, select this template's row, click **Approve**, confirm Yes
+8. Re-open Edit on the now-**Approved** template
+9. **Expected**: the read-only banner is shown (per Scenario 3'a's Approved behavior) and attempting
+   to drag any step produces no reorder — the drag handle MUST be disabled/inert, exactly like Move
+   Up/Move Down are disabled in this state (FR-067)
+10. Use **Request change** (TemplateListPage) to return the template to Draft, confirm the drag
+    gesture works again on re-opening Edit
+
+### Scenario 3: Edit Template with Conditional Versioning (superseded by Scenario 3' — Update 16) (FR-011, FR-012, FR-005b)
+
+> **Superseded (Update 16)**: FR-012's 24-hour age-based versioning branch has been removed
+> entirely. This scenario is kept for historical reference (including its real
+> `/speckit-implement` verification evidence below) but no longer reflects current behavior — see
+> **Scenario 3'** for the Status-driven replacement (always in-place while Draft; versioning only
+> via the explicit Request change action).
 
 **3a. Edit within 24h of creation (in-place update)**
 
@@ -216,6 +262,95 @@ unchanged. This is the exact SQL statement `EutrTemplatesService.UpdateAsync`'s 
 calls (via `_templateReferencesRepository.CopyReferencesAsync(id, newId, ct)`) right after copying
 the step tree — the C# wiring around it (constructor injection, call placement inside the existing
 transaction) was verified by code review and a clean `dotnet build` (0 `error CS`).
+
+### Scenario 3': Status-Driven Editing — Draft Always In-Place, Approve, Request Change (FR-055 to FR-062, Update 16)
+
+**3'a. Draft edits always save in-place, regardless of age**
+
+1. Create a new template via Scenario 2 (quick-create) — **Verify in DB**: `Status = 0` (Draft)
+2. Backdate its `CreatedDate` far in the past (reusing Scenario 3's backdate technique — this used
+   to force the ≥24h branch; Update 16 removes that branch, so this step now exists purely to prove
+   age no longer matters): `UPDATE eutr_templates SET CreatedDate = CreatedDate - INTERVAL 100 HOUR
+   WHERE Id = <id>;`
+3. Click **Edit**, change Name to "Test Template v2", add/remove a step, click **Save**
+4. **Expected**: Redirects to list; grid shows the SAME Code and VersionId (not incremented)
+5. **Verify in DB**: Same `Id`, same `VersionId`, `CreatedDate` still shows the backdated value
+   (untouched by Save), `Status` still `0` (Draft), `eutr_template_details` reflect the edit — no new
+   row was created despite the row being far older than the old 24h threshold
+
+**3'b. Approve — Draft to Approved, same row**
+
+1. On `TemplateListPage`, tick the checkbox for a Draft template; **Expected**: the **Approve**
+   button on the toolbar becomes enabled, **Request change** stays disabled
+2. Click **Approve**; **Expected**: a Yes/No confirmation dialog appears
+3. Click **No**; **Expected**: dialog closes, **verify in DB** the row's `Status` is still `0` (Draft)
+4. Click **Approve** again, then **Yes**; **Expected**: list refreshes, the row's Status Chip now
+   shows "Approved"
+5. **Verify in DB**: same `Id`, same `VersionId`, same `eutr_template_details`/
+   `eutr_template_references` as before — only `Status` (+ `UpdatedBy`/`UpdatedDate`) changed
+6. Click **Edit** on this now-Approved template; **Expected**: `TemplateBuilderPage` shows a warning
+   banner; every header field, the Save button, Root Group/Child Step buttons, and each step row's
+   Edit/Delete icons are disabled
+7. **API check**: call `PUT api/eutr-templates/{id}` directly (e.g. via the browser network tab or a
+   REST client) with a valid payload for this Approved template; **Expected**: HTTP 400,
+   `"Template is Approved — use Request change before editing."` — confirms the backend rejects the
+   edit even if the disabled frontend button were somehow bypassed
+
+**3'c. Request change — Approved to Draft, new version row, old row preserved**
+
+1. Note the Approved template's current `Id`, `Code`, and `VersionId` from Scenario 3'b
+2. **(FR-049/FR-060 continuity check)** Before requesting change, apply at least 1 vendor mapping to
+   this template via ApplyCustomerPage (Scenario 17)
+3. On `TemplateListPage`, tick the checkbox for this Approved template; **Expected**: **Request
+   change** becomes enabled, **Approve** stays disabled
+4. Click **Request change**; **Expected**: a Yes/No confirmation dialog appears
+5. Click **No**; **Expected**: dialog closes, **verify in DB** no new row was created, the original
+   row is still `Status=1 (Approved)`, same `VersionId`
+6. Click **Request change** again, then **Yes**; **Expected**: list refreshes, showing a row with the
+   SAME Code, a new `VersionId` (old + 1), and Status Chip "Draft"
+7. **Verify in DB**: a NEW row exists with `VersionId = <old + 1>`, `Status = 0` (Draft), `IsHide = 0`,
+   same `Name`/`AlertFor`/`IsDefault` as the old row; the OLD row now has `IsHide = 1` but is
+   otherwise completely unchanged (`Status` still `1` (Approved), not deleted)
+8. **Verify in DB**: `eutr_template_details` for the NEW `TemplateId` match the old `TemplateId`'s
+   tree exactly (same StepId/RequirementType/TakeFrom/DisplayOrder/ParentId structure)
+9. **Verify in DB**: `eutr_template_references` for the NEW `TemplateId` match the old `TemplateId`'s
+   mapping(s) from step 2 exactly (same VendorCode/FromDate/ToDate) — open
+   `/eutr/templates/apply/<new Id>` in the browser and confirm the mapping is visible there, AND the
+   old `TemplateId`'s mapping is still present unchanged at `/eutr/templates/apply/<old Id>`
+10. Click **Edit** on the new Draft row; **Expected**: `TemplateBuilderPage` opens in normal editing
+    mode (no read-only banner), and Save works exactly as in Scenario 3'a
+
+**3'd. Toolbar button gating**
+
+1. With 0 rows selected: **Expected** both Approve and Request change are disabled
+2. With 2+ rows selected (any Status mix): **Expected** both are disabled
+3. With exactly 1 Draft row selected: **Expected** only Approve is enabled
+4. With exactly 1 Approved row selected: **Expected** only Request change is enabled
+
+**Outcome (2026-07-21, `/speckit-implement`)**: **Verified via a direct SQL smoke test against the
+live dev DB** (`compliance_sys_db_260601`), not through the full HTTP+UI stack — no interactive
+browser session available, and the dev API's `[Authorize]` requires a JWT (validated against
+`keys/public.pem`, no matching private key present) plus an `XApiKey` header whose configured value
+is a key-vault placeholder in this environment (same class of limitation as Update 13/14/15). Before
+any code changes, `DESCRIBE eutr_templates` revealed the dev DB already had an unused
+`Status TINYINT NULL DEFAULT 0` column (no matching migration/design-doc/code anywhere), and
+`AlertFor` still `tinyint` (migration 08 never applied there) — confirming this dev DB predates
+several documented migrations. Per the user's decision, `Status` was implemented as `TINYINT`
+(`TemplateStatusEnum : byte { Draft = 0, Approved = 1 }`) instead of the originally-planned
+`VARCHAR(20)` string — see research.md §33 for the full account. A throwaway template
+("SMOKE16-001") with 2 steps (root + child) and 1 vendor mapping was created as Draft, then the
+exact SQL each service method runs was executed by hand: (1) Approve's `UPDATE ... SET Status=1`
+left `Id`/`VersionId`/both detail rows/the mapping row completely unchanged; (2) Request change's
+sequence (insert new row with `VersionId+1`/`Status=0`, copy the 2 detail rows with correct
+`ParentId` re-parenting, copy the 1 mapping row via the existing `CopyReferencesAsync` SQL, then
+`UPDATE` the old row to `IsHide=1`) produced a new row with the copied tree/mapping intact and left
+the old row's `Status=1`/2 details/1 mapping fully preserved (not deleted, not moved). All throwaway
+rows (2 templates, 4 details, 2 mappings total across both) were deleted afterward; a follow-up
+count query confirmed 0 rows remaining, leaving the dev DB unchanged. Toolbar gating (3'd) and the
+read-only banner (3'b step 6)
+were verified by code review of `TemplateListPage.jsx`/`TemplateBuilderPage.jsx` rather than live
+clicking. **Recommended before sign-off**: obtain a working `XApiKey`/JWT (or run this in an
+environment with real auth configured) and manually click through 3'a–3'd in a browser.
 
 ### Scenario 4: Delete Template - Soft Delete (FR-013)
 
@@ -669,6 +804,21 @@ gap between "verified by code/SQL-level smoke test" and "verified end-to-end thr
 - (Update 15) After a version-up (≥24h Edit) on a template with existing vendor mappings:
   **Expected** the mappings are visible on `ApplyCustomerPage` for the NEW (now-current) TemplateId;
   the old (now-hidden) TemplateId's mapping rows remain in the DB, untouched
+- (Update 16) Selecting 2+ rows (any Status mix), or 0 rows: **Expected** both Approve and Request
+  change stay disabled — neither action supports bulk/no-selection
+- (Update 16) Requesting change on an Approved template that has 0 steps and 0 vendor mappings
+  (e.g. Approved immediately after Create, before adding anything): **Expected** succeeds normally,
+  producing a new Draft row with an empty tree/mapping set — not an error
+- (Update 16) Clicking Approve or Request change, then clicking No in the confirmation dialog:
+  **Expected** no HTTP request is sent at all (verify via DevTools Network tab), and the row's
+  Status/Chip is unchanged
+- (Update 16) A template goes through Approve → Request change → Approve → Request change multiple
+  times in a row: **Expected** `VersionId` increments by exactly 1 on each Request change (never on
+  Approve), and every previous Approved row remains in the DB with `IsHide=1`, forming a complete,
+  unbroken version history
+- (Update 16) Calling `POST api/eutr-templates/{id}/approve` on a template that is already Approved,
+  or `POST .../request-change` on one that is still Draft: **Expected** HTTP 400 with a clear message,
+  no data changed
 
 ## Post-Validation Checks
 
@@ -697,7 +847,9 @@ gap between "verified by code/SQL-level smoke test" and "verified end-to-end thr
 - [ ] Tree supports 3+ levels of nesting
 - [ ] ParentId saved correctly for all levels (root=0, children=parent's Id)
 - [ ] ParentId correct even for newly-added parent steps (temp ID mapping works)
-- [ ] Drag-and-drop reorders steps and updates DisplayOrder
+- [ ] ~~Drag-and-drop reorders steps and updates DisplayOrder~~ — this item predates any real
+      drag-and-drop implementation in this feature (see Update 17 items below for the actual,
+      verifiable checks)
 - [ ] Inline Edit step changes Step, RequirementType, TakeFrom correctly
 - [ ] Only one step in edit mode at a time (auto-cancel previous)
 - [ ] Two-column layout displays correctly with WIDER header column (left) and NARROWER steps column (right) — Edit page only
@@ -711,8 +863,10 @@ gap between "verified by code/SQL-level smoke test" and "verified end-to-end thr
 - [ ] Typing a new step name and saving the template auto-creates it in `eutr_steps`, visible immediately in the EUTR Steps screen
 - [ ] Multiple steps with the same new typed name in one Save create only ONE `eutr_steps` row (no duplicates)
 - [ ] Typing a name matching an existing step (case-insensitive/trimmed) reuses that step's Id, no duplicate created
-- [ ] Editing a template <24h old updates the row in place (same Id/VersionId/CreatedDate, no new row)
-- [ ] Editing a template ≥24h old creates a new version (new row, VersionId+1, old row IsHide=1)
+- [ ] ~~Editing a template <24h old updates the row in place (same Id/VersionId/CreatedDate, no new
+      row)~~ / ~~Editing a template ≥24h old creates a new version (new row, VersionId+1, old row
+      IsHide=1)~~ — **superseded (Update 16)**: age no longer matters at all; see the two new checks
+      below
 - [ ] Back button with no unsaved step changes navigates immediately, no warning
 - [ ] Back button with unsaved step add/edit shows a confirmation dialog; confirming discards the changes
 - [ ] Soft delete sets IsDeleted=1, data preserved in DB
@@ -800,3 +954,34 @@ gap between "verified by code/SQL-level smoke test" and "verified end-to-end thr
       IsDefault=0, and an exact copy of the source's step tree and vendor mappings (FR-053)
 - [ ] Import never updates an existing mapping — a row matching existing data is rejected as an
       overlap, not silently merged (Update 14)
+- [ ] `DESCRIBE eutr_templates;` shows a `Status` column, `TINYINT NULL DEFAULT 0`
+      (Update 16, FR-055)
+- [ ] A newly-created template (Create Template dialog) and a newly-Cloned template both have
+      `Status = 0` (Draft) (Update 16, FR-056)
+- [ ] Editing a Draft template ALWAYS updates the row in place (same Id/VersionId/CreatedDate),
+      even when backdated far beyond the old 24h threshold — no age check remains (Update 16, FR-057)
+- [ ] TemplateListPage shows a Status Chip per row (Draft/Approved) (Update 16, FR-062)
+- [ ] Approve/Request change toolbar buttons are enabled ONLY when exactly 1 row is selected and its
+      Status matches (Draft for Approve, Approved for Request change); disabled for 0 rows, 2+ rows,
+      or a Status mismatch (Update 16, FR-058)
+- [ ] Approve shows a Yes/No confirmation; Yes flips Status to Approved on the same row (no new
+      row, no VersionId change); No leaves Status unchanged (Update 16, FR-059)
+- [ ] Request change shows a Yes/No confirmation; Yes creates a new Draft row (VersionId+1) copying
+      the full step tree and vendor mappings from the Approved row, and hides (IsHide=1, not
+      deletes) the old Approved row; No leaves everything unchanged (Update 16, FR-060)
+- [ ] Opening TemplateBuilderPage for an Approved template shows a read-only banner and disables
+      every header field, Save, Root Group/Child Step, and each step row's Edit/Delete icons
+      (Update 16, FR-061)
+- [ ] Calling `PUT api/eutr-templates/{id}` directly against an Approved template returns HTTP 400
+      (server-side rejection, not just a disabled frontend button) (Update 16, FR-057)
+- [ ] Dragging a step to a new position among its same-level siblings on TemplateBuilderPage
+      reorders it immediately in the UI and marks the screen dirty; the reordered `DisplayOrder`
+      values persist correctly on Save, matching what Move Up/Move Down would produce for the same
+      target position (Update 17, FR-064, FR-066)
+- [ ] Move Up/Move Down buttons still work unchanged after this update — drag-and-drop is additive,
+      not a replacement (Update 17, FR-064)
+- [ ] Dragging a step and dropping it onto a step under a different parent does NOT change its
+      `ParentId` — no reorder happens, no error shown (Update 17, FR-065)
+- [ ] Drag-and-drop is disabled (no reorder possible) when the template's Status is Approved, same
+      as Move Up/Move Down in that state; dragging works again after Request change returns the
+      template to Draft (Update 17, FR-067)

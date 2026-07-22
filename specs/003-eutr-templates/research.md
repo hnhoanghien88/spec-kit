@@ -1298,3 +1298,193 @@ backend-side transform, not a new frontend responsibility.
 **Implementation**: see plan.md's "Update 2026-07-15 (Update 15)" section for the full file-by-file
 backend/frontend design; contracts/api-endpoints.md Section 10 (new); data-model.md's Clone lifecycle
 note; quickstart.md Scenario 21.
+
+## 32. Status-Driven Versioning — Request Change Reuses Clone's Copy Pipeline, Not `UpdateAsync`'s Old Branch (spec Update 16, FR-057, FR-060)
+
+**Decision**: Delete the `(DateTime.UtcNow - existing.CreatedDate) >= TimeSpan.FromHours(24)` branch
+from `EutrTemplatesService.UpdateAsync` entirely. `UpdateAsync` becomes a single unconditional path:
+reject with `ValidationException` if `existing.Status == (byte)TemplateStatusEnum.Approved`, else always run
+the in-place update (generic repository `UpdateAsync` + `ReplaceDetailsAsync`) the old <24h branch
+already implemented. The version-bump behavior that used to live in the ≥24h branch moves to a new,
+explicit method, `EutrTemplatesService.RequestChangeAsync(long id, string userEmail, ct)`, which does
+NOT reuse `UpdateAsync`'s old tree-building path at all — it instead calls the exact same
+`CopyDetailTreeAsync`/`CopyReferencesAsync` pair Section 31's `CloneAsync` already uses, because a
+Request change is structurally a copy (duplicate the CURRENT row's header/tree/mappings under a new
+`TemplateId`), not a re-save of a submitted payload (Request change carries no payload at all — the
+UI only sends the template `Id`).
+
+**Rationale**: The old ≥24h branch and Clone independently solved "duplicate a template's detail
+tree into a new TemplateId," but via two different code paths — the old branch rebuilt entities from
+whatever tree the frontend happened to submit in that Save request (`BuildDetailEntitiesAsync` fed by
+`UpdateEutrTemplatesRequestDto.Details`), while Clone (Section 31) re-indexes and copies the EXISTING
+persisted rows via `GetByIdWithDetailsAsync`. Request change has no submitted tree to rebuild from —
+by spec (FR-060), it must carry forward the CURRENT step tree and vendor mappings unchanged, which is
+exactly Clone's shape, not the old Save-branch's shape. Reusing Clone's copy pair instead of adapting
+the old branch avoids maintaining two subtly different "copy a template" implementations going
+forward (one keyed off a submitted payload, one off the persisted row) for what the spec now treats
+as the same operation, twice. This also lets the old branch be deleted outright rather than kept
+as dead code — nothing in the new design still needs "rebuild-and-insert-under-a-new-Id from a
+submitted tree," so there is no future call site to preserve it for.
+
+**Alternatives considered**:
+- Keep `UpdateAsync`'s ≥24h tree-rebuild branch, but trigger it from `RequestChangeAsync` by first
+  loading the current tree and re-submitting it as a synthetic `Details[]` payload — rejected: this
+  round-trips through the exact same `BuildDetailEntitiesAsync` free-solo-step-name-resolution branch
+  Clone's approach naturally skips (Section 31), for no benefit, since every value would already be a
+  resolved `StepId` with no free-solo names to resolve; it also keeps two parallel "copy the tree"
+  code paths alive (the rebuild-from-payload one and Clone's copy-from-persisted-rows one) instead of
+  collapsing to one, which is a Principle II violation in the same shape flagged in Sections 30/31.
+- Have `ApproveAsync`/`RequestChangeAsync` live on a new, separate service
+  (`IEutrTemplateStatusService`) instead of methods on the existing `EutrTemplatesService` — rejected:
+  both actions operate purely on `eutr_templates` rows using the SAME repository/transaction
+  primitives (`GetByIdAsync`, `SetStatusAsync`, `CopyDetailTreeAsync`, `CopyReferencesAsync`) already
+  owned by `EutrTemplatesService`; a new service would need to inject the same dependencies anyway
+  with no independent responsibility of its own — pure ceremony, not a real separation of concerns.
+- Represent Draft/Approved as a `bool IsApproved` flag instead of a `Status` string — rejected: the
+  spec (FR-055) explicitly asks for a 2-value enum defined in `helpers.js`, and a future third status
+  (the reference mockup's "Archived," explicitly out of scope per this update but plausible later)
+  would require a breaking column-type change from `bool` to something else; a string column sized
+  for short enum values costs nothing extra today and leaves room for that without a future migration
+  that also has to touch every `bool`-typed call site.
+- Let `ApproveAsync` also be blocked by the same in-place-update in `UpdateAsync` (i.e., route Approve
+  through `UpdateAsync` with a special flag) — rejected: Approve changes exactly one column (`Status`)
+  and touches neither the header fields nor the detail tree; routing it through `UpdateAsync` (which
+  always calls `ReplaceDetailsAsync`, a delete+reinsert of the entire step tree) would do a wasteful
+  delete-and-reinsert of every detail row to change one column on the parent — `SetStatusAsync` (a
+  single-column `UPDATE`) is both simpler and cheaper.
+
+**Implementation**: see plan.md's "Update 2026-07-21 (Update 16)" section for the full file-by-file
+backend/frontend design; contracts/api-endpoints.md Section 11 (new); data-model.md's Status
+lifecycle note; quickstart.md Scenario 22.
+
+## 33. Status Column as TINYINT + Enum, Not a String (spec Update 16, FR-055) — revised during `/speckit-implement`
+
+**Decision (as shipped)**: `eutr_templates.Status` is `TINYINT NULL DEFAULT 0` (0=Draft, 1=Approved),
+backed by `ComplianceSys.Application.Constants.TemplateStatusEnum : byte { Draft = 0, Approved = 1 }`
+on the backend and a numeric `TEMPLATE_STATUS = Object.freeze({ DRAFT: 0, APPROVED: 1 })` +
+`TEMPLATE_STATUS_LABELS = { 0: 'Draft', 1: 'Approved' }` display-label map on the frontend — the
+exact same value/label-map split already used for `REQUIREMENT_TYPES`/`REQUIREMENT_LABELS` and
+`TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS`.
+
+**This reverses the original plan-time decision below**, which chose `VARCHAR(20)` storing the
+literal strings `"Draft"`/`"Approved"`. That decision was reasoned correctly *in isolation* but
+was made without checking the live dev database first. During `/speckit-implement`, `DESCRIBE
+eutr_templates` on the dev DB (`compliance_sys_db_260601`) revealed a `Status TINYINT NULL DEFAULT
+0` column *already present* — referenced by no design doc, no numbered migration file, and no
+application code (the entity had no `Status` property before this update). The same inspection
+found `AlertFor` still `tinyint` there too (migration `08_migrate_eutr_templates_alertfor.sql`,
+which widens it to `BIGINT UNSIGNED`, was evidently never run against this specific environment) —
+independent confirmation that this dev DB is a genuine, pre-existing drift case, not something this
+update introduced. All 9 existing template rows had `Status = 0` uniformly, consistent with an
+inert, unused column rather than one holding meaningful data for a different feature. Presented
+with this conflict, the user chose to keep the column's existing numeric type rather than convert
+it — see the interactive decision recorded in `/speckit-implement`'s session.
+
+**Original Rationale (superseded)**: `RequirementType`/`TakeFrom` are stored as `int` (0/1) with
+separate `REQUIREMENT_LABELS`/`TAKE_FROM_LABELS` maps on the frontend because those two fields have
+a long-established DB shape and their display labels don't match their stored values — a lookup map
+is load-bearing there. `Status` was reasoned to have no such legacy shape to match, so a numeric
+code + label map would supposedly add indirection with no payoff, and a `VARCHAR(20)` would be more
+self-documenting when queried directly. **This reasoning assumed a green-field column**, which
+turned out to be false — the column already existed, already numeric, already in use by nothing.
+Once a real (if inert) `TINYINT` column exists in a shared environment, "which type is more
+self-documenting in isolation" is no longer the deciding question — schema-vs-code consistency
+across every environment is.
+
+**Alternatives considered (at the point of reversal)**:
+- Keep the shipped code on `VARCHAR(20)` and `ALTER ... MODIFY COLUMN` the existing `TINYINT` to
+  match — rejected by the user in favor of adapting the code to the existing column, not altering
+  a shared dev database's column type based on an agent's assumption about an unexplained column's
+  provenance.
+- Leave the column as `TINYINT` but keep a `string Status` property on the C# entity (relying on
+  Dapper/ADO.NET numeric-to-string coercion) — rejected: no such implicit conversion exists for
+  Dapper's typed materialization; this would require a custom Dapper type handler with no precedent
+  elsewhere in the codebase (the same objection raised against a native C# string-backed enum in the
+  original Alternatives list), while a plain `byte?` property matching the column's real
+  affinity has zero conversion overhead and mirrors how `IsDefault`/`IsDeleted`/`IsHide`/
+  `RequirementType`/`TakeFrom` are already modeled (Principle II).
+- A `bool IsApproved` flag instead of numeric `Status` — still rejected, same reasoning as the
+  original write-up: forecloses a plausible future third status without a breaking migration, and
+  doesn't match the column that already exists in the shared environment anyway.
+
+**Implementation**: see plan.md's "Update 2026-07-21 (Update 16)" section; data-model.md's
+`EutrTemplate.Status` field; contracts/api-endpoints.md Section 11;
+`ComplianceSys.Application/Constants/TemplateStatus.cs` (`TemplateStatusEnum`).
+
+---
+
+## 34. Drag-and-Drop for Step Reordering — Additive to Move Up/Down (spec Update 17)
+
+**Decision**: Add real drag-and-drop reordering to `TemplateBuilderPage.jsx`'s step tree using the
+already-installed `@dnd-kit/core` (`DndContext`) + `@dnd-kit/sortable` (`SortableContext`,
+`useSortable`, `arrayMove`), scoped to **one `SortableContext` per sibling group** (i.e. per set of
+nodes sharing the same `ParentId`, computed the same way `renderTree()`/`moveNode()` already group
+them) rather than one context spanning the whole flattened tree. On a valid drop, resolve
+`fromIndex`/`toIndex` within that sibling group and call the existing `reorderSiblings(parentId,
+fromIndex, toIndex)` from `useStepTree.js` — the exact function `moveNode('up'|'down')` (Move
+Up/Down) already calls. Drag-and-drop is additive: Move Up/Down remain in the toolbar, unchanged.
+
+**Pre-write code audit correction**: this feature's plan.md ("Key Differences from Reference
+Features" table) and data-model.md previously stated that `StepTree.jsx`/`EutrTemplatesAddEdit.jsx`
+already had a working `@dnd-kit` drag-and-drop pattern that `TemplateBuilderPage.jsx` chose not to
+adopt (Update 10, in favor of keeping the Move Up/Down toolbar). A repo-wide grep for `@dnd-kit`
+across `compliance-client/src` returns **zero matches** — the packages are listed in
+`package.json` (`@dnd-kit/core@6.3.1`, `@dnd-kit/sortable@10.0.0`, `@dnd-kit/utilities@3.2.2`) but
+have never been imported anywhere in this codebase. That prior claim was aspirational (carried over
+from the original spec's FR-006 wording, itself written before any drag-and-drop was ever built) and
+is corrected here and in plan.md/data-model.md: Update 17 is the first real implementation of
+drag-and-drop for this feature, not a reuse of a pre-existing pattern. `EutrTemplatesAddEdit.jsx`
+itself no longer exists in the codebase (removed at some point after Update 10 without a
+corresponding plan.md note) — out of scope to reconcile fully here, but confirms it cannot be a
+source of a reusable pattern either.
+
+**Rationale**: `@dnd-kit` is already an installed, unused dependency — no new package needed. Using
+one `SortableContext` **per sibling group**, instead of a single context for the whole tree, gets
+"same-level reorder only, no reparenting" (spec's resolved scope question, FR-065) largely for free:
+dnd-kit's default sortable recipe only reorders `items` within the `SortableContext` a drag started
+in, so a drop that lands outside the active item's own group naturally does not produce a same-group
+`over` match — the `handleDragEnd` guard (below) only needs to double-check `active`/`over` share a
+`parentId` before calling `reorderSiblings`, rather than implementing cross-container move logic
+(which a single flat `SortableContext` would otherwise require explicit code to prevent). Reusing
+`reorderSiblings` means zero new tree-mutation logic — the same function already tested by Move
+Up/Down.
+
+**Alternatives considered**:
+- Single `SortableContext` spanning the entire flattened tree (all levels together) — rejected: this
+  is dnd-kit's usual flat-list recipe, but it makes cross-parent drag-and-drop the *default*
+  behavior, requiring extra code to detect and block reparenting; per-sibling-group contexts make
+  the disallowed case structurally awkward to trigger instead.
+- `react-beautiful-dnd` — rejected: already installed but unmaintained since 2022, same conclusion
+  as Section 3's original evaluation for the tree overall.
+- Native HTML5 drag-and-drop (`draggable` + `onDragStart`/`onDrop`) — rejected: inconsistent
+  cross-browser ghost-image/drop-target behavior, no built-in reordering animation, poor keyboard
+  accessibility — same objections as Section 3.
+- Reuse an existing drag-and-drop implementation from `StepTree.jsx` — moot: audited and confirmed no
+  such implementation exists anywhere in the codebase (see correction above).
+
+**Implementation**:
+1. `TemplateBuilderPage.jsx` wraps its `<SimpleTreeView>` in a single `<DndContext
+   onDragEnd={handleDragEnd} sensors={...}>` (pointer + keyboard sensors, per `@dnd-kit/core`'s
+   standard accessible setup).
+2. `renderTree()` wraps each level's `nodes.map(...)` output in `<SortableContext
+   items={nodes.map(n => n._id)} strategy={verticalListSortingStrategy}>` — nodes at the same
+   recursion call are always siblings (same `ParentId`) by construction, so no extra grouping logic
+   is needed beyond the existing recursive structure.
+3. Each `TreeItem`'s label gains a small drag-handle icon (`DragIndicatorIcon`) using
+   `useSortable({ id: node._id, disabled: isReadOnly })` (FR-067 — read-only when Status=Approved,
+   dnd-kit's own per-item `disabled` flag, no separate gate needed); `listeners`/`attributes` are
+   spread only onto that handle element, not the whole row `Box`, so the existing click-to-select
+   (`onSelect`) and the tree's built-in expand/collapse chevron continue to work unmodified.
+   `transform`/`transition` from `useSortable` are applied via inline style to a thin wrapping
+   element around the label content (not the `TreeItem` itself, to avoid fighting
+   `@mui/x-tree-view`'s own DOM/indentation structure).
+4. `handleDragEnd(event)`: look up `active.id`/`over?.id` in `stepItems`; if `over` is missing or
+   `activeNode.parentId !== overNode.parentId`, return without calling anything (FR-065 — no
+   reparenting); otherwise compute `fromIndex`/`toIndex` within that `parentId`'s siblings (sorted by
+   `displayOrder`, the same computation `moveNode()` already performs) and call
+   `reorderSiblings(parentId, fromIndex, toIndex)` (FR-066) — identical effect to reaching the same
+   position via Move Up/Down, including marking `isDirty` and requiring an explicit Save.
+
+**No backend/API change**: the reordered tree is saved through the exact same `flattenForSave()` →
+`UpdateEutrTemplatesUseCase` path Move Up/Down already uses — `displayOrder` is just a client-computed
+field on the same request shape (see contracts/api-endpoints.md's Update 17 note).
