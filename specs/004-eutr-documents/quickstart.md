@@ -284,10 +284,110 @@ Mở SPA, đăng nhập, vào menu **EUTR documents** (đường dẫn `/eutr/do
     lưu: cột Step name/Conditions trên danh sách chính cập nhật đúng theo thay đổi (dòng "Vendor" đã
     biến mất khỏi Conditions). Thử Save khi bỏ hết dòng Conditions type (chỉ còn Step) → bị chặn
     kèm lỗi, dữ liệu cũ giữ nguyên (không mất Step/Conditions đã có).
+14. **Cột Type lấy nhãn thật từ `eutr_reference_types` (Update 14, FR-034)**: Trước tiên, xác nhận
+    bảng `eutr_reference_types` đã có đúng 2 dòng `Id=0` → "PO" và `Id=1` → "Upload manual" (chạy
+    migration `14_seed_eutr_reference_types.sql`, hoặc kiểm tra qua màn hình CRUD của feature
+    `006-eutr-reference-types` tại `/eutr/reference-types`). Mở danh sách EUTR documents chính →
+    kiểm tra tab Network: request `POST /api/eutr-documents/get-all`, xác nhận mỗi item response có
+    thêm field `typeName`. Với 1 document Type="PO" (tạo qua nút Upload ở Screen1, kịch bản 8) →
+    cột Type trên grid hiển thị đúng "PO" (lấy từ `typeName`, không còn tra `TAKE_FROM_OPTIONS` ở
+    client). Với 1 document Type="Upload manual" (kịch bản 11b) → cột Type hiển thị đúng "Upload
+    manual". Với 1 document tạo qua form Save nhập tay (chưa từng qua Upload/Assign condition) → cột
+    Type tiếp tục hiển thị trống (`typeName = null`), không lỗi. Xác nhận trang Add — dropdown
+    **Type** (chọn PO/Upload manual để quyết định layout Screen1/Screen2) **không đổi hành vi** —
+    vẫn đúng 2 lựa chọn hard-code như trước Update 14 (ngoài phạm vi thay đổi này, xem FR-016).
+15. **Popup Add hợp nhất Type/Step/Value/Upload (Update 15/16, FR-059 đến FR-070)** — *(nhánh Type =
+    "PO" ở kịch bản này bị **thay thế bởi kịch bản 16, Update 17** — xem bên dưới; giữ nguyên phần
+    còn lại của kịch bản 15/15a-15e cho các Type khác)*: Trên danh sách chính, nhấn nút **Add** → xác
+    nhận mở **popup** "Add EUTR documents" (KHÔNG điều hướng sang `/eutr/documents/add`). Kiểm tra tab
+    Network: dropdown **Type** gọi `GET /api/eutr-reference-types` (trả toàn bộ bản ghi, không chỉ 2
+    lựa chọn PO/Upload manual). Chọn Type = "Invoice" → ô Value hiển thị gợi ý qua
+    `POST /api/dynamics/reference?refType=15`; gõ hoặc chọn 1 mã PO → 1 chip xuất hiện. Chọn combobox
+    **Step** (gọi `GET /api/eutr-steps`). Nhấn Upload trong khi thiếu Step → nút vẫn vô hiệu hóa; chọn
+    Step xong, Upload khả dụng → chọn 2 file hợp lệ → xác nhận request
+    `POST /api/sharepoint/eutr-upload-multi-by-type` (kiểm tra body có `typeId`/`typeName`/`stepId`/
+    `refValues`) → popup **tự đóng** ngay sau khi có kết quả (FR-070); danh sách chính hiển thị 2
+    document mới, kiểm tra DB: mỗi document có đúng 1 dòng `eutr_references` (`RefType` = `Id` thật
+    của Type "Invoice" đã chọn — KHÔNG cứng `0`/`1`), thư mục SharePoint = `Invoice` (cố định).
+15a. **Type = "Invoice"/"Delivery note" — nhiều chip, thư mục cố định**: Mở lại popup Add, chọn Type =
+    "Invoice" → ô Value vẫn gọi `refType=15` (PO). Dán chuỗi `"PO1, PO2\nPO3"` trong đó PO1/PO2 khớp
+    dữ liệu thật còn PO3 không khớp → xác nhận đúng 2 chip (PO1, PO2) được thêm, cảnh báo hiển thị cho
+    PO3, và KHÔNG bị giới hạn 1 chip (khác Type="PO"). Upload 1 file hợp lệ → kiểm tra file được lưu
+    vào thư mục cố định `{SharePointEutrPath}/Invoice` (không theo giá trị chip); document mới có
+    đúng 2 dòng `eutr_references` (1 dòng/chip, cùng `DocumentId`/`StepId`/`RefType`, khác `RefValue`).
+    Lặp lại nhanh với Type = "Delivery note" → xác nhận thư mục `DeliveryNote`.
+15b. **Type = "Vendor" — 1 chip, thư mục theo giá trị**: Chọn Type = "Vendor" → ô Value gọi
+    `POST /api/dynamics/reference?refType=14`; chọn 1 Vendor → Upload → xác nhận thư mục SharePoint
+    đặt tên theo mã Vendor đã chọn (giống cách PO), và bị giới hạn đúng 1 chip như Type="PO".
+15c. **Type không có nguồn gợi ý (vd. "General agreement")**: Chọn Type này → ô Value là ô nhập tự do,
+    KHÔNG có request nào tới `POST /api/dynamics/reference`; gõ 2 giá trị tùy ý (không cần khớp dữ
+    liệu nào) → cả 2 đều thành chip; Upload → thư mục SharePoint = `GeneralAgreement` (cố định).
+15d. **Đổi Type reset chip**: Sau khi đã có sẵn ít nhất 1 chip, đổi dropdown Type sang giá trị khác →
+    xác nhận vùng chọn trở về rỗng ngay lập tức.
+15e. **Edit không đổi (Update 16, Q1)**: Trên danh sách chính, nhấn Edit trên 1 document Type="PO" và
+    1 document Type="Upload manual" (bất kỳ, kể cả tạo qua popup Add mới) → xác nhận hành vi Edit vẫn
+    đúng như kịch bản 12/13 (không có thay đổi nào do popup Add mới).
+16. **Type = "PO" trong popup Add: bỏ Step thủ công, xác định tự động theo prefix file (Update 17,
+    FR-071 đến FR-075)**: Mở popup Add, chọn Type = "PO" → xác nhận combobox **Step KHÔNG hiển thị**
+    trong popup (khác kịch bản 15, nơi Type="Invoice" vẫn có Step). Gõ hoặc chọn 1 mã PO ở ô Value →
+    chip xuất hiện ngay và ô Value trở về trống (FR-071); thử thêm 1 giá trị nữa → vẫn bị chặn (giới
+    hạn 1 chip, không đổi so với Update 15/FR-064). Nút Upload khả dụng ngay khi có 1 chip (không cần
+    Step). Chọn 2 file có tên khớp `Prefix` của 2 `StepId` khác nhau trong `eutr_master_documents`
+    (dữ liệu do feature `002-eutr-masters` quản lý) → nhấn Upload → kiểm tra tab Network xác nhận
+    request gọi **`POST /api/sharepoint/eutr-upload-multi`** (endpoint gốc từ Update 6/7 — KHÔNG phải
+    `eutr-upload-multi-by-type`), body chỉ có `Files`/`PoCode` (không có `stepId`); popup tự đóng
+    (FR-070 không đổi). Kiểm tra DB: mỗi document mới có bản ghi `eutr_references` với `StepId` đúng
+    theo Prefix khớp tên file đó (không phải Step chọn thủ công, vì không có control này), `RefType =
+    0` (khớp `eutr_reference_types.Id=0`/`Name="PO"` đã seed từ Update 14).
+16a. **File không khớp prefix nào (Update 17)**: Vẫn ở Type = "PO", chọn 1 file có tên KHÔNG khớp bất
+    kỳ `Prefix` nào trong `eutr_master_documents` → Upload → xác nhận file đó bị loại kèm cảnh báo rõ
+    ràng, KHÔNG tạo document/`eutr_references` nào cho file này (không chặn các file hợp lệ khác nếu
+    upload cùng lượt) — giống hành vi đã có ở Update 7 trước khi có popup Add hợp nhất.
+16b. **Type khác "PO" không đổi (Update 17)**: Lặp lại nhanh với Type = "Vendor" (hoặc "Invoice") →
+    xác nhận combobox Step vẫn hiển thị và bắt buộc chọn như kịch bản 15/15a/15b, và request Upload
+    vẫn gọi `POST /api/sharepoint/eutr-upload-multi-by-type` (không đổi).
+17. **`RefType` ghi đúng theo `TypeId` khi Type = "PO" (Update 18, FR-076/FR-077)**: Trước tiên, mở
+    màn hình quản lý reference type (feature `006-eutr-reference-types`) và ghi lại `Id` thật của bản
+    ghi có `Name` = "PO" (ví dụ `Id = 3`). Quay lại `/eutr/documents`, mở popup Add, chọn Type = "PO",
+    thêm 1 chip mã PO, chọn 1 file có tên khớp `Prefix` trong `eutr_master_documents`, nhấn Upload →
+    mở tab Network, xác nhận request `POST /api/sharepoint/eutr-upload-multi` có field `typeId` =
+    đúng `Id` đã ghi lại ở trên (ví dụ `3`) — không phải rỗng/`0` cố định. Kiểm tra trực tiếp DB (bảng
+    `eutr_references`): bản ghi mới tạo cho document này có `RefType` = đúng giá trị `typeId` đó. Quay
+    lại danh sách EUTR documents chính, xác nhận document vừa tạo hiển thị đúng nhãn **"PO"** ở cột
+    Type (JOIN `RefType`↔`eutr_reference_types.Id`, Update 14) — không hiển thị trống hay sai nhãn.
+17a. **Không hồi quy Type khác "PO" (Update 18)**: Lặp lại nhanh với Type = "Vendor" (hoặc "Invoice")
+    → xác nhận request Upload vẫn gọi `POST /api/sharepoint/eutr-upload-multi-by-type` với `typeId`
+    như Update 15/16 (không đổi), không liên quan tới thay đổi ở kịch bản 17.
 
 ## Tiêu chí đạt
 
-- Tất cả 13 kịch bản trên (cùng các kịch bản phụ 9a-9s, 10a, 11a-11b, 1a, 5a-5c, 6a) hoạt động đúng.
+- Tất cả 17 kịch bản trên (cùng các kịch bản phụ 9a-9s, 10a, 11a-11b, 15a-15e, 16a-16b, 17a, 1a,
+  5a-5c, 6a) hoạt động đúng.
+- **(Update 18)** Khi Type = "PO" trong popup Add, request Upload gửi kèm `typeId` = `Id` thật của
+  Type "PO" đang chọn ở dropdown (không phải giá trị rỗng/cố định); mỗi `eutr_references` ghi cho
+  document tạo qua luồng này có `RefType` khớp đúng `typeId` đó — xem SC-044. Trang Add cũ độc lập
+  (`EutrDocumentsAdd.jsx`) và luồng Upload của Type khác "PO" không đổi hành vi.
+- **(Update 17)** Ô Value trong popup Add trở về trống ngay sau khi thêm 1 chip (mọi đường: gợi ý/gõ
+  tay/dán) — xem SC-043. Type = "PO" trong popup Add KHÔNG hiển thị/yêu cầu combobox Step — xem
+  FR-072/FR-074/SC-043; Upload gọi lại đúng endpoint gốc `eutr-upload-multi` (Update 6/7), file không
+  khớp `Prefix` trong `eutr_master_documents` bị loại kèm cảnh báo, không tạo document — xem
+  FR-073/SC-043; mỗi document Type="PO" tạo qua popup Add có `StepId` đúng theo Prefix khớp tên file
+  (không phải Step chọn thủ công) — xem FR-075/SC-040. Type khác "PO" không đổi hành vi so với Update
+  15/16.
+- **(Update 15/16)** Nút Add mở popup "Add EUTR documents", KHÔNG điều hướng trang — xem SC-036.
+  Nút Upload chỉ khả dụng khi đủ Type+Step+≥1 chip (Type khác "PO"; xem ngoại lệ Update 17 ở trên) —
+  xem SC-037. Mọi chip được thêm (qua gợi ý, gõ tay, hoặc dán) khớp đúng dữ liệu tham chiếu khi Type
+  có nguồn gợi ý — xem SC-038; Type="PO"/"Vendor" không bao giờ có quá 1 chip — xem SC-039. Mỗi lượt
+  Upload lưu đúng thư mục SharePoint theo Type và tạo đúng N `eutr_references` cho mỗi document (N=số
+  chip cho Type khác "PO"; N=số `StepId` khớp Prefix cho Type="PO", xem Update 17) — xem SC-040; Step
+  name/Type trên danh sách chính hiển thị đúng ngay cả cho Type mới (ngoài PO/Upload manual) — xem
+  SC-041. Popup luôn tự đóng ngay sau khi Upload hoàn tất — xem SC-042. Trang `/eutr/documents/add` cũ
+  và luồng Edit (Update 12/13) không đổi hành vi.
+- **(Update 14)** Cột Type trên danh sách EUTR documents hiển thị đúng `typeName` trả về từ
+  `POST /api/eutr-documents/get-all` (JOIN `eutr_reference_types`), không còn tra
+  `TAKE_FROM_OPTIONS` ở client cho cột này — xem SC-035. Sau khi seed đúng `Id=0`/`Id=1`, mọi
+  document hiện có tiếp tục hiển thị đúng nhãn Type như trước Update 14 (không bị "mất nhãn"). Trang
+  Add — dropdown Type (FR-016) không đổi.
 - **(Update 11)** Khu Upload File ở Screen2 luôn khả dụng (không cần chọn gì trước), upload đúng
   vào thư mục cố định `UploadManual`, không validate prefix — xem SC-025. Danh sách "chưa gán" chỉ
   hiển thị document không có `eutr_references` — xem SC-026. Save trong popup Assign condition bị

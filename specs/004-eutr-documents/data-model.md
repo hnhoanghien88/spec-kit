@@ -117,21 +117,33 @@ Mở rộng `EutrDocumentsResponseDto` (2 field mới, không đổi entity `Eut
   "createdBy": "hien", "createdDate": "2026-07-09T03:00:00Z",
   "updatedBy": null, "updatedDate": null,
   "stepNames": ["Bước kiểm tra hóa đơn", "Bước xác minh nguồn gốc"],
-  "refType": 0
+  "refType": 0,
+  "typeName": "PO"
 }
 ```
 
 - `stepNames`: `List<string>` — tên các Step (JOIN `eutr_steps.Name` theo `StepId`) của mọi bản ghi
   `eutr_references` có `DocumentId` = `Id` của document này; `[]` nếu không có bản ghi nào.
 - `refType`: `byte?` — giá trị `RefType` của các bản ghi đó (giống nhau trên mọi bản ghi cùng
-  `DocumentId`, theo FR-033/Update 7); `null` nếu không có bản ghi nào. Frontend map sang nhãn hiển
-  thị qua `TAKE_FROM_OPTIONS` (`0` → "PO", `1` → "Upload manual") — backend KHÔNG trả nhãn đã dịch
-  sẵn, giữ đúng tinh thần "PO name" ở List PO (backend trả mã, frontend map nhãn).
+  `DocumentId`, theo FR-033/Update 7); `null` nếu không có bản ghi nào. **Trước Update 14**: frontend
+  map giá trị này sang nhãn hiển thị qua hằng số `TAKE_FROM_OPTIONS`. **Kể từ Update 14**: `refType`
+  vẫn được trả về (dùng để Edit rẽ nhánh popup theo Type, FR-055/FR-056) nhưng KHÔNG còn dùng để suy
+  ra nhãn hiển thị cột Type — xem field `typeName` mới ngay dưới.
+- `typeName` (`string?`, **mới, kể từ Update 14, FR-034**): nhãn Type đã tính sẵn ở backend — JOIN
+  `RefType` với `eutr_reference_types.Id`, trả `Name` của bản ghi khớp (bảng quản lý CRUD bởi feature
+  `006-eutr-reference-types`, xem research Quyết định 41). `null` khi document không có bản ghi
+  `eutr_references` nào, hoặc `RefType` không khớp bất kỳ bản ghi `eutr_reference_types` nào. Đây là
+  thay đổi duy nhất khiến "PO name ở List PO" (backend trả mã, frontend map nhãn) không còn là quy
+  tắc chung cho MỌI nhãn tham chiếu trong feature này — cột Type nay là ngoại lệ có chủ đích, vì nhãn
+  của nó đến từ một bảng CRUD được người dùng quản lý trực tiếp (`eutr_reference_types`), không phải
+  một hằng số cố định trong code.
 - Nguồn dữ liệu: `EutrReferencesRepository.GetStepInfoByDocumentIdsAsync(documentIds)` (SQL JOIN
   `eutr_references`+`eutr_steps`, `WHERE DocumentId IN @DocumentIds`) — xem research Quyết định 20.
+  **Kể từ Update 14**, câu SQL này JOIN thêm `eutr_reference_types` (`LEFT JOIN eutr_reference_types
+  t ON t.Id = r.RefType`) để lấy `t.Name AS TypeName` (research Quyết định 41).
   `EutrDocumentsService.GetPagedAsync` gọi method này với `Id` của mọi document trong trang hiện
-  tại, group theo `DocumentId`, rồi gán vào `StepNames`/`RefType` của từng `EutrDocumentsResponseDto`
-  tương ứng — clone mẫu `ComplCountryGroupService.AttachMembersAsync`.
+  tại, group theo `DocumentId`, rồi gán vào `StepNames`/`RefType`/`TypeName` của từng
+  `EutrDocumentsResponseDto` tương ứng — clone mẫu `ComplCountryGroupService.AttachMembersAsync`.
 
 ## Nạp File name/Step name cho List PO trên trang Add (spec Update 8, FR-037/FR-038) — endpoint MỚI trong `EutrDocumentsController`
 
@@ -194,8 +206,11 @@ public interface IEutrReferencesRepository
 }
 ```
 
-- `EutrReferenceStepInfo { long DocumentId; string? StepName; byte? RefType; }` — projection phẳng,
-  không phải entity `EutrReferences` đầy đủ (không cần `Id`/`RefId`/`RefValue` cho mục đích này).
+- `EutrReferenceStepInfo { long DocumentId; string? StepName; byte? RefType; long ReferenceId;
+  long? StepId; string? TypeName; }` — projection phẳng, không phải entity `EutrReferences` đầy đủ
+  (không cần `Id`/`RefId`/`RefValue` cho mục đích này). `ReferenceId`/`StepId` được thêm ở Update 13
+  (suy ra `StepId` "hiện tại" theo `Id` nhỏ nhất, FR-055); `TypeName` **mới, kể từ Update 14** — JOIN
+  thêm `eutr_reference_types` (`LEFT JOIN eutr_reference_types t ON t.Id = r.RefType`), lấy `t.Name`.
 - `EutrReferencePoDocumentInfo { string PoCode; long DocumentId; string? FileId; string? FileName; string? StepName; }`
   — projection phẳng tương tự, service group thành cấu trúc lồng nhau ở trên. **(Update 10)**: thêm
   `FileId` (JOIN cùng `d.FileId` như `d.Name`/`FileName`) để icon View/Delete theo từng file ở List
@@ -350,6 +365,11 @@ public override async Task DeleteMultiAsync(IEnumerable<long> ids, CancellationT
   liên kết này qua `EutrReferencesRepository` để nạp Step name/Type (danh sách) và File name/Step
   name (List PO) — xem 2 mục ở trên. Feature vẫn chỉ CRUD trực tiếp bảng `eutr_documents`; việc ghi
   vào `eutr_references` tiếp tục thuộc về `EutrUploadService` (Update 7), không đổi bởi Update 8.
+- **Kể từ Update 14**: `eutr_references.RefType` có ràng buộc khóa ngoại tới `eutr_reference_types.Id`
+  (`eutr_references_reftype_foreign`, theo `docs/design/eutr/eutr_db.sql`). Feature này đọc (JOIN,
+  read-only) thêm bảng `eutr_reference_types` — quản lý CRUD hoàn toàn bởi feature
+  `006-eutr-reference-types` — để nạp nhãn hiển thị cột Type (`typeName`, xem mục trên). Feature này
+  KHÔNG tạo/sửa/xóa bản ghi nào trong `eutr_reference_types`.
 
 ## Trạng thái chỉ-giao-diện trên trang Add (Type/List PO/Manual) — KHÔNG có entity/DTO
 
@@ -411,12 +431,18 @@ cùng `SharePointController` (`api/sharepoint`), vì `EutrDocumentsRequestDto` k
 ### `EutrMultiUploadFileRequest` (request, `[FromForm]`, `multipart/form-data`)
 
 ```json
-{ "files": ["<binary>", "<binary>"], "poCode": "PO000123" }
+{ "files": ["<binary>", "<binary>"], "poCode": "PO000123", "typeId": 3 }
 ```
 
 - `files`: bắt buộc ít nhất 1 file (`400` nếu rỗng, cùng validate với `upload-multi` hiện có).
 - `poCode`: bắt buộc, không rỗng (`400` nếu thiếu) — giá trị `code` của PO đang chọn ở List PO
   (tương ứng `PurchId` từ `RSVNEutrPurchOrders`, refType 15).
+- `typeId` *(`long?`, MỚI — spec Update 18, FR-076)*: **nullable**, KHÔNG `[Required]` — `Id` thật của
+  bản ghi `eutr_reference_types` đang được chọn ở dropdown Type trong popup Add (chỉ gửi khi
+  `Type.Name` = "PO"). Khi có giá trị, backend dùng trực tiếp làm `RefType` khi ghi
+  `eutr_references` (FR-077, xem mục "Ghi dữ liệu" bên dưới), thay cho hằng số `PoRefType` cố định.
+  Caller cũ không gửi field này (ví dụ trang Add độc lập `EutrDocumentsAdd.jsx`, Update 6) tiếp tục
+  không bị ảnh hưởng — backend giữ nguyên hằng số cũ khi `typeId` vắng mặt (research Quyết định 52).
 
 ### `EutrUploadFileResultDto` (response item, cho mỗi file trong request)
 
@@ -523,19 +549,27 @@ Với mỗi file đã qua validate định dạng/kích thước (FR-026) VÀ va
 1. Mở 1 transaction (`IUnitOfWork.BeginTransactionAsync`).
 2. `_repository<EutrDocuments,long>.AddAsync(...)` → lấy `documentId` mới.
 3. Với mỗi `StepId` phân biệt đã khớp prefix: `_repository<EutrReferences,long>.AddAsync(new
-   EutrReferences { DocumentId = documentId, StepId = stepId, RefType = 0, RefValue = poCode })`.
+   EutrReferences { DocumentId = documentId, StepId = stepId, RefType = resolvedRefType, RefValue =
+   poCode })`, trong đó `resolvedRefType = request.TypeId.HasValue ? (byte)request.TypeId.Value :
+   PoRefType` *(kể từ Update 18, research Quyết định 52 — trước đó luôn là hằng số `PoRefType`)*.
 4. `CommitAsync()`. Nếu bất kỳ bước 2-3 nào throw → `RollbackAsync()` — **toàn bộ** (cả
    `eutr_documents` lẫn mọi `eutr_references` đã insert trong bước 3 của file này) bị hủy; file đó
    được báo `success: false` trong kết quả trả về (không để lại document "mồ côi" không có
    `eutr_references`).
-- `RefType` luôn là `0` (giá trị "PO" của `TAKE_FROM_OPTIONS` phía frontend) vì khu Upload thật chỉ
-  tồn tại ở Screen1 (Type = PO) — không có nhánh nào ghi `RefType = 1` trong phạm vi feature này.
+- `RefType`: **kể từ Update 18**, bằng `(byte)request.TypeId` khi popup Add gửi kèm field này (luồng
+  Type = "PO" của popup Add hợp nhất, Update 15/17) — giá trị này là `Id` thật của bản ghi
+  `eutr_reference_types` có `Name` = "PO", không còn phụ thuộc giả định "PO luôn có Id = 0" (giả định
+  này từng đúng nhờ seed cưỡng bức ở Update 14, nhưng không còn đảm bảo từ khi feature
+  `006-eutr-reference-types` cho phép CRUD tự do trên bảng đó). Khi request KHÔNG gửi `typeId` (caller
+  cũ, ví dụ trang Add độc lập `EutrDocumentsAdd.jsx`), `RefType` giữ nguyên hằng số `PoRefType` như
+  trước Update 18 — không đổi hành vi của caller đó.
 - `RefValue` = `poCode` (cùng giá trị dùng để suy ra thư mục SharePoint, xem mục "Suy ra thư mục
   SharePoint từ `poCode`" ở trên) — giống nhau trên mọi dòng `eutr_references` của cùng file.
-- Ví dụ: file `"INV2026_report.pdf"` khớp 2 bản ghi `eutr_master_documents` (`Prefix = "INV"`,
-  `StepId = 5` và `Prefix = "INV2026"`, `StepId = 7`) → tạo 1 dòng `eutr_documents` (`Id = 501`) và
-  2 dòng `eutr_references`: `{ DocumentId: 501, StepId: 5, RefType: 0, RefValue: "PO000123" }` và
-  `{ DocumentId: 501, StepId: 7, RefType: 0, RefValue: "PO000123" }`.
+- Ví dụ (kể từ Update 18, popup Add gửi `typeId = 3` cho Type "PO"): file `"INV2026_report.pdf"` khớp
+  2 bản ghi `eutr_master_documents` (`Prefix = "INV"`, `StepId = 5` và `Prefix = "INV2026"`,
+  `StepId = 7`) → tạo 1 dòng `eutr_documents` (`Id = 501`) và 2 dòng `eutr_references`:
+  `{ DocumentId: 501, StepId: 5, RefType: 3, RefValue: "PO000123" }` và
+  `{ DocumentId: 501, StepId: 7, RefType: 3, RefValue: "PO000123" }`.
 
 ## Thực thể mới: EutrReferenceDetails (bảng `eutr_reference_details`, spec Update 11, FR-052)
 
@@ -749,3 +783,83 @@ từ dòng `eutr_references` (`RefType=0`) có `Id` **nhỏ nhất** trong số 
   GetGroupedConditionsByDocumentIdsAsync(documentIds)` (mới, xem trên) cho `conditions`. Cả hai được
   gộp trong cùng bước `AttachStepInfoAsync` (đổi tên `AttachStepAndConditionInfoAsync`) đã có từ
   Update 8 — không thêm round-trip HTTP mới cho grid chính.
+
+## Popup Add hợp nhất Type/Step/Value/Upload — endpoint MỚI trong `SharePointController` (spec Update 15/16, FR-059 đến FR-070)
+
+> ⚠️ **Ngoại lệ kể từ Update 17 (FR-072 đến FR-075)**: khi Type đã chọn trong popup Add có `Name` =
+> "PO", request/endpoint **KHÔNG còn đi qua** `EutrTypeMultiUploadFileRequest`/
+> `eutr-upload-multi-by-type` mô tả dưới đây — frontend gọi lại **nguyên vẹn**
+> `EutrMultiUploadFileRequest`/`POST /api/sharepoint/eutr-upload-multi` (Update 6/7, xem mục "Upload
+> nhiều file thật lên SharePoint" phía trên) với `PoCode` = giá trị chip PO đã chọn. Không có `stepId`
+> trong request này — Step (`eutr_references.StepId`) được backend tự suy theo Prefix tên file (có
+> thể nhiều dòng/file, xem mục "Validate prefix tên file..." phía trên), không phải một giá trị đơn
+> truyền từ client. Mọi nội dung bên dưới (`EutrTypeMultiUploadFileRequest`, cách suy thư mục theo
+> `typeName`, ghi N `eutr_references`=N chip) tiếp tục áp dụng nguyên vẹn cho **mọi Type khác "PO"**
+> (Vendor, Invoice, Delivery note, General agreement, Type mới) — không đổi so với Update 15/16.
+>
+> **Cập nhật Update 18 (FR-076/FR-077, research Quyết định 52)**: `EutrMultiUploadFileRequest` (mục
+> "Upload nhiều file thật lên SharePoint" phía trên) nay có thêm field nullable `typeId`, và popup Add
+> MUST truyền `type.id` (Id thật của Type "PO" đang chọn) vào đó khi gọi endpoint `eutr-upload-multi`
+> — đóng gap trước đó (`RefType` ghi cứng bằng hằng số, KHÔNG khớp `typeId` thật), để nhánh Type =
+> "PO" ghi `RefType` theo đúng cùng nguyên tắc "`RefType` = `Id` của Type đã chọn" mà bảng
+> `EutrTypeMultiUploadFileRequest` bên dưới đã áp dụng cho mọi Type khác từ Update 15.
+
+### `EutrTypeMultiUploadFileRequest` (request, `[FromForm]`, `multipart/form-data`)
+
+```json
+{
+  "files": ["<binary>", "<binary>"],
+  "typeId": 3,
+  "typeName": "Invoice",
+  "stepId": 5,
+  "refValues": ["PO000123", "PO000124"]
+}
+```
+
+- `typeId` (`long`): `Id` của bản ghi `eutr_reference_types` đã chọn ở popup Add — ghi trực tiếp
+  (cast `(byte)`) vào `eutr_references.RefType`, KHÔNG còn giới hạn ở `0`/`1` như luồng Update 7/11.
+- `typeName` (`string`): `Name` của bản ghi đó — CHỈ dùng ở backend để suy tên thư mục SharePoint
+  (Quyết định 43), KHÔNG lưu vào bảng nào (tên hiển thị Type đã có sẵn qua JOIN `eutr_references.
+  RefType`→`eutr_reference_types.Id`, xem Update 14).
+- `stepId` (`long`): Step đã chọn — ghi giống nhau trên mọi dòng `eutr_references` được tạo cho các
+  file trong cùng lượt Upload.
+- `refValues` (`List<string>`): danh sách giá trị chip tại thời điểm nhấn Upload — 1 phần tử nếu Type
+  là "PO"/"Vendor" (FR-064), có thể nhiều phần tử với Type khác.
+
+### Response — tái dùng `List<EutrUploadFileResultDto>` (không đổi shape so với Update 6/11)
+
+Không có field mới — mỗi phần tử vẫn `{ FileName, Success, ErrorMessage?, DocumentId?, FileId? }`.
+
+### Ghi `eutr_documents` + N `eutr_references` per-file (research Quyết định 42, FR-068)
+
+Với mỗi file hợp lệ: 1 transaction — insert 1 `eutr_documents` (`Name`=tên file gốc,
+`ValidFrom`=hôm nay, `ValidTo`=`9999-12-31`, `FileId`=id SharePoint, giống hệt Update 6/7) rồi insert
+N dòng `eutr_references` (N = `refValues.Count`, `DocumentId` giống nhau, `StepId`=`request.StepId`
+giống nhau, `RefType`=`(byte)request.TypeId` giống nhau, `RefValue`=từng giá trị trong `refValues`
+— khác nhau giữa các dòng). Cột `RefId` hiện có KHÔNG bị ghi (giữ đúng quy ước từ Update 7).
+
+### Suy thư mục SharePoint từ `typeName` (research Quyết định 43, FR-067)
+
+| `typeName` (so khớp không phân biệt hoa/thường) | Thư mục SharePoint |
+|---|---|
+| "PO" | *(Không còn đi qua bảng này kể từ Update 17 — xem ghi chú ⚠️ ở đầu mục. Thư mục vẫn `{SharePointEutrPath}/{poCode}`, nhưng suy ra bởi endpoint `eutr-upload-multi` gốc, không phải `ResolveFolderName` của endpoint này.)* |
+| "Vendor" | `{SharePointEutrPath}/{refValues[0]}` (theo mã Vendor đã chọn) |
+| "Invoice" | `{SharePointEutrPath}/Invoice` (cố định) |
+| "Delivery note" | `{SharePointEutrPath}/DeliveryNote` (cố định) |
+| "General agreement" | `{SharePointEutrPath}/GeneralAgreement` (cố định) |
+| Khác (Type mới do feature `006` thêm) | `{SharePointEutrPath}/{typeName không khoảng trắng}` (cố định) |
+
+Dùng lại nguyên vẹn `ResolveOrCreatePoFolderAsync(basePath, folderName)` đã có (Quyết định 13) — chỉ
+tính `folderName` theo bảng trên rồi gọi hàm này, không sửa hàm.
+
+### Trạng thái chỉ tồn tại ở frontend — Type/Step/Value/chip trong popup Add (KHÔNG có entity/DTO backend)
+
+- **Type** (đối tượng `eutr_reference_types` đã chọn, từ `GetEutrReferenceTypesUseCase` — không entity
+  frontend mới, tái dùng `EutrReferenceTypes.js` đã có từ feature `006`).
+- **Step** (đối tượng `eutr_steps` đã chọn, từ `GetEutrStepsUseCase` — không entity frontend mới).
+- **Value/chip**: mảng chuỗi (Type không có nguồn gợi ý) hoặc mảng đối tượng tham chiếu D365 (Type có
+  nguồn gợi ý, cùng shape với kết quả `useReferenceObjects` — `{ id, code, name }`) — state cục bộ của
+  `EutrDocumentsAddDialog.jsx`/`EutrAddValueAutocomplete.jsx`, gửi lên backend dưới dạng `refValues:
+  string[]` (lấy `code` nếu là object, hoặc chuỗi thô nếu Type không có nguồn) khi nhấn Upload.
+- Không có migration DB nào cho phần này — `eutr_references.RefType`/`StepId`/`RefValue` đã đủ linh
+  hoạt từ Update 7/14 để lưu bất kỳ tổ hợp Type/Step/giá trị nào.

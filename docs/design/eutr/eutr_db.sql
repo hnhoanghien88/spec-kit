@@ -137,3 +137,14 @@ CREATE TABLE `eutr_purchase_attachments`(
 );
 ALTER TABLE
     `eutr_purchase_attachments` ADD CONSTRAINT `eutr_purchase_attachments_templatecode_foreign` FOREIGN KEY(`TemplateCode`) REFERENCES `eutr_templates`(`Code`);
+
+CREATE TABLE `eutr_reference_types`(
+    `Id` TINYINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    `Name` VARCHAR(255) NULL,
+    `CreatedBy` VARCHAR(50) NULL,
+    `CreatedDate` DATETIME NULL,
+    `UpdatedBy` VARCHAR(50) NULL,
+    `UpdatedDate` DATETIME NULL
+);
+ALTER TABLE
+    `eutr_references` ADD CONSTRAINT `eutr_references_reftype_foreign` FOREIGN KEY(`RefType`) REFERENCES `eutr_reference_types`(`Id`);

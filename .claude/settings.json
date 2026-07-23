@@ -28,7 +28,29 @@
       "Bash(tasklist //FI \"IMAGENAME eq dotnet.exe\" //FO CSV)",
       "Bash(sed -i 's/`\"Draft\"`/`0` \\(Draft\\)/g; s/`\"Approved\"`/`1` \\(Approved\\)/g' specs/003-eutr-templates/contracts/api-endpoints.md)",
       "Bash(grep -n '`\"Draft\"`\\\\|`\"Approved\"`\\\\|status.*Draft\\\\|status.*Approved' specs/003-eutr-templates/contracts/api-endpoints.md)",
-      "Bash(git status *)"
+      "Bash(git status *)",
+      "Bash(mkdir -p /e/Working/Eutr/specs/006-eutr-reference-types/checklists && ls /e/Working/Eutr/specs)",
+      "Bash(grep -n \"TINYINT\\\\|Id\\\\`\" -i \"/e/Working/Eutr/docs/design/eutr/eutr_db.sql\")",
+      "Bash(xargs grep -l \"public byte Id\")",
+      "Bash(grep -viE \"\\(EutrReferenceTypes|eutr-reference-types\\)\\([^s]|$\\)\")",
+      "Bash(git -C /e/Working/Eutr status --short)",
+      "Bash(git -C /e/Working/Eutr diff --stat docs/design/eutr/eutr_db.sql)",
+      "Bash(git -C /e/Working/Eutr diff docs/design/eutr/eutr_db.sql)",
+      "Bash(sed -i 's/^- \\\\[ \\\\] T/- [X] T/' tasks.md)",
+      "Bash(sed -i 's/^- \\\\[X\\\\] T021 /- [ ] T021 /' tasks.md)",
+      "Bash(sed -i 's/^- \\\\[X\\\\] T040 /- [ ] T040 /' tasks.md)",
+      "Bash(git -C /e/Working/Eutr/compliance-sys-api status --short)",
+      "Bash(git -C /e/Working/Eutr/compliance-client status --short)",
+      "Bash(xargs -I{} sh -c 'echo ==={}===; cat {}')",
+      "Bash(grep -n \"^- \\\\`EutrReferencesRepository.cs\\\\`\\\\|^- \\\\`EutrDocumentsResponseDto.cs\\\\`\" \"e:\\\\Working\\\\Eutr\\\\specs\\\\004-eutr-documents\\\\tasks.md\")",
+      "Bash(grep -n \"^## Complexity Tracking\\\\|^## Progress Tracking\\\\|Backend — \\\\*\\\\*Update 14\\\\*\\\\*\\\\|Frontend — sửa 1 file\\\\n\\(\\\\`useEutrDocumentsColumns\" specs/004-eutr-documents/plan.md)",
+      "Bash(grep -n \"EutrUploadService\\\\.cs\\\\` \\(Update\\\\|SharepointController\\\\.cs\\\\` \\(Update\\\\|ISharePointRepository\\\\.js\\\\` \\(Update\\\\|RestSharePointRepository\\\\.js\\\\` \\(Update\\\\|UploadToSharePointUseCase\\\\.js\\\\` \\(Update\" specs/004-eutr-documents/tasks.md)",
+      "Bash(grep -n \"ISharePointRepository\\\\.js\\\\` \\(Update\\\\|RestSharePointRepository\\\\.js\\\\` \\(Update\\\\|UploadToSharePointUseCase\\\\.js\\\\` \\(Update\\\\|\\\\`ISharePointRepository.js\\\\`/\\\\`RestSharePointRepository\" specs/004-eutr-documents/tasks.md)",
+      "Bash(awk '{print $2, $3}')",
+      "Bash(awk '$1>10')"
+    ],
+    "additionalDirectories": [
+      "E:\\Working\\Eutr\\specs\\006-eutr-reference-types"
     ]
   }
 }

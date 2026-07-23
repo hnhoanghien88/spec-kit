@@ -1223,3 +1223,293 @@ Phase 0 — chốt các quyết định kỹ thuật. Các điểm nghiệp vụ
   `EutrDocumentsAdd.jsx` — cân nhắc nhưng để nguyên trong cùng file (giữ đúng cấu trúc hiện tại của
   file này, đã chứa cả Screen1 và Screen2 từ Update 3) để tránh 1 lần refactor tách file không được
   yêu cầu, ngoài phạm vi các Update đã chốt.
+
+## Quyết định 41 — Backend: JOIN thêm `eutr_reference_types` vào `GetStepInfoByDocumentIdsAsync`, trả `TypeName` thay vì để frontend map qua `TAKE_FROM_OPTIONS`; migration seed 2 dòng cố định (spec Update 14, FR-034)
+
+- **Decision**: Sửa `EutrReferencesRepository.GetStepInfoByDocumentIdsAsync` (Quyết định 20) — thêm
+  `LEFT JOIN eutr_reference_types t ON t.Id = r.RefType` và `t.Name AS TypeName` vào SELECT hiện có:
+  ```sql
+  SELECT r.DocumentId, s.Name AS StepName, r.RefType, r.Id AS ReferenceId, r.StepId AS StepId,
+         t.Name AS TypeName
+  FROM eutr_references r
+  LEFT JOIN eutr_steps s ON s.Id = r.StepId
+  LEFT JOIN eutr_reference_types t ON t.Id = r.RefType
+  WHERE r.DocumentId IN @DocumentIds;
+  ```
+  Thêm `public string? TypeName { get; set; }` vào `EutrReferenceStepInfo` (Dtos/Response) và vào
+  `EutrDocumentsResponseDto`. `EutrDocumentsService.AttachStepAndConditionInfoAsync` mở rộng tuple
+  group-theo-`DocumentId` hiện có (Quyết định 20/39) để lấy thêm `TypeName:
+  x.Select(y => y.TypeName).FirstOrDefault()` và gán `item.TypeName = info.TypeName;` — không đổi
+  cấu trúc hàm, chỉ thêm 1 field, đúng mẫu đã dùng cho `StepId` ở Quyết định 39. Frontend
+  (`useEutrDocumentsColumns.jsx`, cột `type`): đổi `valueGetter` từ
+  `TAKE_FROM_OPTIONS.find(opt => opt.value === row.refType)?.label || ""` sang `row.typeName || ""` —
+  bỏ hẳn phụ thuộc `TAKE_FROM_OPTIONS` cho cột này (import `TAKE_FROM_OPTIONS` trong file này vẫn giữ
+  lại nếu còn dùng cho cột khác — kiểm tra lại khi implement).
+  Thêm migration mới `14_seed_eutr_reference_types.sql`: seed đúng 2 dòng cố định trong
+  `eutr_reference_types` khớp giá trị `RefType` đã ghi sẵn trên `eutr_references` — `Id=0` → "PO"
+  (Update 7), `Id=1` → "Upload manual" (Update 11). Vì cột `Id` là `TINYINT UNSIGNED AUTO_INCREMENT`,
+  MySQL mặc định coi giá trị `0` như `NULL` (tự sinh số kế tiếp) trừ khi bật `NO_AUTO_VALUE_ON_ZERO`
+  trong `sql_mode` của phiên hiện tại — migration MUST bật cờ này tạm thời quanh 2 câu `INSERT` rồi
+  khôi phục `sql_mode` cũ ngay sau đó, dùng `INSERT ... ON DUPLICATE KEY UPDATE` để idempotent (mẫu
+  `INSERT IGNORE` đã dùng ở `03_migrate_master_default.sql`, nhưng ở đây cần `ON DUPLICATE KEY UPDATE
+  Name = VALUES(Name)` thay vì `IGNORE`, để lần chạy lại vẫn cập nhật `Name` nếu người quản trị đã
+  sửa nó qua feature `006` — xem thêm ghi chú phòng vệ `CREATE TABLE IF NOT EXISTS` bên dưới).
+- **Rationale**: Yêu cầu người dùng ("dữ liệu cột Type sẽ lấy từ bảng `eutr_reference_types`") đúng
+  nghĩa đen là đổi NGUỒN dữ liệu nhãn hiển thị, không phải thêm một bảng tra cứu song song ở
+  frontend. Backend đã có sẵn đúng 1 điểm tính `RefType`→nhãn cho cột Type (`GetStepInfoByDocumentIdsAsync`
+  + `AttachStepAndConditionInfoAsync`) — mở rộng JOIN tại đây là thay đổi nhỏ nhất, nhất quán với
+  cách "Step name" đã lấy nhãn thật qua JOIN từ Update 8 (khác với việc bịa ra một cơ chế cache/lookup
+  mới ở tầng khác). Việc kiểm tra thực tế `TAKE_FROM_OPTIONS` (trong `compliance-client/src/utils/helpers.js`)
+  cho thấy mảng này có `value` = `1..5` (PO/Vendor/Invoice/Delivery note/General agreement — dùng
+  chung cho trường "Take from" ở `eutr-templates`), KHÔNG có phần tử nào mang `value = 0`; trong khi
+  `RefType` ghi thật trên `eutr_references` là `0` (PO, Update 7) hoặc `1` (Upload manual, Update 11).
+  Điều này nghĩa là *trước Update 14*, cột Type trên danh sách đã hiển thị **sai/rỗng theo đúng nghĩa
+  đen** cho phần lớn dữ liệu thật: `RefType=0` → không khớp phần tử nào trong `TAKE_FROM_OPTIONS` →
+  nhãn rỗng; `RefType=1` → khớp nhầm phần tử `{value:1, label:'PO'}` → hiển thị "PO" ngay cả khi
+  document thực ra thuộc luồng "Upload manual". Đây chính là lỗi nền (root cause) mà yêu cầu của
+  người dùng nhắm tới sửa — không phải một sở thích trình bày. JOIN thật với `eutr_reference_types`
+  (được feature `006` quản lý, có thể seed đúng `Id=0`/`Id=1` khớp ngữ nghĩa RefType thật) loại bỏ
+  hoàn toàn lớp mapping sai này.
+- **Alternatives considered**: (a) Sửa `TAKE_FROM_OPTIONS` để thêm `{value:0, label:'PO'}` và sửa
+  `{value:1}` thành "Upload manual" — bị loại, vì `TAKE_FROM_OPTIONS` được dùng chung bởi nhiều màn
+  hình khác (`eutr-templates` — `StepFormRow.jsx`, `BulkAddStepsDialog.jsx`, `StepTree.jsx`,
+  `TemplateBuilderPage.jsx`) cho đúng ngữ nghĩa gốc "Take from" (PO/Vendor/Invoice/...); đổi giá trị
+  chung này sẽ phá vỡ các màn hình đó, và cũng không phải điều người dùng yêu cầu (yêu cầu rõ ràng
+  nói tới bảng `eutr_reference_types`, không nói tới sửa hằng số front-end). (b) Tạo hằng số front-end
+  **mới** riêng cho Type (ví dụ `EUTR_DOCUMENT_TYPE_OPTIONS = [{value:0,label:'PO'},{value:1,label:'Upload manual'}]`)
+  — bị loại, vì đây vẫn là hard-code, đúng vấn đề mà yêu cầu muốn thay thế bằng dữ liệu quản lý được
+  qua CRUD (`eutr_reference_types`); không tận dụng được việc feature `006` đã tồn tại. (c) Gọi thêm 1
+  API riêng ở frontend (`GET /api/eutr-reference-types`) để tự dựng bảng tra cứu Id→Name rồi map ở
+  client — bị loại, thêm 1 round-trip + logic map trùng lặp với đúng việc backend đã làm cho Step
+  name (JOIN sẵn, trả nhãn đã tính) ở cùng câu SQL; vi phạm tinh thần "backend trả nhãn khi nhãn đến
+  từ 1 bảng quản lý được, chỉ để frontend map khi nhãn là hằng số cố định trong code" (xem
+  `data-model.md`, đối chiếu với cách "PO name" ở List PO vẫn map ở frontend vì nguồn của nó là D365
+  qua API tham chiếu dùng chung, không phải bảng CRUD nội bộ). (d) Thêm cột `RefType` là **generated/
+  computed** ở tầng DB thay vì JOIN ở tầng ứng dụng — bị loại, over-engineering cho 1 JOIN đơn giản đã
+  có sẵn hạ tầng repository phù hợp.
+- **Rủi ro/giả định cần lưu ý khi implement**: bảng `eutr_reference_types` **đã có** trong
+  `docs/design/eutr/eutr_db.sql` (kèm FK `eutr_references_reftype_foreign`) do feature `006` thêm vào,
+  nhưng KHÔNG tìm thấy trong `ComplianceSys.Infrastructure/Sqls/Tables/eutr_db.sql` (bản DDL build) hay
+  bất kỳ migration nào trong `Sqls/Migration/` — nghĩa là việc tạo bảng/FK này ở môi trường thật (nếu
+  có) nằm ngoài quy trình migration đã theo dõi của feature `006`, không thuộc phạm vi sửa ở đây.
+  Migration `14_seed_eutr_reference_types.sql` của Update 14 MUST tự phòng vệ bằng
+  `CREATE TABLE IF NOT EXISTS eutr_reference_types (...)` (khớp đúng định nghĩa trong
+  `docs/design/eutr/eutr_db.sql`) trước khi `INSERT`, để không phụ thuộc vào việc bảng đã được tạo ở
+  môi trường đích hay chưa; migration này **KHÔNG** tự thêm FK `eutr_references_reftype_foreign` (giả
+  định FK đó là trách nhiệm của quy trình rollout feature `006`, tránh lỗi "duplicate FK" nếu đã tồn
+  tại và tránh mở rộng phạm vi migration này sang việc của feature khác).
+
+## Quyết định 42 — Backend: tổng quát hóa upload theo Type bất kỳ, method mới `UploadMultipleForReferenceTypeAsync` (spec Update 15, FR-066 đến FR-069)
+
+- **Decision**: Thêm method mới `UploadMultipleForReferenceTypeAsync(EutrTypeMultiUploadFileRequest
+  request, string email, CancellationToken ct)` vào `IEutrUploadService`/`EutrUploadService` — request
+  mới `{ List<IFormFile> Files, long TypeId, string TypeName, long StepId, List<string> RefValues }`.
+  Với mỗi file hợp lệ (qua `ValidateFile` đã có, KHÔNG gọi `GetMatchingPrefixesAsync` — luồng này
+  không còn giới hạn ở "PO" nên không áp dụng validate prefix của Update 7): 1 transaction ghi 1
+  `eutr_documents` (giống hệt `UploadMultipleToSharePointAndSaveDataAsync`) và N bản ghi
+  `eutr_references` (N = `request.RefValues.Count`, mỗi dòng `DocumentId` giống nhau, `StepId =
+  request.StepId`, `RefType = (byte)request.TypeId`, `RefValue` = từng giá trị trong `RefValues`) —
+  clone đúng cấu trúc try/BeginTransaction/Commit/Rollback đã có (Quyết định 14/18), chỉ khác số dòng
+  `eutr_references` ghi ra (theo `RefValues` thay vì theo `StepId` khớp prefix).
+- **Rationale**: Spec Update 15 yêu cầu một Type bất kỳ (không giới hạn "PO") có thể gắn nhiều giá trị
+  tham chiếu (chip) cho cùng một lượt Upload — cấu trúc "1 file, N `eutr_references`" đã tồn tại từ
+  Update 7 (ở đó N là số Step khớp prefix); Update 15 chỉ đổi nguồn của N từ "số Step khớp prefix"
+  sang "số chip người dùng chọn", tái dùng đúng thiết kế bảng/transaction đã có, không cần đổi schema.
+- **Alternatives considered**: (a) Tái sử dụng thẳng `UploadMultipleToSharePointAndSaveDataAsync` hiện
+  có, thêm tham số optional cho `TypeId`/`RefValues` — bị loại, vì method đó gắn chặt với giả định
+  `RefType=0` (PO) và có bước validate prefix bắt buộc (FR-032), không áp dụng cho Type khác; tách
+  method mới có tên rõ ràng theo đúng phạm vi phù hợp hơn (Nguyên tắc II — giống cách Update 11 đã tách
+  `UploadManualMultipleToSharePointAndSaveDataAsync` thay vì nhồi vào method PO). (b) Tạo
+  `IEutrUploadService` mới hoàn toàn cho luồng này — bị loại, over-engineering khi service hiện có đã
+  đủ dependency cần thiết.
+
+## Quyết định 43 — Backend: suy thư mục SharePoint theo `Name` của Type, tái dùng `ResolveOrCreatePoFolderAsync` (spec Update 15, FR-067)
+
+- **Decision**: Thêm 1 hàm private `ResolveFolderName(string typeName, List<string> refValues)` trong
+  `EutrUploadService`: so khớp `typeName` không phân biệt hoa/thường — "po"/"vendor" → trả
+  `refValues[0]` (đã đảm bảo đúng 1 giá trị ở tầng frontend, FR-064, nhưng backend vẫn lấy phần tử đầu
+  tiên một cách phòng vệ); "invoice" → "Invoice"; "delivery note" → "DeliveryNote"; "general
+  agreement" → "GeneralAgreement"; còn lại → tên Type đã loại bỏ khoảng trắng
+  (`typeName.Replace(" ", "")`). Kết quả gọi thẳng `ResolveOrCreatePoFolderAsync(basePath,
+  folderName)` **đã có sẵn** (Quyết định 13) — hàm này vốn đã tổng quát (nhận `folderName` bất kỳ,
+  không riêng gì PO), chỉ cần gọi lại, không sửa.
+- **Rationale**: `ResolveOrCreatePoFolderAsync` (dù tên hàm mang tiền tố "Po") thực chất chỉ nhận một
+  chuỗi `folderName` và tìm/tạo thư mục con tương ứng — logic này đã đúng 100% với nhu cầu của Update
+  15, nên tái dùng nguyên vẹn thay vì viết lại. Đặt bảng ánh xạ tên trong 1 hàm private nhỏ giữ business
+  rule này ở đúng 1 chỗ, dễ mở rộng khi feature `006` thêm Type mới.
+- **Alternatives considered**: Đổi tên `ResolveOrCreatePoFolderAsync` thành tên tổng quát hơn (ví dụ
+  `ResolveOrCreateFolderAsync`) — cân nhắc nhưng KHÔNG bắt buộc cho phạm vi spec (đổi tên là refactor
+  thuần túy, không ảnh hưởng hành vi); để tùy chọn khi implement, không phải quyết định thiết kế.
+
+## Quyết định 44 — Backend: endpoint mới `eutr-upload-multi-by-type` trong `SharePointController` hiện có (spec Update 15, FR-066)
+
+- **Decision**: Thêm `[HttpPost("eutr-upload-multi-by-type")] [Consumes("multipart/form-data")]` vào
+  `SharePointController` hiện có — cùng route gốc `api/sharepoint` với `eutr-upload-multi` (Update 6)
+  và `eutr-upload-manual-multi` (Update 11), dùng chung `[Authorize]` mức controller, không thêm
+  policy riêng.
+- **Rationale**: Nhất quán với ranh giới "route theo hành động, không theo entity" đã chốt từ Update 6
+  — mọi hành vi "upload file EUTR thật lên SharePoint" nằm trong `SharePointController`, tách biệt
+  hoàn toàn với `EutrDocumentsController` (CRUD `eutr_documents` thuần). Type/Step lấy qua 2 endpoint
+  đã có sẵn của các feature khác (Quyết định 45), không cần endpoint GET/PUT nào thêm cho luồng này.
+- **Alternatives considered**: Đặt endpoint mới vào `EutrDocumentsController` (giống
+  `list-po-references` ở Update 8) — bị loại, vì hành động này là upload file thật lên SharePoint +
+  tạo document, cùng bản chất với 2 action `eutr-upload-multi`/`eutr-upload-manual-multi` đã có, không
+  phải một truy vấn đọc dữ liệu như `list-po-references`.
+
+## Quyết định 45 — Frontend: nút Add mở Dialog mới thay vì điều hướng trang; `EutrDocumentsAdd.jsx` giữ nguyên, không xóa (spec Update 15/16, FR-059)
+
+- **Decision**: `index.jsx` (danh sách chính) đổi nút Add từ `navigate('/eutr/documents/add')` sang mở
+  state `addDialogOpen`, render `EutrDocumentsAddDialog` với `open`/`onClose`/`onUploaded` (đóng dialog
+  + refetch danh sách). Route `/eutr/documents/add` (đăng ký ở `MainRoutes.jsx`) và component
+  `EutrDocumentsAdd.jsx` (toàn bộ Screen1/Screen2, Update 3-11) **giữ nguyên trong codebase, không
+  xóa, không sửa** — chỉ không còn được liên kết từ toolbar Add của danh sách chính.
+- **Rationale**: Clarify Update 16 (Q1) xác nhận Edit (User Story 3) không đổi — `EutrDocumentsModal.jsx`/
+  `AssignConditionDialog.jsx` là các component độc lập, không nằm trong/phụ thuộc `EutrDocumentsAdd.jsx`,
+  nên việc gỡ liên kết Add không ảnh hưởng gì tới Edit. Xóa hẳn `EutrDocumentsAdd.jsx` (đã hoạt động
+  qua 11 update liên tiếp) là một thao tác rủi ro cao, không mang lại lợi ích chức năng nào so với chỉ
+  đơn giản không liên kết nó nữa — giữ lại làm dead code có chủ đích là lựa chọn an toàn hơn.
+- **Alternatives considered**: (a) Xóa hẳn `EutrDocumentsAdd.jsx`, route, và mọi file con chỉ dùng bởi
+  nó — cân nhắc nhưng bị loại cho phạm vi update này vì rủi ro/lợi ích không cân xứng, và spec không
+  yêu cầu tường minh việc xóa. (b) Giữ route nhưng đổi nó thành redirect về danh sách — bị loại, không
+  cần thiết vì không có yêu cầu nào trong spec về việc xử lý bookmark cũ.
+
+## Quyết định 46 — Frontend: component mới `EutrAddValueAutocomplete.jsx`, KHÔNG sửa `ReferenceObjectMultiAutocomplete.jsx` dùng chung (spec Update 15, FR-062/FR-063/FR-065)
+
+- **Decision**: Tạo component mới `EutrAddValueAutocomplete.jsx` (đặt trong
+  `presentation/pages/eutr-documents/components/`, phạm vi riêng feature này) thay vì sửa
+  `ReferenceObjectMultiAutocomplete.jsx` đã có. Component mới gọi trực tiếp `useReferenceObjects`
+  (giống cách `ReferenceObjectMultiAutocomplete.jsx` đã làm) khi Type có nguồn gợi ý; validate token
+  dán/gõ tay bằng cách gọi `fetchReferenceObjects(refType, token)` rồi tìm phần tử có `code` khớp
+  chính xác (so sánh chữ thường, đã trim) trong kết quả trả về — nếu tìm thấy, thêm object đó làm chip
+  (hiển thị nhất quán "code - name" như các nơi khác dùng chung dữ liệu tham chiếu); nếu không tìm
+  thấy, bỏ qua token đó kèm cảnh báo.
+- **Rationale**: `ReferenceObjectMultiAutocomplete.jsx` đang được `AssignConditionDialog.jsx` dùng cho
+  "Condition value" — sửa trực tiếp component này để thêm hành vi paste-split/cap-1-giá-trị/free-text
+  thuần cho Type không có nguồn sẽ làm tăng độ phức tạp props/nhánh rẽ của 1 component đang hoạt động
+  ổn định, có rủi ro hồi quy cho luồng Assign condition (Update 11/12) vốn không nằm trong yêu cầu lần
+  này. Tạo component mới, nhỏ, chỉ phục vụ đúng nhu cầu của popup Add giữ đúng ranh giới thay đổi
+  (Nguyên tắc I) mà không đụng tới shared component.
+- **Alternatives considered**: (a) Thêm prop điều kiện vào `ReferenceObjectMultiAutocomplete.jsx` dùng
+  chung — bị loại vì lý do rủi ro hồi quy nêu trên, và 2 component có logic kiểm tra token khớp dữ
+  liệu khác nhau đáng kể (component chung không cần paste-split vì Condition value luôn chọn qua
+  dropdown, không có yêu cầu dán). (b) Validate token dán bằng cách tải toàn bộ danh sách PO/Vendor về
+  client rồi so khớp cục bộ — bị loại, danh sách PO/Vendor từ D365 có thể rất lớn (API vốn thiết kế
+  phân trang + tìm kiếm theo từ khóa phía server, xem Update 4/5), gọi lại API tìm chính xác từng token
+  nhẹ hơn và nhất quán với mẫu tìm kiếm đã dùng ở Update 5.
+
+## Quyết định 47 — Frontend: giới hạn 1 chip cho Type = "PO"/"Vendor" bằng cách chặn thêm, không tự thay thế (spec Update 15, FR-064)
+
+- **Decision**: Trong handler thêm giá trị của `EutrAddValueAutocomplete.jsx`, khi tên Type (chữ
+  thường) thuộc {"po", "vendor"} và đã có 1 chip, mọi thao tác thêm giá trị mới (chọn gợi ý, gõ tay xác
+  nhận, dán) bị chặn — hiển thị thông báo yêu cầu xóa chip hiện có trước; input không bị disable hoàn
+  toàn (người dùng vẫn gõ được để tìm kiếm) nhưng hành động "xác nhận thêm" bị vô hiệu hóa cho tới khi
+  chip hiện có bị xóa.
+- **Rationale**: Khớp đúng câu chữ FR-064 ("vô hiệu hóa việc thêm chip mới ... kèm thông báo yêu cầu
+  xóa chip hiện có trước") — hành vi "chặn + báo" thay vì "tự động thay thế chip cũ" tránh mất dữ liệu
+  người dùng đã chọn một cách âm thầm.
+- **Alternatives considered**: Tự động thay thế chip cũ bằng giá trị mới khi Type là PO/Vendor — bị
+  loại vì không khớp câu chữ spec ("vô hiệu hóa việc thêm", không phải "thay thế").
+
+## Quyết định 48 — Frontend: dán nhiều giá trị tách theo dấu phẩy và/hoặc xuống dòng (spec Update 15, FR-065)
+
+- **Decision**: Xử lý sự kiện paste: ngăn hành vi dán mặc định, đọc nội dung clipboard dạng văn bản,
+  tách theo cả dấu phẩy lẫn ký tự xuống dòng trong cùng một lượt xử lý (khớp cả chuỗi trộn lẫn hai kiểu
+  phân tách), loại khoảng trắng thừa và chuỗi rỗng. Với Type có nguồn gợi ý, validate từng token qua
+  Quyết định 46; với Type không có nguồn, thêm thẳng từng token làm chip (không khử trùng lặp — khớp
+  hình mẫu thiết kế cho phép 2 chip cùng nội dung).
+- **Rationale**: Khớp đúng 2 ví dụ trong yêu cầu gốc ("po1, po2" và "po1 xuống dòng po2") — xử lý cả
+  hai dạng cùng lúc mà không cần 2 nhánh code riêng biệt.
+- **Alternatives considered**: Chỉ tách theo xuống dòng, yêu cầu người dùng tự xóa dấu phẩy — bị loại,
+  không khớp ví dụ "po1, po2" nêu tường minh trong yêu cầu gốc.
+
+## Quyết định 49 — Frontend: popup Add tự đóng ngay sau khi Upload hoàn tất (spec Update 16, FR-070)
+
+- **Decision**: `EutrDocumentsAddDialog.jsx` — sau khi lượt Upload trả về kết quả: hiển thị snackbar
+  (số file thành công/thất bại, giống mẫu đã có ở Update 6/11), sau đó gọi callback đóng dialog + báo
+  danh sách chính tải lại — không có nút "Upload thêm" hay cơ chế giữ dialog mở để lặp lại nhiều lượt
+  trong cùng một lần mở.
+- **Rationale**: Khớp đúng quyết định đã xác nhận ở `/speckit-clarify` Update 16 (Q2) — mỗi lần mở
+  popup Add chỉ thực hiện đúng 1 lượt Upload, đơn giản hóa việc quản lý trạng thái (không cần giữ lại
+  Type/Step/chip sau khi đã upload xong).
+- **Alternatives considered**: Giữ dialog mở, chỉ reset riêng Value/chip nhưng giữ Type/Step để cho
+  phép Upload tiếp — bị loại theo đúng lựa chọn tường minh của người dùng ở Update 16 (single-shot).
+
+## Quyết định 50 — Frontend: làm rõ tường minh việc ô Value tự xóa trống ngay sau khi thêm chip (spec Update 17, FR-071)
+
+- **Decision**: Trong `EutrAddValueAutocomplete.jsx` (Quyết định 46), sau mỗi lần một giá trị được
+  thêm thành công vào vùng chọn (qua chọn gợi ý, gõ tay xác nhận, hoặc mỗi token hợp lệ trong một
+  lượt dán), gọi ngay hàm reset input text/`Autocomplete` value về rỗng trước khi xử lý token tiếp
+  theo (nếu có, trong trường hợp dán nhiều giá trị) — hành vi này vốn đã ngụ ý trong cách một
+  `Autocomplete` "thêm chip rồi clear input" thường hoạt động, nay được xác nhận là yêu cầu tường
+  minh, không phải chi tiết triển khai tùy chọn.
+- **Rationale**: FR-071 (Update 17) nêu rõ yêu cầu này trực tiếp — ghi nhận thành quyết định tường
+  minh để tránh trường hợp triển khai giữ lại giá trị đã gõ trong input sau khi thêm chip (một biến
+  thể UX phổ biến khác của combobox nhiều giá trị, nhưng không đúng yêu cầu ở đây).
+- **Alternatives considered**: Giữ nguyên giá trị đã gõ/chọn trong ô Value sau khi thêm chip (để
+  người dùng có thể "thêm lại gần giống") — bị loại, không khớp yêu cầu tường minh "value sẽ trống"
+  của người dùng.
+
+## Quyết định 51 — Frontend: khi Type = "PO", popup Add ẩn Step và tái sử dụng nguyên vẹn endpoint/use case `eutr-upload-multi` (Update 6/7) thay vì `eutr-upload-multi-by-type` (Update 15) — KHÔNG sửa backend (spec Update 17, FR-072 đến FR-075)
+
+- **Decision**: `EutrDocumentsAddDialog.jsx` (Update 15) rẽ nhánh theo `Type.Name` khi nhấn Upload:
+  nếu `Type.Name` (không phân biệt hoa/thường) = "PO" → ẩn control Step (không render, không gọi
+  `GetEutrStepsUseCase`), và gọi lại use case đã có từ Update 6
+  `UploadToSharePointUseCase.executeEutrMulti(files, poCode)` (POST
+  `/api/sharepoint/eutr-upload-multi`, `EutrUploadService.UploadMultipleToSharePointAndSaveDataAsync`
+  — đã validate prefix `eutr_master_documents` và ghi N `eutr_references`/`StepId` khớp Prefix từ
+  Update 7) — thay vì `executeEutrMultiByType` (Update 15, `eutr-upload-multi-by-type`); với mọi
+  Type khác, giữ nguyên hành vi Update 15/16 (Step bắt buộc, gọi `executeEutrMultiByType`).
+- **Rationale**: Endpoint `eutr-upload-multi` (Update 6/7) **đã** triển khai chính xác toàn bộ hành
+  vi Update 17 yêu cầu cho Type="PO" — validate prefix, tự xác định StepId (có thể nhiều dòng) theo
+  `eutr_master_documents`, ghi `eutr_references` với `RefType = 0` (giá trị "PO" cứng, khớp đúng bản
+  ghi `eutr_reference_types.Id = 0`/`Name = "PO"` đã seed từ Update 14) — tái sử dụng nguyên vẹn
+  endpoint/service/migration đã có, **không cần sửa một dòng backend nào**, đúng tinh thần cao nhất
+  của Nguyên tắc III (Reuse Existing Backend). Việc chọn PoCode qua chip Value (thay vì click 1 dòng
+  List PO như luồng cũ) không ảnh hưởng hợp đồng API — `EutrMultiUploadFileRequest.PoCode` chỉ là
+  một chuỗi mã PO, nguồn lấy giá trị đó (List PO cũ hay chip Value mới) là chi tiết UI, không phải
+  hợp đồng backend.
+- **Alternatives considered**: (a) Mở rộng `UploadMultipleForReferenceTypeAsync` (Update 15) để thêm
+  nhánh validate-prefix-theo-nhiều-StepId riêng cho `TypeName == "PO"` — bị loại vì trùng lặp gần như
+  toàn bộ logic đã có sẵn ở `UploadMultipleToSharePointAndSaveDataAsync`/`GetMatchingPrefixesAsync`
+  (Update 7), vi phạm DRY và Nguyên tắc III; (b) Viết lại toàn bộ luồng PO trong popup Add bằng một
+  method mới hoàn toàn — bị loại vì không có lý do nghiệp vụ nào khác với luồng PO gốc (Update 6/7),
+  chỉ khác nguồn UI chọn giá trị.
+
+## Quyết định 52 — Thêm `TypeId` (nullable) vào `EutrMultiUploadFileRequest`; `EutrUploadService` dùng giá trị này làm `RefType` khi có, giữ nguyên hằng số cũ làm fallback cho trang Add cũ (spec Update 18, FR-076/FR-077)
+
+- **Decision**: Thêm 1 field mới `public long? TypeId { get; set; }` (không `[Required]`, để không phá
+  vỡ caller cũ) vào `EutrMultiUploadFileRequest` (`compliance-sys-api/.../Dtos/Request/
+  EutrMultiUploadFileRequest.cs`, Quyết định 12/Update 6). Trong `EutrUploadService.
+  UploadMultipleToSharePointAndSaveDataAsync` (dòng ghi `EutrReferences` mới, hiện đang gán cứng
+  `RefType = PoRefType`), đổi thành: `RefType = request.TypeId.HasValue ? (byte)request.TypeId.Value :
+  PoRefType` — khi caller gửi kèm `TypeId`, dùng trực tiếp giá trị đó (đúng `Id` thật của Type "PO"
+  đang được chọn ở popup Add, khớp cách các Type khác đã làm từ Update 15/Quyết định 42); khi không gửi
+  (caller cũ), giữ nguyên hành vi hiện tại (hằng số `PoRefType = 0`) — không thay đổi hành vi của bất
+  kỳ caller nào chưa được cập nhật. Frontend: `EutrDocumentsAddDialog.jsx` (nhánh `isPoType`, Update
+  17/T228) truyền thêm `type.id` khi gọi `uploadToSharePointUseCase.executeEutrMulti(files, chips[0],
+  type.id)`; `UploadToSharePointUseCase.executeEutrMulti` và `RestSharePointRepository.
+  uploadEutrFilesMulti` (Update 6, Quyết định 12) nhận thêm tham số `typeId` và thêm vào `FormData`
+  (`formData.append('typeId', typeId)`) khi có giá trị.
+- **Rationale**: FR-076/FR-077 (Update 18) yêu cầu popup Add gửi kèm `TypeId` thật khi Type = "PO", và
+  backend phải ghi đúng giá trị đó thay cho hằng số cố định — hằng số `PoRefType = 0` hiện tại **chỉ
+  đúng vì Update 14 từng seed cưỡng bức `eutr_reference_types.Id = 0` cho "PO"** (Quyết định 41); từ
+  khi feature `006-eutr-reference-types` cho phép CRUD tự do trên bảng này, giả định "PO" luôn có
+  `Id = 0` không còn được đảm bảo. Nhận `TypeId` trực tiếp từ giá trị người dùng đã chọn ở dropdown Type
+  (thay vì suy diễn/hard-code phía backend) loại bỏ hoàn toàn giả định này, khớp đúng cách các Type
+  khác đã hoạt động ổn định từ Update 15. Giữ field `TypeId` là **nullable, không bắt buộc** — và giữ
+  nguyên `PoRefType` làm fallback — để KHÔNG phá vỡ trang Add cũ độc lập `EutrDocumentsAdd.jsx`/route
+  `/eutr/documents/add` (Update 6, vẫn còn tồn tại trong routing dù không còn được mở từ nút Add trên
+  toolbar kể từ Update 15) — trang này không có control chọn Type nên không có `TypeId` nào để gửi;
+  hành vi ghi `RefType` của nó giữ nguyên y hệt trước Update 18, không thuộc phạm vi FR-076/FR-077.
+  Đây là thay đổi tối thiểu (1 field DTO nullable + 1 dòng ternary trong service + truyền thêm 1 tham
+  số ở 3 file frontend), không cần migration DB (`eutr_references.RefType` đã là `TINYINT NULL` linh
+  hoạt từ trước, Quyết định 41).
+- **Alternatives considered**: (a) Đặt `TypeId` là `[Required]` trên DTO — bị loại vì sẽ làm hỏng lượt
+  upload của trang Add cũ (`EutrDocumentsAdd.jsx`) nếu nó vẫn còn được truy cập trực tiếp qua URL,
+  không có lợi ích nghiệp vụ tương xứng với rủi ro hồi quy; (b) Backend tự tra cứu động
+  `eutr_reference_types` theo `Name = "PO"` (case-insensitive) làm fallback thay vì giữ hằng số cứng —
+  cân nhắc nhưng bị loại vì thêm 1 truy vấn DB cho một nhánh chỉ phục vụ trang cũ đã bị thay thế hoàn
+  toàn về mặt điều hướng (Update 15), không tương xứng độ phức tạp thêm vào so với lợi ích (Nguyên tắc
+  IV — đơn giản); có thể cân nhắc lại nếu trang cũ bị xóa hẳn ở một dọn dẹp sau này; (c) Xóa hẳn hằng số
+  `PoRefType` và trang Add cũ trong cùng lượt sửa này — bị loại vì nằm ngoài phạm vi yêu cầu của Update
+  18 (chỉ yêu cầu sửa đúng `RefType` cho luồng popup Add, không yêu cầu dọn dẹp trang cũ).

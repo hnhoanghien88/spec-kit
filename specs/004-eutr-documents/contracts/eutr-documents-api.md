@@ -105,6 +105,18 @@
 > trị); (b) endpoint #9/#11 (`assign-conditions`/`condition-assignment`) MUST validate chặn khi
 > `conditions` có 2 dòng cùng `conditionType` (`400 Bad Request`, không đổi response shape khi hợp
 > lệ).
+>
+> **Update 14** (cột Type lấy nhãn thật từ `eutr_reference_types` — spec FR-034): KHÔNG endpoint
+> mới. Endpoint #1 (`GET get-by-id/{id}`) và #2 (`POST get-all`) **mở rộng response** — mỗi
+> `EutrDocumentsResponseDto` có thêm field `typeName` (`string?`, xem chi tiết dưới bảng). `refType`
+> vẫn được trả về nguyên vẹn (dùng cho rẽ nhánh Edit, FR-055/FR-056) — chỉ có nhãn hiển thị cột Type
+> đổi nguồn, không đổi field nào khác, không đổi path/policy/request của bất kỳ endpoint nào.
+>
+> **Update 18** (popup Add gửi kèm `TypeId` khi Type = "PO" — spec FR-076/FR-077): KHÔNG endpoint
+> mới, KHÔNG đổi contract của `api/eutr-documents`. `POST /api/sharepoint/eutr-upload-multi` (Update
+> 6, xem chi tiết dưới đây) **mở rộng request** — thêm 1 field mới **nullable** `typeId` (`long?`);
+> khi có giá trị, backend ghi trực tiếp vào `RefType` của mọi `eutr_references` tạo ở luồng này, thay
+> cho hằng số cố định dùng trước đây (không đổi response shape, không đổi path/policy).
 
 ### API mới — `GET /api/eutr-documents/get-file-by-idref` (spec Update 10, FR-041/FR-042)
 
@@ -139,7 +151,7 @@
 
 | Method | Path | Policy | Consumes | Body (`multipart/form-data`) | Trả về |
 |---|---|---|---|---|---|
-| POST | `/api/sharepoint/eutr-upload-multi` | `[Authorize]` (chung với các action khác của `SharePointController`, không có policy riêng) | `multipart/form-data` | `files`: 1+ file; `poCode`: string (mã PO đang chọn ở List PO) | `ApiResponse<List<EutrUploadFileResultDto>>` |
+| POST | `/api/sharepoint/eutr-upload-multi` | `[Authorize]` (chung với các action khác của `SharePointController`, không có policy riêng) | `multipart/form-data` | `files`: 1+ file; `poCode`: string (mã PO đang chọn ở List PO); `typeId`: long? *(MỚI, Update 18 — optional)* | `ApiResponse<List<EutrUploadFileResultDto>>` |
 
 - Nằm trong `SharePointController.cs` hiện có (cạnh `POST /api/sharepoint/upload-multi`), gọi service
   **mới** `IEutrUploadService.UploadMultipleToSharePointAndSaveDataAsync` — KHÔNG dùng lại
@@ -163,6 +175,12 @@
   `DocumentId`, khác `StepId`, `RefType = 0`, `RefValue = poCode`) — xem `data-model.md`. Nếu bước
   ghi `eutr_references` thất bại, toàn bộ (document + mọi reference của file đó) bị rollback, file
   trả về `success: false` dù đã upload SharePoint thành công trước đó.
+- **(Update 18, FR-076/FR-077)** `typeId` (`long?`) là field **mới, nullable** — khi request gửi kèm
+  giá trị này (popup Add hợp nhất, Update 15/17, luồng Type = "PO"), backend dùng trực tiếp làm
+  `RefType` cho mọi dòng `eutr_references` ghi ở bước trên (thay cho giá trị cố định `0` dùng trước
+  đây) — đóng gap với ghi chú "`RefType = 0`" phía trên, vốn chỉ đúng khi `typeId` KHÔNG được gửi.
+  Khi caller không gửi `typeId` (ví dụ trang Add độc lập cũ `EutrDocumentsAdd.jsx`, Update 6), hành
+  vi ghi `RefType = 0` giữ nguyên như trước, không đổi.
 - Ví dụ response (kèm 1 file bị loại vì sai prefix — Update 7):
   ```json
   {
@@ -264,6 +282,50 @@
   14); feature này chỉ thêm 2 dòng vào `EntityMappings`/`MapDynamicsResponse` trong
   `ComplDynamicsService.cs`, KHÔNG tạo controller/route mới.
 
+### API mới — `POST /api/sharepoint/eutr-upload-multi-by-type` (spec Update 15/16, popup Add hợp nhất, FR-066 đến FR-069)
+
+> ⚠️ **Kể từ Update 17 (FR-072 đến FR-075)**: endpoint này chỉ còn được gọi khi Type đã chọn trong
+> popup Add có `Name` **khác** "PO" (Vendor, Invoice, Delivery note, General agreement, Type mới).
+> Khi Type = "PO", popup Add gọi lại endpoint gốc `POST /api/sharepoint/eutr-upload-multi` (xem mục
+> ngay phía trên, Update 6/7) — không có `stepId` trong request, Step được backend tự suy theo
+> Prefix tên file. Đây cũng là lý do cột "KHÔNG validate prefix" bên dưới chỉ còn đúng cho các Type
+> khác "PO" gọi qua endpoint này — Type = "PO" vẫn validate prefix, nhưng qua endpoint gốc.
+>
+> **Update 18**: endpoint gốc mà Type = "PO" gọi lại (`eutr-upload-multi`) nay nhận thêm `typeId` từ
+> popup Add (xem mục ngay phía trên) và ghi đúng giá trị đó vào `RefType` — cùng nguyên tắc
+> `RefType = typeId` mà endpoint `eutr-upload-multi-by-type` này đã áp dụng cho mọi Type khác từ
+> Update 15 (không đổi gì ở chính endpoint `eutr-upload-multi-by-type`).
+
+| Method | Path | Policy | Body (`multipart/form-data`) | Trả về |
+|---|---|---|---|---|
+| POST | `/api/sharepoint/eutr-upload-multi-by-type` | `[Authorize]` (dùng chung mức controller, không policy riêng) | `EutrTypeMultiUploadFileRequest { files: File[], typeId: long, typeName: string, stepId: long, refValues: string[] }` | `ApiResponse<List<EutrUploadFileResultDto>>` |
+
+- Cùng route gốc `api/sharepoint` với `eutr-upload-multi` (Update 6)/`eutr-upload-manual-multi`
+  (Update 11) — xem `data-model.md` cho chi tiết request/response và bảng suy thư mục theo `typeName`.
+- `typeId` ghi trực tiếp (cast `(byte)`) vào `eutr_references.RefType` cho mọi dòng tạo ra trong lượt
+  này — KHÔNG còn giới hạn `0` (PO)/`1` (Upload manual) như các luồng Update 7/11.
+- KHÔNG validate prefix `eutr_master_documents` cho các Type gọi qua endpoint này (Vendor/Invoice/
+  Delivery note/General agreement/Type mới) — khác luồng PO (Update 7, và kể từ Update 17 không còn
+  đi qua endpoint này nữa).
+
+### API dùng chung — `GET /api/eutr-reference-types` (đã tồn tại từ feature `006-eutr-reference-types`, không đổi)
+
+| Method | Path | Policy | Trả về |
+|---|---|---|---|
+| GET | `/api/eutr-reference-types` | `EutrReferenceTypes.ReadAll` | `IEnumerable<EutrReferenceTypes>` (`{ id, name }`) |
+
+- Dùng để nạp **toàn bộ** dropdown Type trong popup Add (FR-060) — khác `EutrDocumentsAdd.jsx` cũ
+  (FR-016, 2 lựa chọn hard-coded `TAKE_FROM_OPTIONS`, không đổi, ngoài phạm vi).
+
+### API dùng chung — `GET /api/eutr-steps` (đã tồn tại, không đổi)
+
+| Method | Path | Policy | Trả về |
+|---|---|---|---|
+| GET | `/api/eutr-steps` | `EutrSteps.ReadAll` | `IEnumerable<EutrSteps>` (`{ id, name }`) |
+
+- Dùng để nạp combobox Step trong popup Add (FR-061) — cùng nguồn dữ liệu Step đã dùng ở popup
+  Assign condition (Update 11) qua `GetEutrStepsUseCase.js`.
+
 ## EutrDocumentsRequestDto
 
 ```json
@@ -284,6 +346,7 @@
   "updatedBy": null, "updatedDate": null,
   "stepNames": [],
   "refType": null,
+  "typeName": null,
   "stepId": null,
   "conditions": []
 }
@@ -293,8 +356,15 @@
   ghi tạo qua nút Upload (Update 6/7).
 - `stepNames`/`refType`: **mới, kể từ Update 8** — nạp bằng cách JOIN `eutr_references`/`eutr_steps`
   theo `DocumentId` (xem `data-model.md`, research Quyết định 20). `[]`/`null` cho document không có
-  bản ghi `eutr_references` nào (ví dụ document tạo qua form Save nhập tay) — frontend map `refType`
-  sang nhãn hiển thị qua `TAKE_FROM_OPTIONS`.
+  bản ghi `eutr_references` nào (ví dụ document tạo qua form Save nhập tay). `refType` (`byte?`) vẫn
+  được giữ nguyên trong response (dùng bởi Edit để rẽ nhánh popup theo Type, FR-055/FR-056) nhưng
+  **kể từ Update 14** KHÔNG còn dùng để map nhãn hiển thị cột Type ở frontend.
+- `typeName` (`string?`, **mới, kể từ Update 14, FR-034**): nhãn Type đã tính sẵn ở backend — JOIN
+  `RefType` với `eutr_reference_types.Id`, trả về `Name` (xem `data-model.md`, research Quyết định
+  41). `null` khi document không có bản ghi `eutr_references` nào, hoặc khi `RefType` không khớp bất
+  kỳ bản ghi `eutr_reference_types` nào (dữ liệu ngoại lệ). Cột "Type" trên grid MUST hiển thị trực
+  tiếp `typeName` này — KHÔNG còn tra `TAKE_FROM_OPTIONS` ở frontend cho cột này (thay thế hoàn toàn
+  cách nạp nhãn cũ mô tả trước Update 14).
 - `stepId` (`long?`, **mới, kể từ Update 13**): Step hiện tại — với Type="PO" (nhiều
   `eutr_references` có thể), là `StepId` của dòng có `Id` nhỏ nhất; dùng để nạp dropdown Step khi mở
   Edit (FR-055).
