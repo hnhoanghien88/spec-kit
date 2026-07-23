@@ -20,6 +20,11 @@ reordering, additive to the existing Move Up/Move Down buttons — both produce 
 siblings only (no reparenting) and disabled when Status=Approved, same as Move Up/Move Down. See
 **Scenario 2b''**.
 
+**Update 18 (2026-07-23) note**: the Set-as-default checkbox on TemplateBuilderPage is no longer
+locked when Status=Approved (the one exception to Scenario 3'b's read-only banner) — toggling it
+opens a Yes/No confirm dialog and persists immediately via a new dedicated endpoint, independent of
+the (still hidden/disabled) Save button. See **Scenario 21**.
+
 ## Prerequisites
 
 - Backend (`compliance-sys-api`) running on configured port
@@ -737,6 +742,70 @@ process (file-locked by a running instance throughout this session, same conditi
 and the frontend dev server, then manually click through Scenario 20 in a real browser to close the
 gap between "verified by code/SQL-level smoke test" and "verified end-to-end through the UI."
 
+### Scenario 21: Set as Default While Approved (FR-068, Update 18)
+
+1. Approve a Draft template that is currently NOT the global default (via Scenario 3'b); note its Id
+2. Note whichever OTHER template currently holds `IsDefault=1` (if any) from Scenario 5's setup
+3. Click **Edit** on the Approved template; **Expected**: `TemplateBuilderPage` shows the read-only
+   banner, Name/Alert for/Save/step-tree actions all disabled — EXCEPT the **Set as default**
+   checkbox, which remains enabled
+4. Tick the **Set as default** checkbox
+5. **Expected**: a Yes/No confirmation dialog appears (same style as Approve/Request change);
+   **verify in DB** `IsDefault` has NOT changed yet on either template
+6. Click **No**
+7. **Expected**: dialog closes, checkbox returns to unchecked, **verify in DB** no `IsDefault` value
+   changed on any template
+8. Tick the checkbox again, click **Yes**
+9. **Expected**: success snackbar shown, checkbox stays checked, no navigation/redirect (Save button
+   is still hidden/disabled — this did not go through the normal Save flow)
+10. **Verify in DB**: this template's `IsDefault = 1`; the previously-default template from step 2
+    (if any) now has `IsDefault = 0`; `Status`, `VersionId`, `Name`, `AlertFor`,
+    `eutr_template_details`, and `eutr_template_references` for THIS template are all unchanged from
+    before step 4
+11. Refresh `TemplateListPage`; **Expected**: this row's Default chip is now shown, and it is still
+    also shown as Status="Approved" (unaffected by the default change)
+12. Reopen `TemplateBuilderPage` for this same template; **Expected**: still read-only (banner still
+    shown, Name/Alert for/Save/step-tree still disabled), Set as default checkbox still checked and
+    still enabled
+13. Untick the **Set as default** checkbox, confirm **Yes**
+14. **Expected**: success snackbar shown, checkbox now unchecked; **verify in DB** `IsDefault = 0` on
+    this template, and NO other template was automatically re-promoted to default (global default may
+    now be temporarily unset — this is expected, matching Scenario 5's existing "no default template"
+    edge case)
+15. **API check**: call `POST api/eutr-templates/{id}/set-default` directly with `{ "isDefault": 1 }`
+    (byte 0/1, matching `EutrTemplatesRequestDto.IsDefault`'s existing type — not a JSON boolean)
+    against a Draft template; **Expected**: succeeds identically (no `Status` precondition on this
+    endpoint at all) — confirms the bypass is endpoint-wide, not conditioned on the template actually
+    being Approved
+
+**Outcome (2026-07-23, `/speckit-implement`)**: **Verified by code review, `dotnet build`, and
+`npm run build`/`eslint`, not through the full HTTP+UI stack** — same environment limitation as every
+prior update in this session (no interactive browser/seeded DB available). One deviation from the
+original plan surfaced during implementation: `SetDefaultEutrTemplatesRequestDto.IsDefault` (and the
+matching repository/service parameters) were implemented as `byte` (0/1), not `bool` — an audit of
+`EutrTemplatesRequestDto.IsDefault` (already `byte`) and the `eutr_templates.IsDefault` column
+(`TINYINT`) showed every existing IsDefault-related field in this feature uses the numeric
+convention, so the new endpoint was made consistent with that rather than introducing the first
+`bool`-typed field on this entity; the frontend's `eutrTemplatesApi.setDefault` converts its boolean
+argument to `0`/`1` before sending, so step 15's request body above is `{ "isDefault": 1 }`, not
+`{ "isDefault": true }`. Backend (`dotnet build src/ComplianceSys.Api/ComplianceSys.Api.csproj`) → 0
+errors. Frontend (`npm run build`) → succeeded in 44.37s, `TemplateBuilderPage.[hash].js` chunk built
+at 104.38 kB with no new errors; `eslint` clean on all 5 new/changed frontend files
+(`TemplateBuilderPage.jsx`, `eutrTemplatesApi.js`, `RestEutrTemplatesRepository.js`,
+`IEutrTemplatesRepository.js`, `SetDefaultEutrTemplatesUseCase.js`). Verified by direct code trace
+(not live click-through): (1) Status-agnostic endpoint — `SetDefaultAsync` never reads
+`existing.Status`, unlike `UpdateAsync`/`ApproveAsync`/`RequestChangeAsync`, matching step 15; (2)
+scope — `SetDefaultAsync` calls only `ClearGlobalDefaultAsync`/`SetIsDefaultAsync`, touching no other
+column/table, matching steps 9-10; (3) confirm gating — `handleToggleSetDefault` never calls the use
+case directly, only `handleConfirmSetDefault` (wired to the dialog's `onConfirm`) does, matching steps
+5-8; (4) Draft unaffected — the checkbox's Draft-path `onChange` branch is untouched from before this
+update, matching step 12's implicit "no regression" expectation for the sibling Draft flow.
+**Recommended before sign-off**: restart the dev API process (file-locked by a running instance
+throughout this session, same condition as every prior update) and the frontend dev server, then
+manually click through Scenario 21 in a real browser against a seeded DB (an Approved template plus
+another template currently holding `IsDefault=1`) to close the gap between "verified by code/build
+review" and "verified end-to-end through the UI."
+
 ### Scenario 13: Edge Cases
 
 - Empty grid: **Expected** "No data" message, no errors
@@ -819,6 +888,17 @@ gap between "verified by code/SQL-level smoke test" and "verified end-to-end thr
 - (Update 16) Calling `POST api/eutr-templates/{id}/approve` on a template that is already Approved,
   or `POST .../request-change` on one that is still Draft: **Expected** HTTP 400 with a clear message,
   no data changed
+- (Update 18) Toggling Set as default on an Approved template that is currently the ONLY template
+  (no other default to clear): **Expected** succeeds normally — `ClearGlobalDefaultAsync` is a no-op
+  when no other row has `IsDefault=1`, not an error
+- (Update 18) Unchecking Set as default on the Approved template that currently IS the global
+  default, with no other template promoted to replace it: **Expected** succeeds — the system may end
+  up with zero default templates, which is an accepted state (same as the existing Scenario 5
+  behavior for Draft templates)
+- (Update 18) Clicking the Set-as-default checkbox rapidly twice before the first confirm dialog is
+  dismissed: **Expected** the second click either has no effect until the first dialog is resolved,
+  or opens a second dialog reflecting the latest intended value — no duplicate/conflicting requests
+  fire concurrently
 
 ## Post-Validation Checks
 
@@ -985,3 +1065,18 @@ gap between "verified by code/SQL-level smoke test" and "verified end-to-end thr
 - [ ] Drag-and-drop is disabled (no reorder possible) when the template's Status is Approved, same
       as Move Up/Move Down in that state; dragging works again after Request change returns the
       template to Draft (Update 17, FR-067)
+- [ ] On an Approved template's TemplateBuilderPage, the Set-as-default checkbox is the ONLY enabled
+      header field/control — Name, Alert for, Save, and all step-tree actions stay disabled
+      (Update 18, FR-061/FR-068)
+- [ ] Toggling Set as default while Approved shows a Yes/No `ConfirmDialog` before any request is
+      sent; clicking No sends no HTTP request and leaves the checkbox at its prior value
+      (Update 18, FR-068)
+- [ ] Confirming Yes on that dialog calls `POST api/eutr-templates/{id}/set-default` and updates only
+      `IsDefault` — Name/AlertFor/Status/VersionId/step tree/vendor mappings are unchanged afterward
+      (Update 18, FR-068)
+- [ ] Setting an Approved template as default correctly clears `IsDefault` on whichever other
+      template previously held it (same global-uniqueness rule as FR-040), verified in DB
+      (Update 18, FR-068)
+- [ ] `POST api/eutr-templates/{id}/set-default` succeeds against a Draft template too — this
+      endpoint has no `Status` precondition at all, unlike every other mutating endpoint on this
+      controller (Update 18, FR-068)

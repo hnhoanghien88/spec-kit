@@ -28,6 +28,11 @@ through the exact same Update Template request body (Section 4) as Move Up/Move 
 produces (each detail row's `displayOrder` recalculated client-side, same field, same shape); no new
 endpoint, request field, or response field is introduced by this update.
 
+**Update 18 (2026-07-23)**: One new endpoint, `POST api/eutr-templates/{id}/set-default` (Section
+12), updates ONLY `isDefault` and — unlike every other mutating endpoint on this controller — has NO
+`Status` precondition: it succeeds whether the template is Draft or Approved. This is the sole,
+deliberate exception to Update 16's "Approved templates reject edits" rule (Section 4).
+
 ---
 
 ## 1. Get Paged List
@@ -308,6 +313,10 @@ HTTP 400, same `ValidationException` → 400 mapping this controller already use
   replaced (deleted and re-inserted); returns the same `id`/`versionId`. No age check of any kind.
   This endpoint never creates a new row anymore — that behavior moved to `POST {id}/request-change`
   (Section 11).
+- **(Update 18)** The one exception to the Approved-rejection above is `isDefault` — but it is NOT
+  handled here. A template's default flag can still be changed while `Approved` via the separate
+  `POST {id}/set-default` endpoint (Section 12), which bypasses this endpoint's `Status` check
+  entirely. This `PUT {id}` endpoint's own Approved-rejection behavior is unchanged by Update 18.
 - If `IsDefault = 1`: clears existing default **globally** across all templates (Update 13)
 - Free-solo step resolution (see Create Template, Update 6) applies as before
 - **Update 10 (2026-07-13)**: this endpoint is now called by `TemplateBuilderPage.jsx`'s Save
@@ -915,3 +924,54 @@ Update 16 removed it, and the same `{ id, code, versionId }` shape as Clone (Sec
   `ConfirmDialog` Yes/No; **Yes** calls this endpoint via a new `RequestChangeEutrTemplatesUseCase`,
   then clears the selection and refetches the list (the new Draft row now appears, replacing the
   Approved one); **No** closes the dialog with no request sent.
+
+---
+
+## 12. Set Default (new, Update 18)
+
+```
+POST api/eutr-templates/{id}/set-default
+```
+
+**Request Body**:
+```json
+{ "isDefault": 1 }
+```
+Note: `isDefault` is `byte` (0/1), NOT a JSON boolean — implemented to match
+`EutrTemplatesRequestDto.IsDefault`'s existing `byte` type and the `eutr_templates.IsDefault`
+`TINYINT` column, rather than introducing the first `bool`-typed field for this entity (deviation
+from the original plan during `/speckit-implement`; see quickstart.md Scenario 21's Outcome note).
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": { "id": 1, "code": "Templates-001", "versionId": 1, "status": 1, "isDefault": true },
+  "message": "Default flag updated successfully."
+}
+```
+`id`/`versionId`/`status`/`code` are unchanged — this is a same-row, single-column update.
+
+**Response — not found** (404): same shape as Section 10.
+
+**Behavior**:
+- Unlike every other mutating endpoint on this controller, this action has **NO `Status`
+  precondition** — it succeeds whether the template is `0` (Draft) or `1` (Approved). This is the
+  deliberate, sole exception to Update 16's "Approved templates reject edits" rule (Section 4),
+  scoped to exactly this one field (FR-068).
+- If `isDefault: true`: first clears the current global default (Update 13's
+  `ClearGlobalDefaultAsync`, same logic as Create/Update/Clone), then sets `IsDefault = 1` on this
+  row.
+- If `isDefault: false`: sets `IsDefault = 0` on this row directly (nothing else to clear).
+- Does NOT touch `Name`, `AlertFor`, `Status`, `VersionId`, `eutr_template_details`, or
+  `eutr_template_references`.
+- Frontend calling convention:
+  - **While `Status=Draft`**: this endpoint is NOT used — the Set-as-default checkbox on
+    `TemplateBuilderPage.jsx` behaves as it always has (local state only, persisted the next time the
+    user clicks Save, which sends the full `PUT {id}` payload as before).
+  - **While `Status=Approved`**: the Set-as-default checkbox stays enabled (the only header field
+    that does — every other header field and the Save button remain disabled per Section 4/FR-061).
+    Toggling it opens a Yes/No `ConfirmDialog`; **Yes** calls this endpoint via a new
+    `SetDefaultEutrTemplatesUseCase`, then updates the checkbox from the response and shows a
+    success snackbar; **No** closes the dialog with no request sent (the checkbox was never
+    optimistically flipped, so there is nothing to revert).

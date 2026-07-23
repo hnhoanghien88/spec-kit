@@ -1488,3 +1488,58 @@ Up/Down.
 **No backend/API change**: the reordered tree is saved through the exact same `flattenForSave()` →
 `UpdateEutrTemplatesUseCase` path Move Up/Down already uses — `displayOrder` is just a client-computed
 field on the same request shape (see contracts/api-endpoints.md's Update 17 note).
+
+---
+
+## 35. IsDefault Toggle While Approved — Dedicated Endpoint + Confirm Dialog, Bypassing the Approved Edit Gate (spec Update 18, FR-068)
+
+**Decision**: Add a single-purpose endpoint, `POST api/eutr-templates/{id}/set-default`, that updates
+ONLY the `IsDefault` column and does NOT check `existing.Status` at all — this is the one path
+deliberately exempt from the `Status == Approved` rejection Update 16 added to `UpdateAsync`. On the
+frontend, `TemplateBuilderPage.jsx`'s Set-as-default `Checkbox` is removed from the set of fields
+disabled by `isReadOnly` (Update 16); toggling it while `Status=Approved` opens a Yes/No
+`ConfirmDialog` (the same component Approve/Request change already use), and only on **Yes** does the
+frontend call the new endpoint and update local state from the response. While `Status=Draft`, the
+checkbox keeps its pre-existing behavior unchanged (local state only, persisted on the next Save).
+
+**Rationale**: The request ("với template trạng thái approve, cho chỉnh sửa Set as default template")
+is narrowly scoped to one field, not a general loosening of Update 16's read-only rule — introducing
+a whole new "partial edit" mode on `UpdateAsync` (e.g. accepting a payload with only `IsDefault` set
+and ignoring the rest) would reopen exactly the kind of ambiguity Update 16 was written to close
+(what else, besides `IsDefault`, might later be argued to deserve the same treatment?). A dedicated,
+single-column endpoint makes the exception explicit and bounded: it can only ever change one column,
+by construction, regardless of what the client sends. This mirrors the exact reasoning already
+applied to `Approve`/`RequestChange` (Section 32) and to `SetStatusAsync` — small, explicit,
+single-purpose actions instead of overloading the general `Update` endpoint with conditional
+branches. Persisting via a Yes/No confirm (rather than silently auto-saving on every checkbox click)
+matches the only other place this feature changes data outside the normal Save flow (Approve/Request
+change), giving the user one consistent "this is an immediate, confirmed action" pattern for every
+Approved-state mutation, instead of introducing a new interaction style (silent auto-save) for just
+this one field.
+
+**Alternatives considered**:
+- Let `UpdateAsync` accept a partial payload and skip the Approved rejection when only `IsDefault`
+  differs from the persisted row — rejected: requires diffing the incoming payload against the
+  existing row inside the same method that also handles the full header+tree replace, adding a
+  conditional branch to a method Update 16 had just simplified to one unconditional path (Section
+  32); it also silently reopens "what other single-field edits should be allowed while Approved"
+  as a question for every future request, instead of answering it once, explicitly, for this field.
+- Re-enable the Save button (fully or partially) whenever the Set-as-default checkbox changes,
+  routing the change back through the normal `PUT {id}` endpoint — rejected: `PUT {id}` unconditionally
+  calls `ReplaceDetailsAsync` (delete + reinsert the entire step tree) even when nothing about the
+  tree changed, which is both wasteful and — more importantly — reintroduces a live Save affordance
+  on an Approved template, which is precisely what FR-061/Update 16 intentionally removed for every
+  other field; scoping the bypass to a dedicated endpoint keeps the "Approved header/tree edits are
+  blocked" invariant intact everywhere except this one explicit action.
+- Auto-save immediately on toggle, with no confirmation step — this was the first option offered to
+  the user and NOT chosen; rejected by the user in favor of a Yes/No confirm, for consistency with
+  the Approve/Request change interaction pattern already established on this same list page.
+- A checkbox-level "are you sure" native browser `confirm()` instead of the existing `ConfirmDialog`
+  component — rejected: this feature and its sibling EUTR features consistently use `ConfirmDialog`
+  for every other Yes/No confirmation (Delete, Bulk Delete, Approve, Request change, Clone) —
+  introducing a native `confirm()` here would be the only inconsistent confirmation UI in the entire
+  feature (Principle II).
+
+**Implementation**: see plan.md's "Update 2026-07-23 (Update 18)" section for the full file-by-file
+backend/frontend design; contracts/api-endpoints.md Section 12 (new); data-model.md's IsDefault
+Toggle state-transition note; quickstart.md's new Set-as-default-while-Approved scenario.

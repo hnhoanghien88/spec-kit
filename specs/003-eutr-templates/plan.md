@@ -912,6 +912,66 @@ See research.md Section 34 for the full rationale, the audit evidence, and the a
 considered (in particular, why per-sibling-group `SortableContext`s make cross-parent reparenting
 structurally awkward instead of requiring extra guard code).
 
+### Update 2026-07-23 (Update 18) — Editable "Set as Default" While Approved
+
+**Backend: one new single-purpose endpoint that bypasses the Approved edit gate Update 16 added to
+`UpdateAsync`, reusing the existing global-default-clearing logic.** Frontend: the Set-as-default
+checkbox on `TemplateBuilderPage.jsx` gets a second, Approved-only code path (confirm-then-call, not
+part of the disabled header-field group), gated behind a `ConfirmDialog` (the same component used by
+Approve/Request change).
+
+**One scope question asked back to the user before writing this update (answered via
+AskUserQuestion)**: since the Save button is hidden/disabled whenever Status=Approved (FR-061), how
+should a Set-as-default toggle actually persist while Approved? → **answered: auto-save with a
+Yes/No `ConfirmDialog`** — toggling shows a confirmation; Yes calls a dedicated update immediately
+(independent of Save); No reverts the checkbox with no request sent.
+
+#### Backend: dedicated `SetDefaultAsync` (FR-068)
+
+- **`ComplianceSys.Application/Services/EutrTemplatesService.cs`** MODIFY — add `SetDefaultAsync(long
+  id, bool isDefault, string userEmail, ct)`: loads `existing` (no `Status` check — this is the one
+  path deliberately NOT gated by the Approved-rejects-edits rule `UpdateAsync` enforces); if
+  `isDefault == true`, calls the existing `ClearGlobalDefaultAsync(id, ct)` (Update 13) first, then
+  updates only `IsDefault` (+ `UpdatedBy`/`UpdatedDate`) on this row via a new repository method; if
+  `isDefault == false`, updates only `IsDefault = 0` directly (no need to clear anything else).
+  Returns the updated response DTO. Deliberately does not touch `Name`/`AlertFor`/`Status`/
+  `VersionId`/`eutr_template_details`/`eutr_template_references`.
+- **`ComplianceSys.Application/Interfaces/Repositories/IEutrTemplatesRepository.cs`** /
+  **`.../EutrTemplatesRepository.cs`** MODIFY — add `SetIsDefaultAsync(long id, bool isDefault, string
+  userEmail, CancellationToken ct)`, a single-column `UPDATE eutr_templates SET IsDefault = @isDefault,
+  UpdatedBy = @userEmail, UpdatedDate = @now WHERE Id = @id` — same one-column-update shape as the
+  existing `SetStatusAsync` (Update 16), not a generic key/value updater.
+- **`ComplianceSys.Application/Dtos/Request/SetDefaultEutrTemplatesRequestDto.cs`** NEW — single
+  field `bool IsDefault`.
+- **`ComplianceSys.Api/Controllers/EutrTemplatesController.cs`** MODIFY — add
+  `[Authorize(Policy = "EutrTemplates.Update")] [HttpPost("{id:long}/set-default")]
+  SetDefault(long id, [FromBody] SetDefaultEutrTemplatesRequestDto dto)`, same try/catch shape
+  (`KeyNotFoundException` → 404) as every other `{id}`-scoped action on this controller. No
+  `ValidationException`/400 path here — unlike `PUT {id}` and unlike Approve/Request change, this
+  endpoint has no Status precondition to reject on (that is the entire point of FR-068).
+
+#### Frontend: Approved-only confirm-then-persist toggle (FR-068)
+
+- **`infrastructure/api/eutrTemplatesApi.js`** / **`infrastructure/repositories/RestEutrTemplatesRepository.js`**
+  MODIFY — add `setDefault(id, isDefault)` (POST `eutr-templates/${id}/set-default`, body
+  `{ isDefault }`), mirroring the existing `approve(id)`/`requestChange(id)` shape.
+- **`application/usecases/eutr-templates/SetDefaultEutrTemplatesUseCase.js`** NEW — mirrors
+  `ApproveEutrTemplatesUseCase.js`'s one-line `execute(id, isDefault) →
+  repository.setDefault(id, isDefault)` shape.
+- **`presentation/pages/eutr-templates/TemplateBuilderPage.jsx`** MODIFY — the Set-as-default
+  `Checkbox`'s `disabled` prop no longer follows the blanket `isReadOnly`/`status === APPROVED` flag
+  the rest of the header fields use (FR-061); it stays enabled at all times. Its `onChange` branches
+  on `status`: when `Draft`, unchanged existing behavior (flips local `isDefault` state, part of the
+  dirty-tracked header, persisted only on the next Save); when `Approved`, the handler does NOT flip
+  local state directly — it opens the existing `ConfirmDialog` (Yes/No, same component Approve/
+  Request change already use) with the intended new value; **Yes** calls
+  `SetDefaultEutrTemplatesUseCase.execute(id, intendedValue)`, and on success sets local `isDefault`
+  to the confirmed value and shows a `CustomSnackbar` success message (on failure, leaves the
+  checkbox at its prior value and shows an error snackbar); **No** just closes the dialog — the
+  checkbox was never optimistically flipped, so nothing needs to be reverted.
+
+See research.md Section 35 for the full rationale and alternatives considered.
+
 ## Technical Context
 
 **Language/Version**: .NET 8 (backend), JavaScript/React 18 + Vite 7 (frontend)
@@ -1107,6 +1167,18 @@ Update Template endpoint's request shape is unaffected, contracts/api-endpoints.
 confirms zero contract change). No new route, no new menu entry (Principle V unaffected — this is an
 interaction added to the already-routed `/eutr/templates/edit/:id` page).
 
+**Post-design re-check (2026-07-23 update 18)**: All principles still PASS. `SetDefaultAsync` stays
+in the Application layer (`EutrTemplatesService`), the new controller action is a thin, single-line
+delegation matching every other `{id}`-scoped action's shape (Principle I). `SetIsDefaultAsync`
+follows the exact same single-column-`UPDATE` shape as the existing `SetStatusAsync` (Update 16 —
+Principle II, reference-pattern reuse within this same feature). `ClearGlobalDefaultAsync` (Update
+13) is reused verbatim, not reimplemented, when the new value is `true` (Principle III — reuse
+existing backend). The frontend change reuses the existing `ConfirmDialog` component (Update 9/13/
+15/16) — no new dialog paradigm (Principle II). No new route, no new menu entry — this is a new
+action on the already-routed `EutrTemplatesController`/`TemplateBuilderPage.jsx` (Principle V
+unaffected). No new authorization policy family — the new endpoint reuses `EutrTemplates.Update`,
+the same policy already gating this controller's other mutating actions. No new dependency.
+
 ## Project Structure
 
 ### Documentation (this feature)
@@ -1144,7 +1216,8 @@ compliance-sys-api/src/
 │   │   │   ├── EutrTemplatesRequestDto.cs        # NEW; MODIFY (Update 7) — AlertFor: string → long?; (Update 13) MODIFY — remove VendorCode
 │   │   │   ├── EutrTemplateDetailsRequestDto.cs # MODIFY — add StepName (used when StepId is null)
 │   │   │   ├── EutrTemplateReferencesRequestDto.cs # NEW (Update 13) — TemplateId, VendorCode, FromDate, ToDate
-│   │   │   └── CloneEutrTemplatesRequestDto.cs # NEW (Update 15) — Name, AlertFor (used by POST {id}/clone)
+│   │   │   ├── CloneEutrTemplatesRequestDto.cs # NEW (Update 15) — Name, AlertFor (used by POST {id}/clone)
+│   │   │   └── SetDefaultEutrTemplatesRequestDto.cs # NEW (Update 18) — single field IsDefault (bool), used by POST {id}/set-default
 │   │   └── Response/
 │   │       ├── EutrTemplatesResponseDto.cs       # NEW; MODIFY (Update 7) — add AlertForName (string?); (Update 11) add StepsCount (int); (Update 13) MODIFY — remove VendorName; (Update 16) MODIFY — add Status
 │   │       ├── EutrTemplateDetailsResponseDto.cs # NEW
@@ -1164,10 +1237,10 @@ compliance-sys-api/src/
 │   │   │   ├── IEutrTemplateReferencesImportService.cs # NEW (Update 14) — ImportFromExcelAsync(templateId, stream, userEmail, ct)
 │   │   │   └── IEutrTemplateReferencesExportService.cs # NEW (Update 14) — ExportToExcelAsync(templateId, ct)
 │   │   └── Repositories/
-│   │       ├── IEutrTemplatesRepository.cs       # MODIFY — add ReplaceDetailsAsync (in-place update) + ResolveOrCreateStepsByNameAsync (free-solo step auto-create); (Update 7) add ResolveAlertGroupIdByNameAsync (Import lookup, exact match, no auto-create); (Update 13) MODIFY — ClearIsDefaultForVendorAsync(vendorCode, excludeId) → ClearGlobalDefaultAsync(excludeId); (Update 16) MODIFY — add CopyDetailTreeAsync(sourceTemplateId, newTemplateId, ct) (extracted from Clone's re-index logic, now shared with RequestChangeAsync) + SetStatusAsync(id, status, userEmail, ct)
+│   │       ├── IEutrTemplatesRepository.cs       # MODIFY — add ReplaceDetailsAsync (in-place update) + ResolveOrCreateStepsByNameAsync (free-solo step auto-create); (Update 7) add ResolveAlertGroupIdByNameAsync (Import lookup, exact match, no auto-create); (Update 13) MODIFY — ClearIsDefaultForVendorAsync(vendorCode, excludeId) → ClearGlobalDefaultAsync(excludeId); (Update 16) MODIFY — add CopyDetailTreeAsync(sourceTemplateId, newTemplateId, ct) (extracted from Clone's re-index logic, now shared with RequestChangeAsync) + SetStatusAsync(id, status, userEmail, ct); (Update 18) MODIFY — add SetIsDefaultAsync(id, isDefault, userEmail, ct) (single-column IsDefault update, same shape as SetStatusAsync)
 │   │       └── IEutrTemplateReferencesRepository.cs # NEW (Update 13) — GetByTemplateIdAsync, HasOverlapAsync (same-template-same-vendor); (Update 15) MODIFY — add CopyReferencesAsync(sourceTemplateId, newTemplateId, ct)
 │   ├── Services/
-│   │   ├── EutrTemplatesService.cs               # MODIFY — conditional versioning (24h threshold) in UpdateAsync; resolve/auto-create free-solo step names before saving details (AddAsync + both UpdateAsync branches); (Update 13) MODIFY — remove D365 vendor-name resolution block from GetPagedAsync + IComplDynamicsService ctor dependency; AddAsync/UpdateAsync (3 call sites) switch ClearIsDefaultForVendorAsync → ClearGlobalDefaultAsync; (Update 15) MODIFY — constructor gains IEutrTemplateReferencesRepository dependency; UpdateAsync's ≥24h branch calls CopyReferencesAsync(id, newId, ct) after BulkInsertDetailsAsync (FR-049); add CloneAsync(sourceId, dto, userEmail, ct) reusing BuildDetailEntitiesAsync/BulkInsertDetailsAsync + CopyReferencesAsync (FR-050 to FR-054); (Update 16) MODIFY — AddAsync/CloneAsync set Status="Draft" unconditionally; UpdateAsync DELETES the 24h-branch entirely — rejects with ValidationException when existing.Status=="Approved", else always in-place update (old <24h path, now unconditional); add ApproveAsync(id, userEmail, ct) (Draft→Approved via SetStatusAsync, no new row) and RequestChangeAsync(id, userEmail, ct) (Approved→Draft: new row VersionId+1 via CopyDetailTreeAsync + CopyReferencesAsync, old row IsHide=1 via SetStatusAsync-adjacent update)
+│   │   ├── EutrTemplatesService.cs               # MODIFY — conditional versioning (24h threshold) in UpdateAsync; resolve/auto-create free-solo step names before saving details (AddAsync + both UpdateAsync branches); (Update 13) MODIFY — remove D365 vendor-name resolution block from GetPagedAsync + IComplDynamicsService ctor dependency; AddAsync/UpdateAsync (3 call sites) switch ClearIsDefaultForVendorAsync → ClearGlobalDefaultAsync; (Update 15) MODIFY — constructor gains IEutrTemplateReferencesRepository dependency; UpdateAsync's ≥24h branch calls CopyReferencesAsync(id, newId, ct) after BulkInsertDetailsAsync (FR-049); add CloneAsync(sourceId, dto, userEmail, ct) reusing BuildDetailEntitiesAsync/BulkInsertDetailsAsync + CopyReferencesAsync (FR-050 to FR-054); (Update 16) MODIFY — AddAsync/CloneAsync set Status="Draft" unconditionally; UpdateAsync DELETES the 24h-branch entirely — rejects with ValidationException when existing.Status=="Approved", else always in-place update (old <24h path, now unconditional); add ApproveAsync(id, userEmail, ct) (Draft→Approved via SetStatusAsync, no new row) and RequestChangeAsync(id, userEmail, ct) (Approved→Draft: new row VersionId+1 via CopyDetailTreeAsync + CopyReferencesAsync, old row IsHide=1 via SetStatusAsync-adjacent update); (Update 18) MODIFY — add SetDefaultAsync(id, isDefault, userEmail, ct) — no Status check (deliberately bypasses the Approved-rejects-edits gate); isDefault=true calls the existing ClearGlobalDefaultAsync(id, ct) first, then SetIsDefaultAsync; isDefault=false calls SetIsDefaultAsync directly
 │   │   ├── EutrTemplatesImportService.cs         # NEW — Excel import; MODIFY (Update 7) — resolve AlertFor Excel cell (group Name) to Id via ResolveAlertGroupIdByNameAsync, new "Alert for group not found" error case; (Update 13) MODIFY — drop VendorCode cell (was col C), IsDefault shifts D→C
 │   │   ├── EutrTemplatesExportService.cs         # NEW — Excel export; MODIFY (Update 7) — write AlertForName instead of raw AlertFor Id; (Update 13) MODIFY — drop "Vendor code" header/cell (was col 3), AlertForName/IsDefault/VersionId shift 4/5/6→3/4/5
 │   │   ├── ComplDynamicsService.cs              # EXISTS — VendorsV3 refType already mapped
@@ -1191,7 +1264,7 @@ compliance-sys-api/src/
 │   └── DependencyInjection.cs                   # MODIFY — register repository; (Update 13) MODIFY — register IEutrTemplateReferencesRepository
 └── ComplianceSys.Api/
     └── Controllers/
-        ├── EutrTemplatesController.cs           # NEW — REST endpoints; (Update 15) MODIFY — add POST {id:long}/clone (EutrTemplates.Create policy, same try/catch shape as Create); (Update 16) MODIFY — add POST {id:long}/approve and POST {id:long}/request-change (both EutrTemplates.Update policy, no-body, same try/catch shape)
+        ├── EutrTemplatesController.cs           # NEW — REST endpoints; (Update 15) MODIFY — add POST {id:long}/clone (EutrTemplates.Create policy, same try/catch shape as Create); (Update 16) MODIFY — add POST {id:long}/approve and POST {id:long}/request-change (both EutrTemplates.Update policy, no-body, same try/catch shape); (Update 18) MODIFY — add POST {id:long}/set-default (EutrTemplates.Update policy, body { isDefault: bool }, same try/catch shape — no Status precondition to reject on)
         ├── ComplGroupEmailController.cs          # UNCHANGED (Update 7) — GET /api/group-email reused as-is by the frontend combobox
         ├── DynController.cs                     # UNCHANGED (Update 5) — GET vendors endpoint from Update 2/3 kept but no longer called by this feature
         └── EutrTemplateReferencesController.cs   # NEW (Update 13) — GET by-template/{templateId}, POST, PUT {id}, DELETE {id}; policies confirmed as shipped = reuse EutrTemplates.Read/.Update/.Delete (no new policy family); (Update 14) MODIFY — add POST import/{templateId:long} (EutrTemplates.Update) and GET export/{templateId:long} (EutrTemplates.Read), same try/catch shape as EutrTemplatesController.Import/.Export
@@ -1207,12 +1280,12 @@ compliance-client/src/
 │       └── IEutrTemplateReferencesRepository.js # NEW (Update 13)
 ├── infrastructure/
 │   ├── api/
-│   │   ├── eutrTemplatesApi.js                  # NEW; (Update 15) MODIFY — add clone(id, payload) (POST eutr-templates/{id}/clone); (Update 16) MODIFY — add approve(id)/requestChange(id)
+│   │   ├── eutrTemplatesApi.js                  # NEW; (Update 15) MODIFY — add clone(id, payload) (POST eutr-templates/{id}/clone); (Update 16) MODIFY — add approve(id)/requestChange(id); (Update 18) MODIFY — add setDefault(id, isDefault) (POST eutr-templates/{id}/set-default)
 │   │   ├── groupEmailApi.js                     # EXISTS (Update 7) — GET /group-email reused as-is via GetAllGroupEmailUseCase, no change needed
 │   │   ├── dynamicsApi.js                       # UNCHANGED (Update 5) — getVendors kept but unused by this feature; reference API client already exists
 │   │   └── eutrTemplateReferencesApi.js         # NEW (Update 13) — get-by-template, create, update, delete; (Update 14) MODIFY — add importByTemplate(templateId, file)/exportByTemplate(templateId)
 │   └── repositories/
-│       ├── RestEutrTemplatesRepository.js       # NEW; (Update 15) MODIFY — add clone(id, payload) passthrough; (Update 16) MODIFY — add approve(id)/requestChange(id) passthroughs
+│       ├── RestEutrTemplatesRepository.js       # NEW; (Update 15) MODIFY — add clone(id, payload) passthrough; (Update 16) MODIFY — add approve(id)/requestChange(id) passthroughs; (Update 18) MODIFY — add setDefault(id, isDefault) passthrough
 │       ├── RestDynamicsRepository.js            # UNCHANGED (Update 5) — getVendors kept but unused by this feature
 │       └── RestEutrTemplateReferencesRepository.js # NEW (Update 13) — getByTemplateId/create/update/delete, wraps EutrTemplateReferences; (Update 14) MODIFY — add importByTemplate/exportByTemplate passthroughs
 ├── application/
@@ -1228,7 +1301,8 @@ compliance-client/src/
 │       │   ├── ExportEutrTemplatesUseCase.js     # NEW
 │       │   ├── CloneEutrTemplatesUseCase.js      # NEW (Update 15) — execute(sourceId, {name, alertFor}) → POST eutr-templates/{sourceId}/clone
 │       │   ├── ApproveEutrTemplatesUseCase.js    # NEW (Update 16) — execute(id) → POST eutr-templates/{id}/approve
-│       │   └── RequestChangeEutrTemplatesUseCase.js # NEW (Update 16) — execute(id) → POST eutr-templates/{id}/request-change
+│       │   ├── RequestChangeEutrTemplatesUseCase.js # NEW (Update 16) — execute(id) → POST eutr-templates/{id}/request-change
+│       │   └── SetDefaultEutrTemplatesUseCase.js # NEW (Update 18) — execute(id, isDefault) → POST eutr-templates/{id}/set-default
 │       ├── eutr-template-references/             # NEW (Update 13) — one file per operation
 │       │   ├── GetByTemplateIdEutrTemplateReferencesUseCase.js
 │       │   ├── CreateEutrTemplateReferencesUseCase.js
@@ -1242,7 +1316,7 @@ compliance-client/src/
 │   └── pages/
 │       └── eutr-templates/
 │           ├── TemplateListPage.jsx              # RENAME (Update 9) — was index.jsx/EutrTemplatesPage; (Update 10/11) MODIFY — keep its own Table/search/chip layout, swap mock data (`mock/eutrTemplates.js`, `mock/eutrTemplateDetails.js`) for `useEutrTemplatesData`/`permissionList`/`DeleteEutrTemplatesUseCase`/`DeleteMultiEutrTemplatesUseCase`/`CreateTemplateDialog`/`ConfirmDialog`/`CustomSnackbar` (reused from TemplateListPageOld.jsx, itself unchanged); Code shown bold, Name as caption; Steps column reads real `stepsCount`; add per-row checkbox + bulk-delete toolbar button; add `TablePagination`; search box sends a debounced `{field:'keyword', operator:'contains', value}` filter item and resets to page 0; Clone/Apply-to-Customer icons kept but `disabled` (mock onClick/dialog removed); **(Update 13) MODIFY** — Apply-to-Customer icon becomes active: `onClick={() => navigate(\`/eutr/templates/apply/${tmpl.id}\`)}`, gated by the same permission check as Edit; Clone stays disabled; **(Update 15) MODIFY** — Clone icon becomes active: `onClick={() => setCloneDialogTemplate(row)}` opens `CloneTemplateDialog` for that row; on successful Clone, closes the dialog and re-runs the existing list-refresh (same `fetchData()` call `CreateTemplateDialog` already triggers); **(Update 16) MODIFY** — add a Status `Chip` per row; add **Approve**/**Request change** toolbar `Button`s next to Create Template, enabled only when the existing `selectedIds` (bulk-delete checkbox state) has exactly 1 entry whose row status matches; clicking either opens `ConfirmDialog` (Yes/No), confirming calls `ApproveEutrTemplatesUseCase`/`RequestChangeEutrTemplatesUseCase.execute(id)`, clears selection, re-runs `fetchData()`, shows `CustomSnackbar`
-│           ├── TemplateBuilderPage.jsx           # (Update 10) MODIFY — keep its own tree-view + toolbar + side-panel layout, swap mock data (`mock/eutrTemplates.js`, `mock/eutrTemplateDetails.js`, `mock/eutrSteps.js`, `utils/treeUtils.js`) for `GetEutrTemplatesUseCase`/`UpdateEutrTemplatesUseCase`/`GetEutrStepsUseCase`/`GetAllGroupEmailUseCase`/`ReferenceObjectAutocomplete` (refType=13) and the existing `useStepTree` hook (replaces its own hand-rolled tree state); Add Root/Add Child step-picker becomes free-solo Autocomplete over the real steps list; Type/FSC fields and the 8-option mock TakeFrom list removed (not in the real schema); Move Up/Down buttons call `reorderSiblings`; side panel shows the header form (Code/Name/AlertFor/Vendor/Default/Save) when no step is selected, step detail (real RequirementType/TakeFrom) when one is; Save calls `UpdateEutrTemplatesUseCase` then navigates to `/eutr/templates`; Back reuses the `isDirty` + `ConfirmDialog` pattern from EutrTemplatesAddEdit.jsx; **(Update 12) MODIFY** — Add Root Group/Add Child Step `Dialog` content swaps `<StepFormRow>` (+ `addStepFormRef`/`addStepValid`, removed) for `<BulkAddStepsDialog onAdd={addSteps} existingChildStepIds={...} />`; **(Update 13) MODIFY** — remove `vendorCode`/`vendorName` state, the two setters in the load effect, `vendorCode` from the Save payload, and the entire Vendor `ReferenceObjectAutocomplete` block + its now-unused import from the side panel (FR-041); **(Update 16) MODIFY** — read `template.status`; when `TEMPLATE_STATUS.APPROVED`, render a warning `Alert` banner and `disabled` every header field, the Save button, Root Group/Child Step toolbar buttons, and each step row's Edit/Delete icons (FR-061); Draft behaves unchanged; **(Update 17) MODIFY** — wrap `<SimpleTreeView>` in a `<DndContext>`, wrap each tree level's siblings in their own `<SortableContext>`, add a drag-handle icon per `TreeItem` wired to `useSortable` (`disabled: isReadOnly`), and add `handleDragEnd` which calls the existing `reorderSiblings` when the dragged/target nodes share a `parentId` (no-op otherwise) — additive to the unchanged Move Up/Down buttons (FR-064 to FR-067; research.md §34)
+│           ├── TemplateBuilderPage.jsx           # (Update 10) MODIFY — keep its own tree-view + toolbar + side-panel layout, swap mock data (`mock/eutrTemplates.js`, `mock/eutrTemplateDetails.js`, `mock/eutrSteps.js`, `utils/treeUtils.js`) for `GetEutrTemplatesUseCase`/`UpdateEutrTemplatesUseCase`/`GetEutrStepsUseCase`/`GetAllGroupEmailUseCase`/`ReferenceObjectAutocomplete` (refType=13) and the existing `useStepTree` hook (replaces its own hand-rolled tree state); Add Root/Add Child step-picker becomes free-solo Autocomplete over the real steps list; Type/FSC fields and the 8-option mock TakeFrom list removed (not in the real schema); Move Up/Down buttons call `reorderSiblings`; side panel shows the header form (Code/Name/AlertFor/Vendor/Default/Save) when no step is selected, step detail (real RequirementType/TakeFrom) when one is; Save calls `UpdateEutrTemplatesUseCase` then navigates to `/eutr/templates`; Back reuses the `isDirty` + `ConfirmDialog` pattern from EutrTemplatesAddEdit.jsx; **(Update 12) MODIFY** — Add Root Group/Add Child Step `Dialog` content swaps `<StepFormRow>` (+ `addStepFormRef`/`addStepValid`, removed) for `<BulkAddStepsDialog onAdd={addSteps} existingChildStepIds={...} />`; **(Update 13) MODIFY** — remove `vendorCode`/`vendorName` state, the two setters in the load effect, `vendorCode` from the Save payload, and the entire Vendor `ReferenceObjectAutocomplete` block + its now-unused import from the side panel (FR-041); **(Update 16) MODIFY** — read `template.status`; when `TEMPLATE_STATUS.APPROVED`, render a warning `Alert` banner and `disabled` every header field, the Save button, Root Group/Child Step toolbar buttons, and each step row's Edit/Delete icons (FR-061); Draft behaves unchanged; **(Update 17) MODIFY** — wrap `<SimpleTreeView>` in a `<DndContext>`, wrap each tree level's siblings in their own `<SortableContext>`, add a drag-handle icon per `TreeItem` wired to `useSortable` (`disabled: isReadOnly`), and add `handleDragEnd` which calls the existing `reorderSiblings` when the dragged/target nodes share a `parentId` (no-op otherwise) — additive to the unchanged Move Up/Down buttons (FR-064 to FR-067; research.md §34); **(Update 18) MODIFY** — Set-as-default `Checkbox` no longer follows the blanket `isReadOnly` disabled flag; its `onChange` branches on `status` — Draft: unchanged (local state, saved via Save); Approved: opens `ConfirmDialog` with the intended value, Yes calls `SetDefaultEutrTemplatesUseCase.execute(id, value)` and updates local state from the result, No closes the dialog with no change (FR-068; research.md §35)
 │           ├── ApplyCustomerPage.jsx             # NEW-scope, EXISTS as mock (Update 13) MODIFY — rewrite from `MOCK_CUSTOMERS`/`MOCK_TEMPLATE_CUSTOMERS` (`mock/eutrTemplates.js`) + `status !== 'Published'` gate to real data: Vendor combobox via `ReferenceObjectAutocomplete`(refType=13), load/save via the new `eutr-template-references` use cases keyed by the `:id` route param, drop the Published gate (no Status concept on real templates at that time), keep the existing `hasOverlap()` client pre-check rescoped from `customerId` to `vendorCode` (server `HasOverlapAsync` is authoritative); **(Update 14) MODIFY** — add Import/Export `Button`s to the header `Stack` (FR-043): hidden `<input type="file" accept=".xlsx">` wired to `ImportEutrTemplateReferencesUseCase.execute(id, file)`, opens `ImportMappingResultDialog` with the result and calls `fetchMappings()` to refresh; Export button calls `ExportEutrTemplateReferencesUseCase.execute(id)` directly (no dialog); new `importing`/`importResult`/`importDialogOpen` state; **(Update 16) NO CHANGE** — the real Status added by this update does NOT gate Apply to Customer; this page keeps working at any Status (Draft or Approved), per FR-032
 │           ├── EutrTemplatesAddEdit.jsx          # MODIFY (through Update 9) — 2-column layout (widened header/narrowed steps), vendor via ReferenceObjectAutocomplete (refType=13) (Update 5), Save button moved below Default checkbox, Back dirty-check confirm dialog; (Update 7) Alert for `Autocomplete` switches from `freeSolo`/hardcoded `ALERT_FOR_OPTIONS` to `GetAllGroupEmailUseCase`-backed, select-only, filtered to `groupType===2 && isAddition===false`, storing the selected group's `id`; (Update 9) becomes Edit-only; **(Update 10) UNCHANGED but no longer routed** — `/eutr/templates/edit/:id` now points at TemplateBuilderPage.jsx; left in place unreferenced (cleanup candidate for a future task, same precedent as the unused vendors endpoint from Update 5), not deleted by this feature
 │           ├── components/
@@ -1290,6 +1364,10 @@ this feature's original plan but never previously imported, and reusing `useStep
 `reorderSiblings` function verbatim (no new tree-mutation logic). Corrects a stale claim in this
 same table and in data-model.md that a working drag-and-drop pattern already existed elsewhere in
 this feature (verified false — see research.md §34).
+**(Update 18)**: one new single-purpose endpoint (`POST {id}/set-default`) and one new repository
+method (`SetIsDefaultAsync`, mirroring `SetStatusAsync`'s single-column-update shape) — the smallest
+possible backend surface for carving out one exception to Update 16's Approved-read-only rule;
+frontend reuses the existing `ConfirmDialog` component, no new dialog.
 
 ### Key Differences from Reference Features
 
@@ -1326,6 +1404,7 @@ this feature (verified false — see research.md §34).
 | Versioning trigger (Update 16) | N/A | REPLACED — no more 24h age check; `UpdateAsync` always saves in-place while Draft (rejects if Approved); a version bump (new row, VersionId+1, old row hidden) now happens ONLY via `POST {id}/request-change`, reusing Clone's copy pipeline |
 | Approve / Request change (Update 16) | N/A | New `POST {id}/approve` (Draft→Approved, same row) and `POST {id}/request-change` (Approved→Draft, new version row) — toolbar buttons on TemplateListPage, gated by the existing single-row checkbox selection, each behind a `ConfirmDialog` Yes/No |
 | Edit read-only gate (Update 16) | N/A | TemplateBuilderPage becomes fully read-only (header + step tree) when the loaded template's Status is Approved; editing resumes only after Request change |
+| Set as default while Approved (Update 18) | N/A | One exception to the Update 16 read-only gate — the Set-as-default checkbox stays enabled when Approved and persists immediately via a dedicated `POST {id}/set-default` endpoint (behind a Yes/No `ConfirmDialog`), independent of the (still hidden/disabled) Save button |
 
 ## Complexity Tracking
 
@@ -1336,4 +1415,7 @@ mechanism relocated to a dedicated, explicit action (`RequestChangeAsync`) that 
 Clone-era copy helpers rather than adding new ones. **(Update 17)** note: purely additive frontend
 complexity, scoped to one component (`TemplateBuilderPage.jsx`) and reusing an existing tree-mutation
 function (`reorderSiblings`) and already-installed dependencies — no new backend surface, no new
-dependency, no layer crossed.
+dependency, no layer crossed. **(Update 18)** note: one new endpoint + one new single-column
+repository method, deliberately scoped to carve out exactly one field (`IsDefault`) from the Update
+16 read-only gate rather than loosening that gate generally — the smallest change that satisfies the
+request without reopening Approved templates to broader edits.

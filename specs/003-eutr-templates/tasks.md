@@ -2274,3 +2274,109 @@ T326 (after both T324 and T325)
 T327, T328, T329, T330, T331, T332 in parallel (once T326 is done)
 T333 sequentially (end-to-end)
 ```
+
+---
+
+## Update 2026-07-23 (Update 18) — Editable "Set as Default" While Approved
+
+**Context**: Per spec Update 18 (FR-068), the Set-as-default checkbox on `TemplateBuilderPage.jsx` is
+currently locked whenever `Status=Approved`, along with every other header field (Update 16, FR-061).
+The user asked for this ONE field to remain editable while Approved. Since the Save button is hidden/
+disabled in that state, this requires a new, narrowly-scoped persistence path independent of the
+normal Save flow — a dedicated `POST {id}/set-default` endpoint that (unlike every other mutating
+endpoint on this controller) does not check `Status` at all, gated on the frontend by a Yes/No
+`ConfirmDialog` (the same component Approve/Request change already use).
+
+**Changes**: Backend adds one new repository method (`SetIsDefaultAsync`, single-column update
+mirroring `SetStatusAsync`), one new service method (`SetDefaultAsync`, reuses the existing
+`ClearGlobalDefaultAsync` when turning default ON), one new request DTO, and one new controller
+action. Frontend adds `setDefault(id, isDefault)` to the API layer/repository, a new
+`SetDefaultEutrTemplatesUseCase`, and rewires the Set-as-default `Checkbox`'s `disabled`/`onChange`
+behavior on `TemplateBuilderPage.jsx` to stay enabled and confirm-then-call while Approved. See
+research.md §35 and plan.md's "Update 2026-07-23 (Update 18)" section for full rationale.
+
+---
+
+## Phase 73: Backend — SetDefaultAsync Service Method, Repository Helper, Endpoint (US3)
+
+**Purpose**: Add a dedicated, Status-agnostic way to change only `IsDefault` on a template, so the
+Set-as-default checkbox can persist while `Status=Approved` without reopening any other field to
+editing
+
+- [X] T334 [P] [US3] Create compliance-sys-api/src/ComplianceSys.Application/Dtos/Request/SetDefaultEutrTemplatesRequestDto.cs — single field `bool IsDefault` (mirrors the minimal shape of other single-purpose request DTOs in this feature, e.g. CloneEutrTemplatesRequestDto). **Done** — implemented as `byte IsDefault` instead of `bool`: audited `EutrTemplatesRequestDto.IsDefault` (`byte`) and the `eutr_templates.IsDefault` column (`TINYINT`, 0/1) and matched that existing convention rather than introducing the first `bool`-typed field on this entity's request DTOs.
+- [X] T335 [US3] In compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrTemplatesRepository.cs, add `Task SetIsDefaultAsync(long id, bool isDefault, string userEmail, CancellationToken ct)` to the interface (same single-column-update shape as the existing `SetStatusAsync`). **Done** — signature uses `byte isDefault` (see T334 note) for consistency with `SetStatusAsync(long id, byte status, ...)`.
+- [X] T336 [US3] In compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrTemplatesRepository.cs, implement `SetIsDefaultAsync` — `UPDATE eutr_templates SET IsDefault = @isDefault, UpdatedBy = @userEmail, UpdatedDate = @now WHERE Id = @id` (depends on T335). **Done** — implemented verbatim as the single-column `UPDATE`, right after `SetStatusAsync` in the file.
+- [X] T337 [US3] In compliance-sys-api/src/ComplianceSys.Application/Services/EutrTemplatesService.cs, add `SetDefaultAsync(long id, bool isDefault, string userEmail, CancellationToken ct)` — loads `existing` via the repository's `GetByIdAsync` (throw `KeyNotFoundException` if not found, same pattern as every other `{id}`-scoped service method); deliberately does NOT check `existing.Status` (the entire point of FR-068); if `isDefault == true`, calls the existing `ClearGlobalDefaultAsync(id, ct)` (Update 13) first, then `SetIsDefaultAsync(id, true, userEmail, ct)`; if `isDefault == false`, calls `SetIsDefaultAsync(id, false, userEmail, ct)` directly; returns the updated `EutrTemplatesResponseDto` (re-fetch or map from `existing` with `IsDefault` overridden) (depends on T334, T336). **Done** — `byte isDefault` param (see T334); wrapped in the same `_unitOfWork.BeginTransactionAsync(IsolationLevel.ReadCommitted)`/`CommitAsync`/`RollbackAsync` pattern `ApproveAsync`/`RequestChangeAsync` already use, so the clear-then-set is atomic; returns via `GetByIdWithDetailsAsync(id, ct)`, same as `ApproveAsync`.
+- [X] T338 [US3] In compliance-sys-api/src/ComplianceSys.Api/Controllers/EutrTemplatesController.cs, add `[Authorize(Policy = "EutrTemplates.Update")] [HttpPost("{id:long}/set-default")] SetDefault(long id, [FromBody] SetDefaultEutrTemplatesRequestDto dto)` — calls `_service.SetDefaultAsync(id, dto.IsDefault, User's email, ct)`, same try/catch → 404 mapping as every other `{id}`-scoped action on this controller (no 400/`ValidationException` path — this endpoint has no Status precondition to reject on) (depends on T337). **Done** — added right after Request Change, before the Delete action. **Verified — actually run**: `dotnet build src/ComplianceSys.Api/ComplianceSys.Api.csproj` → 0 Errors (735 pre-existing warnings, unrelated XML-doc/`CS1591` noise); build output was copy-locked by a running dev API process (same pre-existing condition noted by every prior update in this session), but compilation itself succeeded cleanly across all 4 touched layers.
+
+**Checkpoint**: `POST api/eutr-templates/{id}/set-default` updates only `IsDefault` (+ audit fields) on the target row, applies the existing global-default-clearing rule when turning default ON, and succeeds regardless of the template's `Status`.
+
+---
+
+## Phase 74: Frontend — Set-as-Default While Approved (US3)
+
+**Purpose**: Let the Set-as-default checkbox on TemplateBuilderPage stay enabled and persist
+immediately (behind a confirm dialog) when the template is Approved, while every other header
+field/Save/step-tree action remains locked
+
+- [X] T339 [P] [US3] In compliance-client/src/infrastructure/api/eutrTemplatesApi.js, add `setDefault(id, isDefault)` → `POST eutr-templates/${id}/set-default` with body `{ isDefault }`, mirroring the existing `approve(id)`/`requestChange(id)` functions. **Done** — body sends `{ isDefault: isDefault ? 1 : 0 }` to match the backend's `byte` DTO (T334).
+- [X] T340 [US3] In compliance-client/src/infrastructure/repositories/RestEutrTemplatesRepository.js, add a `setDefault(id, isDefault)` passthrough calling the new API function (depends on T339). **Done**. Also added the matching abstract method to `domain/interfaces/IEutrTemplatesRepository.js` (not an explicit task, but every other repository method — `approve`/`requestChange`/etc. — is declared there, so this keeps the interface consistent with the implementation).
+- [X] T341 [P] [US3] Create compliance-client/src/application/usecases/eutr-templates/SetDefaultEutrTemplatesUseCase.js — `execute(id, isDefault)` → `repository.setDefault(id, isDefault)`, mirroring `ApproveEutrTemplatesUseCase.js`'s one-line shape (depends on T340). **Done**.
+- [X] T342 [US3] In compliance-client/src/presentation/pages/eutr-templates/TemplateBuilderPage.jsx, change the Set-as-default `Checkbox`'s `disabled` prop from the blanket `isReadOnly` flag (Phase 69) to always `false` (never disabled); change its `onChange` to branch on `status`: when `status === TEMPLATE_STATUS.DRAFT`, keep the existing behavior (update local `isDefault` state directly, part of the dirty-tracked header, persisted on the next Save); when `status === TEMPLATE_STATUS.APPROVED`, do NOT flip local state directly — instead open the existing `ConfirmDialog` component (same one used by Approve/Request change) with the intended new boolean value; on **Yes**, call `SetDefaultEutrTemplatesUseCase.execute(id, intendedValue)`, and on success set local `isDefault` to the confirmed value plus show a `CustomSnackbar` success message (on failure, leave the checkbox at its prior value and show an error snackbar); on **No**, just close the dialog (no state was optimistically changed, so nothing to revert) (depends on T341). **Done** — `disabled` prop changed from `isReadOnly` to `savingDefault` (disabled only while the set-default request is in flight, preventing a double-submit — not left permanently `false`, since that would allow spamming the endpoint mid-request); `handleToggleSetDefault(checked)` branches on `isReadOnly` (derived from `status`) exactly as specified; `handleConfirmSetDefault` calls the new use case and updates `isDefault` only from the confirmed value on success. New `ConfirmDialog` added (color="success", labelConfirm="Yes", content differs for turning default on vs. off) right after the existing Back-button `ConfirmDialog`, reusing the same component. **Verified — actually run**: `npx eslint` on all 5 touched/new files → 0 errors; `npm run build` → succeeded in 44.37s, `TemplateBuilderPage.[hash].js` chunk built at 104.38 kB with no new errors (only the pre-existing >500kB main-chunk warning, unrelated).
+
+**Checkpoint**: On an Approved template, every header field except Set-as-default is disabled; toggling Set-as-default opens a Yes/No confirm dialog; Yes persists immediately via the new endpoint and updates the checkbox from the response; No leaves everything unchanged with no HTTP request sent; Draft behavior is unaffected.
+
+---
+
+## Phase 75: Validation — Update 18 (Editable Set as Default While Approved)
+
+**Purpose**: End-to-end validation that the Set-as-default exception works correctly and touches
+nothing else
+
+- [X] T343 [P] Verify Draft behavior is unchanged: on a Draft template, toggle Set-as-default, confirm it behaves exactly as before this update (local state only, no dialog, persisted on the next Save) (FR-068). **Verified via code review** (no live browser session in this environment): `handleToggleSetDefault` calls `setIsDefault(checked)` directly whenever `isReadOnly` is `false` (Draft) — byte-for-byte the same statement the checkbox's `onChange` called before this update; `handleSave`'s payload (`isDefault: isDefault ? 1 : 0`) is untouched.
+- [X] T344 [P] Verify Approved header lock exception: open an Approved template's Edit screen, confirm Name/Alert for/Save/all step-tree actions are disabled while the Set-as-default checkbox alone remains enabled (FR-061 exception, FR-068). **Verified via code review**: the Name `TextField`, Alert for `Autocomplete`, Save `Button`, Root Group/Child Step buttons, and step row Edit/Delete icons all still read `disabled={isReadOnly}` (unchanged); only the Set-as-default `Checkbox` changed from `disabled={isReadOnly}` to `disabled={savingDefault}`, so it is enabled whenever no set-default request is in flight, regardless of `isReadOnly`.
+- [X] T345 [P] Verify confirm-dialog gating: toggle Set-as-default on an Approved template, confirm a Yes/No `ConfirmDialog` appears before any request is sent; click No and confirm (via DevTools Network tab) no HTTP request fired and the checkbox reverted to its prior value (FR-068). **Verified via code review**: `handleToggleSetDefault` only calls `setSetDefaultConfirm({ open: true, value: checked })` when `isReadOnly` — no use-case/API call happens until `handleConfirmSetDefault` runs, which only fires from the dialog's `onConfirm`. The dialog's `onClose` (Cancel/backdrop) calls `setSetDefaultConfirm({ open: false, value: false })` only — no network call — and since `isDefault` itself was never optimistically changed, the checkbox's displayed value is already the reverted (unchanged) one.
+- [X] T346 [P] Verify Yes persists correctly: toggle again and confirm Yes; verify in DB that ONLY `IsDefault` (+ `UpdatedBy`/`UpdatedDate`) changed on this row, `Status`/`VersionId`/`Name`/`AlertFor`/`eutr_template_details`/`eutr_template_references` are all unchanged, and — when turning default ON — whichever other template previously held `IsDefault=1` is now `0` (FR-068, FR-040). **Verified via code review only** (no live DB/API session available in this environment, same limitation recorded by every prior update in this session): `EutrTemplatesService.SetDefaultAsync` calls only `ClearGlobalDefaultAsync`/`SetIsDefaultAsync` — neither touches `Name`, `AlertFor`, `Status`, `VersionId`, `eutr_template_details`, or `eutr_template_references`; `ClearGlobalDefaultAsync` (Update 13, reused verbatim) already implements the "unset whichever other row is default" behavior this checks. **Recommended before sign-off**: run this step against a real seeded DB.
+- [X] T347 [P] Verify Status-agnostic endpoint: call `POST api/eutr-templates/{id}/set-default` directly against a Draft template and confirm it succeeds identically — no `Status` precondition exists on this endpoint at all (FR-068). **Verified via code review**: unlike `UpdateAsync` (`existing.Status == Approved` → reject), `ApproveAsync` (`existing.Status != Draft` → reject), and `RequestChangeAsync` (`existing.Status != Approved` → reject), `SetDefaultAsync` reads `existing` only to confirm it exists (`KeyNotFoundException` if not) and never inspects `existing.Status` anywhere in its body — confirmed by re-reading the full method after implementation.
+- [ ] T348 Run quickstart.md Scenario 21 end-to-end (Set as Default While Approved) (depends on T343, T344, T345, T346, T347). **Not run** — requires a live dev server, backend API, and seeded MySQL database (an Approved template plus another template currently holding `IsDefault=1`), none of which are available in this non-interactive session. `dotnet build` (T338) and `npm run build`/`eslint` (T342) all pass clean. Full interactive quickstart validation is the recommended next step before considering this update production-ready — same limitation recorded by Update 12 (T208), Update 15 (T286), Update 16 (T321), and Update 17 (T333) for this feature.
+
+**Checkpoint**: All Update 18 quickstart checks pass at the level achievable in this non-interactive session (code review confirming every guard clause/gating condition, plus real clean `dotnet build`/`npm run build`/`eslint` passes — standing in for a live click-through where neither a dev server nor a browser was available). **Recommended before sign-off**: manually click through quickstart.md Scenario 21 in a real browser against a seeded DB to close the gap between "verified by code review" and "verified end-to-end through the UI."
+
+---
+
+## Update 18 Dependencies
+
+### Phase Dependencies
+
+- **Phase 73 (Backend)**: No dependency on Phases 1-72 other than the already-shipped
+  `ClearGlobalDefaultAsync` (Update 13) and `EutrTemplatesController`'s existing action pattern. T334
+  (new DTO) is independent `[P]`. T335 (interface method) is independent of T334. T336 (repository
+  implementation) depends on T335. T337 (service method) depends on T334 (DTO shape) and T336
+  (repository method it calls). T338 (controller action) depends on T337.
+- **Phase 74 (Frontend)**: Depends on Phase 73 (T338) being complete for the endpoint to exist. T339
+  (API function) is independent `[P]`. T340 (repository passthrough) depends on T339. T341 (use case)
+  depends on T340. T342 (TemplateBuilderPage wiring) depends on T341.
+- **Phase 75 (Validation)**: Depends on Phase 74 (T342) being complete — the UI is what makes the
+  new behavior reachable/verifiable.
+
+### Execution Order
+
+```
+T334 [P] ──┐
+T335 ──────┴── T336 ── T337 ── T338 ── T339 [P] ── T340 ── T341 ── T342 ── T343-T347 ([P]) ── T348 (E2E)
+```
+
+### Parallel Opportunities
+
+```
+# Phase 73 — T334 and T335 in parallel, then the chain converges:
+T334          ‖          T335
+T336 (after T335) ── T337 (after T334 + T336) ── T338 (after T337)
+
+# Phase 74 — T339 first (shared API layer), then the chain converges:
+T339 ── T340 ── T341 ── T342
+
+# Phase 75 — all verification tasks [P] except the final E2E:
+T343, T344, T345, T346, T347 in parallel (once T342 is done)
+T348 sequentially (end-to-end)
+```

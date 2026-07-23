@@ -46,7 +46,7 @@ disabled frontend control.
 | Code | VARCHAR(255) | NO | — | — | Auto-generated code (e.g., Templates-001). Readonly. |
 | Name | VARCHAR(255) | YES | NULL | — | Template name. Required by validation. |
 | ~~VendorCode~~ | ~~VARCHAR(50)~~ | — | — | — | **Removed (Update 13)**. Existing values discarded, no migration. Vendor↔Template linkage now lives in `EutrTemplateReferences` (time-bound, many-to-many) instead of a single field on the template. |
-| IsDefault | TINYINT | YES | 0 | Max 1 **globally** among active records (Update 13 — was max 1 per VendorCode) | Default template flag |
+| IsDefault | TINYINT | YES | 0 | Max 1 **globally** among active records (Update 13 — was max 1 per VendorCode) | Default template flag. **(Update 18)**: editable via a dedicated `POST {id}/set-default` endpoint even when `Status=Approved` — the one field NOT subject to Update 16's Approved-rejects-edits rule (see State Transitions below). |
 | VersionId | TINYINT | NO | 1 | — | Version counter. Starts at 1. **(Superseded by Update 16)** ~~increments on edit only if CreatedDate is >24h old~~ → increments ONLY when Request change transitions the row from Approved to Draft (see Status below and State Transitions). |
 | Status | TINYINT | YES | 0 | Values: `0`=Draft, `1`=Approved (Update 16; `TemplateStatusEnum` backend, `TEMPLATE_STATUS`/`TEMPLATE_STATUS_LABELS` frontend `helpers.js`) | Approval lifecycle flag. Defaults to `0` (Draft) on Create and Clone. `1` (Approved) rows are read-only (server-enforced) until Request change moves them back to `0` (Draft) on a NEW version row. Column pre-existed on the dev DB (unused, no prior migration) — see Update 16 note above. |
 | AlertFor | BIGINT UNSIGNED | YES | NULL | Logical ref → compl_group_email.Id (no DB FK — see Update 7) | Selected Alert group's Id. Required by validation (must be > 0). Was VARCHAR(50) free text before Update 7 (2026-07-07). |
@@ -349,6 +349,17 @@ all.~~
   3. Set IsDefault=1 on Template A
 ```
 
+**(Update 18)** This toggle now runs through TWO entry points, both reaching the SAME global-default
+logic above:
+- **Status=Draft**: unchanged — part of the header form, only persisted when the user clicks Save
+  on `TemplateBuilderPage` (via `PUT {id}`, which rejects entirely if `Status` has since become
+  Approved).
+- **Status=Approved**: NEW — the Set-as-default checkbox stays enabled (the only header field that
+  does); toggling it opens a Yes/No `ConfirmDialog`, and on **Yes** calls the dedicated
+  `POST {id}/set-default` endpoint, which runs the same 3-step logic above immediately, independent
+  of Save (which remains hidden/disabled for this row) and with NO `Status` precondition — this is
+  the one endpoint on this entity that intentionally does not check `Status` before writing.
+
 ### EutrTemplateReferences Lifecycle (new — Update 13)
 
 ```
@@ -377,6 +388,7 @@ all.~~
 | EutrTemplates Update (Update 16) | Status | Backend rejects the request with a validation error if `existing.Status == Approved` — edits are only accepted while Draft |
 | Approve request (Update 16) | Status | Backend rejects with a validation error if `existing.Status != Draft` |
 | Request change request (Update 16) | Status | Backend rejects with a validation error if `existing.Status != Approved` |
+| Set Default request (Update 18) | Status | NO precondition — unlike every other mutating action on this entity, `POST {id}/set-default` succeeds regardless of `Status` (Draft or Approved); this is the deliberate, sole exception to the Update 16 Approved-rejects-edits rule (FR-068) |
 | EutrTemplateDetails | StepId or StepName | Must provide `StepId` (existing eutr_steps record) OR a non-blank `StepName` (Update 6 — resolved to an existing or newly-created eutr_steps record on Save) |
 | EutrTemplateDetails | RequirementType | Must be 0 (Optional) or 1 (Required) |
 | EutrTemplateDetails | TakeFrom | Must be 0 (PO) or 1 (Upload manual) |

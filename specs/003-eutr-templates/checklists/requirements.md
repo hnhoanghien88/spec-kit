@@ -2,7 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-07-02
-**Updated**: 2026-07-22 (Update 17)
+**Updated**: 2026-07-23 (Update 18)
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -607,5 +607,37 @@
 - No [NEEDS CLARIFICATION] markers were embedded in the spec — the one scope question above was
   resolved interactively via AskUserQuestion before writing, consistent with this spec's established
   "resolve via question, not marker" pattern (Update 10/11/12/13/14/15/16).
+- Spec Quality Checklist re-validated against the updated spec: all 16/16 items remain passing (no
+  regressions, no newly-failing items).
+
+### Update 2026-07-23 (Update 18) — Allow Editing "Set as default template" When Approved
+
+- **Input**: "cập nhật 003-eutr-templates. với template trạng thái approve, cho chỉnh sửa Set as
+  default template." (For an Approved-status template, allow editing "Set as default template".)
+- **One scope question asked back to the user before writing this update (answered via
+  AskUserQuestion)**: FR-061 (Update 16) says the Save button is fully hidden/disabled when
+  Status=Approved — so if the Set as default checkbox becomes editable in that state, how does the
+  change actually get persisted? → **answered: auto-save with a `ConfirmDialog` Yes/No** — toggling
+  the checkbox shows a Yes/No confirmation (matching the existing Approve/Request change pattern);
+  choosing Yes immediately calls a dedicated update (only the `IsDefault` column) independent of the
+  main Save flow; choosing No reverts the checkbox to its prior value.
+- **Change: FR-061 partially reversed** — the checkbox **Set as default template** is now the one
+  exception to Approved read-only mode; it stays enabled and persists via the new FR-068 mechanism
+  instead of the disabled/Save-gated behavior FR-061 previously required for all header fields. The
+  rest of FR-061 (Name/Alert for disabled, Save hidden, step-tree actions locked) is unchanged.
+- **New: FR-068** — defines the Yes/No confirm-then-persist mechanism for toggling Set as default
+  while Approved: Yes updates only `IsDefault` (applying the existing global single-default
+  constraint, FR-040) without touching Name/AlertFor/Status/VersionId/step tree/vendor mappings, and
+  without requiring the (still hidden) Save button; No reverts the checkbox with no API call.
+- Edge case (Update 16, "Approved templates reject direct API updates outside Request change") is
+  updated to carve out an explicit exception: backend MUST still allow a dedicated IsDefault-only
+  update while Approved, independent from the header/step-tree update path it otherwise rejects.
+- User Story 8 (Approve template) acceptance scenario 5 updated to note the Set as default exception;
+  new acceptance scenario 6 added describing the Yes/No confirm-then-persist round trip.
+- Success Criteria: SC-052 added (100% of Set as default toggles on an Approved template show the
+  confirm dialog; Yes persists only IsDefault; No leaves it unchanged).
+- No [NEEDS CLARIFICATION] markers were embedded in the spec — the one scope question above was
+  resolved interactively via AskUserQuestion before writing, consistent with this spec's established
+  "resolve via question, not marker" pattern (Update 10/11/12/13/14/15/16/17).
 - Spec Quality Checklist re-validated against the updated spec: all 16/16 items remain passing (no
   regressions, no newly-failing items).
