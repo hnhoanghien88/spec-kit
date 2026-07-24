@@ -35,3 +35,11 @@
   lookup-table CRUD), scoped to `eutr_reference_types` per `docs/design/eutr/eutr_db.sql`. No
   clarifications were needed — table shape and FK usage from `eutr_references.RefType` gave enough
   context for reasonable defaults (deletion blocked when in use).
+- **(Update 1, 2026-07-24)**: Added User Story 5 (Assign Steps), FR-013 to FR-021, SC-007/SC-008,
+  and a new Key Entity (EUTR Reference Type Detail) for the "assign steps to reference type"
+  feature, mirroring "Apply to Customer" from `003-eutr-templates` but scoped down (no Vendor, no
+  From Date/To Date, no Import/Export; steps sourced from `eutr_steps`, data persisted to
+  `eutr_reference_type_details`). Two clarification points were resolved inline in the
+  Clarifications section (duplicate-step blocking, policy reuse) using reasonable defaults derived
+  from the Apply to Customer precedent — no user-facing [NEEDS CLARIFICATION] markers remained. All
+  checklist items still pass after this update.

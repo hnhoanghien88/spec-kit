@@ -124,6 +124,13 @@ approach).
   special-cased in the repository's WHERE-clause builder the same way `AlertFor → g.Name` is,
   instead of a straight single-column mapping. Powers TemplateListPage's search box (server-side,
   matches across the full dataset, not just the loaded page).
+- **Per-column filter whitelist (Update 20, 2026-07-24)**: `EutrTemplatesRepository.FilterMap`
+  (which columns `POST get-all`'s `Filters` array is allowed to filter on) now also includes
+  `Status → t.Status`, `VersionId → t.VersionId`, `IsDefault → t.IsDefault`, alongside the existing
+  `Code`, `Name`, `AlertFor` (→ `g.Name`), `CreatedBy`. Powers TemplateListPage's new per-column
+  filter panel (matching `country-groups/index.jsx`'s pattern) for those 3 columns plus the existing
+  Name column. `StepsCount` (a correlated `COUNT(*)` subquery, not a real column) intentionally has
+  no whitelist entry — filtering on it would require a `HAVING`-based rewrite, out of scope here.
 
 ### 2. EutrTemplateDetails
 
@@ -136,7 +143,7 @@ approach).
 | ParentId | BIGINT | NO | — | — | Parent step Id (0 = root level) |
 | StepId | BIGINT UNSIGNED | YES | NULL | FK → eutr_steps.Id | Reference to EUTR step |
 | RequirementType | TINYINT | YES | 0 | — | 0=Optional, 1=Required |
-| TakeFrom | TINYINT | NO | — | — | 0=PO, 1=Upload manual |
+| TakeFrom | TINYINT UNSIGNED (`byte` in `EutrTemplateDetails.cs`/`EutrTemplateDetailsRequestDto.cs`) | NO | — | Semantically FK → eutr_reference_types.Id (**Update 19**), NOT enforced at the DB level | `docs/design/eutr/eutr_db.sql`'s fresh-install DDL declares this column as `BIGINT UNSIGNED NULL` with a real `eutr_template_details_takefrom_foreign` FK constraint, but the actually-deployed column/entity is a `byte` (max 255) with no FK — confirmed drift, consistent with this same file already noting `eutr_db.sql` is stale elsewhere (Update 13). Value is now an `eutr_reference_types.Id` looked up dynamically (see Entity 7), no longer a fixed 0/1 enum. No column-type migration in this update — see research.md §36 for the byte-vs-BIGINT risk and why it's deferred. |
 | DisplayOrder | INT | YES | 0 | — | Sort order within same parent level |
 | CreatedBy | VARCHAR(50) | YES | NULL | — | Audit: creator email |
 | CreatedDate | DATETIME | YES | NULL | — | Audit: creation timestamp |
@@ -286,6 +293,24 @@ resolution. Domain model: `ComplianceSys.Domain.Entities.ComplGroupEmail` (alrea
   `EutrTemplatesService.UpdateAsync`'s ≥24h version-up branch (FR-049), and (2) the new
   `EutrTemplatesService.CloneAsync` (FR-053) — same method, no duplicated copy logic.
 
+### 7. EutrReferenceTypes (existing — feature 006-eutr-reference-types; read-only reference for this feature) — Update 19
+
+**Table**: `eutr_reference_types`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| Id | BIGINT UNSIGNED | PK |
+| Name | VARCHAR(255) | Reference type name (displayed as the TakeFrom label) |
+
+Owned and CRUD-managed entirely by feature 006-eutr-reference-types; this feature only **reads**
+the full list via the existing `GET /api/eutr-reference-types` endpoint (no new endpoint added).
+Used as the data source for the **TakeFrom** combobox on Add step/Edit step (FR-007/FR-008b) and
+the bulk-select dialog (FR-027–FR-030), and for the TakeFrom label lookup on the step tree display
+(FR-073) — replacing the previously hardcoded `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` frontend
+constants for these call sites. See research.md §36 for the cross-feature note on why
+`helpers.js`'s `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` constants themselves are NOT removed (still
+consumed by the out-of-scope `eutr-sales-orders` feature).
+
 ## Relationships
 
 ```
@@ -391,7 +416,7 @@ logic above:
 | Set Default request (Update 18) | Status | NO precondition — unlike every other mutating action on this entity, `POST {id}/set-default` succeeds regardless of `Status` (Draft or Approved); this is the deliberate, sole exception to the Update 16 Approved-rejects-edits rule (FR-068) |
 | EutrTemplateDetails | StepId or StepName | Must provide `StepId` (existing eutr_steps record) OR a non-blank `StepName` (Update 6 — resolved to an existing or newly-created eutr_steps record on Save) |
 | EutrTemplateDetails | RequirementType | Must be 0 (Optional) or 1 (Required) |
-| EutrTemplateDetails | TakeFrom | Must be 0 (PO) or 1 (Upload manual) |
+| ~~EutrTemplateDetails~~ | ~~TakeFrom~~ | ~~Must be 0 (PO) or 1 (Upload manual)~~ **(Superseded by Update 19)** — no longer a fixed 0/1 (or the frontend's previous 1-5) set; any `byte` value (0-255) is accepted by the backend as before (unchanged validator), but the frontend combobox now only offers/labels values that exist as an `Id` in `eutr_reference_types` at load time (Entity 7) |
 | EutrTemplateReferences (Update 13) | VendorCode | Required, not empty |
 | EutrTemplateReferences (Update 13) | FromDate | Required |
 | EutrTemplateReferences (Update 13) | ToDate | Optional in the UI (blank = unlimited/9999-12-31); when provided, must be ≥ FromDate |
@@ -408,7 +433,8 @@ logic above:
 |------|-------|-------|
 | RequirementType | 0 | Optional |
 | RequirementType | 1 | Required |
-| TakeFrom | 0 | PO |
-| TakeFrom | 1 | Upload manual |
+| ~~TakeFrom~~ | ~~0~~ | ~~PO~~ |
+| ~~TakeFrom~~ | ~~1~~ | ~~Upload manual~~ |
+| TakeFrom (**Update 19**) | *(dynamic)* | No longer a fixed enum — options/labels come from `eutr_reference_types` rows (Id → Name) at runtime, loaded via `GET /api/eutr-reference-types`. The struck-through 0/1 values above (and the frontend's separate 1-5 `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` constants in `helpers.js`, which disagreed with this table even before Update 19) are historical/superseded for this feature's own combobox and label lookups; `helpers.js`'s constants are NOT deleted because `eutr-sales-orders` (spec 005, out of scope) still reads them for its own read-only display — see research.md §36. |
 | Status (Update 16) | 0 | Draft |
 | Status (Update 16) | 1 | Approved |

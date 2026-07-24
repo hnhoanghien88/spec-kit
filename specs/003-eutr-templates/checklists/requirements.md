@@ -2,7 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-07-02
-**Updated**: 2026-07-23 (Update 18)
+**Updated**: 2026-07-24 (Update 20)
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -641,3 +641,77 @@
   "resolve via question, not marker" pattern (Update 10/11/12/13/14/15/16/17).
 - Spec Quality Checklist re-validated against the updated spec: all 16/16 items remain passing (no
   regressions, no newly-failing items).
+
+### Update 2026-07-24 (Update 19) — TakeFrom Sourced from `eutr_reference_types` + TemplateListPage Switches to DataGridStyled
+
+- **Input**: "cập nhật 003-eutr-templates thông tin take from lấy từ bảng eutr_reference_types và
+  TableContainer ở TemplateListPage sửa lại thành DataGridStyled." (Two independent technical
+  changes: (1) the TakeFrom field's options/labels move from a hardcoded frontend constant to the
+  `eutr_reference_types` table; (2) TemplateListPage's raw MUI `TableContainer`/`Table` markup is
+  replaced with the shared `DataGridStyled` + MUI `DataGrid` pattern already used by other EUTR list
+  pages.)
+- **Pre-write code audit**: confirmed `eutr_db.sql` already declares
+  `eutr_template_details_takefrom_foreign FOREIGN KEY(TakeFrom) REFERENCES eutr_reference_types(Id)`
+  — the DB design already intended TakeFrom to reference this table; the frontend just never used
+  it (`TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` in `helpers.js` hardcode 5 values that happen to line up
+  with the currently-seeded rows). Feature 006-eutr-reference-types already ships a working
+  `GET /api/eutr-reference-types` (all rows) endpoint with CRUD, so no new backend work is needed —
+  the templates feature only needs to consume it. Confirmed `eutr-reference-types/index.jsx` and
+  `eutr-steps/index.jsx` as the canonical `DataGridStyled` + `DataGrid` usage pattern (server-side
+  pagination/sort/filter, `checkboxSelection`, `columnVisibilityModel`) to follow for
+  TemplateListPage.
+- **Two scope questions resolved via informed default (not asked back)**, consistent with this
+  spec's "reasonable defaults over blocking markers" convention for low-ambiguity/reversible
+  decisions: (1) whether the TakeFrom data-source change applies to every combobox/label lookup
+  (Add step, Edit step, bulk-select dialog, step-tree label display) or only some → resolved: all of
+  them, since they all currently read the same two hardcoded constants; (2) whether switching to
+  DataGridStyled also means restoring the old 9-column DataGrid/re-enabling column sort/filter/
+  visibility (Update 9 style) or keeping Update 10-18's exact columns/features and only swapping the
+  rendering technology → resolved: keep everything currently on TemplateListPage (2-line Code/Name
+  cell, Status/Version/Default chips, Steps count, search box, checkbox bulk-select, 4 action icons)
+  exactly as-is; sort/filter/column-visibility/Import-Export remain deferred per FR-021b, unchanged
+  by this update.
+- **New: FR-069 through FR-071 added** — TemplateListPage's list MUST render via `DataGridStyled` +
+  MUI `DataGrid` instead of `TableContainer`/`Table`/`TableHead`/`TableRow`/`TableCell`/`TableBody`/
+  `TablePagination` (FR-069); every existing column becomes a `DataGrid` column with `renderCell`
+  preserving current content/behavior exactly, using DataGrid's built-in server-side pagination
+  instead of manual `TablePagination` (FR-070); the manual per-row `Checkbox` for bulk-delete
+  selection becomes DataGrid's built-in `checkboxSelection`/`onRowSelectionModelChange` (FR-071).
+  FR-021 annotated in place (body preserved) noting the render technology changed at Update 19 while
+  its described content stays authoritative.
+- **New: FR-072, FR-073 added** — TakeFrom comboboxes (Add step FR-007, Edit step FR-008b,
+  bulk-select FR-027-030) MUST load options from `GET /api/eutr-reference-types` (Name as label, Id
+  as value) instead of the hardcoded `TAKE_FROM_OPTIONS` (FR-072); every place that looks up a
+  TakeFrom display label by Id (step-tree rendering in `StepTree.jsx`/`TemplateBuilderPage.jsx`)
+  MUST look up `Name` from the same loaded list instead of the hardcoded `TAKE_FROM_LABELS` map,
+  rendering blank if the Id no longer exists (FR-073). `REQUIREMENT_TYPES`/`REQUIREMENT_LABELS` are
+  explicitly out of scope — unchanged. FR-007, FR-008b annotated in place with pointers to FR-072.
+- User Story 1 intro updated to note DataGridStyled/DataGrid now render the list (content per row
+  unchanged). Key Entities: EUTR Template Detail's TakeFrom attribute redescribed as an
+  `eutr_reference_types.Id` foreign key (no longer a 2-value hardcoded enum); new **EUTR Reference
+  Type** key entity added documenting the table/API this feature now reuses.
+- Success Criteria: SC-053 (TakeFrom comboboxes reflect eutr_reference_types CRUD changes live, no
+  code change needed) and SC-054 (DataGridStyled swap preserves 100% of prior list behavior) added.
+- Assumptions: 4 new bullets added — `eutr_reference_types`/`GET /api/eutr-reference-types` already
+  exist from feature 006 (no new backend), existing seeded Ids retain their meaning (no data
+  migration needed for already-saved `TakeFrom` values), `DataGridStyled` is an existing shared
+  styling wrapper (no new component), and the `useEutrTemplatesData` hook's API contract
+  (`paginationModel`/`filterModel`/`total`/`data`/`loading`) is unchanged — only how those values feed
+  the grid changes.
+- No [NEEDS CLARIFICATION] markers were embedded in the spec — both scope decisions above were
+  resolved as documented Assumptions/Clarification Q&A with explicit rationale, consistent with this
+  spec's established pattern (e.g. Update 7, 9, 12, 15) of using reasonable defaults for low-impact,
+  easily-reversible technical/UX decisions instead of blocking on every open question.
+- Spec Quality Checklist re-validated against the updated spec: all 16/16 items remain passing (no
+  regressions, no newly-failing items). Both changes are scoped as data-source/rendering-technology
+  swaps that preserve all existing user-facing behavior, so no acceptance-scenario contradictions
+  were introduced.
+
+### Update 2026-07-24 (Update 20) — Column Filters on TemplateListPage (Matching country-groups/index.jsx)
+
+- **Input**: "thêm filter các cột giống E:\Working\Eutr\compliance-client\src\presentation\pages\country-groups\index.jsx" — a direct follow-up request (not routed through `/speckit-specify`), applied here retroactively for traceability.
+- **Change: FR-021b marked partially superseded** — FR-074/FR-075 added: TemplateListPage's `DataGrid` enables per-column filtering (`filterMode="server"`, column-menu filter panel) for Template Name/Status/Version/Default, matching `country-groups/index.jsx`'s pattern; Steps (computed) and Actions stay non-filterable, mirroring how `country-groups` itself excludes its own computed `memberCount`/`countryCodes` columns. Sort and column-visibility remain deferred — only filter was requested.
+- **Change: Backend `EutrTemplatesRepository.FilterMap` extended** — added `Status`, `VersionId`, `IsDefault` (all already selected in the existing query, just missing from the filter whitelist); no new endpoint, no contract change.
+- **Change: Quick-search + column-filter coexistence** — the existing Code/Name search box and the new column-filter panel both write to the same `filterModel`; merge logic added so neither one clobbers the other's items.
+- Success Criteria: SC-055, SC-056 added.
+- No new [NEEDS CLARIFICATION] markers — scope (which columns get real filter support) was resolved by auditing the backend's existing `FilterMap`/`SortMap` whitelist before writing, consistent with this spec's established pattern of pre-write code audits (Update 13, 17, 19).

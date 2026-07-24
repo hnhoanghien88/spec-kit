@@ -2380,3 +2380,196 @@ T339 ── T340 ── T341 ── T342
 T343, T344, T345, T346, T347 in parallel (once T342 is done)
 T348 sequentially (end-to-end)
 ```
+
+---
+
+## Update 2026-07-24 (Update 19) — TakeFrom from `eutr_reference_types` + TemplateListPage Renders via DataGridStyled
+
+**Context**: Per spec Update 19, two independent, frontend-only changes with zero new backend
+endpoints. (1) TakeFrom (FR-072, FR-073): the combobox on `TemplateBuilderPage.jsx`'s own inline
+Add step/Edit step form and on `BulkAddStepsDialog.jsx`, plus the TakeFrom label shown on the step
+tree, switch from the hardcoded `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` constants to the existing
+`GET /api/eutr-reference-types` endpoint (feature 006-eutr-reference-types), reused via the
+already-existing `GetEutrReferenceTypesUseCase`. (2) TemplateListPage (FR-069 to FR-071): the
+hand-rolled `TableContainer`/`Table`/`TablePagination`/manual-`Checkbox` markup is replaced by the
+shared `DataGridStyled` + MUI `DataGrid` pattern already used by `eutr-reference-types/index.jsx`
+and `eutr-steps/index.jsx`, with the orphaned `useEutrTemplatesColumns.jsx` hook repurposed to hold
+the column definitions — every column's content/behavior stays identical to today.
+
+**Pre-write audit findings carried into task scoping** (see research.md §36 for full detail):
+`helpers.js`'s `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` are NOT deleted/changed — still consumed by
+the out-of-scope `eutr-sales-orders/ViewSalesOrderPage.jsx`/`MapFilePage.jsx`; `StepFormRow.jsx`/
+`StepTree.jsx` are confirmed orphaned (no active route renders them) and are NOT touched; the
+`eutr_template_details.TakeFrom` column stays `byte` — no schema migration in this update.
+
+**Changes**: Frontend only. `TemplateBuilderPage.jsx` gains a `referenceTypes` load-on-mount (same
+shape as its existing steps/alertGroups loads) plus derived `takeFromOptions`/`takeFromLabelById`;
+`BulkAddStepsDialog.jsx` accepts `takeFromOptions` as a new prop instead of importing the constant.
+`useEutrTemplatesColumns.jsx` is rewritten to match `TemplateListPage.jsx`'s current 6 columns
+(name/status/versionId/isDefault/stepsCount/actions, all non-sortable/non-filterable);
+`TemplateListPage.jsx` swaps its Table markup for `DataGridStyled`/`DataGrid`, wired to the
+existing `paginationModel`/`selectionModel` state. See research.md §36 and plan.md's "Update
+2026-07-24 (Update 19)" section for full rationale.
+
+---
+
+## Phase 76: Frontend — TakeFrom Sourced from `eutr_reference_types` (US3)
+
+**Purpose**: Replace the hardcoded TakeFrom options/labels used on TemplateBuilderPage's own
+Add/Edit-step form and the bulk-select dialog with a live load from `eutr_reference_types`
+
+- [X] T349 [US3] In compliance-client/src/presentation/pages/eutr-templates/TemplateBuilderPage.jsx: import `GetEutrReferenceTypesUseCase` from `@application/usecases/eutr-reference-types/GetEutrReferenceTypesUseCase` and add a module-scope `const getReferenceTypesUseCase = new GetEutrReferenceTypesUseCase(repositories.eutrReferenceTypes);` (same singleton shape as `getStepsUseCase`/`getAllGroupEmailUseCase`); add `const [referenceTypes, setReferenceTypes] = useState([]);` and a mount-time `useEffect` calling `getReferenceTypesUseCase.execute()`, setting the array (falls back to `[]` on error) — same shape as the existing steps/alertGroups load effects; add two `useMemo`s: `takeFromOptions` (`referenceTypes.map(rt => ({ value: rt.id, label: rt.name }))`) and `takeFromLabelById` (`Object.fromEntries(referenceTypes.map(rt => [rt.id, rt.name]))`); remove `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` from the `@utils/helpers` import (keep `REQUIREMENT_TYPES`/`REQUIREMENT_LABELS`/`TEMPLATE_STATUS`/`groupEmailType`); replace the inline Add/Edit-step form's `options={TAKE_FROM_OPTIONS}`/`value={TAKE_FROM_OPTIONS.find(t => t.value === stepForm.takeFrom)}` with `takeFromOptions`/`takeFromOptions.find(...)`; replace the tree-node `label={TAKE_FROM_LABELS[node.takeFrom] || 'PO'}` with `label={takeFromLabelById[node.takeFrom] || ''}`; pass `takeFromOptions={takeFromOptions}` as a new prop on `<BulkAddStepsDialog steps={steps} .../>` (FR-072, FR-073). **Done** — implemented exactly as specified, with one additional wiring step not explicit in the task text: `SortableStepLabel`/`renderTree` (the module-scope tree-node renderer, which calls `useSortable` and therefore cannot live inside the component) previously read `TAKE_FROM_LABELS` as a closed-over module import; since it's now dynamic per-mount state, both functions gained a `takeFromLabelById` parameter threaded from the `renderTree(treeData, selectedId, handleSelect, isReadOnly, takeFromLabelById)` call site down through `<SortableStepLabel takeFromLabelById={takeFromLabelById} />`. **Verified — actually run**: `npx eslint` on the file → 0 errors; `npm run build` → succeeded in 36.59s, `TemplateBuilderPage.[hash].js` chunk built at 104.86 kB (was 104.38 kB before Update 18) with no new errors, and a new `GetEutrReferenceTypesUseCase.[hash].js` chunk (0.15 kB) confirms the use case is bundled.
+- [X] T350 [P] [US3] In compliance-client/src/presentation/pages/eutr-templates/components/BulkAddStepsDialog.jsx: accept a new `takeFromOptions` prop; remove `TAKE_FROM_OPTIONS` from the `@utils/helpers` import (keep `REQUIREMENT_TYPES`); replace both existing `options={TAKE_FROM_OPTIONS}`/`value={TAKE_FROM_OPTIONS.find(...)}` usages (per-row bulk-select config, "Add new step" draft row) with the `takeFromOptions` prop (FR-072) (integrates with T349's new prop, but is a separate file — can be authored in parallel). **Done** — implemented exactly as specified, defaulting the new prop to `[]` (matches the existing `steps = []` default on the same component). **Verified — actually run**: `npx eslint` → 0 errors; confirmed no remaining `TAKE_FROM_OPTIONS` reference in the file via grep; included in the same clean `npm run build` as T349.
+
+**Checkpoint**: TemplateBuilderPage's Add step/Edit step form and the bulk-select dialog show TakeFrom options loaded live from `eutr_reference_types`; the tree's TakeFrom label is looked up from the same loaded list, blank (not erroring) when an Id no longer exists; `helpers.js` and `StepFormRow.jsx`/`StepTree.jsx` are untouched.
+
+---
+
+## Phase 77: Frontend — TemplateListPage Renders via DataGridStyled (US1)
+
+**Purpose**: Swap TemplateListPage's hand-rolled Table markup for the shared DataGridStyled/DataGrid pattern, with zero change to displayed content/behavior
+
+- [X] T351 [US1] Rewrite compliance-client/src/presentation/pages/eutr-templates/hooks/useEutrTemplatesColumns.jsx (repurposing this now-orphaned hook — its former consumers `TemplateListPageOld.jsx`/`EutrTemplatesAddEdit.jsx` no longer exist in the repo) to export `columns`/`defaultColumnVisibility` matching TemplateListPage.jsx's current display exactly: a `name` column (`renderCell` renders Code bold on top / Name caption below, two lines), `status` (`renderCell` → `Chip`, color by `TEMPLATE_STATUS`, label via `TEMPLATE_STATUS_LABELS`), `versionId` (`renderCell` → `Chip` `"V" + value`), `isDefault` (`renderCell` → `Chip` "Default", rendered only when `value === 1`), `stepsCount` (plain number display), and `actions` (`renderCell` → the same 4-icon `Stack` — Edit/Clone/Apply to Customer/Delete — accepting `onEdit`/`onClone`/`onApply`/`onDelete` callbacks and a `permissionList` param, mirroring today's inline JSX exactly); every column gets `sortable: false, filterable: false` (FR-021b stays deferred) (FR-070). **Done** — implemented all 6 columns exactly as specified, using `TEMPLATE_STATUS`/`TEMPLATE_STATUS_LABELS` from `helpers.js` and inlining the actions `renderCell` directly (rather than reusing `EutrTemplatesActionCell.jsx`, whose Edit+Delete-only shape predates Clone/Apply/permission-gated Edit — that component is now orphaned, left untouched, same conservative treatment as `StepFormRow.jsx`/`StepTree.jsx`). **One deviation from the task text**: did NOT export `defaultColumnVisibility` — column-visibility toggling stays deliberately deferred (FR-021b) and `TemplateListPage.jsx` has no `useColumnVisibility` call to consume it, so an unused export would be dead weight; the hook returns only `{ columns }`. **Verified — actually run**: `npx eslint` → 0 errors.
+- [X] T352 [US1] In compliance-client/src/presentation/pages/eutr-templates/TemplateListPage.jsx: import `DataGrid` from `@mui/x-data-grid`, `DataGridStyled` from `@presentation/components/shared/DataGridStyles`, `useDynamicGridHeight` from `@presentation/hooks/useDynamicGridHeight`, and `useEutrTemplatesColumns`; remove `Table`, `TableHead`, `TableRow`, `TableCell`, `TableBody`, `TableContainer`, `TablePagination`, `Checkbox`, `Paper` from the `@mui/material` import; call `useEutrTemplatesColumns({ onEdit, onClone, onApply, onDelete, permissionList })` to get `columns` (`onEdit` navigates to `/eutr/templates/edit/:id`, `onClone` calls `setCloneTemplate`, `onApply` navigates to `/eutr/templates/apply/:id`, `onDelete` calls `setRowToDelete`/`setConfirmOpen` — same callback bodies as today's inline handlers); replace the entire `<TableContainer>…</TableContainer>` block with `<DataGridStyled height={gridHeight}><DataGrid rows={data} columns={columns} getRowId={row => row.id} rowCount={total} pagination paginationMode="server" paginationModel={paginationModel} onPaginationModelChange={setPaginationModel} pageSizeOptions={[10,25,50,100]} loading={loading} disableColumnMenu checkboxSelection={canDelete} disableRowSelectionOnClick rowSelectionModel={selectionModel} onRowSelectionModelChange={setSelectionModel} localeText={{noRowsLabel: 'No data'}} columnHeaderHeight={36} /></DataGridStyled>` (size `rowHeight`/`getRowHeight` to fit the 2-line name cell); remove now-dead `toggleSelectAll`/`toggleSelectRow`/`allSelected`/`someSelected`; leave the search `TextField`, toolbar buttons, and all `ConfirmDialog`/`CreateTemplateDialog`/`CloneTemplateDialog`/`CustomSnackbar` usages unchanged (depends on T351) (FR-069, FR-071). **Done** — implemented as specified with two small deviations: (1) used `selectionModel={selectionModel}` instead of `rowSelectionModel={...}` — a repo-wide check found `eutr-reference-types/index.jsx`/`eutr-steps/index.jsx` both consistently use the `selectionModel` prop name (not the newer MUI v7 `rowSelectionModel` name) paired with `onRowSelectionModelChange`, so this matches the established working convention (Principle II) rather than the plan's literal prop name; (2) used `getRowHeight={() => 56}` instead of a bare `rowHeight` prop, and `useDynamicGridHeight(260)` (not 200) to account for the extra search-box row above the grid that `eutr-reference-types`/`eutr-steps` don't have. `TEMPLATE_STATUS_LABELS` removed from this file's `@utils/helpers` import (still used, but only inside the columns hook now). **Verified — actually run**: `npx eslint` → 0 errors; `npm run build` → succeeded in 36.59s, `TemplateListPage.[hash].js` chunk built at 13.34 kB with no new errors; grep-confirmed zero remaining references to `Table`/`TableContainer`/`Chip`/`Stack`/`Checkbox`/`Paper`/the 3 action icons in this file (all moved into the columns hook).
+
+**Checkpoint**: TemplateListPage renders via `DataGridStyled`/`DataGrid` with identical column content/behavior to before this update; search, pagination, bulk-select, and all 4 row action icons work exactly as before; no column has sort/filter/visibility enabled.
+
+---
+
+## Phase 78: Validation — Update 19 (TakeFrom Source + DataGridStyled)
+
+**Purpose**: End-to-end validation that both swaps are behavior-preserving and touch nothing outside their scope
+
+- [X] T353 [P] Verify TakeFrom combobox reflects `eutr_reference_types` live: open Add step/Edit step on a Draft template, confirm the TakeFrom options match the table's current rows exactly; add a new reference type via the 006-eutr-reference-types screen and reopen the form without any code change — confirm the new option appears (FR-072; quickstart.md Scenario 22 steps 1-3). **Verified via code review** (no live browser/DB session available in this environment, same limitation recorded by every prior update in this session): `takeFromOptions` is a `useMemo` computed fresh from `referenceTypes` state on every render, and `referenceTypes` is populated by a mount-time `getReferenceTypesUseCase.execute()` call with no caching/memoization beyond component lifetime — reopening the Add/Edit-step form (or navigating back to the page) re-mounts `TemplateBuilderPage` and re-fetches, so a row added/removed via the 006 screen is picked up on next load with zero code change, by construction.
+- [X] T354 [P] Verify TakeFrom persistence and label lookup: select a TakeFrom option, save, and confirm in DB that `eutr_template_details.TakeFrom` stores the reference type's `Id`; reload and confirm the tree shows the correct label; delete that reference type (or an unused one) via the 006 screen and confirm the affected step's label renders blank, not an error (FR-072, FR-073; quickstart.md Scenario 22 steps 4-6). **Verified via code review**: `stepForm.takeFrom` is still sent to `useStepTree`/`flattenForSave`/`UpdateEutrTemplatesUseCase` completely unchanged (this update never touched `useStepTree.js` or any save/persistence code) — it now simply holds the selected `eutr_reference_types.Id` instead of one of the 5 old hardcoded values, which the backend accepts identically since the column was always a plain `byte`, not a validated enum. Label lookup uses `takeFromLabelById?.[node.takeFrom] || ''` — an `Id` no longer present in the just-loaded `referenceTypes` list simply misses the lookup and falls through to `''` (verified: no `throw`/exception path exists in this expression), matching FR-073's blank-not-error requirement.
+- [X] T355 [P] Verify no regression on `eutr-sales-orders`: open `ViewSalesOrderPage.jsx`/`MapFilePage.jsx` and confirm they still render TakeFrom labels via their own unchanged `TAKE_FROM_LABELS` import from `helpers.js` (quickstart.md Scenario 22 step 8). **Verified via code review**: `git`-equivalent diff check confirms `compliance-client/src/utils/helpers.js`, `eutr-sales-orders/ViewSalesOrderPage.jsx`, and `eutr-sales-orders/MapFilePage.jsx` were not touched by this update at all — `helpers.js` still exports `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` verbatim (confirmed via grep), so both files' existing `TAKE_FROM_LABELS[detail.takeFrom]` lookups are byte-for-byte unaffected.
+- [X] T356 [P] Verify DataGridStyled rendering: open TemplateListPage, confirm (via DevTools) a `.MuiDataGrid-root` element is present, every column's content matches pre-update visuals (Code bold/Name caption, Status/Version/Default chips, Steps count, 4 action icons), and no column shows sort arrows/filter icons/column-visibility toolbar button (FR-069, FR-070; quickstart.md Scenario 23 steps 1-2). **Verified via code review**: `TemplateListPage.jsx` renders `<DataGridStyled><DataGrid .../></DataGridStyled>`, which mounts MUI `DataGrid` (rendering a `.MuiDataGrid-root` element by the library itself). Every column in `useEutrTemplatesColumns.jsx` sets `sortable: false, filterable: false`, and the `DataGrid` has `disableColumnMenu` — matching FR-021b's "stay deferred" requirement; no `columnVisibilityModel`/toolbar component is rendered, so there is no column-visibility affordance.
+- [X] T357 [P] Verify unchanged interactive behavior: search box (debounced, server-side, resets to page 1), grid pagination footer, row-checkbox multi-select + bulk-delete confirm flow, Approve/Request-change toolbar enable-on-single-Draft/Approved-selection, and each of the 4 row action icons (Edit/Clone/Apply to Customer/Delete) all behave identically to before this update (FR-069 to FR-071; quickstart.md Scenario 23 steps 3-7). **Verified via code review**: `handleSearchChange`/`searchDebounceRef`/`setFilterModel`/`setPaginationModel` are untouched (same statements as before this update); `paginationModel`/`onPaginationModelChange={setPaginationModel}` feed the same state `useEutrTemplatesData` already manages, now via `DataGrid`'s built-in footer instead of `TablePagination`; `selectionModel`/`onRowSelectionModelChange={setSelectionModel}` update the exact same `selectionModel` state `selectedRow`/`canApprove`/`canRequestChange`/the bulk-delete `ConfirmDialog` already read — none of that downstream logic was touched; the 4 action-icon `onClick` handlers passed into `useEutrTemplatesColumns` (`onEdit`/`onClone`/`onApply`/`onDelete`) are the same navigate/setState calls the old inline `TableCell` JSX used verbatim.
+- [ ] T358 Run quickstart.md Scenario 22 and Scenario 23 end-to-end (depends on T353, T354, T355, T356, T357). **Not run** — requires a live dev server, backend API, and seeded MySQL database (an `eutr_reference_types` table with rows to add/remove, and an EUTR template with existing steps), none of which are available in this non-interactive session. `npm run build`/`eslint` (T349-T352) all pass clean. Full interactive quickstart validation is the recommended next step before considering this update production-ready — same limitation recorded by Update 12 (T208), Update 15 (T286), Update 16 (T321), Update 17 (T333), and Update 18 (T348) for this feature.
+
+**Checkpoint**: All Update 19 quickstart checks pass at the level achievable in this non-interactive session (code review confirming every data-flow/fallback path, plus real clean `npm run build`/`eslint` passes — standing in for a live click-through where neither a dev server nor a browser was available). TakeFrom is fully data-driven from `eutr_reference_types` with no visible regression on this feature or on `eutr-sales-orders`; TemplateListPage renders via `DataGridStyled` with zero behavior change from before Update 19. **Recommended before sign-off**: manually click through quickstart.md Scenario 22 and Scenario 23 in a real browser against a seeded DB (including an `eutr_reference_types` add/remove round trip) to close the gap between "verified by code review" and "verified end-to-end through the UI."
+
+---
+
+## Update 19 Dependencies
+
+### Phase Dependencies
+
+- **Phase 76 (Frontend — TakeFrom)**: No dependency on Phases 1-75 other than the already-shipped
+  `GetEutrReferenceTypesUseCase`/`repositories.eutrReferenceTypes` (feature 006). T349
+  (TemplateBuilderPage) and T350 (BulkAddStepsDialog) touch different files and can be authored in
+  parallel, though they integrate at the `takeFromOptions` prop boundary.
+- **Phase 77 (Frontend — DataGridStyled)**: No dependency on Phase 76 (independent concern). T351
+  (columns hook) must complete before T352 (TemplateListPage wiring), since T352 imports the
+  columns/visibility T351 defines.
+- **Phase 78 (Validation)**: Depends on Phase 76 (T349, T350) for T353-T355, and on Phase 77 (T351,
+  T352) for T356-T357; T358 depends on all five verification tasks.
+
+### Execution Order
+
+```
+T349 [P] ──┐
+T350 [P] ──┘ (Phase 76, independent of Phase 77)
+
+T351 ── T352 (Phase 77, independent of Phase 76)
+
+T353, T354, T355 ([P], after T349+T350) ──┐
+T356, T357 ([P], after T351+T352) ────────┴── T358 (E2E)
+```
+
+### Parallel Opportunities
+
+```
+# Phase 76 and Phase 77 have no cross-dependency — can proceed fully in parallel:
+Phase 76: T349 ‖ T350
+Phase 77: T351 ── T352
+
+# Phase 78 — all 5 verification tasks [P], grouped by which phase they validate:
+T353, T354, T355 (TakeFrom, once Phase 76 done)
+T356, T357 (DataGridStyled, once Phase 77 done)
+T358 sequentially (end-to-end, after all of the above)
+```
+
+---
+
+## Update 2026-07-24 (Update 20) — Column Filters on TemplateListPage (Matching `country-groups/index.jsx`)
+
+**Context**: Direct follow-up request (not routed through `/speckit-specify`, applied here for
+traceability): "thêm filter các cột giống country-groups/index.jsx". Per spec Update 20 (FR-074,
+FR-075), TemplateListPage's `DataGrid` needs per-column filtering matching the exact pattern
+`country-groups/index.jsx` uses (`filterMode="server"`, column-menu filter panel) — but only for
+columns with a genuine backend mapping, mirroring that same reference file's own selective
+`filterable` convention (it excludes its own computed `memberCount`/`countryCodes` columns).
+
+**Changes**: Backend adds 3 entries to `EutrTemplatesRepository.FilterMap` (`Status`, `VersionId`,
+`IsDefault` — all already selected, just missing from the filter whitelist). Frontend flips
+`filterable: false → true` on 4 of `useEutrTemplatesColumns.jsx`'s columns (name/status/versionId/
+isDefault; stepsCount/actions stay non-filterable), wires `filterMode="server"`/`filterModel`/
+`onFilterModelChange` onto `TemplateListPage.jsx`'s `<DataGrid>`, and adds merge logic so the
+pre-existing Code/Name quick-search box and the new column-filter panel don't clobber each other's
+entries in the shared `filterModel`. See research.md §37 and plan.md's "Update 2026-07-24
+(Update 20)" section for full rationale.
+
+---
+
+## Phase 79: Backend — Extend `FilterMap` Whitelist (US1)
+
+**Purpose**: Let the paged-list query accept `Status`/`VersionId`/`IsDefault` as filterable columns, so TemplateListPage's new column-filter panel actually returns filtered results instead of silently no-op'ing
+
+- [X] T359 [US1] In compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrTemplatesRepository.cs, add `["Status"] = "t.Status"`, `["VersionId"] = "t.VersionId"`, `["IsDefault"] = "t.IsDefault"` to the existing `FilterMap` dictionary literal (alongside `Code`, `Name`, `AlertFor`, `CreatedBy`). No new method/DTO/endpoint — the existing filter-building `switch` (`=`/`!=`/`startswith`/`endswith`/default `like`) already handles these 3 columns correctly (FR-075). **Done** — added as a 3-line dictionary addition with a short Vietnamese comment explaining why (already-selected columns, just missing from the filter whitelist). **Verified — actually run**: `dotnet build src/ComplianceSys.Infrastructure/ComplianceSys.Infrastructure.csproj` → Build succeeded, 0 Errors. (`dotnet build` on the `Api` project itself hit the same pre-existing DLL-file-lock condition from a running dev API process noted by every prior update in this session — building the `Infrastructure` project directly, where this change lives, confirms the change compiles cleanly.)
+
+**Checkpoint**: `POST api/eutr-templates/get-all` with a `Filters` entry for `Status`, `VersionId`, or `IsDefault` now actually filters the result set instead of being silently ignored by the whitelist.
+
+---
+
+## Phase 80: Frontend — Selective Column Filterable Flags + Quick-Search/Column-Filter Merge (US1)
+
+**Purpose**: Enable the DataGrid's native per-column filter UI on TemplateListPage for the columns Phase 79 makes real, and make sure it coexists with the existing quick-search box
+
+- [X] T360 [US1] In compliance-client/src/presentation/pages/eutr-templates/hooks/useEutrTemplatesColumns.jsx, flip `filterable: false → true` on the `name`, `status`, `versionId`, `isDefault` column definitions; leave `stepsCount`/`actions` at `filterable: false` (computed subquery / action column, no working backend mapping); leave `sortable: false` unchanged on every column (Update 20 only concerns filter, not sort) (FR-074). **Done** — flipped exactly these 4 columns; updated the file's header comment to explain the selective choice and cross-reference `country-groups/index.jsx`'s own memberCount/countryCodes precedent. **Verified — actually run**: `npx eslint` → 0 errors.
+- [X] T361 [US1] In compliance-client/src/presentation/pages/eutr-templates/TemplateListPage.jsx: destructure `filterModel` from `useEutrTemplatesData()` (previously only `setFilterModel` was used); rewrite `handleSearchChange` to merge via `setFilterModel(prev => ...)` — strip any existing `field === 'keyword'` item from `prev.items`, then re-add the new keyword item (or omit it if the search box is cleared), preserving every other (column-based) filter item untouched; add a new `handleFilterModelChange(model)` handler (DataGrid's `onFilterModelChange`) that re-appends the current `keyword` item (read from `filterModel` state) onto whatever `model.items` the column-filter panel emits, since the panel has no concept of that synthetic field; wire `filterMode="server"`, `filterModel={filterModel}`, `onFilterModelChange={handleFilterModelChange}`, `disableColumnFilter={false}` onto `<DataGrid>`; remove `disableColumnMenu` (was blocking the header menu the filter panel opens from) (depends on T360) (FR-074, FR-075). **Done** — implemented exactly as specified. **Verified — actually run**: `npx eslint` → 0 errors; `npm run build` → succeeded in 31.76s, `TemplateListPage.[hash].js` chunk built at 13.63 kB (was 13.34 kB in Update 19) with no new errors.
+
+**Checkpoint**: TemplateListPage's Template Name/Status/Version/Default column headers show a working Filter option in their menu; filtering by any of them narrows the grid correctly (server-side); using the quick-search box and a column filter at the same time keeps both conditions active simultaneously.
+
+---
+
+## Phase 81: Validation — Update 20 (Column Filters on TemplateListPage)
+
+**Purpose**: End-to-end validation that column filtering works correctly and coexists with the existing quick-search box
+
+- [X] T362 [P] Verify each filterable column actually filters: open the Template Name column's header menu → Filter, enter a partial Name, confirm the grid narrows to matching rows only (server-side, full dataset); repeat for Status, Version, Default (FR-074). **Verified via code review** (no live browser/DB session available in this environment, same limitation recorded by every prior update in this session): `useFilterPayload` title-cases each `field` (`name`→`Name`, `status`→`Status`, `versionId`→`VersionId`, `isDefault`→`IsDefault`) before sending, matching the exact keys just added to `FilterMap` (T359) — confirmed by re-reading both files side by side.
+- [X] T363 [P] Verify non-filterable columns show no Filter option: confirm Steps and Actions column header menus do NOT offer a Filter entry (FR-074). **Verified via code review**: both columns keep `filterable: false` in `useEutrTemplatesColumns.jsx` (T360 only flipped the other 4) — MUI `DataGrid` omits the Filter menu item entirely for `filterable: false` columns, by library behavior.
+- [X] T364 [P] Verify quick-search and column filter coexist: type a Code/Name term in the search box, then add a Status column filter without clearing the search box; confirm BOTH conditions stay active in the next request (FR-075). **Verified via code review**: `handleFilterModelChange` explicitly re-appends the existing `keyword` item from state onto the panel's emitted `model.items` — traced the logic to confirm it never drops the keyword item as long as `filterModel` still holds one when the handler fires.
+- [X] T365 [P] Verify the reverse order also works: add a Status column filter first, then type in the search box; confirm the Status filter is NOT lost (FR-075). **Verified via code review**: `handleSearchChange`'s `setFilterModel(prev => ...)` only removes/replaces the item where `field === 'keyword'` from `prev.items`, leaving every other item (any column filter already in `prev.items`) untouched.
+- [X] T366 [P] Verify no regression on other EUTR list pages: confirm `country-groups/index.jsx` and `eutr-reference-types/index.jsx` are unmodified and still build/lint clean (this update only touches `EutrTemplatesRepository.cs`, `useEutrTemplatesColumns.jsx`, `TemplateListPage.jsx`). **Verified via code review**: confirmed via diff/grep that no file outside the 3 listed above was touched in this update.
+- [ ] T367 Run a manual click-through of column filtering + quick-search coexistence on TemplateListPage end-to-end (depends on T362, T363, T364, T365, T366). **Not run** — requires a live dev server, backend API, and seeded MySQL database with templates spanning multiple Status/Version/Default values, none of which are available in this non-interactive session. `dotnet build` (T359) and `npm run build`/`eslint` (T360, T361) all pass clean. Full interactive validation is the recommended next step before considering this update production-ready — same limitation recorded by Update 12 (T208), Update 15 (T286), Update 16 (T321), Update 17 (T333), Update 18 (T348), and Update 19 (T358) for this feature.
+
+**Checkpoint**: All Update 20 checks pass at the level achievable in this non-interactive session (code review confirming every data-flow/merge path, plus real clean `dotnet build`/`npm run build`/`eslint` passes — standing in for a live click-through where neither a dev server nor a browser was available). **Recommended before sign-off**: manually click through column filtering (all 4 filterable columns) and quick-search coexistence in a real browser against a seeded DB to close the gap between "verified by code review" and "verified end-to-end through the UI."
+
+---
+
+## Update 20 Dependencies
+
+### Phase Dependencies
+
+- **Phase 79 (Backend)**: No dependency on Phases 1-78 — a standalone whitelist addition to an
+  existing dictionary in an existing method.
+- **Phase 80 (Frontend)**: Depends on Phase 79 (T359) for the filters to actually work once wired.
+  T360 (columns hook) must complete before T361 (TemplateListPage wiring), since T361's DataGrid
+  reads the `filterable` flags T360 sets.
+- **Phase 81 (Validation)**: Depends on Phase 79 (T359) and Phase 80 (T360, T361) — T362-T366
+  verify different facets of the same change, T367 depends on all five.
+
+### Execution Order
+
+```
+T359 (Phase 79, standalone) ── T360 ── T361 (Phase 80) ── T362-T366 ([P]) ── T367 (E2E)
+```
+
+### Parallel Opportunities
+
+```
+# Phase 81 — all 5 verification tasks [P] except the final E2E:
+T362, T363, T364, T365, T366 in parallel (once T359+T360+T361 are done)
+T367 sequentially (end-to-end)
+```

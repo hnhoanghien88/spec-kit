@@ -806,6 +806,82 @@ manually click through Scenario 21 in a real browser against a seeded DB (an App
 another template currently holding `IsDefault=1`) to close the gap between "verified by code/build
 review" and "verified end-to-end through the UI."
 
+### Scenario 22: TakeFrom Sourced from `eutr_reference_types` (FR-072, FR-073, Update 19)
+
+**Prerequisite**: at least 2 rows exist in `eutr_reference_types` (e.g. via the
+006-eutr-reference-types screen), with distinct `Name` values (e.g. "PO", "Vendor").
+
+1. Open `TemplateBuilderPage` (Edit) for a Draft template
+2. Click **Add Root Group**/**Add Child Step** (or Add step); **Expected**: the TakeFrom combobox
+   shows exactly the `Name` values currently in `eutr_reference_types`, no more/fewer, and NOT the
+   previous hardcoded 5 values (PO/Vendor/Invoice/Delivery note/General agreement) if those no
+   longer match the table's actual rows
+3. In `eutr-reference-types` screen (feature 006), add a new reference type (e.g. Name = "New
+   Test Source"); reopen the Add step form on `TemplateBuilderPage` WITHOUT any code change;
+   **Expected**: "New Test Source" now appears as a TakeFrom option
+4. Select a TakeFrom option, add the step, Save; **verify in DB**:
+   `eutr_template_details.TakeFrom` stores the reference type's `Id` (not a 0/1/1-5 fixed code)
+5. Reload the page; **Expected**: the step tree shows the correct TakeFrom label for that step,
+   looked up from the same `eutr_reference_types` list (not a hardcoded map)
+6. In `eutr-reference-types`, delete the reference type used in step 4 (if the delete isn't blocked
+   by its own FK checks — use a different, unused row if it is); reopen `TemplateBuilderPage` for
+   the same template; **Expected**: the affected step's TakeFrom label renders blank (FR-073),
+   no error/crash
+7. Open the same Add step / bulk-select dialog on `BulkAddStepsDialog`; **Expected**: identical
+   TakeFrom option list as step 2 (same source, same data)
+8. **Regression check**: open a screen in `eutr-sales-orders` (e.g. `ViewSalesOrderPage` or
+   `MapFilePage`) that displays an existing template's step tree read-only; **Expected**: unaffected
+   by this update — still renders using its own existing `TAKE_FROM_LABELS` lookup, unchanged
+
+### Scenario 23: TemplateListPage Renders via DataGridStyled (FR-069 to FR-071, Update 19)
+
+1. Open `TemplateListPage`; **Expected**: the list now renders inside a MUI `DataGrid` (inspect via
+   browser dev tools — `.MuiDataGrid-root` present) instead of a plain `<table>`; visually, every
+   column looks the same as before this update: bold Code / caption Name in one cell, Status chip,
+   Version chip ("V{n}"), Default chip (only when applicable), Steps count, and 4 action icons
+   (Edit/Clone/Apply to Customer/Delete)
+2. Confirm column headers have NO sort arrows and NO filter icon, and there is no column-visibility
+   toolbar button — sort/filter/column-visibility remain deferred (FR-021b), unchanged by this
+   rendering swap
+3. Type a partial Code or Name into the search box; **Expected**: identical server-side filtering
+   behavior as before (debounced, resets to page 1, matches across the full dataset) — the search
+   box itself is unchanged, sitting outside the grid
+4. Change page / change page size using the grid's own built-in pagination footer; **Expected**:
+   same server-side pagination behavior as the old `TablePagination` (same page-size options)
+5. Tick 2-3 row checkboxes (grid's built-in `checkboxSelection`); **Expected**: identical
+   select/bulk-delete-toolbar-button-enables behavior as before; click the bulk-delete button,
+   confirm; **Expected**: same `ConfirmDialog` + `DeleteMultiEutrTemplatesUseCase` flow as before
+6. With exactly 1 Draft row selected, **Expected**: the toolbar's Approve button enables exactly as
+   before (selection-model wiring unchanged, only its source — `DataGrid` vs. manual `Checkbox` —
+   changed)
+7. Click **Edit**/**Clone**/**Apply to Customer**/**Delete** on a single row; **Expected**: identical
+   navigation/dialog behavior as before this update for each icon
+8. **Regression check**: confirm no other EUTR list screens (`eutr-reference-types`, `eutr-steps`)
+   changed behavior — this update only touches `TemplateListPage.jsx`'s own markup and its dedicated
+   `useEutrTemplatesColumns.jsx` hook
+
+### Scenario 24: Column Filters on TemplateListPage (FR-074, FR-075, Update 20)
+
+1. Open TemplateListPage; hover a column header for **Template Name**, click the 3-dot menu icon,
+   choose **Filter**; **Expected**: a filter panel opens (same interaction as
+   `country-groups/index.jsx`)
+2. Enter a partial Name value; **Expected**: the grid narrows to matching rows only, across the
+   full dataset (server-side), not just the currently-loaded page
+3. Repeat step 1-2 for the **Status**, **Version**, and **Default** columns; **Expected**: each
+   filters correctly
+4. Hover the **Steps** and **Actions** column headers; **Expected**: the 3-dot menu (if shown at
+   all) has NO Filter option for these 2 columns
+5. Type a value into the existing Code/Name search box, THEN add a Status column filter without
+   clearing the search box; **Expected**: both conditions stay active together in the next request
+   (verify via DevTools Network tab — the request's `filters` array contains both a `Keyword` entry
+   and a `Status` entry)
+6. Reverse the order — add a Status column filter first, then type in the search box; **Expected**:
+   the Status filter is NOT lost; both remain active
+7. Clear the column filter via the filter panel; **Expected**: only that filter is removed, the
+   quick-search term (if any) remains applied
+8. Confirm no sort arrows or column-visibility toggle appeared on any column as a side effect of
+   this change — only filter was added (FR-021b's sort/column-visibility deferral still applies)
+
 ### Scenario 13: Edge Cases
 
 - Empty grid: **Expected** "No data" message, no errors
@@ -902,9 +978,13 @@ review" and "verified end-to-end through the UI."
 
 ## Post-Validation Checks
 
-- [ ] TemplateListPage renders the Table + search-box layout (not a 9-column DataGrid) — see
-      Scenario 1' (Update 10). (`TemplateListPageOld.jsx`'s 9-column DataGrid is checked separately,
-      only if manually opened for reference — it is not part of the routed app)
+- [ ] ~~TemplateListPage renders the Table + search-box layout (not a 9-column DataGrid)~~ —
+      **superseded (Update 19)**: TemplateListPage now renders via `DataGridStyled`/MUI `DataGrid`
+      (see Scenario 23), while keeping every column's content identical to the Update 10 Table
+      layout (Code bold/Name caption, Status/Version/Default chips, Steps count, 4 action icons,
+      search box, bulk-select). `TemplateListPageOld.jsx` no longer exists in the repo at all
+      (confirmed during Update 19's pre-write audit) — the old "check it manually if still present"
+      note above no longer applies.
 - [ ] Alert for combobox loads only Alert groups (`GroupType=2`, `IsAddition=false`) via
       `GET /api/group-email`, no free-text typing allowed (Update 7)
 - [ ] Alert for pre-selected correctly in Edit mode (Update 7)
@@ -1080,3 +1160,29 @@ review" and "verified end-to-end through the UI."
 - [ ] `POST api/eutr-templates/{id}/set-default` succeeds against a Draft template too — this
       endpoint has no `Status` precondition at all, unlike every other mutating endpoint on this
       controller (Update 18, FR-068)
+- [ ] TakeFrom combobox (Add step, Edit step, bulk-select dialog) shows exactly the current rows of
+      `eutr_reference_types`, not the old hardcoded 5-value list (Update 19, FR-072)
+- [ ] Adding/removing a row in `eutr_reference_types` (feature 006 screen) changes the TakeFrom
+      combobox's options on next open, with no code change (Update 19, FR-072)
+- [ ] Step tree's TakeFrom label is looked up from the loaded `eutr_reference_types` list (Id →
+      Name), rendering blank (not an error) if the Id no longer exists in that table (Update 19,
+      FR-073)
+- [ ] `eutr-sales-orders`' `ViewSalesOrderPage.jsx`/`MapFilePage.jsx` are unaffected — still use
+      their own existing `TAKE_FROM_LABELS` lookup from `helpers.js`, unchanged by this update
+      (Update 19)
+- [ ] TemplateListPage's grid is a MUI `DataGrid` inside `DataGridStyled` (inspect via DevTools)
+      (Update 19, FR-069, FR-070). ~~with sort/filter/column-visibility still NOT available on any
+      column~~ — **superseded (Update 20)**: filter is now available on Template Name/Status/
+      Version/Default (see checks below); sort and column-visibility remain unavailable, unchanged.
+- [ ] TemplateListPage's search box, pagination, bulk-select/bulk-delete, and all 4 row action icons
+      behave identically to before this update (Update 19, FR-069 to FR-071)
+- [ ] Template Name/Status/Version/Default column header menus show a working **Filter** option;
+      applying a filter on any of them narrows the grid server-side, across the full dataset
+      (Update 20, FR-074)
+- [ ] Steps and Actions column header menus have NO Filter option (computed subquery / action
+      column, no backend filter mapping) (Update 20, FR-074)
+- [ ] Using the Code/Name quick-search box and a column filter at the same time keeps BOTH
+      conditions active simultaneously, in either order of entry (Update 20, FR-075)
+- [ ] Sort arrows and column-visibility toggles did NOT appear on any column as a side effect of
+      Update 20 — only filter was added, matching the request's literal scope (Update 20, FR-021b
+      still deferred for sort/column-visibility)

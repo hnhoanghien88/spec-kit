@@ -1543,3 +1543,155 @@ this one field.
 **Implementation**: see plan.md's "Update 2026-07-23 (Update 18)" section for the full file-by-file
 backend/frontend design; contracts/api-endpoints.md Section 12 (new); data-model.md's IsDefault
 Toggle state-transition note; quickstart.md's new Set-as-default-while-Approved scenario.
+
+## 36. TakeFrom Sourced from `eutr_reference_types` + TemplateListPage Renders via DataGridStyled (spec Update 19)
+
+**Decision**: Two independent, frontend-only, zero-new-endpoint changes. (1) TakeFrom: the combobox
+on `TemplateBuilderPage.jsx`'s own inline Add step/Edit step form and on `BulkAddStepsDialog.jsx`,
+plus the TakeFrom label shown on the tree, now source their data by loading `GET
+/api/eutr-reference-types` (feature 006-eutr-reference-types) once on mount and deriving `{value,
+label}` options / an `Id → Name` lookup map — replacing the hardcoded `TAKE_FROM_OPTIONS`/
+`TAKE_FROM_LABELS` constants for these call sites only. (2) `TemplateListPage.jsx`'s hand-rolled MUI
+`Table`/`TableContainer`/`TablePagination`/manual-`Checkbox` markup is replaced by the shared
+`DataGridStyled` + MUI `DataGrid` pattern, with the orphaned `useEutrTemplatesColumns.jsx` hook
+repurposed to hold the column definitions — every column's content/behavior stays byte-for-byte the
+same as today; only the rendering technology changes.
+
+**Rationale**: The request itself ("TakeFrom lấy từ bảng eutr_reference_types", "TableContainer …
+sửa lại thành DataGridStyled") names the exact target data source and target component, leaving
+little room for alternative designs — the research here is mostly about *scope boundaries*
+(what NOT to touch) rather than picking between competing approaches, surfaced by a pre-write code
+audit:
+
+1. **`eutr_db.sql` vs. the live schema**: the design doc declares `eutr_template_details.TakeFrom`
+   as `BIGINT UNSIGNED NULL` with a real FK to `eutr_reference_types.Id`, but
+   `EutrTemplateDetails.cs`/`EutrTemplateDetailsRequestDto.cs` actually type it as `byte` (max 255),
+   unenforced. This is the same category of drift plan.md already documents for `eutr_templates`
+   (Update 13's note that `eutr_db.sql` is stale) — not a new discovery, but it does mean: (a) no FK
+   constraint exists to violate/migrate for this update, and (b) there is a latent ceiling of 255
+   distinct `eutr_reference_types` rows before `byte` overflows. Widening the column is a real,
+   separate migration effort with its own risk (any existing rows, indexes, or FK add step) that the
+   user's request — a frontend data-source swap — did not ask for. Deferred, not silently ignored.
+2. **Cross-feature dependency on `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS`**: a repo-wide grep found
+   `eutr-sales-orders/ViewSalesOrderPage.jsx` and `.../MapFilePage.jsx` (spec 005, out of scope for
+   this update) also import `TAKE_FROM_LABELS` for read-only display of `eutr_template_details` rows
+   inside a different feature's screens. Deleting the constants from `helpers.js` — the "clean up
+   now-unused code" instinct — would break those two files. Keeping the constants exported, and only
+   changing what 003-eutr-templates itself imports, is the only option that satisfies both "this
+   feature's TakeFrom now reflects the real reference table" and "don't touch spec 005's files
+   without being asked."
+3. **`StepFormRow.jsx`/`StepTree.jsx` are orphaned**: a repo-wide import grep (`from '.../StepTree'`,
+   `from '.../StepFormRow'`, and a JSX-tag grep for `<StepTree`/`<StepFormRow`) found neither file is
+   rendered by any active route — `TemplateBuilderPage.jsx` (the real, routed Edit screen) has its
+   own inline Add/Edit-step form and its own inline tree-node rendering, and never imports either
+   component. They are leftovers from the pre-Update-10 `EutrTemplatesAddEdit.jsx` flow. Because
+   `helpers.js` keeps exporting the old constants (finding #2), these two files keep compiling
+   exactly as before with zero edits — there is no forcing function to touch unreachable code just
+   because it happens to reference a constant this update is also changing elsewhere.
+4. **`useEutrTemplatesColumns.jsx` is *also* orphaned, and plan.md's own history was stale about it**:
+   plan.md's Update 10 entry claims this hook is "still used by `TemplateListPageOld.jsx`" — a
+   repo-wide search found that file, and `EutrTemplatesAddEdit.jsx`, no longer exist anywhere in the
+   repository (an out-of-band cleanup this plan's running history had not caught up with). This
+   means the hook is currently dead code, sitting in exactly the right location
+   (`presentation/pages/eutr-templates/hooks/`) and with exactly the right shape (a `columns` +
+   `defaultColumnVisibility` factory) for the job Update 19 needs — repurposing it (Principle II)
+   is strictly better than either leaving it dead or writing a second, near-duplicate hook.
+
+**Alternatives considered**:
+- Delete `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` from `helpers.js` entirely once
+  003-eutr-templates stops using them — rejected after finding #2: this would break
+  `eutr-sales-orders/ViewSalesOrderPage.jsx`/`MapFilePage.jsx`, a feature this update has no mandate
+  to touch. Leaving unused-by-this-feature-but-used-elsewhere exports in a shared `utils/helpers.js`
+  is not the same "unused code" case the project's "delete if certain it's unused" guidance targets.
+- Update `StepFormRow.jsx`/`StepTree.jsx` to accept `takeFromOptions`/`takeFromLabelById` props (for
+  "consistency", since the spec's Update 19 text mentions them loosely) or delete them outright as
+  confirmed-dead code — rejected: updating unreachable code for a prop nothing will ever pass is
+  pure busywork with no observable effect; deleting them is a legitimate but *separate* cleanup
+  decision (removing whole files) that goes beyond what the user asked for in this update and is
+  better left to its own explicit cleanup request, especially since `EutrTemplatesAddEdit.jsx`'s
+  disappearance suggests file deletions in this codebase have happened outside the spec-kit flow
+  before and deserve their own deliberate pass rather than being folded into an unrelated change.
+- Write a brand-new hook (e.g. `useTemplateListColumns.jsx`) instead of repurposing
+  `useEutrTemplatesColumns.jsx` — rejected: would leave two near-identical "EUTR Templates grid
+  columns" hooks in the same folder, one dead and one live, which is worse for future readers than
+  fixing the one that already has the right name and shape (Principle II).
+- Migrate `eutr_template_details.TakeFrom` from `byte` to `BIGINT UNSIGNED` (matching
+  `eutr_db.sql`'s FK declaration) as part of this update, to make the FK real — rejected: out of
+  scope for a frontend data-source change; no functional problem exists today (a `byte` comfortably
+  holds every `Id` the reference-types table is expected to have for the foreseeable future), and a
+  column-type migration is exactly the kind of unrequested, higher-risk change the user did not ask
+  for. Flagged as a known, currently-latent limitation rather than silently fixed or silently
+  ignored.
+- Re-enable DataGrid's client-side column sort/filter/column-visibility while doing the
+  `DataGridStyled` swap, since MUI `DataGrid` supports all three out of the box — rejected: the spec
+  (Update 19 clarification Q2) explicitly resolved this as "swap rendering technology only, keep
+  FR-021b's deferred scope unchanged"; all six columns get `sortable: false, filterable: false` and
+  the grid gets `disableColumnMenu` to keep the current no-sort/no-filter UX intact rather than
+  half-enabling a feature no design decision asked for.
+
+**Implementation**: see plan.md's "Update 2026-07-24 (Update 19)" section for the full file-by-file
+frontend design; contracts/api-endpoints.md's new "TakeFrom Reference Type Lookup" section;
+data-model.md's Entity 7 (EutrReferenceTypes) and the updated TakeFrom field/validation/enum rows;
+quickstart.md's new TakeFrom-source and DataGridStyled-rendering validation scenarios.
+
+## 37. Column Filters on TemplateListPage — Selective, Matching `country-groups/index.jsx`'s Own Convention (spec Update 20)
+
+**Decision**: Enable MUI `DataGrid`'s native per-column filter panel on TemplateListPage
+(`filterMode="server"`, `filterModel`/`onFilterModelChange`, header column menu re-enabled), but
+only for the 4 columns with a genuine, working backend mapping — Template Name (filters by Name),
+Status, Version, Default. Steps (a `COUNT(*)` subquery column) and Actions stay `filterable: false`.
+Backend gains 3 new `FilterMap` entries (`Status`, `VersionId`, `IsDefault`) — all 3 columns were
+already in the SELECT list and already in `SortMap`, just never added to the separate filter
+whitelist. The pre-existing Code/Name quick-search box is kept, with merge logic added so it and the
+new column-filter panel don't clobber each other's entries in the shared `filterModel`.
+
+**Rationale**: The request named a specific reference file — `country-groups/index.jsx` — rather
+than asking for "filtering" in the abstract, so the goal is to reproduce *that* file's actual
+pattern, not just any DataGrid filter configuration. Reading that file (and its columns hook,
+`useCountryGroupColumns.jsx`) shows it does NOT mark every column `filterable: true`: `code`/`name`/
+`description` (real `ComplCountryGroup` entity columns, filtered generically via the shared
+`BaseService.GetPagedAsync`/`IRepository<T>` infrastructure) are filterable, while `memberCount`/
+`countryCodes` (computed via a separate `AttachMembersAsync` join, not real columns on the paged
+entity) are explicitly `sortable: false, filterable: false`. `EutrTemplatesRepository` doesn't use
+that generic per-property mechanism — it hand-rolls `GetPagedAsync` with its own SQL, `SortMap`, and
+`FilterMap` whitelists (needed because of the `AlertFor`→`compl_group_email.Name` join and the
+`StepsCount` subquery) — so matching the *pattern* means auditing that whitelist and extending it
+for genuinely real columns, then marking the frontend `filterable` flags to match, rather than
+naively setting `filterable: true` everywhere and letting unmapped columns silently no-op.
+
+**Alternatives considered**:
+- Mark every column (including `stepsCount` and `actions`) `filterable: true` for a literal, blanket
+  match to "add filter to the columns" — rejected: `stepsCount` has no `FilterMap` equivalent
+  possible without rewriting the query to a `HAVING`-based filter (the count is a correlated
+  subquery, not a real column, so a `WHERE StepsCount = ...` clause isn't valid SQL as currently
+  written); shipping a filter UI that silently returns unfiltered results for that column would be a
+  worse user experience than not offering it, and `country-groups/index.jsx` itself sets this same
+  precedent by excluding its own computed columns.
+- Give `versionId`/`isDefault`/`status` `type: 'number'` so the filter panel exposes `>`/`<`/`>=`/
+  `<=` operators — rejected: `EutrTemplatesRepository.GetPagedAsync`'s filter-building `switch` only
+  implements `=`, `!=`, `startswith`, `endswith`, and a default `like` — there is no `>`/`<` case, so
+  those operators would silently fall through to the `like` branch and produce a nonsensical
+  string-comparison query. Leaving these columns as plain (default string-operator) columns keeps
+  every operator the UI offers mapped to a real, correct backend behavior.
+- Replace the existing Code/Name quick-search box with column-level Name/Code filtering instead of
+  keeping both — rejected: `country-groups/index.jsx` doesn't have an equivalent quick-search box to
+  begin with, so there's no reference precedent either way; removing an existing, already-relied-on
+  UX affordance (FR-021a) to install a differently-shaped one is a bigger behavior change than "add
+  filter" implies, and the two mechanisms can coexist on the same `filterModel` with a small merge
+  function instead.
+- Let the column-filter panel and the quick-search box both call `setFilterModel` with a fully
+  overwritten array (no merge) — rejected: whichever one fires second would silently erase the
+  other's active filter, which is confusing (a user who typed a search term, then opened a column
+  filter, would watch their search term vanish with no indication why); the merge functions
+  (`handleSearchChange` preserves non-`keyword` items, `handleFilterModelChange` re-appends the
+  current `keyword` item) cost a few lines and remove that surprise entirely.
+- Also enable `sortingMode="server"`/`sortModel` (available in `useEutrTemplatesData` since Update
+  11 but never wired to this page) since `country-groups/index.jsx` has both filter and sort —
+  rejected: the request specifically said "filter", not "filter and sort"; FR-021b's sort deferral
+  was a deliberate decision (Update 10/11), and un-deferring it wasn't asked for in this follow-up.
+  Left as a documented option for a future request rather than bundled in here.
+
+**Implementation**: see plan.md's "Update 2026-07-24 (Update 20)" section for the full file-by-file
+design; `EutrTemplatesRepository.cs`'s `FilterMap` (backend); `useEutrTemplatesColumns.jsx`'s
+per-column `filterable` flags and `TemplateListPage.jsx`'s `handleSearchChange`/
+`handleFilterModelChange` merge logic (frontend).

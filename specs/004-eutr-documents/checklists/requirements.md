@@ -61,3 +61,47 @@
   remove the old Add/Edit/Assign logic. All checklist items pass after this rewrite — no regressions;
   downstream artifacts (plan.md, tasks.md, data-model.md, contracts, quickstart.md, research.md) still
   reflect the pre-Update-19 design and should be regenerated via `/speckit-plan` and `/speckit-tasks`.
+- 2026-07-24 `/speckit-specify` update 20: per direct user request, the Step combobox in the Add/Edit
+  popup (Type other than "PO") now only lists Steps that have an "Assign Steps" record in
+  `eutr_reference_type_details` for the currently selected Type (`TypeId` match), instead of every row
+  in `eutr_steps`; the combobox also defaults to the first row of that filtered list in Add mode (no
+  longer opens empty). Edit applies the same filter against the document's current (locked) Type, but
+  always guarantees the document's existing Step stays selectable even if it was later unassigned from
+  that Type in the "Assign Steps" screen (`006-eutr-reference-types`) — avoids silently discarding
+  existing data. Added FR-043/FR-044/FR-045, SC-010, two new Edge Cases, a new read-only Key Entity for
+  `eutr_reference_type_details`, and two new Assumptions; extended User Story 2 and User Story 3
+  narratives/acceptance scenarios accordingly. No [NEEDS CLARIFICATION] markers were needed — the two
+  edge behaviors (empty filtered list; current Step no longer in the filtered list) were resolved as
+  informed defaults and documented as embedded Q&A in the new "Session 2026-07-24 (Update 20)" entry.
+  All checklist items pass after this update — no regressions; downstream artifacts (plan.md, tasks.md,
+  data-model.md, contracts, quickstart.md, research.md) still reflect the pre-Update-20 design and
+  should be regenerated via `/speckit-plan` and `/speckit-tasks`.
+- 2026-07-24 `/speckit-specify` update 21: per direct user request, added a **search box** above the
+  main list (Type dropdown / Step name dropdown / Conditions free-text / Search button) letting users
+  filter the document list. Added User Story 6, FR-046 through FR-050, SC-011, two new Edge Cases, and
+  three new Assumptions (client-side filter reusing the existing list API; Step name dropdown lists
+  all `eutr_steps` independent of the Type selected in the same search box, unlike the Assign-Steps
+  filter in the Add/Edit popup from Update 20; Conditions uses a case-insensitive "contains" match). No
+  [NEEDS CLARIFICATION] markers were needed — three embedded Q&A entries in the new "Session
+  2026-07-24 (Update 21)" Clarifications section resolve the filter-combination semantics (independent
+  per-criterion match, not required on the same `eutr_references` row), search trigger (button click
+  only, no live search), and Step name dropdown scope (unfiltered by Type) as informed defaults. All
+  checklist items pass after this update — no regressions; downstream artifacts (plan.md, tasks.md,
+  data-model.md, contracts, quickstart.md, research.md) still reflect the pre-Update-21 design and
+  should be regenerated via `/speckit-plan` and `/speckit-tasks`.
+- 2026-07-24 `/speckit-specify` update 22: per direct user request, the Edit popup's chip **Value**
+  area is no longer universally read-only — for any document Type **other than "PO"** (including
+  "Vendor"), the chip area now behaves like Add: an editable Value combobox (same per-Type suggestion
+  source as FR-011/FR-012) to add new chips, and a delete button on each existing chip, still subject
+  to the existing max-1-chip rule for "Vendor" (FR-013) and a minimum of 1 chip at Save time. Save now
+  reconciles `eutr_references` against the displayed chip set for Type != "PO" (create rows for newly
+  added chips, delete rows for removed chips, update `StepId` on all remaining rows) instead of only
+  updating `StepId`; Type = "PO" keeps the prior fully-read-only/Step-only-update behavior unchanged.
+  Updated FR-028/FR-033, added FR-051 through FR-055, SC-012, new acceptance scenarios 13-18 and edge
+  cases under User Story 3, and two new Assumptions. No [NEEDS CLARIFICATION] markers were needed — the
+  one real fork (whether "Vendor", which also caps at 1 chip, is treated like "PO" or like the other
+  editable types) was resolved as an informed default favoring the literal request wording ("type khác
+  PO" includes Vendor) and documented as embedded Q&A in the new "Session 2026-07-24 (Update 22)"
+  Clarifications entry. All checklist items pass after this update — no regressions; downstream
+  artifacts (plan.md, tasks.md, data-model.md, contracts, quickstart.md, research.md) still reflect the
+  pre-Update-22 design and should be regenerated via `/speckit-plan` and `/speckit-tasks`.

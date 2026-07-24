@@ -41,7 +41,7 @@ CREATE TABLE `eutr_template_details`(
     `ParentId` BIGINT NOT NULL,
     `StepId` BIGINT UNSIGNED NULL,
     `RequirementType` TINYINT NULL DEFAULT 0,
-    `TakeFrom` TINYINT NOT NULL,
+    `TakeFrom` BIGINT UNSIGNED NULL,
     `DisplayOrder` INT NULL DEFAULT 0,
     `CreatedBy` VARCHAR(50) NULL,
     `CreatedDate` DATETIME NULL,
@@ -72,6 +72,8 @@ CREATE TABLE `eutr_documents`(
     `UpdatedBy` VARCHAR(50) NULL,
     `UpdatedDate` DATETIME NULL
 );
+ALTER TABLE
+    `eutr_template_details` ADD CONSTRAINT `eutr_template_details_takefrom_foreign` FOREIGN KEY(`TakeFrom`) REFERENCES `eutr_reference_types`(`Id`);
 ALTER TABLE
     `eutr_template_details` ADD CONSTRAINT `eutr_template_details_templateid_foreign` FOREIGN KEY(`TemplateId`) REFERENCES `eutr_templates`(`Id`);
 ALTER TABLE
@@ -126,7 +128,7 @@ ALTER TABLE
     `eutr_template_references` ADD CONSTRAINT `eutr_template_references_templateid_foreign` FOREIGN KEY(`TemplateId`) REFERENCES `eutr_templates`(`Id`);    
 
 CREATE TABLE `eutr_purchase_attachments`(
-    `Id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    `Id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     `SalesId` VARCHAR(50) NOT NULL,
     `PurchId` VARCHAR(50) NOT NULL,
     `TemplateCode` VARCHAR(50) NOT NULL,
@@ -139,7 +141,7 @@ ALTER TABLE
     `eutr_purchase_attachments` ADD CONSTRAINT `eutr_purchase_attachments_templatecode_foreign` FOREIGN KEY(`TemplateCode`) REFERENCES `eutr_templates`(`Code`);
 
 CREATE TABLE `eutr_reference_types`(
-    `Id` TINYINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    `Id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     `Name` VARCHAR(255) NULL,
     `CreatedBy` VARCHAR(50) NULL,
     `CreatedDate` DATETIME NULL,
@@ -148,3 +150,17 @@ CREATE TABLE `eutr_reference_types`(
 );
 ALTER TABLE
     `eutr_references` ADD CONSTRAINT `eutr_references_reftype_foreign` FOREIGN KEY(`RefType`) REFERENCES `eutr_reference_types`(`Id`);
+
+CREATE TABLE `eutr_reference_type_details`(
+    `Id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    `StepId` BIGINT UNSIGNED NULL,
+    `TypeId` BIGINT UNSIGNED NOT NULL,
+    `CreatedBy` VARCHAR(50) NULL,
+    `CreatedDate` DATETIME NULL,
+    `UpdatedBy` VARCHAR(50) NULL,
+    `UpdatedDate` DATETIME NULL
+);
+ALTER TABLE
+    `eutr_reference_type_details` ADD CONSTRAINT `eutr_reference_type_details_typeid_foreign` FOREIGN KEY(`TypeId`) REFERENCES `eutr_reference_types`(`Id`);
+ ALTER TABLE
+    `eutr_reference_type_details` ADD CONSTRAINT `eutr_reference_type_details_stepid_foreign` FOREIGN KEY(`StepId`) REFERENCES `eutr_steps`(`Id`);       

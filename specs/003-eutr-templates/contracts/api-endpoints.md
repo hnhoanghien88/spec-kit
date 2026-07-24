@@ -70,8 +70,28 @@ POST api/eutr-templates/get-all
 ```
 A `Keyword` filter entry expands server-side to `(Code LIKE @value OR Name LIKE @value)` instead of
 being mapped to a single SQL column — see Notes below. Sent by `TemplateListPage.jsx`'s search box,
-debounced, replacing (not combined with) any other filter entries; the frontend resets `page` to 1
-whenever the keyword changes.
+debounced; the frontend resets `page` to 1 whenever the keyword changes. **(Update 20)** No longer
+replaces other filter entries — merged alongside any per-column filter entries the user has set via
+the DataGrid's column-filter panel (see the `Status`/`VersionId`/`IsDefault` example below), so both
+mechanisms can be active on the same request at once.
+
+**Request Body — TemplateListPage column filter panel (Update 20, 2026-07-24)**:
+```json
+{
+  "page": 1,
+  "pageSize": 25,
+  "sortColumn": "Id",
+  "sortOrder": "asc",
+  "filters": [
+    { "field": "Status", "operator": "equals", "value": "1" },
+    { "field": "Keyword", "operator": "like", "value": "temp" }
+  ]
+}
+```
+Sent when the user opens a column's header menu → Filter on TemplateListPage (Template Name/Status/
+Version/Default columns only — see Notes below); combined with any active `Keyword` entry from the
+search box. `FilterMap` now whitelists `Status → t.Status`, `VersionId → t.VersionId`,
+`IsDefault → t.IsDefault` in addition to the pre-existing `Code`, `Name`, `AlertFor`, `CreatedBy`.
 
 **Response** (PagedResult):
 ```json
@@ -975,3 +995,42 @@ from the original plan during `/speckit-implement`; see quickstart.md Scenario 2
     `SetDefaultEutrTemplatesUseCase`, then updates the checkbox from the response and shows a
     success snackbar; **No** closes the dialog with no request sent (the checkbox was never
     optimistically flipped, so there is nothing to revert).
+
+## TakeFrom Reference Type Lookup (Update 19, 2026-07-24)
+
+The TakeFrom combobox on Add step/Edit step (FR-007/FR-008b) and the bulk-select dialog
+(FR-027–FR-030), plus the TakeFrom label shown on the step tree, are backed by the existing
+feature 006-eutr-reference-types — no new backend endpoint is introduced by 003-eutr-templates.
+
+```
+GET api/eutr-reference-types
+```
+
+**Response** (`IEnumerable<EutrReferenceTypes>`, from `EutrReferenceTypesController.GetAll` —
+see `specs/006-eutr-reference-types/contracts/eutr-reference-types-api.md` Section 2):
+```json
+[
+  { "id": 1, "name": "PO" },
+  { "id": 2, "name": "Vendor" },
+  { "id": 3, "name": "Invoice" }
+]
+```
+
+**Notes**:
+- The frontend calls this once per `TemplateBuilderPage.jsx` mount (via a new
+  `GetEutrReferenceTypesUseCase.execute()` / `repositories.eutrReferenceTypes`, already used by the
+  `eutr-reference-types` list page) and builds `{value: id, label: name}` options for the TakeFrom
+  combobox plus an `Id → Name` lookup map for label display — replacing the hardcoded
+  `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` constants for these call sites only (see research.md §36).
+- Values are NOT filtered — every row in `eutr_reference_types` is offered as a TakeFrom option
+  (unlike Alert For's `groupType`/`isAddition` filtering above), since this table has no
+  type/category column to filter on.
+- On Save, the frontend submits the selected row's `id` as `TakeFrom` (`byte`) — same wire format
+  as today, no DTO/contract change.
+- No new backend endpoint, controller, or policy is added; `GET /api/eutr-reference-types` already
+  exists and is authorized under the `EutrReferenceTypes.ReadAll` policy — a **different** policy
+  family than `EutrTemplates.*`. **Open dependency to verify during implementation**, same shape as
+  the Alert For note above: users who have `EutrTemplates.Create`/`Update` but not
+  `EutrReferenceTypes.ReadAll` would get a 403 when `TemplateBuilderPage.jsx` tries to load the
+  TakeFrom combobox — confirm the role/menu seeding includes `EutrReferenceTypes.ReadAll` for
+  EUTR Templates users, or request a policy grant if not.

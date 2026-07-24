@@ -972,6 +972,171 @@ Yes/No `ConfirmDialog`** — toggling shows a confirmation; Yes calls a dedicate
 
 See research.md Section 35 for the full rationale and alternatives considered.
 
+### Update 2026-07-24 (Update 19) — TakeFrom from `eutr_reference_types` + TemplateListPage Renders via DataGridStyled
+
+**Frontend-only, zero backend changes.** Two independent technical swaps, both pure data-source/
+rendering-technology changes with no new user-facing feature: (1) the TakeFrom combobox/label
+lookups used by `TemplateBuilderPage.jsx`'s own Add step/Edit step forms and
+`BulkAddStepsDialog.jsx` switch from the hardcoded `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` constants
+to the existing `GET /api/eutr-reference-types` endpoint (feature 006-eutr-reference-types); (2)
+`TemplateListPage.jsx`'s hand-rolled `TableContainer`/`Table` markup is replaced by the shared
+`DataGridStyled` + MUI `DataGrid` pattern already used by `eutr-reference-types/index.jsx` and
+`eutr-steps/index.jsx`, preserving every column/feature exactly as-is.
+
+**Pre-write code audit (four findings that reshaped scope from the spec's literal wording)**:
+1. `docs/design/eutr/eutr_db.sql` declares `eutr_template_details.TakeFrom` as `BIGINT UNSIGNED NULL`
+   with a real FK to `eutr_reference_types.Id` — but the actually-deployed entity/DTO
+   (`EutrTemplateDetails.cs`, `EutrTemplateDetailsRequestDto.cs`) types it as `byte` (0-255), and the
+   FK is not enforced live. `eutr_db.sql` is already known-stale elsewhere in this feature (Update
+   13's note on `eutr_templates`) — this is the same class of drift, not a new problem. **Decision**:
+   do NOT migrate the column type in this update (out of scope — the user's request was a frontend
+   data-source swap, not a schema migration); flagged as a latent risk if `eutr_reference_types` ever
+   grows past 255 rows (see research.md §36).
+2. `TAKE_FROM_LABELS` (and, less critically, `TAKE_FROM_OPTIONS`) is **also imported by
+   `eutr-sales-orders/ViewSalesOrderPage.jsx` and `eutr-sales-orders/MapFilePage.jsx`** (a different,
+   out-of-scope feature reading `eutr_template_details` read-only). **Decision**: `helpers.js` KEEPS
+   both constants exported, unchanged — only 003-eutr-templates' own active call sites stop importing
+   them. Deleting them would break spec 005's pages, which this update has no mandate to touch.
+3. `StepFormRow.jsx`/`StepTree.jsx` (in `presentation/pages/eutr-templates/components/`) are
+   **orphaned** — confirmed via a repo-wide import grep, neither is rendered by any active route;
+   `TemplateBuilderPage.jsx` (the actually-routed Edit screen) has its own inline Add/Edit-step form
+   and its own inline tree-node rendering, not these two components. **Decision**: leave both files
+   untouched. Since `helpers.js` keeps exporting `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` (finding #2),
+   these two orphaned files keep compiling exactly as before — there is no forcing function to edit
+   unreachable code for this update's two asks.
+4. `useEutrTemplatesColumns.jsx` (in `presentation/pages/eutr-templates/hooks/`) is likewise
+   **orphaned** post-Update 10 — `TemplateListPageOld.jsx` and `EutrTemplatesAddEdit.jsx`, the files
+   plan.md previously said still used it, no longer exist in the repo (confirmed via repo-wide
+   search — an out-of-band cleanup this plan's history hadn't caught up with). **Decision**: reuse
+   and rewrite this existing hook file's column definitions to match `TemplateListPage.jsx`'s current
+   columns (Principle II — reference-pattern reuse of an existing, correctly-located file) instead of
+   authoring a new hook from scratch or defining columns inline.
+
+#### Frontend: TakeFrom sourced from `eutr_reference_types` (FR-072, FR-073)
+
+- **`application/usecases/eutr-reference-types/GetEutrReferenceTypesUseCase.js`** REUSED AS-IS — no
+  change; already implements `execute() → repositories.eutrReferenceTypes.getAll()`.
+- **`presentation/pages/eutr-templates/TemplateBuilderPage.jsx`** MODIFY —
+  - Import `GetEutrReferenceTypesUseCase`; add a module-scope
+    `const getReferenceTypesUseCase = new GetEutrReferenceTypesUseCase(repositories.eutrReferenceTypes);`
+    (same singleton-use-case shape as `getStepsUseCase`/`getAllGroupEmailUseCase`).
+  - Add `const [referenceTypes, setReferenceTypes] = useState([]);` and a mount-time `useEffect`
+    that calls `getReferenceTypesUseCase.execute()` and sets the array (falls back to `[]` on
+    error) — identical shape to the existing steps/alertGroups load effects.
+  - Add two `useMemo`s derived from `referenceTypes`: `takeFromOptions` (`{value: rt.id, label:
+    rt.name}[]`, replaces every `TAKE_FROM_OPTIONS` reference) and `takeFromLabelById` (an `Id →
+    Name` object, replaces every `TAKE_FROM_LABELS[...]` lookup; falls back to `''` instead of the
+    old hardcoded `'PO'` default when an Id is missing, per FR-073).
+  - Remove `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` from the `@utils/helpers` import; keep
+    `REQUIREMENT_TYPES`/`REQUIREMENT_LABELS`/`TEMPLATE_STATUS`/`groupEmailType` unchanged.
+  - Replace the two `options={TAKE_FROM_OPTIONS}`/`value={TAKE_FROM_OPTIONS.find(...)}` usages
+    (inline Add/Edit step form) with `takeFromOptions`.
+  - Replace the tree-node label `label={TAKE_FROM_LABELS[node.takeFrom] || 'PO'}` with
+    `label={takeFromLabelById[node.takeFrom] || ''}`.
+  - Pass `takeFromOptions` down as a new prop on `<BulkAddStepsDialog steps={steps}
+    takeFromOptions={takeFromOptions} .../>`, alongside the existing `steps` prop.
+- **`presentation/pages/eutr-templates/components/BulkAddStepsDialog.jsx`** MODIFY — accept a new
+  `takeFromOptions` prop; remove `TAKE_FROM_OPTIONS` from the `@utils/helpers` import (keep
+  `REQUIREMENT_TYPES`); replace both existing `options={TAKE_FROM_OPTIONS}`/
+  `value={TAKE_FROM_OPTIONS.find(...)}` usages (per-row bulk-select config, "Add new step" draft
+  row) with the prop.
+- **`presentation/pages/eutr-templates/components/StepFormRow.jsx`**,
+  **`.../components/StepTree.jsx`** NO CHANGE — orphaned (finding #3 above); left exactly as-is,
+  still importing `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` from `helpers.js`, which keeps exporting
+  them unchanged (finding #2).
+- **`utils/helpers.js`** NO CHANGE — `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` stay exported as today;
+  still required by `eutr-sales-orders/ViewSalesOrderPage.jsx`/`MapFilePage.jsx` (finding #2) and by
+  the two orphaned files above (finding #3).
+
+#### Frontend: TemplateListPage → DataGridStyled (FR-069, FR-070, FR-071)
+
+- **`presentation/pages/eutr-templates/hooks/useEutrTemplatesColumns.jsx`** MODIFY (repurposed,
+  finding #4) — rewrite the `columns`/`defaultColumnVisibility` to match `TemplateListPage.jsx`'s
+  current display exactly: a single `name` column (`renderCell` shows Code bold / Name caption,
+  two lines, per FR-021), `status` (`renderCell` → `Chip`, color by `TEMPLATE_STATUS`, label via
+  `TEMPLATE_STATUS_LABELS`), `versionId` (`renderCell` → `Chip` `V${value}`), `isDefault`
+  (`renderCell` → `Chip` "Default", only when `1`), `stepsCount` (plain number), and `actions`
+  (`renderCell` → the same 4-icon `Stack` — Edit/Clone/Apply to Customer/Delete — with the same
+  `permissionList`/`navigate`/`onClone`/`onDelete` wiring `TemplateListPage.jsx` has inline today).
+  All 6 columns get `sortable: false, filterable: false` and the grid gets `disableColumnMenu` —
+  per the spec's explicit decision NOT to re-enable column sort/filter/visibility in this update
+  (FR-021b unchanged).
+- **`presentation/pages/eutr-templates/TemplateListPage.jsx`** MODIFY —
+  - Import `DataGrid` (`@mui/x-data-grid`), `DataGridStyled`
+    (`@presentation/components/shared/DataGridStyles`), `useDynamicGridHeight`
+    (`@presentation/hooks/useDynamicGridHeight`), and `useEutrTemplatesColumns`; remove `Table`,
+    `TableHead`, `TableRow`, `TableCell`, `TableBody`, `TableContainer`, `TablePagination`,
+    `Checkbox`, `Paper` from the `@mui/material` import (no longer used once the manual table/
+    pagination/checkbox markup is gone).
+  - Call `useEutrTemplatesColumns({ onEdit, onClone, onApply, onDelete, permissionList })` to get
+    `columns` (mirrors the `onEdit`/`onDelete` callback shape `eutr-reference-types/index.jsx`
+    already uses for its own columns hook).
+  - Replace the entire `<TableContainer>…</TableContainer>` block (current header
+    Checkbox/TableHead, per-row `TableRow`/`TableCell`s, manual "No data" row, and
+    `TablePagination`) with `<DataGridStyled height={gridHeight}><DataGrid rows={data}
+    columns={columns} getRowId={row => row.id} rowCount={total} pagination
+    paginationMode="server" paginationModel={paginationModel}
+    onPaginationModelChange={setPaginationModel} pageSizeOptions={[10,25,50,100]}
+    loading={loading} disableColumnMenu checkboxSelection={canDelete}
+    disableRowSelectionOnClick rowSelectionModel={selectionModel}
+    onRowSelectionModelChange={setSelectionModel} localeText={{noRowsLabel: 'No data'}}
+    columnHeaderHeight={36} /></DataGridStyled>` — `rowHeight`/`getRowHeight` sized to fit the
+    2-line name cell, exact px value to be finalized in tasks/implementation (research.md §36).
+  - Remove `toggleSelectAll`/`toggleSelectRow`/`allSelected`/`someSelected` (dead code once
+    `checkboxSelection`/`onRowSelectionModelChange` take over selection — `selectionModel` state
+    itself is unchanged, still read by `selectedRow`/`canApprove`/`canRequestChange`/bulk-delete).
+  - The search `TextField` (FR-021a), toolbar buttons (Create/Approve/Request change/bulk-delete),
+    and all `ConfirmDialog`/`CreateTemplateDialog`/`CloneTemplateDialog`/`CustomSnackbar` usages
+    below the grid are UNCHANGED — none of them live inside the replaced block.
+
+See research.md Section 36 for the full rationale, the four pre-write findings, and alternatives
+considered.
+
+### Update 2026-07-24 (Update 20) — Column Filters on TemplateListPage (Matching `country-groups/index.jsx`)
+
+**Direct follow-up request** (not routed through `/speckit-specify`, applied here for traceability):
+"thêm filter các cột giống country-groups/index.jsx". `country-groups/index.jsx` selectively marks
+`filterable: true` only on columns backed by real, directly-queryable entity columns (Code, Name,
+Description), leaving computed/joined columns (`memberCount`, `countryCodes`, `actions`) non-
+filterable — this update applies the same selective pattern to TemplateListPage rather than a
+blanket `filterable: true` across every column.
+
+**Pre-write audit**: `EutrTemplatesRepository`'s `FilterMap` whitelist only maps `Code`, `Name`,
+`AlertFor`, `CreatedBy` — `Status`, `VersionId`, `IsDefault` are real columns already in the SELECT
+list but were never added to `FilterMap` (a gap, not an intentional exclusion — `SortMap` already
+includes `VersionId`/`IsDefault`). `StepsCount` is a subquery-computed column with no `FilterMap`
+equivalent possible without a `HAVING`-based rewrite — left non-filterable, same treatment
+`country-groups` gives its own computed columns.
+
+#### Backend: extend `FilterMap` whitelist (minimal, additive)
+
+- **`compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrTemplatesRepository.cs`**
+  MODIFY — add `["Status"] = "t.Status"`, `["VersionId"] = "t.VersionId"`, `["IsDefault"] =
+  "t.IsDefault"` to the existing `FilterMap` dictionary literal. No new method, no contract change —
+  the existing filter-building loop (`switch` over `=`/`!=`/`startswith`/`endswith`/default `like`)
+  already handles these correctly for numeric-ish columns (no operator change needed).
+
+#### Frontend: selective `filterable` + quick-search/column-filter merge
+
+- **`compliance-client/src/presentation/pages/eutr-templates/hooks/useEutrTemplatesColumns.jsx`**
+  MODIFY — flip `filterable: false → true` on `name`, `status`, `versionId`, `isDefault` (all now
+  backend-whitelisted); leave `stepsCount`/`actions` at `filterable: false` (computed/action
+  columns, no working backend mapping). `sortable: false` unchanged on every column — Update 20
+  only concerns filter, not sort (FR-021b's sort/column-visibility deferral stands).
+- **`compliance-client/src/presentation/pages/eutr-templates/TemplateListPage.jsx`** MODIFY —
+  destructure `filterModel` (already exposed by `useEutrTemplatesData`, previously unused here);
+  wire `filterMode="server"`, `filterModel`, `onFilterModelChange`, `disableColumnFilter={false}`
+  onto `<DataGrid>`; remove `disableColumnMenu` (was blocking the header menu the filter panel opens
+  from). Rework `handleSearchChange` to merge (not overwrite) the `keyword` item into
+  `filterModel.items` via `setFilterModel(prev => ...)`; add `handleFilterModelChange` (DataGrid's
+  `onFilterModelChange` handler) that re-appends the current `keyword` item onto whatever model the
+  filter panel emits, since the panel has no concept of that synthetic field and would otherwise
+  silently drop it whenever the user edits a column filter.
+
+See research.md Section 37 for the full rationale and alternatives considered (Constitution
+re-check for this update is recorded in the Constitution Check section below, alongside every
+prior update's re-check).
+
 ## Technical Context
 
 **Language/Version**: .NET 8 (backend), JavaScript/React 18 + Vite 7 (frontend)
@@ -1179,6 +1344,35 @@ action on the already-routed `EutrTemplatesController`/`TemplateBuilderPage.jsx`
 unaffected). No new authorization policy family — the new endpoint reuses `EutrTemplates.Update`,
 the same policy already gating this controller's other mutating actions. No new dependency.
 
+**Post-design re-check (2026-07-24 update 19)**: All principles still PASS. No backend code touched
+at all (Principle III — reuses `GET /api/eutr-reference-types`, an already-shipped endpoint from
+feature 006-eutr-reference-types, verified in code before writing this update). Frontend changes stay
+within the presentation layer (`TemplateBuilderPage.jsx`, `BulkAddStepsDialog.jsx`,
+`TemplateListPage.jsx`, `useEutrTemplatesColumns.jsx`) and one already-existing use case/repository
+pair (`GetEutrReferenceTypesUseCase`/`repositories.eutrReferenceTypes`) reused verbatim — no new
+frontend layer crossed (Principle I). Both swaps are reference-pattern reuse in the strongest sense
+(Principle II): TakeFrom's fetch-on-mount-then-derive-options shape copies the existing
+steps/alertGroups loads already in `TemplateBuilderPage.jsx`; `TemplateListPage.jsx`'s `DataGridStyled`
++ `DataGrid` usage copies `eutr-reference-types/index.jsx`/`eutr-steps/index.jsx` verbatim, down to
+`checkboxSelection`/server-mode pagination wiring. Repurposing the orphaned
+`useEutrTemplatesColumns.jsx` (rather than leaving it dead or adding a new hook) is itself Principle
+II applied to this feature's own codebase — an existing, correctly-located file for exactly this
+job. No new route, no new menu entry (Principle V unaffected — both changes touch already-routed
+screens). No new dependency (`@mui/x-data-grid` already in `package.json`, used elsewhere in this
+same feature's Technical Context). One deliberately out-of-scope item, not a violation: `helpers.js`
+keeps `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` exported unchanged because `eutr-sales-orders` (spec
+005) still depends on them — touching that feature's files was never part of this update's mandate.
+
+**Post-design re-check (2026-07-24 update 20)**: All principles still PASS. The backend change is a
+3-line whitelist addition inside `EutrTemplatesRepository`'s existing `GetPagedAsync` (Principle I —
+stays in the Infrastructure layer, no new service/controller/DTO; Principle III — reuses the
+existing filter-building `switch`, no new SQL path or endpoint). Frontend reuses the exact
+`filterMode="server"`/`filterModel`/`onFilterModelChange` pattern already proven by
+`country-groups/index.jsx` — the specific reference the user named (Principle II — reference-pattern
+reuse). Selective `filterable: true` per column (real columns only, computed/action columns
+excluded) mirrors that same reference file's own convention rather than a blanket toggle. No new
+dependency, no new route, no new menu entry (Principle V unaffected).
+
 ## Project Structure
 
 ### Documentation (this feature)
@@ -1252,7 +1446,7 @@ compliance-sys-api/src/
 │   └── DependencyInjection.cs                   # MODIFY — register services + validator; (Update 13) MODIFY — register IEutrTemplateReferencesService + IValidator<EutrTemplateReferencesRequestDto>; (Update 14) MODIFY — register IEutrTemplateReferencesImportService/IEutrTemplateReferencesExportService
 ├── ComplianceSys.Infrastructure/
 │   ├── Repositories/
-│   │   ├── EutrTemplatesRepository.cs            # MODIFY — add ReplaceDetailsAsync (delete+insert details for in-place update) + ResolveOrCreateStepsByNameAsync (match/insert into eutr_steps); (Update 7) add `LEFT JOIN compl_group_email g ON g.Id = t.AlertFor` + `g.Name AS AlertForName` to GetPagedWithVendorNameAsync/GetByIdWithDetailsAsync; FilterMap["AlertFor"] → "g.Name"; add ResolveAlertGroupIdByNameAsync; (Update 10/11) GetPagedWithVendorNameAsync gains `(SELECT COUNT(*) FROM eutr_template_details d WHERE d.TemplateId = t.Id) AS StepsCount` + a `Keyword` column special-case → `(Code LIKE @p OR Name LIKE @p)`; (Update 13) MODIFY — drop VendorCode from SortMap/FilterMap + both header SELECT lists; rename method → GetPagedAsync; ClearIsDefaultForVendorAsync → ClearGlobalDefaultAsync (drop VendorCode predicate)
+│   │   ├── EutrTemplatesRepository.cs            # MODIFY — add ReplaceDetailsAsync (delete+insert details for in-place update) + ResolveOrCreateStepsByNameAsync (match/insert into eutr_steps); (Update 7) add `LEFT JOIN compl_group_email g ON g.Id = t.AlertFor` + `g.Name AS AlertForName` to GetPagedWithVendorNameAsync/GetByIdWithDetailsAsync; FilterMap["AlertFor"] → "g.Name"; add ResolveAlertGroupIdByNameAsync; (Update 10/11) GetPagedWithVendorNameAsync gains `(SELECT COUNT(*) FROM eutr_template_details d WHERE d.TemplateId = t.Id) AS StepsCount` + a `Keyword` column special-case → `(Code LIKE @p OR Name LIKE @p)`; (Update 13) MODIFY — drop VendorCode from SortMap/FilterMap + both header SELECT lists; rename method → GetPagedAsync; ClearIsDefaultForVendorAsync → ClearGlobalDefaultAsync (drop VendorCode predicate); **(Update 20) MODIFY** — add `Status`/`VersionId`/`IsDefault` to `FilterMap` (all already selected, just missing from the filter whitelist) so TemplateListPage's new column-filter panel works for these 3 columns
 │   │   └── EutrTemplateReferencesRepository.cs   # NEW (Update 13) — extends DapperRepository<EutrTemplateReferences, long>; GetByTemplateIdAsync, HasOverlapAsync (date-range overlap query, same TemplateId + VendorCode only); (Update 15) MODIFY — add CopyReferencesAsync (single INSERT ... SELECT, preserves original audit fields)
 │   ├── Sqls/
 │   │   ├── Tables/
@@ -1315,16 +1509,16 @@ compliance-client/src/
 ├── presentation/
 │   └── pages/
 │       └── eutr-templates/
-│           ├── TemplateListPage.jsx              # RENAME (Update 9) — was index.jsx/EutrTemplatesPage; (Update 10/11) MODIFY — keep its own Table/search/chip layout, swap mock data (`mock/eutrTemplates.js`, `mock/eutrTemplateDetails.js`) for `useEutrTemplatesData`/`permissionList`/`DeleteEutrTemplatesUseCase`/`DeleteMultiEutrTemplatesUseCase`/`CreateTemplateDialog`/`ConfirmDialog`/`CustomSnackbar` (reused from TemplateListPageOld.jsx, itself unchanged); Code shown bold, Name as caption; Steps column reads real `stepsCount`; add per-row checkbox + bulk-delete toolbar button; add `TablePagination`; search box sends a debounced `{field:'keyword', operator:'contains', value}` filter item and resets to page 0; Clone/Apply-to-Customer icons kept but `disabled` (mock onClick/dialog removed); **(Update 13) MODIFY** — Apply-to-Customer icon becomes active: `onClick={() => navigate(\`/eutr/templates/apply/${tmpl.id}\`)}`, gated by the same permission check as Edit; Clone stays disabled; **(Update 15) MODIFY** — Clone icon becomes active: `onClick={() => setCloneDialogTemplate(row)}` opens `CloneTemplateDialog` for that row; on successful Clone, closes the dialog and re-runs the existing list-refresh (same `fetchData()` call `CreateTemplateDialog` already triggers); **(Update 16) MODIFY** — add a Status `Chip` per row; add **Approve**/**Request change** toolbar `Button`s next to Create Template, enabled only when the existing `selectedIds` (bulk-delete checkbox state) has exactly 1 entry whose row status matches; clicking either opens `ConfirmDialog` (Yes/No), confirming calls `ApproveEutrTemplatesUseCase`/`RequestChangeEutrTemplatesUseCase.execute(id)`, clears selection, re-runs `fetchData()`, shows `CustomSnackbar`
-│           ├── TemplateBuilderPage.jsx           # (Update 10) MODIFY — keep its own tree-view + toolbar + side-panel layout, swap mock data (`mock/eutrTemplates.js`, `mock/eutrTemplateDetails.js`, `mock/eutrSteps.js`, `utils/treeUtils.js`) for `GetEutrTemplatesUseCase`/`UpdateEutrTemplatesUseCase`/`GetEutrStepsUseCase`/`GetAllGroupEmailUseCase`/`ReferenceObjectAutocomplete` (refType=13) and the existing `useStepTree` hook (replaces its own hand-rolled tree state); Add Root/Add Child step-picker becomes free-solo Autocomplete over the real steps list; Type/FSC fields and the 8-option mock TakeFrom list removed (not in the real schema); Move Up/Down buttons call `reorderSiblings`; side panel shows the header form (Code/Name/AlertFor/Vendor/Default/Save) when no step is selected, step detail (real RequirementType/TakeFrom) when one is; Save calls `UpdateEutrTemplatesUseCase` then navigates to `/eutr/templates`; Back reuses the `isDirty` + `ConfirmDialog` pattern from EutrTemplatesAddEdit.jsx; **(Update 12) MODIFY** — Add Root Group/Add Child Step `Dialog` content swaps `<StepFormRow>` (+ `addStepFormRef`/`addStepValid`, removed) for `<BulkAddStepsDialog onAdd={addSteps} existingChildStepIds={...} />`; **(Update 13) MODIFY** — remove `vendorCode`/`vendorName` state, the two setters in the load effect, `vendorCode` from the Save payload, and the entire Vendor `ReferenceObjectAutocomplete` block + its now-unused import from the side panel (FR-041); **(Update 16) MODIFY** — read `template.status`; when `TEMPLATE_STATUS.APPROVED`, render a warning `Alert` banner and `disabled` every header field, the Save button, Root Group/Child Step toolbar buttons, and each step row's Edit/Delete icons (FR-061); Draft behaves unchanged; **(Update 17) MODIFY** — wrap `<SimpleTreeView>` in a `<DndContext>`, wrap each tree level's siblings in their own `<SortableContext>`, add a drag-handle icon per `TreeItem` wired to `useSortable` (`disabled: isReadOnly`), and add `handleDragEnd` which calls the existing `reorderSiblings` when the dragged/target nodes share a `parentId` (no-op otherwise) — additive to the unchanged Move Up/Down buttons (FR-064 to FR-067; research.md §34); **(Update 18) MODIFY** — Set-as-default `Checkbox` no longer follows the blanket `isReadOnly` disabled flag; its `onChange` branches on `status` — Draft: unchanged (local state, saved via Save); Approved: opens `ConfirmDialog` with the intended value, Yes calls `SetDefaultEutrTemplatesUseCase.execute(id, value)` and updates local state from the result, No closes the dialog with no change (FR-068; research.md §35)
+│           ├── TemplateListPage.jsx              # RENAME (Update 9) — was index.jsx/EutrTemplatesPage; (Update 10/11) MODIFY — keep its own Table/search/chip layout, swap mock data (`mock/eutrTemplates.js`, `mock/eutrTemplateDetails.js`) for `useEutrTemplatesData`/`permissionList`/`DeleteEutrTemplatesUseCase`/`DeleteMultiEutrTemplatesUseCase`/`CreateTemplateDialog`/`ConfirmDialog`/`CustomSnackbar` (reused from TemplateListPageOld.jsx, itself unchanged); Code shown bold, Name as caption; Steps column reads real `stepsCount`; add per-row checkbox + bulk-delete toolbar button; add `TablePagination`; search box sends a debounced `{field:'keyword', operator:'contains', value}` filter item and resets to page 0; Clone/Apply-to-Customer icons kept but `disabled` (mock onClick/dialog removed); **(Update 13) MODIFY** — Apply-to-Customer icon becomes active: `onClick={() => navigate(\`/eutr/templates/apply/${tmpl.id}\`)}`, gated by the same permission check as Edit; Clone stays disabled; **(Update 15) MODIFY** — Clone icon becomes active: `onClick={() => setCloneDialogTemplate(row)}` opens `CloneTemplateDialog` for that row; on successful Clone, closes the dialog and re-runs the existing list-refresh (same `fetchData()` call `CreateTemplateDialog` already triggers); **(Update 16) MODIFY** — add a Status `Chip` per row; add **Approve**/**Request change** toolbar `Button`s next to Create Template, enabled only when the existing `selectedIds` (bulk-delete checkbox state) has exactly 1 entry whose row status matches; clicking either opens `ConfirmDialog` (Yes/No), confirming calls `ApproveEutrTemplatesUseCase`/`RequestChangeEutrTemplatesUseCase.execute(id)`, clears selection, re-runs `fetchData()`, shows `CustomSnackbar`; **(Update 19) MODIFY** — replace `TableContainer`/`Table`/`TableHead`/`TableRow`/`TableCell`/`TableBody`/`TablePagination`/manual `Checkbox` with `DataGridStyled` + `DataGrid` (rows/columns from the repurposed `useEutrTemplatesColumns.jsx`, server-mode pagination via the existing `paginationModel`/`setPaginationModel`, `checkboxSelection`/`rowSelectionModel`/`onRowSelectionModelChange` replacing the manual per-row `Checkbox`/`toggleSelectRow`/`toggleSelectAll`); search box, toolbar buttons, and dialogs below the grid unchanged (FR-069 to FR-071; research.md §36); **(Update 20) MODIFY** — destructure `filterModel` from `useEutrTemplatesData`; wire `filterMode="server"`/`filterModel`/`onFilterModelChange`/`disableColumnFilter={false}` onto `<DataGrid>`, remove `disableColumnMenu`; `handleSearchChange` now merges the `keyword` item into `filterModel` instead of overwriting it, and a new `handleFilterModelChange` re-appends the current `keyword` item onto whatever the column-filter panel emits (FR-074, FR-075; research.md §37)
+│           ├── TemplateBuilderPage.jsx           # (Update 10) MODIFY — keep its own tree-view + toolbar + side-panel layout, swap mock data (`mock/eutrTemplates.js`, `mock/eutrTemplateDetails.js`, `mock/eutrSteps.js`, `utils/treeUtils.js`) for `GetEutrTemplatesUseCase`/`UpdateEutrTemplatesUseCase`/`GetEutrStepsUseCase`/`GetAllGroupEmailUseCase`/`ReferenceObjectAutocomplete` (refType=13) and the existing `useStepTree` hook (replaces its own hand-rolled tree state); Add Root/Add Child step-picker becomes free-solo Autocomplete over the real steps list; Type/FSC fields and the 8-option mock TakeFrom list removed (not in the real schema); Move Up/Down buttons call `reorderSiblings`; side panel shows the header form (Code/Name/AlertFor/Vendor/Default/Save) when no step is selected, step detail (real RequirementType/TakeFrom) when one is; Save calls `UpdateEutrTemplatesUseCase` then navigates to `/eutr/templates`; Back reuses the `isDirty` + `ConfirmDialog` pattern from EutrTemplatesAddEdit.jsx; **(Update 12) MODIFY** — Add Root Group/Add Child Step `Dialog` content swaps `<StepFormRow>` (+ `addStepFormRef`/`addStepValid`, removed) for `<BulkAddStepsDialog onAdd={addSteps} existingChildStepIds={...} />`; **(Update 13) MODIFY** — remove `vendorCode`/`vendorName` state, the two setters in the load effect, `vendorCode` from the Save payload, and the entire Vendor `ReferenceObjectAutocomplete` block + its now-unused import from the side panel (FR-041); **(Update 16) MODIFY** — read `template.status`; when `TEMPLATE_STATUS.APPROVED`, render a warning `Alert` banner and `disabled` every header field, the Save button, Root Group/Child Step toolbar buttons, and each step row's Edit/Delete icons (FR-061); Draft behaves unchanged; **(Update 17) MODIFY** — wrap `<SimpleTreeView>` in a `<DndContext>`, wrap each tree level's siblings in their own `<SortableContext>`, add a drag-handle icon per `TreeItem` wired to `useSortable` (`disabled: isReadOnly`), and add `handleDragEnd` which calls the existing `reorderSiblings` when the dragged/target nodes share a `parentId` (no-op otherwise) — additive to the unchanged Move Up/Down buttons (FR-064 to FR-067; research.md §34); **(Update 18) MODIFY** — Set-as-default `Checkbox` no longer follows the blanket `isReadOnly` disabled flag; its `onChange` branches on `status` — Draft: unchanged (local state, saved via Save); Approved: opens `ConfirmDialog` with the intended value, Yes calls `SetDefaultEutrTemplatesUseCase.execute(id, value)` and updates local state from the result, No closes the dialog with no change (FR-068; research.md §35); **(Update 19) MODIFY** — add `GetEutrReferenceTypesUseCase` load-on-mount (mirrors the existing steps/alertGroups effects) into a `referenceTypes` state; derive `takeFromOptions`/`takeFromLabelById` via `useMemo`; remove `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` from the `@utils/helpers` import; replace both inline Add/Edit-step-form TakeFrom combobox usages and the tree-node `label={TAKE_FROM_LABELS[...]}` lookup with the derived values; pass `takeFromOptions` down to `<BulkAddStepsDialog>` as a new prop (FR-072, FR-073; research.md §36)
 │           ├── ApplyCustomerPage.jsx             # NEW-scope, EXISTS as mock (Update 13) MODIFY — rewrite from `MOCK_CUSTOMERS`/`MOCK_TEMPLATE_CUSTOMERS` (`mock/eutrTemplates.js`) + `status !== 'Published'` gate to real data: Vendor combobox via `ReferenceObjectAutocomplete`(refType=13), load/save via the new `eutr-template-references` use cases keyed by the `:id` route param, drop the Published gate (no Status concept on real templates at that time), keep the existing `hasOverlap()` client pre-check rescoped from `customerId` to `vendorCode` (server `HasOverlapAsync` is authoritative); **(Update 14) MODIFY** — add Import/Export `Button`s to the header `Stack` (FR-043): hidden `<input type="file" accept=".xlsx">` wired to `ImportEutrTemplateReferencesUseCase.execute(id, file)`, opens `ImportMappingResultDialog` with the result and calls `fetchMappings()` to refresh; Export button calls `ExportEutrTemplateReferencesUseCase.execute(id)` directly (no dialog); new `importing`/`importResult`/`importDialogOpen` state; **(Update 16) NO CHANGE** — the real Status added by this update does NOT gate Apply to Customer; this page keeps working at any Status (Draft or Approved), per FR-032
 │           ├── EutrTemplatesAddEdit.jsx          # MODIFY (through Update 9) — 2-column layout (widened header/narrowed steps), vendor via ReferenceObjectAutocomplete (refType=13) (Update 5), Save button moved below Default checkbox, Back dirty-check confirm dialog; (Update 7) Alert for `Autocomplete` switches from `freeSolo`/hardcoded `ALERT_FOR_OPTIONS` to `GetAllGroupEmailUseCase`-backed, select-only, filtered to `groupType===2 && isAddition===false`, storing the selected group's `id`; (Update 9) becomes Edit-only; **(Update 10) UNCHANGED but no longer routed** — `/eutr/templates/edit/:id` now points at TemplateBuilderPage.jsx; left in place unreferenced (cleanup candidate for a future task, same precedent as the unused vendors endpoint from Update 5), not deleted by this feature
 │           ├── components/
 │           │   ├── EutrTemplatesActionCell.jsx   # NEW — row action buttons; (Update 9) verified against FR-020, no change (Edit + Delete only, already correct)
 │           │   ├── CreateTemplateDialog.jsx      # NEW (Update 9) — quick-create dialog: Name, Alert for combobox, Set as default checkbox only; calls CreateEutrTemplatesUseCase with vendorCode=null, details=[]; (Update 10) reused as-is by TemplateListPage.jsx's Table layout, no change needed; (Update 13) MODIFY — delete the hardcoded `vendorCode: null` line from the Save payload
-│           │   ├── StepTree.jsx                  # MODIFY — add inline Edit step mode; (Update 6) inline-edit Step combobox becomes freeSolo; (Update 8) delete local REQUIREMENT_TYPES/TAKE_FROM_OPTIONS/REQUIREMENT_LABELS/TAKE_FROM_LABELS, import from utils/helpers.js; (Update 10) not reused by TemplateBuilderPage.jsx (which keeps its own tree-rendering shell) — only its underlying `useStepTree` hook and `utils/helpers.js` constants are shared
-│           │   ├── StepFormRow.jsx               # NEW — add step form; (Update 6) Step combobox becomes freeSolo (pick existing or type new name); (Update 8) delete local REQUIREMENT_TYPES/TAKE_FROM_OPTIONS duplicate, import from utils/helpers.js; (Update 10) same free-solo Autocomplete pattern reused inside TemplateBuilderPage.jsx's own Add Root/Add Child dialogs; **(Update 12) no longer used by TemplateBuilderPage.jsx** (replaced there by BulkAddStepsDialog.jsx) — still used by the unrouted EutrTemplatesAddEdit.jsx, left unchanged
-│           │   ├── BulkAddStepsDialog.jsx        # NEW (Update 12) — checkbox table of available EUTR steps (per-row Requirement Type/Take From once ticked) + a single free-solo "Add new step" entry row + "{N} available - {M} selected" footer; used only by TemplateBuilderPage.jsx's Add Root Group/Add Child Step dialogs
+│           │   ├── StepTree.jsx                  # MODIFY — add inline Edit step mode; (Update 6) inline-edit Step combobox becomes freeSolo; (Update 8) delete local REQUIREMENT_TYPES/TAKE_FROM_OPTIONS/REQUIREMENT_LABELS/TAKE_FROM_LABELS, import from utils/helpers.js; (Update 10) not reused by TemplateBuilderPage.jsx (which keeps its own tree-rendering shell) — only its underlying `useStepTree` hook and `utils/helpers.js` constants are shared; **(Update 19) NO CHANGE** — confirmed orphaned (no route/component imports it; `EutrTemplatesAddEdit.jsx`, its former consumer, no longer exists in the repo); still imports `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` unchanged from `helpers.js`, which keeps exporting them for `eutr-sales-orders`
+│           │   ├── StepFormRow.jsx               # NEW — add step form; (Update 6) Step combobox becomes freeSolo (pick existing or type new name); (Update 8) delete local REQUIREMENT_TYPES/TAKE_FROM_OPTIONS duplicate, import from utils/helpers.js; (Update 10) same free-solo Autocomplete pattern reused inside TemplateBuilderPage.jsx's own Add Root/Add Child dialogs; **(Update 12) no longer used by TemplateBuilderPage.jsx** (replaced there by BulkAddStepsDialog.jsx) — still used by the unrouted EutrTemplatesAddEdit.jsx, left unchanged; **(Update 19) NO CHANGE** — `EutrTemplatesAddEdit.jsx` no longer exists in the repo (confirmed via repo-wide search), so this file is now fully orphaned too; left untouched for the same reason as StepTree.jsx above
+│           │   ├── BulkAddStepsDialog.jsx        # NEW (Update 12) — checkbox table of available EUTR steps (per-row Requirement Type/Take From once ticked) + a single free-solo "Add new step" entry row + "{N} available - {M} selected" footer; used only by TemplateBuilderPage.jsx's Add Root Group/Add Child Step dialogs; **(Update 19) MODIFY** — accept a new `takeFromOptions` prop; remove `TAKE_FROM_OPTIONS` from the `@utils/helpers` import (keep `REQUIREMENT_TYPES`); replace both TakeFrom combobox usages (per-row bulk config, "Add new step" draft row) with the prop
 │           │   ├── ImportResultDialog.jsx        # NEW — import result display; (Update 9) reference pattern reused by CreateTemplateDialog
 │           │   ├── ImportMappingResultDialog.jsx # NEW (Update 14) — copies ImportResultDialog.jsx's structure, error table columns Row/TemplateCode/VendorCode/Reason; used only by ApplyCustomerPage.jsx's Import button
 │           │   └── CloneTemplateDialog.jsx       # NEW (Update 15) — read-only source Code/Name, required New template name field, required Alert for combobox (reuses CreateTemplateDialog's GetAllGroupEmailUseCase-backed pattern), Cancel/Clone buttons; Clone opens the existing ConfirmDialog warning before calling CloneEutrTemplatesUseCase
@@ -1335,12 +1529,12 @@ compliance-client/src/
 │           ├── utils/
 │           │   └── treeUtils.js                  # (Update 10) UNCHANGED but orphaned — TemplateBuilderPage.jsx now uses `useStepTree`'s buildTree/flattenForSave instead
 │           └── hooks/
-│               ├── useEutrTemplatesColumns.jsx   # NEW — grid column definitions; (Update 7) `alertFor` column field → `alertForName`; (Update 9) verified against FR-020, no change; (Update 10) no longer used by TemplateListPage.jsx (Table layout doesn't use DataGrid columns) — still used by TemplateListPageOld.jsx, kept unchanged; (Update 13) MODIFY — remove `vendorCode`/`vendorName` from `defaultColumnVisibility` and the `columns` array (kept in sync for the unrouted old page)
+│               ├── useEutrTemplatesColumns.jsx   # NEW — grid column definitions; (Update 7) `alertFor` column field → `alertForName`; (Update 9) verified against FR-020, no change; (Update 10) no longer used by TemplateListPage.jsx (Table layout doesn't use DataGrid columns) — still used by TemplateListPageOld.jsx, kept unchanged; (Update 13) MODIFY — remove `vendorCode`/`vendorName` from `defaultColumnVisibility` and the `columns` array (kept in sync for the unrouted old page); **(Update 19) MODIFY — repurposed** — `TemplateListPageOld.jsx` no longer exists in the repo (confirmed via repo-wide search; this hook had been fully orphaned since sometime after Update 10, not just "kept in sync for" a still-existing old page as previously noted here). Rewrite `columns`/`defaultColumnVisibility` from scratch to match `TemplateListPage.jsx`'s current display: `name` (renderCell, Code bold/Name caption), `status` (renderCell → Chip), `versionId` (renderCell → Chip "V{n}"), `isDefault` (renderCell → Chip "Default"), `stepsCount` (plain number), `actions` (renderCell → 4-icon Edit/Clone/Apply/Delete Stack, same permission wiring as today); all columns `sortable: false, filterable: false` (FR-021b unchanged). Now imported and used by `TemplateListPage.jsx` again (FR-069, FR-070; research.md §36); **(Update 20) MODIFY** — flip `filterable: false → true` on `name`/`status`/`versionId`/`isDefault` (now backend-whitelisted via `FilterMap`); `stepsCount`/`actions` stay `filterable: false` (computed/action columns); `sortable: false` unchanged on every column (FR-074; research.md §37)
 │               ├── useEutrTemplatesData.js       # NEW — list data hook; (Update 11) reused as-is by TemplateListPage.jsx — no hook change needed, `useFilterPayload` already title-cases `keyword` → `Keyword`
 │               ├── useVendors.js                 # REMOVE (Update 5) — superseded by shared useReferenceObjects/ReferenceObjectAutocomplete
 │               └── useStepTree.js                # MODIFY — fix flattenForSave ParentId + add editStep + isDirty tracking for Back warning; (Update 6) flattenForSave also emits stepName for every detail; (Update 10) now also consumed by TemplateBuilderPage.jsx (previously only EutrTemplatesAddEdit.jsx) — no hook change needed, already generic over any host component; **(Update 12) MODIFY** — add `addSteps(newSteps)` bulk-append function (sequential displayOrder per parentId, one isDirty flip), sibling to the unchanged `addStep`; **(Update 17) NO CHANGE** — `reorderSiblings` is already generic over the caller's trigger gesture (button click or drag drop), consumed as-is by the new drag-and-drop `handleDragEnd`
 ├── utils/
-│   └── helpers.js                                 # MODIFY (Update 8) — add REQUIREMENT_TYPES, TAKE_FROM_OPTIONS, REQUIREMENT_LABELS, TAKE_FROM_LABELS exports (moved from StepTree.jsx); (Update 16) MODIFY — add TEMPLATE_STATUS = Object.freeze({ DRAFT: 0, APPROVED: 1 })
+│   └── helpers.js                                 # MODIFY (Update 8) — add REQUIREMENT_TYPES, TAKE_FROM_OPTIONS, REQUIREMENT_LABELS, TAKE_FROM_LABELS exports (moved from StepTree.jsx); (Update 16) MODIFY — add TEMPLATE_STATUS = Object.freeze({ DRAFT: 0, APPROVED: 1 }); **(Update 19) NO CHANGE** — TAKE_FROM_OPTIONS/TAKE_FROM_LABELS stay exported exactly as-is; `eutr-sales-orders/ViewSalesOrderPage.jsx`/`MapFilePage.jsx` (a different, out-of-scope feature) still import them for read-only display — confirmed via repo-wide search before writing this update
 ├── di/
 │   └── repositories.js                           # MODIFY — add eutrTemplates repo; repositories.groupEmail EXISTS already (Update 7 reuses it); (Update 13) MODIFY — add `eutrTemplateReferences: new RestEutrTemplateReferencesRepository()`
 └── app/
@@ -1368,6 +1562,18 @@ this feature (verified false — see research.md §34).
 method (`SetIsDefaultAsync`, mirroring `SetStatusAsync`'s single-column-update shape) — the smallest
 possible backend surface for carving out one exception to Update 16's Approved-read-only rule;
 frontend reuses the existing `ConfirmDialog` component, no new dialog.
+**(Update 19)**: zero backend surface — both changes reuse an already-shipped endpoint
+(`GET /api/eutr-reference-types`, feature 006) and an already-shipped shared component
+(`DataGridStyled`, used by `eutr-reference-types`/`eutr-steps`). The only "new" file-level work is
+repurposing an orphaned hook (`useEutrTemplatesColumns.jsx`) that this plan's own history had
+incorrectly believed was still in use by files (`TemplateListPageOld.jsx`, `EutrTemplatesAddEdit.jsx`)
+that a repo-wide search confirmed no longer exist — corrected in place rather than left to drift
+further. `helpers.js`'s TAKE_FROM_OPTIONS/TAKE_FROM_LABELS are deliberately left untouched because a
+different, out-of-scope feature (`eutr-sales-orders`, spec 005) still consumes them.
+**(Update 20)**: minimal backend surface — a 3-entry whitelist addition to an existing dictionary,
+no new endpoint/method/DTO. Frontend reuses `country-groups/index.jsx`'s exact `DataGrid` filter
+wiring (the pattern the user explicitly pointed at) and `useEutrTemplatesData`'s already-existing
+(previously unused by this page) `filterModel` state — no new hook, no new dependency.
 
 ### Key Differences from Reference Features
 

@@ -1513,3 +1513,477 @@ Phase 0 — chốt các quyết định kỹ thuật. Các điểm nghiệp vụ
   IV — đơn giản); có thể cân nhắc lại nếu trang cũ bị xóa hẳn ở một dọn dẹp sau này; (c) Xóa hẳn hằng số
   `PoRefType` và trang Add cũ trong cùng lượt sửa này — bị loại vì nằm ngoài phạm vi yêu cầu của Update
   18 (chỉ yêu cầu sửa đúng `RefType` cho luồng popup Add, không yêu cầu dọn dẹp trang cũ).
+
+## Quyết định 53 — Hợp nhất Add/Edit vào một component `EutrDocumentsFormDialog.jsx` qua prop `mode`; xóa hẳn trang Add cũ, popup Edit cũ, popup Assign condition (spec Update 19, FR-008/FR-026 đến FR-031/FR-059)
+
+- **Decision**: Đổi tên `EutrDocumentsAddDialog.jsx` (Update 15-18) thành
+  `EutrDocumentsFormDialog.jsx`, thêm 2 prop mới `mode: 'add' | 'edit'` và `initialData` (dữ liệu của
+  đúng `row` grid đang sửa, xem Quyết định 59). Component hiển thị **cùng một layout** Type/Step/
+  Value-chip/Valid from/Valid to cho cả 2 mode, chỉ khác: mode `add` hiển thị nút Upload + input file
+  ẩn (không đổi hành vi Update 15-18, chỉ thêm 2 trường Valid from/to, xem Quyết định 55); mode `edit`
+  khóa Type, chip Value chỉ đọc, ẩn `EutrAddValueAutocomplete`, thay nút Upload bằng Save. Xóa hoàn
+  toàn (không giữ dead code): trang riêng `EutrDocumentsAdd.jsx` + route `/eutr/documents/add`
+  (`RouteResolver.jsx`/`MainRoutes.jsx`), `EutrDocumentsModal.jsx` (popup Edit đơn giản cũ),
+  `AssignConditionDialog.jsx` (popup Assign condition cũ, cả 2 mode create/edit).
+- **Rationale**: Spec Update 19 nêu rõ bằng từ ngữ mạnh hơn hẳn các Update trước — "loại bỏ **hoàn
+  toàn** khỏi phạm vi feature" — khác hẳn quyết định ở Update 15 (Quyết định 45) là **cố ý giữ lại**
+  `EutrDocumentsAdd.jsx` làm dead code sau khi ngừng liên kết từ toolbar. Đây là một đảo ngược có chủ
+  đích của quyết định đó (chính Quyết định 52 phía trên đã dự liệu khả năng này ở mục "Alternatives
+  considered (c)"): 3 luồng Edit khác nhau theo Type (Update 12/13: popup đơn giản cho PO/trống, popup
+  Assign condition cho Upload manual) không còn lý do tồn tại vì Edit giờ luôn là **một** popup duy
+  nhất bất kể Type — giữ lại các file này sẽ là code chết không còn khả năng được kích hoạt lại bởi bất
+  kỳ đường dẫn UI nào (khác Update 15, khi trang cũ vẫn còn truy cập được qua URL trực tiếp). Đổi tên
+  file phản ánh đúng vai trò mới (không còn chỉ là "Add"), tránh để lại tên gây hiểu nhầm cho người đọc
+  code sau này.
+- **Alternatives considered**: (a) Giữ nguyên tên `EutrDocumentsAddDialog.jsx`, chỉ thêm prop `mode` —
+  cân nhắc để giảm số dòng diff, nhưng bị loại vì tên file không còn mô tả đúng vai trò (component giờ
+  xử lý cả Add lẫn Edit), gây nhầm lẫn lâu dài hơn giá trị tiết kiệm được từ việc không đổi tên; (b)
+  Tiếp tục giữ `EutrDocumentsAdd.jsx`/`AssignConditionDialog.jsx`/`EutrDocumentsModal.jsx` như dead code
+  (đúng tiền lệ Update 15) — bị loại vì spec lần này dùng từ ngữ khác hẳn ("loại bỏ hoàn toàn" thay vì
+  im lặng không đề cập), và không giống Update 15 (khi route cũ vẫn có thể truy cập trực tiếp), ở đây
+  **không còn state/API nào** mà 3 file này còn có thể gọi đúng (popup Assign condition phụ thuộc các
+  endpoint sẽ bị xóa ở Quyết định 57) — giữ lại sẽ là code không biên dịch/không chạy được, không phải
+  dead-code-nhưng-vẫn-hoạt-động như Update 15.
+
+## Quyết định 54 — Cột Conditions đổi nguồn: `RefValue` phẳng từ `eutr_references`, bỏ hẳn `eutr_reference_details`/`ConditionGroupDto` (spec Update 19, FR-005)
+
+- **Decision**: Mở rộng SQL có sẵn của `EutrReferencesRepository.GetStepInfoByDocumentIdsAsync`
+  (Quyết định 20/41) thêm `r.RefValue` vào `SELECT`. `EutrDocumentsService.
+  AttachStepAndConditionInfoAsync` đổi cách dựng `Conditions`: nhóm theo `DocumentId`, lấy
+  `Distinct()` các `RefValue` khác `null`/rỗng (giữ thứ tự xuất hiện), gán vào field kiểu **mới**
+  `List<string> Conditions` (thay `List<ConditionGroupDto>` của Update 11). Loại bỏ hoàn toàn khỏi
+  service: lời gọi `IEutrReferenceDetailsRepository.GetGroupedConditionsByDocumentIdsAsync`, và (xem
+  Quyết định 57) toàn bộ entity/repository/DTO liên quan tới `eutr_reference_details`.
+- **Rationale**: FR-005 yêu cầu Conditions = mọi `RefValue` khác null của `eutr_references` thuộc
+  document, hiển thị mỗi giá trị 1 chip — không còn phân biệt theo `ConditionType`/nhóm theo bảng con
+  `eutr_reference_details` (bảng đó chỉ được ghi bởi popup Assign condition cũ, nay đã xóa ở Quyết
+  định 53/57). Dùng `Distinct()` thay vì liệt kê nguyên văn mọi dòng để tránh chip trùng lặp khi Type
+  = "PO" khớp nhiều `StepId` cho cùng 1 mã PO (N dòng `eutr_references` cùng `RefValue`, xem Quyết
+  định 18/42) — spec không yêu cầu tường minh việc dedupe, nhưng hiển thị N chip giống hệt nhau cho
+  cùng 1 giá trị không mang lại thông tin gì thêm cho người dùng và không khớp tinh thần "mỗi giá trị
+  một chip" của FR-005 (ngụ ý các giá trị *phân biệt*).
+- **Alternatives considered**: (a) Giữ nguyên `List<ConditionGroupDto>` (nhóm theo `ConditionType`) và
+  chỉ đổi nguồn dữ liệu bên trong — bị loại vì `eutr_reference_details` không còn được ghi bởi bất kỳ
+  luồng nào sau Update 19 (document Type="Upload manual" giờ cũng tạo qua popup Add hợp nhất, ghi
+  `eutr_references.RefValue` trực tiếp, không qua Assign condition) — giữ shape nhóm theo Type cũ sẽ
+  luôn trả về rỗng cho dữ liệu mới, sai lệch với ý định spec; (b) Không dedupe, trả nguyên văn mọi
+  `RefValue` (kể cả trùng) — cân nhắc vì đơn giản hơn 1 dòng code, nhưng bị loại vì tạo trải nghiệm
+  hiển thị gây hiểu nhầm (nhiều chip giống hệt nhau) cho đúng trường hợp phổ biến nhất của Type="PO"
+  khớp nhiều Step.
+
+## Quyết định 55 — Thêm Valid from/Valid to vào popup Add + 2 request upload hiện có; `EutrUploadService` dùng giá trị nhận được thay hằng số Today/`9999-12-31` cố định (spec Update 19, FR-014/FR-015/FR-021)
+
+- **Decision**: Thêm 2 trường ngày mới vào `EutrDocumentsFormDialog.jsx` (mode `add`): `validFrom`
+  (mặc định `DateTime.Today`), `validTo` (mặc định `9999-12-31`), cả hai dùng MUI `DatePicker` sẵn có
+  trong repo (cùng loại control đã dùng ở `EutrDocumentsModal.jsx` cũ), editable trước khi nhấn Upload.
+  Validate `validFrom <= validTo` phía client (chặn Upload + hiển thị lỗi inline khi vi phạm, FR-016).
+  Thêm 2 field nullable `ValidFrom (DateTime?)`, `ValidTo (DateTime?)` vào **cả 2** request DTO đang
+  dùng cho Upload: `EutrMultiUploadFileRequest` (nhánh Type="PO", Quyết định 12/52) và
+  `EutrTypeMultiUploadFileRequest` (nhánh Type khác, Quyết định 44). Trong `EutrUploadService`, tại 2
+  nơi hiện đang gán cứng `ValidFrom = DateTime.Today` / `ValidTo = MaxValidTo` (hằng số
+  `9999-12-31`), đổi thành `request.ValidFrom ?? DateTime.Today` / `request.ValidTo ?? MaxValidTo` —
+  giữ đúng 2 hằng số cũ làm giá trị mặc định khi request không gửi (an toàn, không phá vỡ hợp đồng cũ
+  nếu có caller nào khác trong tương lai không gửi field này).
+- **Rationale**: FR-014/FR-015/FR-021 yêu cầu Valid from/Valid to hiển thị sẵn giá trị mặc định nhưng
+  MUST cho phép sửa trước khi Upload, và document tạo ra MUST dùng đúng giá trị đang hiển thị tại thời
+  điểm Upload — 2 giá trị này trước đây bị hard-code hoàn toàn trong `EutrUploadService` (Update 6),
+  không có đường truyền nào từ client. Mẫu ternary `request.X ?? default` giống hệt cách `TypeId`
+  (Quyết định 52) đã được thêm an toàn vào cùng request DTO này — tái dùng đúng pattern vừa áp dụng.
+- **Alternatives considered**: (a) Bắt buộc (`[Required]`) 2 field mới trên request DTO — bị loại vì
+  không cần thiết (client luôn có giá trị mặc định sẵn để gửi, không có kịch bản "thiếu giá trị" hợp
+  lệ) và làm phức tạp hoá contract không cần thiết; (b) Validate `ValidFrom <= ValidTo` thêm ở
+  backend (FluentValidation) — cân nhắc như một lớp phòng vệ kép, nhưng bị loại ở phạm vi tối thiểu vì
+  đây là luồng nội bộ 1 popup duy nhất đã validate chặt ở client trước khi cho phép nhấn Upload/Save,
+  không có API nào khác gọi trực tiếp 2 endpoint upload này — có thể bổ sung sau nếu phát sinh caller
+  thứ 2.
+
+## Quyết định 56 — Đơn giản hóa `PUT /api/eutr-documents/{id}/step`: bỏ logic PO-only xóa/tạo lại, thay bằng UPDATE `StepId` hàng loạt cho mọi `eutr_references` của document, dùng chung cho mọi Type; đổi tên DTO cho đúng vai trò mới (spec Update 19, FR-029/FR-033)
+
+- **Decision**: Thêm method mới `Task UpdateStepIdByDocumentIdAsync(long documentId, long stepId,
+  string updatedBy, CancellationToken ct)` vào `IEutrReferencesRepository`/`EutrReferencesRepository`
+  (raw SQL, cùng style 2 method ghi/xóa hiện có): `UPDATE eutr_references SET StepId = @StepId,
+  UpdatedBy = @UpdatedBy, UpdatedDate = @UpdatedDate WHERE DocumentId = @DocumentId;`. Thêm method mới
+  `UpdateReferenceStepAsync(long documentId, long stepId, string userEmail, CancellationToken ct)`
+  **trực tiếp trong `EutrDocumentsService`** (không qua `IEutrConditionAssignmentService` — service đó
+  bị xóa hoàn toàn, xem Quyết định 57) gọi thẳng method trên. Action controller `[HttpPut("{id:long}/
+  step")]` (giữ nguyên route) đổi từ gọi `_conditionAssignmentService.UpdatePoStepAsync(...)` sang
+  `_eutrDocumentsService.UpdateReferenceStepAsync(...)`. Đổi tên `EutrUpdatePoStepRequestDto` →
+  `EutrUpdateReferenceStepRequestDto` (cùng shape `{ long StepId }`) để phản ánh đúng việc endpoint
+  không còn riêng cho Type="PO".
+- **Rationale**: FR-029/FR-033 (Save trong popup Edit) yêu cầu một hành vi **đơn giản hơn hẳn** hành vi
+  cũ của Update 12/13: cập nhật `StepId` của **mọi** bản ghi `eutr_references` hiện có của document
+  thành Step mới, **giữ nguyên** `RefValue`/`RefType`/số lượng bản ghi — không xóa/tạo lại bản ghi nào,
+  áp dụng đồng nhất cho **mọi** Type (không còn phân biệt PO/Upload manual/Type khác). Đây thực ra là
+  phép `UPDATE` một cột duy nhất theo điều kiện `DocumentId` — đơn giản hơn cả 2 cơ chế cũ nó thay thế
+  (Update 12: xóa-toàn-bộ-tạo-lại-1-dòng cho PO; Update 12b tương tự cho Upload manual qua
+  `UpdateConditionAssignmentAsync`), và không cần biết trước `RefValue`/`RefType` hiện tại (khác quy
+  tắc cũ phải đọc trước "dòng có `Id` nhỏ nhất" để giữ lại `RefValue`). Đặt method mới trong
+  `EutrDocumentsService` (không tạo lại service riêng) vì `IEutrConditionAssignmentService` không còn
+  lý do tồn tại sau khi xóa toàn bộ luồng Assign condition (Quyết định 57) — chỉ còn đúng 1 hành vi
+  "sửa Step" cần giữ lại, đặt cạnh `DeleteAsync`/`DeleteMultiAsync` override đã có sẵn trong cùng file
+  là đủ (Nguyên tắc II — không giữ một service Application chỉ để chứa 1 method).
+- **Alternatives considered**: (a) Giữ `IEutrConditionAssignmentService` chỉ với đúng 1 method
+  `UpdateReferenceStepAsync` còn lại — bị loại, một service Application chỉ bọc 1 lệnh `UPDATE` đơn
+  giản không mang lại giá trị tách lớp nào, thêm 1 file/interface không cần thiết (yagni); (b) Gộp
+  logic sửa Step vào ngay `EutrDocumentsService.UpdateAsync` (override) để chỉ cần 1 lệnh gọi API thay
+  vì 2 — bị loại vì `EutrDocumentsRequestDto`/`UpdateAsync` là CRUD chuẩn dùng chung, không có chỗ cho
+  `StepId` (tương tự lý do Quyết định 11 tách `EutrUploadService` khỏi `IEutrDocumentsService.
+  AddAsync`); giữ 2 lời gọi API riêng biệt (đã là pattern có sẵn từ Update 12, Quyết định 38 — frontend
+  `index.jsx`/nay `EutrDocumentsFormDialog.jsx` gọi tuần tự Update rồi step) tránh mở rộng phạm vi DTO
+  CRUD chung.
+
+## Quyết định 57 — Xóa hoàn toàn luồng Assign condition: service, entity/repository `eutr_reference_details`, 5 endpoint liên quan, cùng mọi DTO/use case/component chỉ phục vụ luồng đó (spec Update 19, "loại bỏ hoàn toàn khỏi phạm vi feature")
+
+- **Decision**: Xóa: `IEutrConditionAssignmentService.cs`/`EutrConditionAssignmentService.cs`,
+  `EutrReferenceDetails.cs` (entity), `IEutrReferenceDetailsRepository.cs`/
+  `EutrReferenceDetailsRepository.cs`, `EutrManualMultiUploadFileRequest.cs`,
+  `EutrAssignConditionsRequestDto.cs` (+ validator), `EutrConditionRowDto.cs`,
+  `EutrUpdateConditionAssignmentRequestDto.cs` (+ validator), `EutrDocumentConditionAssignmentDto.cs`,
+  `ConditionGroupDto.cs`, `EutrConditionGroupRow.cs`. Xóa 4 action khỏi `EutrDocumentsController`:
+  `POST get-unassigned`, `POST assign-conditions`, `GET`/`PUT {id}/condition-assignment`; xóa
+  `EutrDocumentsService.GetUnassignedPagedAsync`; xóa
+  `IEutrReferencesRepository.GetUnassignedDocumentsPagedAsync`; xóa action
+  `[HttpPost("eutr-upload-manual-multi")]` khỏi `SharePointController` cùng
+  `EutrUploadService.UploadManualMultipleToSharePointAndSaveDataAsync`. Xóa DI registration tương ứng.
+  Frontend: xóa use case `AssignEutrConditionsUseCase`, `GetEutrDocumentConditionAssignmentUseCase`,
+  `UpdateEutrConditionAssignmentUseCase`, `GetEutrDocumentsUnassignedUseCase`; xóa method tương ứng
+  khỏi `IEutrDocumentsRepository.js`/`RestEutrDocumentsRepository.js`/`eutrDocumentsApi.js`
+  (`getUnassigned`, `assignConditions`, `getConditionAssignment`, `updateConditionAssignment`) và khỏi
+  `ISharePointRepository.js`/`RestSharePointRepository.js`/`UploadToSharePointUseCase.js`
+  (`uploadEutrManualFilesMulti`/`executeManualMulti`); xóa hằng số `CONDITION_TYPE_OPTIONS`
+  (`utils/helpers.js`) nếu không còn nơi nào khác dùng tới (xác nhận lại khi implement — task-level
+  concern, không phải quyết định thiết kế). Đổi tên `UpdateEutrDocumentPoStepUseCase.js` →
+  `UpdateEutrDocumentReferenceStepUseCase.js` (khớp Quyết định 56, dùng bởi `EutrDocumentsFormDialog.jsx`
+  ở mode edit thay vì `index.jsx`).
+- **Rationale**: Toàn bộ các endpoint/DTO/component này chỉ tồn tại để phục vụ 2 luồng mà spec Update
+  19 xác nhận đã bị loại bỏ hoàn toàn khỏi phạm vi feature: trang Add cũ (List PO/bảng "chưa gán") và
+  popup Assign condition (cả 2 mode create/edit). Khảo sát toàn bộ call site (xem báo cáo khảo sát khi
+  lập kế hoạch) xác nhận không còn điểm gọi nào khác ngoài các file/luồng vừa liệt kê — an toàn để xóa
+  hẳn thay vì giữ làm dead code (khác quyết định ở Update 15/Quyết định 45, nơi trang cũ **vẫn còn
+  đường dẫn URL trực tiếp** có thể kích hoạt lại được). Bảng `eutr_reference_details` **không bị xóa/
+  migrate** — chỉ không còn entity/repository backend nào đọc/ghi nó nữa, đúng theo Assumptions đã
+  chốt ở spec ("dữ liệu cũ giữ nguyên trong schema nhưng không còn được hiển thị/chỉnh sửa qua màn
+  hình này").
+- **Alternatives considered**: (a) Chỉ ngừng liên kết (giữ file như dead code, đúng tiền lệ Update 15)
+  — bị loại, xem lý do đối chiếu ở Quyết định 53 (từ ngữ spec khác hẳn, và các file này phụ thuộc lẫn
+  nhau + phụ thuộc endpoint sắp xóa nên giữ lại sẽ không còn biên dịch/chạy được, khác hẳn trường hợp
+  Update 15 nơi trang cũ độc lập, tự đủ, vẫn chạy được qua URL trực tiếp); (b) Xóa file nhưng giữ lại
+  route/endpoint rỗng (trả lỗi 410 Gone) để không phá vỡ client cũ nào còn gọi — bị loại, không có bất
+  kỳ client nào khác ngoài chính SPA này gọi các endpoint đó (không phải API công khai cho bên thứ 3),
+  không cần thiết duy trì tương thích ngược.
+- **⚠️ Điều chỉnh khi implement (`/speckit-implement`)**: Khảo sát call site ban đầu (thực hiện khi
+  lập kế hoạch) **bỏ sót** một điểm gọi ngoài phạm vi feature `004-eutr-documents`: trang
+  `ViewSalesOrderPage.jsx` của feature khác **`eutr-sales-orders`** gọi
+  `GetEutrDocumentsPoReferencesUseCase` (→ `getPoReferences` → `POST /api/eutr-documents/
+  list-po-references` → `EutrDocumentsService.GetPoReferencesAsync` →
+  `IEutrReferencesRepository.GetDocumentsByPoCodesAsync`) để suy diễn trạng thái "đã map" ở mục
+  Template Checklist (JOIN theo mã PO đã lưu trong `eutr_purchase_attachments`). Phát hiện qua
+  `npx vite build` thất bại (`ENOENT ... GetEutrDocumentsPoReferencesUseCase`) ngay sau khi xóa file
+  này theo kế hoạch ban đầu. **Đã khôi phục nguyên vẹn** (không đổi shape/hành vi) toàn bộ chuỗi
+  `EutrDocumentsListPoReferencesRequestDto.cs`/`EutrDocumentsPoReferenceDto.cs`/
+  `EutrDocumentsPoReferenceItemDto.cs`/`EutrReferencePoDocumentInfo.cs`/
+  `GetDocumentsByPoCodesAsync`/`GetPoReferencesAsync`/action `list-po-references`/
+  `GetEutrDocumentsPoReferencesUseCase.js`/`getPoReferences`/`listPoReferences` — bảng trong Decision
+  ở trên đã được cập nhật để phản ánh đúng danh sách xóa cuối cùng (không còn liệt kê nhóm List-PO).
+  Bài học: khảo sát call site cho quyết định xóa code phải quét **toàn bộ monorepo** (cả các feature
+  khác dùng chung `application/usecases/eutr-documents/*`), không chỉ trong thư mục
+  `presentation/pages/eutr-documents/` — endpoint/use case CRUD của 1 feature hoàn toàn có thể bị
+  feature khác tái sử dụng làm nguồn tra cứu read-only.
+
+## Quyết định 58 — Giữ nguyên SQL 2 bước của `DeleteByDocumentIdAsync` (dọn `eutr_reference_details` mồ côi trước khi xóa `eutr_references`) dù feature không còn ghi bảng đó (spec Update 19)
+
+- **Decision**: KHÔNG rút gọn lại `EutrReferencesRepository.DeleteByDocumentIdAsync` (Quyết định 30,
+  Update 11) về lại 1 câu `DELETE FROM eutr_references WHERE DocumentId = @DocumentId` như trước
+  Update 11 — giữ nguyên 2 câu `DELETE` (xóa `eutr_reference_details` con trước qua subquery `RefId IN
+  (SELECT Id FROM eutr_references WHERE DocumentId = @DocumentId)`, rồi mới xóa `eutr_references`).
+- **Rationale**: Khóa ngoại `eutr_reference_details_refid_foreign` (KHÔNG có `ON DELETE CASCADE`) vẫn
+  tồn tại trong schema, và dữ liệu lịch sử tạo bởi popup Assign condition cũ (Update 11-13, trước khi
+  tính năng đó bị xóa ở Update 19) vẫn còn nguyên trong `eutr_reference_details` theo đúng Assumptions
+  đã chốt ("dữ liệu cũ giữ nguyên trong schema"). Nếu rút gọn lại còn 1 câu `DELETE`, xóa một document
+  Type="Upload manual" cũ (tạo trước Update 19, còn `eutr_reference_details` liên kết) sẽ vi phạm khóa
+  ngoại và làm hỏng chức năng Delete (User Story 4) cho đúng nhóm dữ liệu lịch sử này — một hồi quy
+  nghiêm trọng hơn nhiều so với lợi ích đơn giản hóa 1 câu SQL không còn đường ghi mới nào tạo ra dữ
+  liệu ở bảng đó.
+- **Alternatives considered**: (a) Rút gọn về 1 câu DELETE vì "feature không còn dùng bảng đó" — bị
+  loại vì lý do trên (phá vỡ Delete cho dữ liệu lịch sử); (b) Thêm `ON DELETE CASCADE` vào khóa ngoại
+  qua 1 migration mới rồi rút gọn SQL — bị loại, vượt phạm vi yêu cầu Update 19 (không yêu cầu sửa
+  schema `eutr_reference_details`), và thay đổi ràng buộc DB có thể ảnh hưởng phạm vi rộng hơn phạm vi
+  feature này (bảng đó vẫn được thiết kế tổng thể coi là thuộc sở hữu chung, không riêng feature này).
+
+## Quyết định 59 — Frontend: Edit nạp dữ liệu trực tiếp từ `row` grid đã có (không gọi API round-trip mới) (spec Update 19, FR-026)
+
+- **Decision**: `EutrDocumentsFormDialog.jsx` (mode `edit`) nhận `initialData = row` (chính dòng
+  DataGrid đang hiển thị, đã có sẵn `refType`, `typeName`, `stepId`, `conditions` (nay là
+  `string[]` phẳng, Quyết định 54), `validFrom`, `validTo` từ response `get-all` hiện có) — KHÔNG gọi
+  thêm API nào để tải lại dữ liệu document khi mở popup Edit. Type field: tìm phần tử khớp `id ===
+  initialData.refType` trong danh sách `referenceTypes` đã tải sẵn (giống Add, qua
+  `GetEutrReferenceTypesUseCase`) để hiển thị (disabled). Step field: tìm phần tử khớp `id ===
+  initialData.stepId` trong danh sách `steps` đã tải sẵn (giống Add, qua `GetEutrStepsUseCase`) làm
+  giá trị ban đầu (editable). Chip: hiển thị trực tiếp `initialData.conditions` (đọc-only, không qua
+  `EutrAddValueAutocomplete`).
+- **Rationale**: Tiếp nối tinh thần "0 round-trip HTTP mới" đã áp dụng nhất quán từ Update 13 (Quyết
+  định 38, `EutrDocumentsResponseDto.StepId`) và Update 8 (Quyết định 22) — mọi dữ liệu cần cho popup
+  Edit **đã có sẵn** trên `row` vì chính `get-all` (Update 8/11/13/14) đã tính đủ `refType`/`typeName`/
+  `stepId`/`conditions` cho mục đích hiển thị cột grid; tái dùng luôn cho popup Edit tránh thêm 1 GET
+  endpoint chỉ để lấy lại dữ liệu đã có trong tay (khác hẳn Update 11/12 cũ, nơi
+  `GET {id}/condition-assignment` là cần thiết vì `Conditions` grouped-by-type khi đó KHÔNG có trên
+  response `get-all` chuẩn cho mọi Type — nay không còn đúng vì Conditions đã đơn giản hoá thành
+  `RefValue` phẳng, sẵn có trên mọi dòng).
+- **Alternatives considered**: (a) Giữ 1 endpoint `GET {id}` chuyên dụng để tải lại dữ liệu Edit (như
+  `condition-assignment` cũ) — bị loại, không cần thiết vì dữ liệu đã có đủ trên `row`, thêm round-trip
+  không có lợi ích (Nguyên tắc III/YAGNI); (b) Gọi lại `GET get-by-id/{id}` (endpoint CRUD chuẩn, trả
+  raw entity `EutrDocuments`, không có `refType`/`stepId`/`conditions`) — bị loại, thiếu đúng những
+  field popup Edit cần, sẽ phải mở rộng response của endpoint này chỉ để phục vụ 1 popup trong khi
+  `get-all` đã tính sẵn.
+
+## Quyết định 60 — Quy tắc ẩn/hiện Step khác nhau giữa mode Add và mode Edit của cùng 1 dialog (spec Update 19, FR-010/FR-029/FR-034)
+
+- **Decision**: `EutrDocumentsFormDialog.jsx` tính điều kiện hiển thị Step **khác nhau theo mode**:
+  mode `add` → `showStep = !isPoType` (không đổi so với Update 17, Quyết định 51 — PO ẩn Step, Type
+  khác hiện); mode `edit` → `showStep = initialData.refType != null` (hiện Step bất kể Type là gì, kể
+  cả Type="PO" — chỉ ẩn khi document hoàn toàn không có bản ghi `eutr_references` nào, tức Type/chip
+  cũng trống). Khi Step hiển thị ở mode `edit`, MUST chọn sẵn giá trị hiện tại (Quyết định 59) và vẫn
+  bắt buộc phải có giá trị trước khi Save khả dụng.
+- **Rationale**: FR-010 (Add) và FR-029/FR-034 (Edit) mô tả 2 quy tắc **khác nhau có chủ đích**: Add ẩn
+  Step cho Type="PO" vì Step được suy tự động theo Prefix tên file (Quyết định 51 — không có Step đơn
+  để hiển thị trước khi biết file nào được chọn); Edit luôn cho sửa Step (kể cả Type="PO") vì tại thời
+  điểm Edit, document đã tồn tại với 1 giá trị Step cụ thể (dòng `Id` nhỏ nhất, Update 13) cần hiển thị
+  và cho phép đổi — không còn tình huống "chưa biết file nào". Đây là lý do chính khiến dialog cần
+  tham số hóa điều kiện này theo `mode` thay vì dùng chung 1 biểu thức `isPoType` cho cả 2 mode.
+- **Alternatives considered**: Dùng chung đúng 1 quy tắc `showStep = !isPoType` cho cả 2 mode — bị
+  loại, trái trực tiếp FR-029 ("Step MUST vẫn khả dụng để sửa" không có ngoại lệ theo Type) — sẽ khiến
+  Edit một document Type="PO" không thể sửa Step, vi phạm User Story 3 hoàn toàn cho nhóm Type phổ
+  biến nhất.
+
+## Quyết định 61 — Combobox Step lọc theo `eutr_reference_type_details`: tái sử dụng nguyên vẹn hạ tầng đã có sẵn của feature `006-eutr-reference-types`, 0 dòng backend mới (spec Update 20, FR-043 đến FR-045)
+
+- **Decision**: `EutrDocumentsFormDialog.jsx` gọi lại use case **đã tồn tại sẵn**
+  `GetByTypeIdEutrReferenceTypeDetailsUseCase` (`compliance-client/src/application/usecases/
+  eutr-reference-type-details/GetByTypeIdEutrReferenceTypeDetailsUseCase.js`, instantiate với
+  `repositories.eutrReferenceTypeDetails` đã đăng ký sẵn trong `di/repositories.js`) — use case này gọi
+  `GET /api/eutr-reference-type-details/by-type/{typeId}` (`EutrReferenceTypeDetailsController`, policy
+  `EutrReferenceTypes.ReadOne`), toàn bộ entity/repository/service/controller/policy cho endpoint này
+  **đã được xây dựng đầy đủ** bởi feature `006` (Assign Steps) — feature `004` chỉ **tiêu thụ read-only**,
+  không thêm bất kỳ file/dòng backend nào. Kết quả trả về (`{ id, typeId, stepId, stepName, ... }[]`,
+  sắp xếp `ORDER BY d.CreatedDate DESC` do repository quyết định — không có tham số sắp xếp nào khác)
+  được map sang hình dạng `{ id: stepId, name: stepName }` mà `Autocomplete` Step hiện có đang kỳ vọng;
+  ưu tiên đối chiếu `stepId` với mảng `steps` đầy đủ đã tải sẵn bởi `getEutrStepsUseCase` (Update 15) để
+  giữ đúng object reference hiện dùng trong `isOptionEqualToValue`, dùng thẳng `stepName` của response
+  làm fallback nếu không khớp (trường hợp Step đã bị xóa khỏi `eutr_steps` sau khi được gán — hiếm,
+  không chặn hiển thị). Gọi lại use case này mỗi khi `type` đổi ở mode `add`, và một lần khi mở popup ở
+  mode `edit` (dùng `initialData`'s Type, vì Type đã khóa — không đổi trong suốt vòng đời popup Edit).
+  Mode `add`: sau khi danh sách lọc tải xong, `setStep(filteredSteps[0] ?? null)` (FR-044). Mode `edit`:
+  nếu Step hiện tại của document (từ `initialData`, xác định theo Quyết định 59 — bản ghi `Id` nhỏ
+  nhất) không có mặt trong danh sách đã lọc (đã bị gỡ khỏi Assign Steps sau khi document được tạo),
+  chèn thêm chính Step đó vào đầu mảng hiển thị thay vì loại bỏ, và **không** đổi giá trị `step` đang
+  chọn sang mặc định khác (FR-045). Type = "PO" không đổi — `isPoType` tiếp tục ẩn hẳn Step, không gọi
+  use case này (Quyết định 51/60 không đổi).
+- **Rationale**: Khảo sát codebase trước khi lập kế hoạch xác nhận **toàn bộ** hạ tầng cần thiết đã tồn
+  tại sẵn từ feature `006`: entity `EutrReferenceTypeDetails`, repository
+  `IEutrReferenceTypeDetailsRepository`/`EutrReferenceTypeDetailsRepository.GetByTypeIdAsync` (SQL JOIN
+  `eutr_reference_type_details`+`eutr_steps`, lọc `WHERE d.TypeId = @typeId`), controller action
+  `GetByTypeId` (`GET .../by-type/{typeId}`), và toàn bộ tầng frontend tương ứng (domain entity, infra
+  repository, API client, use case, đăng ký DI) — được dùng bởi màn `AssignStepsPage.jsx` của feature
+  `006` nhưng không có gì đặc thù riêng cho feature đó, hoàn toàn tái sử dụng được read-only từ feature
+  `004`. Đây là mức áp dụng cao nhất của Nguyên tắc II (Reference-Pattern Reuse)/III (Reuse Existing
+  Backend) trong lịch sử feature này kể từ Update 17 (0 dòng backend mới) — viết lại 1 endpoint/repository
+  tương đương ở `004` sẽ là trùng lặp thuần túy, vi phạm trực tiếp Nguyên tắc III.
+- **Alternatives considered**: (a) Tạo endpoint/repository JOIN mới riêng cho `004` (ví dụ mở rộng
+  `IEutrReferencesRepository`) — bị loại, trùng lặp hoàn toàn logic đã có ở `006`, không có lý do
+  nghiệp vụ nào cần tách biệt; (b) Đổi `GetEutrStepsUseCase` hiện có (tải toàn bộ `eutr_steps`) để nhận
+  thêm tham số lọc theo Type — bị loại, use case này được nhiều nơi khác trong hệ thống dùng để tải
+  *toàn bộ* Step (không có khái niệm Type), thêm tham số lọc sẽ phá vỡ hợp đồng dùng chung của nó; (c)
+  Bỏ qua việc đối chiếu với `steps` đầy đủ, dựng thẳng `{id, name}` từ mỗi response item — được cân nhắc
+  nhưng giữ bước đối chiếu để tránh 2 object khác instance cùng biểu diễn 1 Step gây lệch
+  `isOptionEqualToValue` nếu `Autocomplete` so sánh theo reference ở đâu đó khác trong component (phòng
+  vệ rẻ, không tốn thêm round-trip HTTP).
+- **Cân nhắc permission (không phải rào cản mới)**: Endpoint `by-type/{typeId}` dùng policy
+  `EutrReferenceTypes.ReadOne` — khác nhóm policy `EutrDocuments.*` của feature này. Đây **không phải
+  vấn đề mới phát sinh** từ Update 20: dialog này đã gọi không điều kiện 2 endpoint thuộc 2 feature khác
+  từ Update 15/16 (`GET /api/eutr-reference-types` cho dropdown Type, `GET /api/eutr-steps` cho Step
+  không lọc) mà không cần policy `EutrDocuments.*` bao trùm chúng — người dùng có quyền mở popup Add/
+  Edit của `004` được giả định (qua cấu hình role/menu ở DB, ngoài phạm vi code — Nguyên tắc V, Quyết
+  định 7) đã có sẵn quyền đọc dữ liệu tham chiếu của `eutr_steps`/`eutr_reference_types`/nay thêm
+  `eutr_reference_type_details`. Không cần thay đổi/thêm policy nào ở phạm vi feature `004-eutr-documents`.
+
+## Quyết định 62 — Search box lọc qua "cột filter ảo" trên endpoint `get-all` hiện có, KHÔNG endpoint mới (spec Update 21, FR-046/FR-047)
+
+- **Decision**: KHÔNG tạo endpoint/DTO request mới cho search box. `EutrDocumentsController`'s
+  `POST /api/eutr-documents/get-all` (đã nhận `[FromQuery] page,pageSize,sortColumn,sortOrder` +
+  `[FromBody] List<FilterRequest>? filters`, xem `EutrDocumentsController.GetPaged`) giữ nguyên chữ
+  ký — search box chỉ gửi thêm, bên trong `filters` đã có, tối đa 3 phần tử với `Column` ∈
+  `{"TypeId", "StepId", "Conditions"}` (ví dụ `{ column: "TypeId", operator: "=", value: 3 }`).
+  `EutrDocumentsService.GetPagedAsync` (đã override `base.GetPagedAsync` từ trước để gọi
+  `AttachStepAndConditionInfoAsync`) MỚI thêm 1 bước **trước** khi gọi `base.GetPagedAsync`: rút 3
+  filter này ra khỏi `request.Filters` (so khớp `Column` không phân biệt hoa/thường, loại khỏi list
+  gửi xuống repository generic), đọc `typeId`/`stepId`/`conditionsQuery` từ chúng.
+- **Rationale**: Khảo sát xác nhận generic repository (`Shared.Dapper.Repositories.BaseRepository.
+  GetPagedAsync`, decompiled qua ilspycmd — package `Res.Shared.Dapper` chỉ có sẵn dưới dạng NuGet,
+  không có source trong repo) build WHERE clause bằng cách tra `Column` (không phân biệt hoa/thường)
+  vào **whitelist property** của chính `TEntity` (`EutrDocuments`) qua reflection — cột không tồn tại
+  trên entity bị **âm thầm bỏ qua** (không lỗi, không cảnh báo). Nghĩa là gửi thẳng `TypeId`/`StepId`/
+  `Conditions` vào `filters` mà không rút ra trước sẽ không có tác dụng gì (silently ignored) — bắt
+  buộc phải xử lý ở tầng `EutrDocumentsService` (Application), nơi duy nhất biết về mối quan hệ
+  `eutr_documents` ↔ `eutr_references`. Không tạo endpoint mới giữ đúng path/contract công khai
+  (`get-all`) mà mọi client hiện có (bao gồm cả các nơi khác trong SPA có thể gọi endpoint này) không
+  bị ảnh hưởng — đúng tinh thần Nguyên tắc III (Reuse Existing Backend).
+- **Alternatives considered**: (a) Tạo endpoint mới riêng (ví dụ `POST /api/eutr-documents/search`)
+  với DTO request tường minh `{ typeId, stepId, conditions, page, pageSize, ... }` — bị loại, trùng
+  lặp gần như toàn bộ logic phân trang/sắp xếp đã có ở `get-all`, và tách 2 nguồn dữ liệu cho cùng 1
+  bảng làm tăng rủi ro lệch hành vi giữa "xem danh sách" và "tìm kiếm"; (b) Thêm field tường minh mới
+  vào 1 DTO request riêng cho `get-all` (thay vì tái dùng `FilterRequest` sẵn có) — bị loại, endpoint
+  hiện tại không có DTO request riêng nào (dùng thẳng `PagedRequest`/`FilterRequest` generic của
+  `Shared.Dapper`), thêm DTO mới sẽ phá vỡ đúng cơ chế "mọi lọc đi qua `List<FilterRequest>`" đã nhất
+  quán trên toàn bộ các endpoint `get-all` của hệ thống.
+
+## Quyết định 63 — `GetMatchingDocumentIdsAsync`: 3 `EXISTS` độc lập, không cùng 1 dòng `eutr_references` (spec Update 21, FR-048)
+
+- **Decision**: Thêm method mới vào `IEutrReferencesRepository`/`EutrReferencesRepository` (đã tồn
+  tại từ Update 8, cạnh 4 method hiện có):
+  ```csharp
+  Task<List<long>> GetMatchingDocumentIdsAsync(
+      long? typeId, long? stepId, string? conditionsQuery, CancellationToken ct = default);
+  ```
+  SQL (raw, cùng style `Connection.QueryAsync`/`CommandDefinition` đã dùng ở 4 method hiện có của
+  repository này):
+  ```sql
+  SELECT d.Id
+  FROM eutr_documents d
+  WHERE (@typeId IS NULL OR EXISTS (
+          SELECT 1 FROM eutr_references r WHERE r.DocumentId = d.Id AND r.RefType = @typeId))
+    AND (@stepId IS NULL OR EXISTS (
+          SELECT 1 FROM eutr_references r WHERE r.DocumentId = d.Id AND r.StepId = @stepId))
+    AND (@conditionsQuery IS NULL OR EXISTS (
+          SELECT 1 FROM eutr_references r WHERE r.DocumentId = d.Id
+            AND r.RefValue LIKE CONCAT('%', @conditionsQuery, '%')));
+  ```
+  Tham số nào không được cung cấp (`null`) thì điều kiện `EXISTS` tương ứng bị bỏ qua hoàn toàn (luôn
+  đúng) — chỉ những điều kiện có giá trị mới thực sự lọc. `typeId` truyền xuống dưới dạng giá trị số
+  nguyên khớp kiểu cột `RefType` (`TINYINT`, ép kiểu ở tầng gọi — cùng quy ước `(byte)typeId` đã dùng
+  từ Update 15/18); `conditionsQuery` là chuỗi thô người dùng nhập (không cần escape ký tự đại diện
+  LIKE — khác trường hợp "đảo chiều LIKE" của Quyết định 17, ở đây tham số là chuỗi tìm kiếm, không
+  phải pattern).
+- **Rationale**: Spec Update 21 (Clarifications, Q&A) chốt rõ: 3 điều kiện lọc (Type/Step name/
+  Conditions) **không bắt buộc khớp cùng một bản ghi** `eutr_references` của document — một document
+  có thể khớp Type qua dòng A và khớp Conditions qua dòng B. Một câu SQL "1 dòng JOIN thỏa cả 3 điều
+  kiện AND trên cùng dòng" (ví dụ `WHERE r.RefType=@t AND r.StepId=@s AND r.RefValue LIKE ...`) sẽ SAI
+  ngữ nghĩa cho trường hợp Type="PO" khớp nhiều `StepId` (Update 7) — mỗi `StepId` một dòng riêng,
+  cùng `RefType`/`RefValue`. Dùng 3 `EXISTS` độc lập (mỗi điều kiện tự JOIN lại `eutr_references`) là
+  cách duy nhất đạt đúng ngữ nghĩa "độc lập theo điều kiện, cùng document" mà không cần `GROUP BY`/
+  `HAVING` phức tạp. Mẫu `EXISTS`/`NOT EXISTS` correlated trên `eutr_documents`↔`eutr_references` đã có
+  tiền lệ trực tiếp trong chính feature này — endpoint `get-unassigned` (Update 11, đã xóa ở Update 19
+  nhưng logic `NOT EXISTS` gốc vẫn là tiền lệ hợp lệ, research Quyết định 33) dùng đúng cấu trúc
+  `WHERE NOT EXISTS (SELECT 1 FROM eutr_references r WHERE r.DocumentId = eutr_documents.Id)`.
+- **Alternatives considered**: (a) 1 câu JOIN với `WHERE RefType=@t AND StepId=@s AND RefValue LIKE
+  ...` trên cùng 1 dòng — bị loại, sai ngữ nghĩa theo quyết định đã chốt ở spec (xem trên); (b)
+  `GROUP BY DocumentId HAVING SUM(CASE WHEN RefType=@t THEN 1 ELSE 0 END) > 0 AND ...` — cân nhắc,
+  cho cùng kết quả đúng nhưng khó đọc hơn 3 `EXISTS` độc lập và không có tiền lệ nào trong codebase
+  dùng `HAVING` kiểu này; 3 `EXISTS` rõ ràng hơn và khớp đúng mẫu `NOT EXISTS` đã dùng ở Update 11;
+  (c) Gọi riêng 3 truy vấn (1 cho mỗi điều kiện) rồi giao (intersect) tập kết quả ở tầng C# — bị loại,
+  tốn 3 round-trip DB thay vì 1, không cần thiết khi SQL đã biểu diễn đúng logic AND/EXISTS trong 1
+  câu.
+
+## Quyết định 64 — Frontend: clone `ComplianceFilterBar.jsx` + wiring `handleSearch`/`searchFilters` của `compliance-master`, KHÔNG dùng lại nguyên component (spec Update 21)
+
+- **Decision**: Không tái sử dụng trực tiếp `ComplianceFilterBar.jsx` (component này có sẵn các
+  control cụ thể cho `compliance-master` — compliance type `Select`, reference type `Select`,
+  `ReferenceObjectAutocomplete`, search text, expiry days — không khớp 3 control Type/Step name/
+  Conditions mà spec yêu cầu). Thay vào đó, tạo component **mới, nhỏ**
+  `EutrDocumentsFilterBar.jsx` (`presentation/pages/eutr-documents/components/`) **clone cấu trúc**
+  của `ComplianceFilterBar.jsx` (`Box` hàng ngang chứa các control tùy chọn hiển thị theo prop, nút
+  Search `contained` + `startIcon={<SearchIcon/>}` ở cuối) nhưng chỉ giữ 3 control spec yêu cầu.
+  Wiring ở `index.jsx` clone đúng pattern `handleSearch`/`searchFilters`/reset-page-về-0 đã dùng ở
+  `compliance-master/index.jsx`; `useEutrDocumentsData.js` đổi chữ ký nhận thêm `defaultFilters = []`
+  (mẫu `useComplianceMasterData(defaultFilters = [])`), gộp vào `filterPayload` trước khi gọi
+  `getPagingEutrDocumentsUseCase.execute(...)` — cùng cách `useComplianceMasterData` gộp
+  `filterPayload` (DataGrid column filter) + `defaultFilters` (search bar) + `additionalFilters`.
+- **Rationale**: Nguyên tắc II (Reference-Pattern Reuse) yêu cầu clone mẫu tham chiếu **cùng hình
+  dạng** thay vì phát minh mới — `ComplianceFilterBar.jsx` + wiring của `compliance-master/index.jsx`
+  là tiền lệ trực tiếp duy nhất trong repo cho đúng nhu cầu "filter bar phía trên DataGrid với nút
+  Search tách biệt khỏi filter cột của chính DataGrid". Không dùng lại nguyên `ComplianceFilterBar.jsx`
+  vì component đó không tổng quát hóa theo kiểu "generic filter bar nhận danh sách control tùy ý" —
+  các control của nó gắn cứng với domain compliance-master (2 `Select` cụ thể, 1 `Autocomplete` tham
+  chiếu D365, 1 số ngày hết hạn); ép dùng lại sẽ phải sửa nó thành generic hoặc truyền xuống nhiều
+  prop không liên quan — tạo component nhỏ riêng, cùng *hình dạng* nhưng đúng *nội dung*, là lựa chọn
+  nhất quán hơn với cách các dialog/form khác trong chính feature này đã làm (ví dụ
+  `EutrDocumentsFormDialog.jsx` không tái sử dụng `EutrMastersModal.jsx`, mà clone cấu trúc của nó).
+  Step name dropdown trong search box tải **toàn bộ** `eutr_steps` (dùng lại `GetEutrStepsUseCase` —
+  cùng use case đã tải toàn bộ Step trước Update 20) — không lọc theo Type đang chọn trong cùng search
+  box, đúng quyết định đã chốt ở spec Update 21 (search box là bộ lọc độc lập trên dữ liệu đã có, khác
+  hẳn ngữ cảnh "nhập liệu tạo mới" của combobox Step trong popup Add/Edit vốn lọc theo Assign Steps từ
+  Update 20).
+- **Alternatives considered**: (a) Tổng quát hóa `ComplianceFilterBar.jsx` thành 1 component nhận
+  `fields: Array<{type, props}>` tùy ý — bị loại, over-engineering cho nhu cầu hiện tại (chỉ 1 feature
+  dùng hình dạng 3-control này), vi phạm YAGNI; có thể cân nhắc lại nếu một feature thứ ba cần đúng
+  hình dạng tương tự trong tương lai; (b) Đặt 3 control trực tiếp inline trong `index.jsx` (không tách
+  component riêng) — cân nhắc vì đơn giản hơn, nhưng tách riêng `EutrDocumentsFilterBar.jsx` giữ
+  `index.jsx` gọn (đã có nhiều state dialog/selection khác) và khớp đúng mẫu tách file đã dùng ở
+  `compliance-master` (`ComplianceFilterBar.jsx` là file riêng, không inline trong `index.jsx` của nó);
+  (c) Lọc Step name theo Type đang chọn trong cùng search box (giống Assign Steps, Update 20) — bị
+  loại theo quyết định đã chốt ở spec (Q&A "Session 2026-07-24 (Update 21)"), giữ search box là 3 bộ
+  lọc độc lập, đơn giản hơn cho người dùng khi tìm kiếm trên dữ liệu đã tồn tại.
+
+## Quyết định 65 — Backend: đối chiếu (diff) insert/delete theo `RefValue`, KHÔNG "xóa toàn bộ rồi tạo lại toàn bộ" (spec Update 22, FR-052)
+
+- **Decision**: Khi Save ở popup Edit với Type khác "PO", `EutrDocumentsService.
+  UpdateReferenceStepAsync` đọc lại tập `RefValue` hiện có của document (qua
+  `GetStepInfoByDocumentIdsAsync` đã có sẵn — không thêm method đọc mới), tính hai tập chênh lệch bằng
+  LINQ `Except` (so sánh không phân biệt hoa/thường, `StringComparer.OrdinalIgnoreCase`): `toAdd` (có ở
+  `RefValues` gửi lên, chưa có trong DB) và `toRemove` (có trong DB, không còn ở `RefValues` gửi lên).
+  Chỉ `INSERT` đúng các dòng thuộc `toAdd` và `DELETE` đúng các dòng thuộc `toRemove` — mọi dòng không
+  đổi (`RefValue` có mặt ở cả hai tập) được giữ nguyên `Id`/`CreatedBy`/`CreatedDate`, chỉ `StepId` của
+  chúng được cập nhật ở bước cuối (`UpdateStepIdByDocumentIdAsync`, không đổi).
+- **Rationale**: Spec (Update 22, FR-052) mô tả rõ 3 bước tuần tự "tạo bản ghi mới cho chip mới thêm;
+  xóa bản ghi cho chip đã xóa; cập nhật `StepId` của mọi bản ghi còn lại" — đây là ngữ nghĩa **diff
+  từng phần tử**, không phải "thay thế toàn bộ tập hợp". Giữ nguyên `Id`/audit gốc của các dòng không
+  đổi cũng đúng tinh thần chung của feature này (Update 19/FR-033 đã nhấn mạnh "không xóa/tạo lại bản
+  ghi nào" cho trường hợp chỉ đổi Step — Update 22 mở rộng nguyên tắc "tối thiểu hóa write" đó sang cả
+  trường hợp có thêm/bớt chip).
+- **Alternatives considered**: **Xóa toàn bộ rồi tạo lại toàn bộ** theo đúng mẫu
+  `ComplMasterConditionPersistenceService.ReplaceAsync` (đã dùng ở Update 12 cho luồng Assign condition
+  cũ — `GetPagedAsync` theo `masterId` rồi `DeleteAsync` từng dòng, sau đó `AddAsync` lại toàn bộ danh
+  sách mới) — bị loại vì: (a) làm mất `Id`/`CreatedBy`/`CreatedDate` gốc của các chip không hề thay đổi
+  giữa 2 lần Save liên tiếp (vi phạm ngầm định "không thêm/xóa bản ghi nào" nếu người dùng không đổi
+  chip nào — Save khi đó vẫn sẽ xóa+tạo lại toàn bộ, nhiều hơn cần thiết); (b) không có lý do nghiệp vụ
+  nào yêu cầu "làm mới" toàn bộ danh tính bản ghi — khác luồng Assign condition cũ (nơi
+  `eutr_reference_details` là bảng con phụ thuộc, không có ràng buộc "giữ Id" nào từ nghiệp vụ khác);
+  (c) chi phí không nhỏ hơn cách diff (vẫn cần ít nhất 1 round-trip đọc + N round-trip ghi ở cả hai
+  cách) nên không có lợi thế hiệu năng bù lại cho việc mất tính minh bạch/toàn vẹn dữ liệu.
+
+## Quyết định 66 — Backend: mở rộng `EutrUpdateReferenceStepRequestDto`/`PUT {id}/step` hiện có thay vì tạo endpoint reconcile riêng (spec Update 22, FR-051/FR-052)
+
+- **Decision**: Thêm 1 field nullable `List<string>? RefValues` vào `EutrUpdateReferenceStepRequestDto`
+  đã có (Update 19) thay vì tạo route/DTO/controller action mới cho việc "đối chiếu chip". `null` (Type
+  = "PO", hoặc Client không gửi — ví dụ code cũ) giữ nguyên hành vi trước Update 22 (chỉ `UPDATE
+  StepId`, không transaction); có giá trị (Type khác "PO") kích hoạt nhánh reconcile mới trong cùng
+  method `UpdateReferenceStepAsync`, cùng lời gọi HTTP `PUT {id}/step` đã có, cùng 1 lượt Save (sau
+  bước cập nhật `ValidFrom`/`ValidTo` ở `PUT {id}`, không đổi thứ tự đã có từ Update 19).
+- **Rationale**: Save ở popup Edit vốn đã gọi tuần tự 2 endpoint (`PUT {id}` rồi `PUT {id}/step`, nếu
+  Step hiển thị) — thêm khả năng reconcile chip vào **cùng đúng** endpoint step-update là thay đổi tối
+  thiểu, giữ nguyên số lượng round-trip HTTP của 1 lượt Save (không tăng từ 2 lên 3), và tận dụng đúng
+  transaction/policy (`EutrDocuments.Update`) đã có — khớp Nguyên tắc III (Reuse Existing Backend, ưu
+  tiên mở rộng endpoint hiện có hơn tạo endpoint mới cho nhu cầu có thể gộp chung).
+- **Alternatives considered**: Endpoint riêng, ví dụ `PUT /api/eutr-documents/{id}/references`
+  (reconcile only, tách khỏi Step) — bị loại vì Save vẫn phải gọi cả 2 (Step lẫn reconcile chip) trong
+  cùng 1 lượt (Step mới luôn được áp dụng cho toàn bộ bản ghi kể cả bản ghi vừa reconcile, theo spec),
+  tách riêng chỉ tăng round-trip mà không tách bạch được trách nhiệm nghiệp vụ (2 endpoint vẫn phải
+  chạy tuần tự, phụ thuộc lẫn nhau trong cùng 1 request Save).
+
+## Quyết định 67 — Frontend: tái sử dụng nguyên vẹn `EutrAddValueAutocomplete.jsx` cho Edit (Type khác "PO"), không nhân bản logic gợi ý/giới hạn chip (spec Update 22, FR-051)
+
+- **Decision**: Hiển thị lại đúng component `EutrAddValueAutocomplete.jsx` (đã tồn tại từ Update 15,
+  hiện chỉ dùng ở mode `add`) trong mode `edit` khi `showEditableChips` (Type khác "PO" và document có
+  Type) là `true`, với cùng props `type`/`value={chips}`/`onChange={setChips}`/`disabled={submitting}`
+  đã dùng ở Add — không sửa bất kỳ dòng nào bên trong component này. Chip `Stack`/`Chip` hiện có (dùng
+  chung cho cả 2 mode từ Update 19) chỉ đổi điều kiện `onDelete` từ `!isEdit && !submitting` sang
+  `(!isEdit || showEditableChips) && !submitting`.
+- **Rationale**: `EutrAddValueAutocomplete.jsx` vốn tự suy `referenceType`/`isSingleValueType` thuần
+  từ `type.name` (không phụ thuộc `isEdit`/mode nào) — nó *vốn đã* tổng quát đúng mức cần thiết cho cả
+  2 mode, chỉ chưa được render trong mode edit. Tái dùng nguyên vẹn kế thừa miễn phí toàn bộ quy tắc đã
+  implement đúng ở Update 15-18 (gợi ý theo Type FR-011, giới hạn 1 chip cho PO/Vendor FR-013, dán
+  nhiều giá trị, chống trùng) mà không cần viết/test lại — khớp Nguyên tắc II (Reference-Pattern Reuse)
+  ở mức cao nhất (0 dòng logic mới, chỉ đổi 2 biểu thức điều kiện hiển thị).
+- **Alternatives considered**: Viết lại một control chip-editor riêng cho Edit (ví dụ giới hạn phạm vi
+  rõ ràng hơn "input chỉ dùng khi sửa") — bị loại, trùng lặp không cần thiết logic đã đúng và đã qua
+  thực tế sử dụng ở Add; rủi ro 2 nơi lệch quy tắc (ví dụ sửa giới hạn 1 chip ở một nơi mà quên nơi
+  kia) trong tương lai.

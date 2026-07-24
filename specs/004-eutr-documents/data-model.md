@@ -863,3 +863,448 @@ tính `folderName` theo bảng trên rồi gọi hàm này, không sửa hàm.
   string[]` (lấy `code` nếu là object, hoặc chuỗi thô nếu Type không có nguồn) khi nhấn Upload.
 - Không có migration DB nào cho phần này — `eutr_references.RefType`/`StepId`/`RefValue` đã đủ linh
   hoạt từ Update 7/14 để lưu bất kỳ tổ hợp Type/Step/giá trị nào.
+
+## Update 19 — Hợp nhất hoàn toàn Add/Edit vào một popup; đơn giản hóa Conditions; xóa luồng Assign condition
+
+Đây là một **thay đổi phạm vi lớn**, KHÔNG migration DB mới (mọi cột cần đều đã tồn tại từ Update
+7/14). Xem research Quyết định 53-60 cho lý do từng quyết định.
+
+### Cột Conditions đổi nguồn — flat `RefValue`, không còn `eutr_reference_details` (FR-005, research Quyết định 54)
+
+`EutrDocumentsResponseDto.Conditions` đổi kiểu từ `List<ConditionGroupDto>` (Update 11, nhóm theo
+`ConditionType`) sang **`List<string>`** — danh sách `RefValue` **phân biệt** (distinct), khác `null`,
+của mọi bản ghi `eutr_references` có `DocumentId` = document đó, giữ thứ tự xuất hiện.
+
+```json
+{
+  "id": 501, "name": "INV2026_hop-dong-po123.pdf", "...": "...",
+  "stepNames": ["Bước kiểm tra hóa đơn", "Bước xác minh nguồn gốc"], "refType": 3,
+  "typeName": "PO", "stepId": 5,
+  "conditions": ["PO000123"]
+}
+```
+
+Nguồn dữ liệu: `EutrReferencesRepository.GetStepInfoByDocumentIdsAsync` mở rộng thêm `r.RefValue` vào
+`SELECT` (cùng câu SQL JOIN `eutr_references`+`eutr_steps`+`eutr_reference_types` đã có từ Update
+8/14) — `EutrReferenceStepInfo` (projection) thêm field `string? RefValue`.
+`AttachStepAndConditionInfoAsync` (`EutrDocumentsService`) nhóm theo `DocumentId`, lấy
+`.Select(x => x.RefValue).Where(v => !string.IsNullOrEmpty(v)).Distinct()` làm `Conditions`. KHÔNG
+còn gọi `IEutrReferenceDetailsRepository` (bị xóa hoàn toàn, xem mục dưới).
+
+- Document không có bản ghi `eutr_references` nào, hoặc mọi bản ghi có `RefValue = null` (ví dụ tạo
+  qua popup Assign condition cũ trước Update 19) → `conditions: []` (trống, không lỗi).
+- Document Type="PO" khớp N `StepId` phân biệt cho cùng 1 mã PO (Update 7/18) → N dòng
+  `eutr_references` cùng `RefValue` → `Distinct()` gộp về **đúng 1 chip**, không hiển thị trùng lặp.
+
+### Xóa hoàn toàn `EutrReferenceDetails`/`eutr_reference_details` khỏi backend feature này (research Quyết định 57)
+
+Bảng `eutr_reference_details` (Update 11) **không bị xóa/migrate** — dữ liệu cũ được giữ nguyên trong
+schema theo đúng Assumptions của spec. Nhưng feature này xóa hoàn toàn khỏi codebase:
+`EutrReferenceDetails.cs` (entity), `IEutrReferenceDetailsRepository.cs`/
+`EutrReferenceDetailsRepository.cs`, `ConditionGroupDto.cs`, `EutrConditionGroupRow.cs` — không còn
+lớp nào trong `ComplianceSys.*` đọc/ghi bảng này.
+
+**Ngoại lệ giữ nguyên**: SQL 2 bước của `EutrReferencesRepository.DeleteByDocumentIdAsync` (Update
+11, research Quyết định 30) — vẫn xóa `eutr_reference_details` con trước khi xóa `eutr_references`
+cha, dùng raw SQL trực tiếp (không qua repository đã xóa), vì khóa ngoại
+`eutr_reference_details_refid_foreign` vẫn tồn tại và dữ liệu lịch sử vẫn có thể vi phạm nó nếu bỏ
+bước này (research Quyết định 58). Chữ ký method và mọi caller không đổi.
+
+### Popup hợp nhất — request/response cho Add (Valid from/Valid to mới, research Quyết định 55)
+
+Cả 2 request DTO dùng cho Upload thêm 2 field nullable:
+
+```json
+{ "files": ["<binary>"], "poCode": "PO000123", "typeId": 3, "validFrom": "2026-07-20", "validTo": "9999-12-31" }
+```
+
+- `EutrMultiUploadFileRequest` (nhánh Type="PO", `eutr-upload-multi`): + `ValidFrom (DateTime?)`,
+  `ValidTo (DateTime?)`.
+- `EutrTypeMultiUploadFileRequest` (nhánh Type khác, `eutr-upload-multi-by-type`): + `ValidFrom
+  (DateTime?)`, `ValidTo (DateTime?)`.
+- `EutrUploadService`: 2 nơi đang gán cứng `ValidFrom = DateTime.Today`/`ValidTo = MaxValidTo` đổi
+  thành `request.ValidFrom ?? DateTime.Today`/`request.ValidTo ?? MaxValidTo` — mọi document tạo ra
+  từ 1 lượt Upload nhận đúng 1 cặp giá trị Valid from/Valid to (giá trị đang hiển thị ở popup tại thời
+  điểm nhấn Upload), giống nhau trên mọi file trong cùng lượt (FR-021).
+- Response (`List<EutrUploadFileResultDto>`) không đổi shape.
+
+### `PUT /api/eutr-documents/{id}/step` — đơn giản hóa hoàn toàn, dùng chung cho mọi Type (research Quyết định 56, FR-029/FR-033)
+
+Đổi tên request DTO `EutrUpdatePoStepRequestDto` → `EutrUpdateReferenceStepRequestDto` (cùng shape
+`{ long StepId }`). Hành vi backend đổi hoàn toàn:
+
+- **Trước Update 19** (Update 12/13): chỉ áp dụng cho `RefType=0` (PO) — đọc `RefValue` từ dòng `Id`
+  nhỏ nhất, xóa toàn bộ dòng cũ, insert đúng 1 dòng mới.
+- **Từ Update 19**: áp dụng cho **mọi** document có ít nhất 1 bản ghi `eutr_references` (không phân
+  biệt Type) — `IEutrReferencesRepository.UpdateStepIdByDocumentIdAsync(documentId, stepId, updatedBy,
+  ct)` chạy `UPDATE eutr_references SET StepId=@StepId, UpdatedBy=@UpdatedBy, UpdatedDate=@UpdatedDate
+  WHERE DocumentId=@DocumentId` — cập nhật **tại chỗ** mọi dòng hiện có, giữ nguyên `RefValue`/
+  `RefType`/số lượng bản ghi, KHÔNG xóa/tạo lại bản ghi nào (khớp đúng FR-033).
+- Logic này chuyển từ `IEutrConditionAssignmentService` (bị xóa, xem mục dưới) sang method mới
+  `EutrDocumentsService.UpdateReferenceStepAsync(documentId, stepId, userEmail, ct)`, đặt cạnh
+  `DeleteAsync`/`DeleteMultiAsync` override đã có từ Update 9.
+- Document không có bản ghi `eutr_references` nào → endpoint này không được frontend gọi (Step field
+  ẩn ở popup Edit, research Quyết định 60) — backend không cần xử lý đặc biệt cho trường hợp 0 dòng
+  (UPDATE ảnh hưởng 0 dòng, không lỗi).
+
+### Xóa hoàn toàn: `IEutrConditionAssignmentService`, 4 endpoint Assign-condition/Unassigned (research Quyết định 57)
+
+Xóa khỏi `EutrDocumentsController`: `POST get-unassigned`, `POST assign-conditions`, `GET`/
+`PUT {id}/condition-assignment`. Xóa khỏi `SharePointController`: `POST eutr-upload-manual-multi`.
+Xóa toàn bộ DTO/entity/repository/service chỉ phục vụ các endpoint này:
+`IEutrConditionAssignmentService`/`EutrConditionAssignmentService`,
+`EutrManualMultiUploadFileRequest`, `EutrAssignConditionsRequestDto` (+validator),
+`EutrConditionRowDto`, `EutrUpdateConditionAssignmentRequestDto` (+validator),
+`EutrDocumentConditionAssignmentDto`; `EutrDocumentsService.GetUnassignedPagedAsync`;
+`IEutrReferencesRepository.GetUnassignedDocumentsPagedAsync`;
+`EutrUploadService.UploadManualMultipleToSharePointAndSaveDataAsync`. Xóa toàn bộ DI registration
+tương ứng.
+
+> **⚠️ Điều chỉnh khi implement**: `POST list-po-references` và toàn bộ chuỗi
+> `EutrDocumentsListPoReferencesRequestDto`/`EutrDocumentsPoReferenceDto`/
+> `EutrDocumentsPoReferenceItemDto`/`EutrReferencePoDocumentInfo`/
+> `EutrDocumentsService.GetPoReferencesAsync`/`IEutrReferencesRepository.GetDocumentsByPoCodesAsync`/
+> frontend `GetEutrDocumentsPoReferencesUseCase` **KHÔNG bị xóa** — khảo sát call site ban đầu bỏ sót
+> feature khác (`eutr-sales-orders/ViewSalesOrderPage.jsx`) vẫn gọi chuỗi này để suy diễn trạng thái
+> "đã map" ở Template Checklist. Phát hiện qua build thất bại khi thử xóa, đã khôi phục nguyên vẹn —
+> xem research Quyết định 57 (điều chỉnh) để biết chi tiết.
+
+### Frontend: dữ liệu Edit lấy trực tiếp từ `row` grid, 0 round-trip HTTP mới (research Quyết định 59)
+
+`EutrDocumentsFormDialog.jsx` (đổi tên từ `EutrDocumentsAddDialog.jsx`, research Quyết định 53) mode
+`edit` nhận `initialData = row` (đã có `refType`/`typeName`/`stepId`/`conditions`/`validFrom`/
+`validTo` từ response `get-all` hiện có, không gọi thêm API nào):
+
+| Trường popup | Mode `add` | Mode `edit` |
+|---|---|---|
+| Type | Autocomplete editable, đổi giá trị xóa hết chip | Autocomplete **disabled**, giá trị = phần tử `referenceTypes` khớp `id === initialData.refType` |
+| Step | Ẩn khi `isPoType`; ngược lại bắt buộc (research Quyết định 51/60) | Ẩn khi `initialData.refType == null`; ngược lại **luôn hiện, kể cả PO** (research Quyết định 60), preselect theo `initialData.stepId` |
+| Value/chip | `EutrAddValueAutocomplete` + chip có nút xóa | KHÔNG hiển thị input; chip **chỉ đọc** (không nút xóa) từ `initialData.conditions` |
+| Valid from/to | Mặc định hôm nay/`9999-12-31`, editable | Nạp `initialData.validFrom`/`validTo`, editable (KHÔNG reset về mặc định) |
+| Nút chính | Upload (input file ẩn) | Save (không có control file nào) |
+
+Save (mode `edit`) gọi tuần tự: (1) `UpdateEutrDocumentsUseCase.execute({id, name: initialData.name,
+validFrom, validTo})` → `PUT /api/eutr-documents/{id}` (base CRUD, không đổi contract); (2) nếu Step
+đang hiển thị: `UpdateEutrDocumentReferenceStepUseCase.execute(id, stepId)` (đổi tên từ
+`UpdateEutrDocumentPoStepUseCase`, research Quyết định 57) → `PUT /api/eutr-documents/{id}/step`.
+
+### Xóa hoàn toàn trang Add cũ, popup Edit cũ, popup Assign condition (research Quyết định 53)
+
+Xóa: `EutrDocumentsAdd.jsx`, route `/eutr/documents/add` (`MainRoutes.jsx`),
+`EutrDocumentsModal.jsx`, `AssignConditionDialog.jsx`, cùng mọi use case/method chỉ dùng bởi các file
+này (`AssignEutrConditionsUseCase`, `GetEutrDocumentConditionAssignmentUseCase`,
+`UpdateEutrConditionAssignmentUseCase`, `GetEutrDocumentsUnassignedUseCase`,
+`uploadEutrManualFilesMulti`/`executeManualMulti`) — **`GetEutrDocumentsPoReferencesUseCase` GIỮ LẠI**
+(vẫn dùng bởi feature `eutr-sales-orders`, xem mục trên). Khác Update 15 (giữ `EutrDocumentsAdd.jsx`
+làm dead code có chủ đích) — lần này xóa hẳn vì spec dùng từ ngữ "loại bỏ hoàn toàn khỏi phạm vi
+feature" và các file này không còn tự đủ để chạy (phụ thuộc endpoint đã xóa ở trên).
+
+### Quy tắc nghiệp vụ bổ sung (Update 19)
+
+- `ValidFrom <= ValidTo` MUST được validate ở client trước khi Upload/Save khả dụng (FR-016); backend
+  không thêm validator riêng cho 2 endpoint upload (client là điểm chặn duy nhất, xem research Quyết
+  định 55).
+- Document không có bản ghi `eutr_references` nào: Edit hiển thị Type/chip trống, ẩn Step, chỉ Valid
+  from/Valid to khả dụng để sửa (FR-034) — Save chỉ gọi bước (1) ở trên, không gọi bước (2).
+- `docs/design/eutr/eutr_documents_overview.md` (tài liệu thiết kế tĩnh) vẫn mô tả layout Screen1/
+  Screen2/Assign condition cũ — **ngoài phạm vi cập nhật của kế hoạch này** (không phải artifact do
+  `/speckit-plan` sinh ra); cần được đội ngũ cập nhật riêng để khớp thiết kế popup hợp nhất.
+
+## Update 20 — Combobox Step lọc theo `eutr_reference_type_details` của Type đang chọn, mặc định chọn dòng đầu (FR-043 đến FR-045)
+
+### Không có entity/DTO backend mới — tiêu thụ read-only bảng đã có sẵn (research Quyết định 61)
+
+Bảng `eutr_reference_type_details` (Id, StepId, TypeId, CreatedBy, CreatedDate, UpdatedBy,
+UpdatedDate) và toàn bộ entity/repository/service/controller/policy tương ứng
+(`EutrReferenceTypeDetails`, `EutrReferenceTypeDetailsRepository.GetByTypeIdAsync`,
+`EutrReferenceTypeDetailsController.GetByTypeId`) **đã tồn tại đầy đủ**, được xây dựng bởi feature
+`006-eutr-reference-types` (Assign Steps). Feature `004-eutr-documents` chỉ đọc (read-only) endpoint
+`GET /api/eutr-reference-type-details/by-type/{typeId}` đã có sẵn (xem
+`contracts/eutr-documents-api.md`) — không thêm entity/DTO/repository/controller/migration nào ở
+phạm vi feature này.
+
+### `EutrReferenceTypeDetailsResponseDto` (item của response, đã có sẵn từ feature `006`)
+
+```json
+{
+  "id": 5, "typeId": 3, "stepId": 12, "stepName": "Harvesting",
+  "createdBy": "hien", "createdDate": "2026-07-20T10:00:00Z",
+  "updatedBy": null, "updatedDate": null
+}
+```
+
+- Frontend map mỗi item sang hình dạng `{ id: stepId, name: stepName }` để tương thích với
+  `Autocomplete` Step hiện có (vốn nhận mảng `EutrSteps { id, name }` từ `GetEutrStepsUseCase`) —
+  không đổi cấu trúc component, chỉ đổi nguồn dữ liệu nạp vào.
+
+### Quy tắc nghiệp vụ bổ sung (Update 20)
+
+- Mode Add: mỗi khi Type đổi, gọi lại `GetByTypeIdEutrReferenceTypeDetailsUseCase.execute(type.id)`;
+  danh sách Step hiển thị = kết quả trả về (map sang `{id, name}`); nếu rỗng, combobox Step trống và
+  Upload tiếp tục vô hiệu hóa (Step vẫn bắt buộc theo FR-017, Type khác "PO") — không phải lỗi hệ
+  thống.
+- Mode Add: ngay sau khi danh sách lọc tải xong, tự động `setStep(filteredSteps[0] ?? null)` (FR-044).
+- Mode Edit: gọi 1 lần khi mở popup, dùng Type hiện tại của document (đã khóa, không đổi). Step hiện
+  tại của document (xác định theo Quyết định 59 — bản ghi `Id` nhỏ nhất) MUST luôn có mặt trong danh
+  sách hiển thị: nếu không nằm trong kết quả lọc (đã bị gỡ khỏi Assign Steps sau khi document được
+  tạo), chèn thêm chính Step đó vào đầu mảng hiển thị — KHÔNG tự động đổi giá trị `step` đang chọn
+  sang Step khác (FR-045).
+- Type = "PO": không đổi — combobox Step tiếp tục ẩn hẳn (`isPoType`), không gọi API này (FR-010,
+  Quyết định 51/60 không đổi).
+- Document không có bản ghi `eutr_references` nào (Type/chip trống, Edit ẩn Step theo FR-034): không
+  gọi API này (không có Type để xác định `typeId` lọc theo).
+
+## Update 21 — Search box lọc danh sách theo Type/Step name/Conditions (FR-046 đến FR-050)
+
+### `POST /api/eutr-documents/get-all` — không đổi path/request shape, mở rộng ý nghĩa 3 `Column` trong `filters`
+
+Request body vẫn `List<FilterRequest>` (`{ column, operator, value }`, generic `Shared.Dapper`) —
+search box chỉ thêm, khi có giá trị, tối đa 3 phần tử với `Column` ∈ `{"TypeId", "StepId",
+"Conditions"}`:
+
+```json
+[
+  { "column": "TypeId", "operator": "=", "value": 3 },
+  { "column": "StepId", "operator": "=", "value": 12 },
+  { "column": "Conditions", "operator": "like", "value": "PO0001" }
+]
+```
+
+- 3 `Column` này **không tồn tại** trên entity `EutrDocuments` — nếu để nguyên trong `filters` và gọi
+  thẳng repository generic, chúng sẽ bị **âm thầm bỏ qua** (whitelist property của `TEntity`, xem
+  research Quyết định 62). `EutrDocumentsService.GetPagedAsync` MUST rút 3 phần tử này ra khỏi
+  `request.Filters` (so khớp `Column` không phân biệt hoa/thường) **trước** khi gọi
+  `base.GetPagedAsync`, đọc `typeId`/`stepId`/`conditionsQuery` từ `Value` của chúng (bỏ qua
+  `Operator` gửi lên — service tự áp dụng đúng ngữ nghĩa `=`/`like` tương ứng ở bước dưới).
+- Không cung cấp bất kỳ phần tử nào trong 3 tên cột trên → hành vi `get-all` **không đổi** so với
+  trước Update 21 (không gọi thêm truy vấn nào, không ảnh hưởng hiệu năng của các màn hình/luồng khác
+  đang gọi endpoint này).
+
+### `IEutrReferencesRepository.GetMatchingDocumentIdsAsync` — method mới, đọc-only
+
+```csharp
+Task<List<long>> GetMatchingDocumentIdsAsync(
+    long? typeId, long? stepId, string? conditionsQuery, CancellationToken ct = default);
+```
+
+SQL (xem research Quyết định 63 cho lý do dùng 3 `EXISTS` độc lập thay vì 1 JOIN cùng dòng):
+
+```sql
+SELECT d.Id
+FROM eutr_documents d
+WHERE (@typeId IS NULL OR EXISTS (
+        SELECT 1 FROM eutr_references r WHERE r.DocumentId = d.Id AND r.RefType = @typeId))
+  AND (@stepId IS NULL OR EXISTS (
+        SELECT 1 FROM eutr_references r WHERE r.DocumentId = d.Id AND r.StepId = @stepId))
+  AND (@conditionsQuery IS NULL OR EXISTS (
+        SELECT 1 FROM eutr_references r WHERE r.DocumentId = d.Id
+          AND r.RefValue LIKE CONCAT('%', @conditionsQuery, '%')));
+```
+
+- Mỗi tham số `null` vô hiệu hóa điều kiện `EXISTS` tương ứng (luôn đúng) — 0, 1, 2, hoặc cả 3 điều
+  kiện có thể áp dụng đồng thời, độc lập với nhau.
+- `@typeId` so khớp `RefType` (`TINYINT`) — ép kiểu ở service trước khi gọi (`(byte)typeId.Value`),
+  cùng quy ước đã dùng từ Update 15/18. Không tra `eutr_reference_types` ở đây — `typeId` là `Id` gửi
+  thẳng từ dropdown Type của search box (đã tải qua `GetEutrReferenceTypesUseCase`, cùng nguồn dữ liệu
+  dùng ở popup Add).
+- `@conditionsQuery` là chuỗi tìm kiếm thô (không phải pattern) — khớp kiểu "chứa", không phân biệt
+  hoa/thường (theo collation mặc định của schema, cùng giả định đã dùng ở Quyết định 17).
+
+### `EutrDocumentsService.GetPagedAsync` — luồng xử lý đầy đủ (mở rộng, không đổi chữ ký public)
+
+```csharp
+public override async Task<PagedResult<EutrDocumentsResponseDto>> GetPagedAsync(
+    PagedRequest request, CancellationToken ct = default)
+{
+    var (typeId, stepId, conditionsQuery) = ExtractSearchBoxFilters(request.Filters); // rut 3 filter ao
+
+    if (typeId.HasValue || stepId.HasValue || conditionsQuery != null)
+    {
+        var matchingIds = await _referencesRepository.GetMatchingDocumentIdsAsync(
+            typeId, stepId, conditionsQuery, ct);
+
+        if (matchingIds.Count == 0)
+            return new PagedResult<EutrDocumentsResponseDto> { Items = [], TotalCount = 0 };
+
+        request.Filters.Add(new FilterRequest
+        {
+            Column = "Id", Operator = "in", Value = string.Join(",", matchingIds)
+        });
+    }
+
+    var pagedResult = await base.GetPagedAsync(request, ct);
+    var responseItems = _mapper.Map<List<EutrDocumentsResponseDto>>(pagedResult.Items);
+    await AttachStepAndConditionInfoAsync(responseItems, ct);
+    return new PagedResult<EutrDocumentsResponseDto>
+    { Items = responseItems, TotalCount = pagedResult.TotalCount };
+}
+```
+
+- `matchingIds.Count == 0` → trả `PagedResult` rỗng **ngay**, không gọi `base.GetPagedAsync` (tránh 1
+  truy vấn phân trang thừa khi chắc chắn không có kết quả nào) — khớp Acceptance Scenario "không có
+  document nào khớp điều kiện → hiển thị No data" (spec User Story 6, kịch bản 6).
+  `FilterRequest { Column = "Id", Operator = "in", ... }` tái dùng **nguyên vẹn** cơ chế `in` đã có sẵn
+  của generic repository (`Id` đã nằm trong whitelist cột filter/sắp xếp mặc định của
+  `EutrDocuments`, xem `contracts/eutr-documents-api.md` mục `FilterRequest`) — không cần thêm logic
+  filter tùy biến nào ở tầng repository generic.
+- Các filter khác (nếu có, ví dụ người dùng đồng thời dùng filter cột của DataGrid) tiếp tục đi qua
+  `base.GetPagedAsync` như trước, không bị ảnh hưởng bởi bước rút/thêm filter ảo này.
+
+### Không có entity/DTO/migration mới
+
+Toàn bộ Update 21 chỉ thêm 1 method repository (đọc-only) + mở rộng logic nội bộ 1 method service đã
+có — không có bảng/cột mới, không có DTO request/response mới, `EutrDocumentsResponseDto` không đổi.
+
+## Update 22 — Edit cho phép thêm/xóa chip Value khi Type khác "PO" (FR-051 đến FR-055)
+
+Không migration DB mới (mọi cột — `RefValue`, `StepId`, `RefType` — đã tồn tại từ Update 7/14); không
+entity/endpoint mới — mở rộng đúng 1 DTO + 1 method service + 2 method repository của
+`PUT /api/eutr-documents/{id}/step` (Update 19). Xem research Quyết định 65-67 cho lý do từng quyết
+định.
+
+### `EutrUpdateReferenceStepRequestDto` — thêm 1 field nullable
+
+```csharp
+public class EutrUpdateReferenceStepRequestDto
+{
+    public long StepId { get; set; }
+    public List<string>? RefValues { get; set; }   // MỚI, Update 22 — null = giữ hành vi cũ (chỉ update StepId)
+}
+```
+
+```json
+{ "stepId": 12, "refValues": ["PO000123", "PO000456"] }
+```
+
+- `RefValues = null` (hoặc field vắng mặt trong body): Type = "PO", hoặc client cũ chưa gửi field này
+  — hành vi backend **không đổi** so với Update 19 (chỉ `UPDATE StepId`, không transaction, không đối
+  chiếu).
+- `RefValues` có giá trị (kể cả mảng rỗng `[]`, xem quy tắc chặn ở FR-054/spec edge case — client
+  MUST không cho Save với 0 chip nên trường hợp `[]` không nên xảy ra trong thực tế, nhưng backend vẫn
+  xử lý đúng nếu xảy ra: xóa hết mọi `RefValue` hiện có, giữ 0 dòng `eutr_references` cho document —
+  không có validator server-side riêng chặn mảng rỗng, client là điểm chặn duy nhất, cùng nguyên tắc đã
+  áp dụng cho `ValidFrom <= ValidTo` ở Update 19): kích hoạt bước đối chiếu bên dưới.
+
+### `EutrDocumentsService.UpdateReferenceStepAsync` — mở rộng chữ ký, thêm nhánh đối chiếu
+
+```csharp
+public async Task UpdateReferenceStepAsync(
+    long documentId, long stepId, List<string>? refValues, string userEmail, CancellationToken ct = default)
+{
+    ArgumentException.ThrowIfNullOrWhiteSpace(userEmail);
+
+    if (refValues == null)
+    {
+        // Khong doi so voi Update 19 - Type = "PO" hoac client cu
+        await _referencesRepository.UpdateStepIdByDocumentIdAsync(documentId, stepId, userEmail, ct);
+        return;
+    }
+
+    await _unitOfWork.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
+    try
+    {
+        var existingRows = await _referencesRepository.GetStepInfoByDocumentIdsAsync([documentId], ct);
+        var existingValues = existingRows
+            .Select(r => r.RefValue)
+            .Where(v => !string.IsNullOrEmpty(v))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var refType = existingRows.Select(r => r.RefType).FirstOrDefault(t => t.HasValue);
+
+        var toAdd = refValues.Except(existingValues, StringComparer.OrdinalIgnoreCase).ToList();
+        var toRemove = existingValues.Except(refValues, StringComparer.OrdinalIgnoreCase).ToList();
+
+        if (toRemove.Count > 0)
+            await _referencesRepository.DeleteByDocumentIdAndRefValuesAsync(documentId, toRemove, ct);
+
+        if (toAdd.Count > 0 && refType.HasValue)
+            await _referencesRepository.AddReferencesAsync(documentId, stepId, refType.Value, toAdd, userEmail, ct);
+
+        await _referencesRepository.UpdateStepIdByDocumentIdAsync(documentId, stepId, userEmail, ct);
+
+        await _unitOfWork.CommitAsync(ct);
+    }
+    catch
+    {
+        await _unitOfWork.RollbackAsync(ct);
+        throw;
+    }
+}
+```
+
+- **Nguồn đọc trạng thái hiện có**: tái dùng nguyên vẹn `GetStepInfoByDocumentIdsAsync` (Update 8/14/19)
+  — projection đã có sẵn `RefValue`/`RefType` theo từng dòng `eutr_references`, không cần thêm method
+  đọc mới. `refType` lấy từ dòng đầu tiên có giá trị (mọi dòng của cùng document luôn cùng `RefType`,
+  bất biến đã có từ Update 7 — Type bị khóa ở Edit nên không đổi giữa các dòng).
+- **So sánh không phân biệt hoa/thường** (`StringComparer.OrdinalIgnoreCase`) — nhất quán với cách
+  validate giá trị gõ tay ở Value combobox (FR-012) và validate prefix PO (FR-020).
+- Thứ tự bước: xóa trước, thêm sau, cập nhật `StepId` cuối cùng — đảm bảo bước cuối áp dụng cho **mọi**
+  dòng còn tồn tại (kể cả dòng vừa thêm), khớp đúng FR-052(c).
+- Toàn bộ gói trong 1 transaction mới (`_unitOfWork`, cùng mẫu `DeleteAsync`/`DeleteMultiAsync` của
+  Update 9) — nếu bất kỳ bước nào lỗi (ví dụ lỗi kết nối giữa lúc xóa và thêm), `RollbackAsync` khiến
+  toàn bộ lượt Save đó không để lại thay đổi một phần.
+
+### `IEutrReferencesRepository` — 2 method ghi mới
+
+```csharp
+Task DeleteByDocumentIdAndRefValuesAsync(
+    long documentId, IEnumerable<string> refValues, CancellationToken ct = default);
+
+Task AddReferencesAsync(
+    long documentId, long stepId, byte refType, IEnumerable<string> refValues, string createdBy,
+    CancellationToken ct = default);
+```
+
+`DeleteByDocumentIdAndRefValuesAsync` — raw SQL, dọn kèm `eutr_reference_details` mồ côi trước (cùng
+mẫu 2 bước phòng thủ của `DeleteByDocumentIdAsync`, Update 11/research Quyết định 30, cho dữ liệu lịch
+sử vẫn có thể còn liên kết qua `RefId`):
+
+```sql
+DELETE FROM eutr_reference_details
+WHERE RefId IN (
+  SELECT Id FROM eutr_references WHERE DocumentId = @DocumentId AND RefValue IN @RefValues);
+DELETE FROM eutr_references WHERE DocumentId = @DocumentId AND RefValue IN @RefValues;
+```
+
+`AddReferencesAsync` — raw SQL INSERT, thực thi 1 lần cho cả tập `refValues` (Dapper multi-exec, mỗi
+phần tử 1 bộ tham số):
+
+```sql
+INSERT INTO eutr_references (DocumentId, StepId, RefType, RefValue, CreatedBy, CreatedDate, UpdatedBy, UpdatedDate)
+VALUES (@DocumentId, @StepId, @RefType, @RefValue, @CreatedBy, @Now, @CreatedBy, @Now);
+```
+
+- Cả hai chạy trong `Transaction` do `EutrDocumentsService` mở (tham số `transaction:` truyền vào
+  `Connection.ExecuteAsync`, cùng style đã dùng ở `UpdateStepIdByDocumentIdAsync`/
+  `DeleteByDocumentIdAsync`).
+- `AddReferencesAsync` KHÔNG ghi `RefId` (cột này không được ghi bởi bất kỳ luồng nào của feature này,
+  bất biến từ Update 7) — cùng shape với đường ghi hiện có trong `EutrUploadService` (Add mode).
+
+### Frontend — payload `refValues` gửi kèm `stepId`, tái dùng helper `toRefValue` có sẵn
+
+```js
+// EutrDocumentsFormDialog.jsx, handleSave (mode edit)
+const refValues = showEditableChips ? chips.map(toRefValue) : undefined;
+if (showStep && step) {
+  await updateEutrDocumentReferenceStepUseCase.execute(initialData.id, step.id, refValues);
+}
+```
+
+`showEditableChips = isEdit && initialData?.refType != null && !isPoType` — cùng cách tính với
+`showStep` đã có (Update 19), chỉ thêm điều kiện `!isPoType`. `toRefValue` là helper đã tồn tại sẵn
+trong file này (dùng để build `refValues: string[]` cho request Upload ở mode `add`) — không viết hàm
+mới, tái dùng nguyên vẹn để đảm bảo cùng quy tắc trích xuất giá trị chip (chip có thể là `string` hoặc
+`{ id, code, name }` tùy nguồn gợi ý) giữa Add và Edit.
+
+### Quy tắc nghiệp vụ bổ sung (Update 22)
+
+- Vùng chip Value ở Edit MUST còn lại ít nhất 1 chip tại thời điểm Save khi `showEditableChips` — chặn
+  ở **client** (`canSubmit` thêm điều kiện `!showEditableChips || chips.length > 0`), không có
+  validator server-side riêng cho ràng buộc này (cùng nguyên tắc "client là điểm chặn duy nhất" đã áp
+  dụng cho `ValidFrom <= ValidTo`, Update 19) — xem mục "`RefValues` có giá trị" ở trên cho hành vi
+  backend nếu client vẫn gửi mảng rỗng.
+- Type = "Vendor" tiếp tục giới hạn tối đa 1 chip trong Edit — kế thừa **miễn phí** từ
+  `EutrAddValueAutocomplete.jsx` (không có logic giới hạn chip nào mới ở tầng dialog hay backend).
+- Type = "PO": `RefValues` luôn gửi `undefined`/không có trong request — hành vi Save với Type = "PO"
+  không đổi so với Update 19 (chỉ `UPDATE StepId`, giữ nguyên toàn bộ `RefValue`/`RefType`/số lượng bản
+  ghi).

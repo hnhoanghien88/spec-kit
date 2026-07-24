@@ -358,11 +358,159 @@ Mở SPA, đăng nhập, vào menu **EUTR documents** (đường dẫn `/eutr/do
 17a. **Không hồi quy Type khác "PO" (Update 18)**: Lặp lại nhanh với Type = "Vendor" (hoặc "Invoice")
     → xác nhận request Upload vẫn gọi `POST /api/sharepoint/eutr-upload-multi-by-type` với `typeId`
     như Update 15/16 (không đổi), không liên quan tới thay đổi ở kịch bản 17.
+18. **Trang Add cũ và popup Assign condition đã bị gỡ bỏ (Update 19)**: Truy cập trực tiếp URL
+    `/eutr/documents/add` → xác nhận KHÔNG còn route nào khớp (điều hướng về trang mặc định/404 tùy
+    cấu hình router, KHÔNG còn hiển thị Screen1/Screen2 cũ). Trên danh sách chính, xác nhận không còn
+    bất kỳ nút/luồng nào mở popup "Assign condition".
+18a. **Popup Add có thêm Valid from/Valid to (Update 19, FR-014/FR-015)**: Nhấn Add → xác nhận popup
+    "Add EUTR documents" hiển thị đúng layout Update 15-18 (Type/Step/Value/chip/Upload) **cộng thêm**
+    2 trường ngày mới **Valid from** (mặc định = hôm nay) và **Valid to** (mặc định = `9999-12-31`),
+    cả hai là ô chọn ngày cho phép sửa trước khi Upload.
+18b. **Valid from/Valid to được dùng khi tạo document (Update 19, FR-021/SC-003)**: Ở popup Add, đổi
+    Valid from sang một ngày khác trong quá khứ và Valid to sang một ngày cụ thể (khác mặc định); chọn
+    Type bất kỳ (PO hoặc Type khác), thêm 1 chip hợp lệ, chọn Step nếu cần, nhấn Upload với 1 file hợp
+    lệ → xác nhận document mới trên danh sách chính có đúng Valid from/Valid to vừa chỉnh sửa (không
+    phải giá trị mặc định). Lặp lại KHÔNG chỉnh sửa gì → xác nhận document tạo ra có Valid from = hôm
+    nay, Valid to = `9999-12-31` (mặc định không đổi).
+18c. **Validate Valid from ≤ Valid to (Update 19, FR-016/SC-009)**: Ở popup Add, đặt Valid from muộn
+    hơn Valid to → xác nhận hệ thống báo lỗi rõ ràng và nút Upload bị chặn (vô hiệu hóa hoặc từ chối
+    khi nhấn) cho tới khi sửa lại giá trị hợp lệ.
+18d. **Edit mở lại đúng popup Add, Type khóa, chip chỉ đọc (Update 19, FR-026 đến FR-028)**: Với một
+    document có Type/Step/chip hiện có (tạo từ kịch bản 18b), nhấn Edit → xác nhận popup mở ra với
+    tiêu đề **"Edit EUTR document"**, Type/Step/chip/Valid from/Valid to được nạp sẵn đúng giá trị
+    hiện có của document, dropdown Type ở trạng thái **vô hiệu hóa** (không đổi được), vùng chip
+    **không có control** để thêm/xóa (chỉ đọc), KHÔNG có control Upload/chọn file — thay bằng nút
+    **Save**.
+18e. **Save cập nhật Step (mọi bản ghi eutr_references) + Valid from/to, không đổi RefValue/RefType
+    (Update 19, FR-029/FR-033/SC-005)**: Từ popup Edit ở kịch bản 18d, đổi Step sang giá trị khác và
+    đổi Valid from/Valid to, nhấn Save → xác nhận danh sách chính hiển thị đúng Step name mới và Valid
+    from/to mới, cột Conditions/Type KHÔNG đổi. Kiểm tra trực tiếp DB: mọi dòng `eutr_references` của
+    document đó có `StepId` = Step mới, `RefValue`/`RefType`/số lượng bản ghi giữ nguyên như trước Save
+    (không có dòng nào bị xóa/tạo mới).
+18f. **Step hiển thị cho cả Type="PO" ở Edit (khác Add) (Update 19, research Quyết định 60)**: Với một
+    document Type="PO" (tạo từ kịch bản 17), nhấn Edit → xác nhận combobox Step **hiển thị và khả
+    dụng để sửa** (khác popup Add, nơi Type="PO" ẩn hẳn Step) — đổi Step rồi Save, xác nhận mọi dòng
+    `eutr_references` của document đó cập nhật đúng `StepId` mới (như kịch bản 18e), `RefValue` (mã
+    PO) giữ nguyên.
+18g. **Document Type trống — chỉ sửa Valid from/to (Update 19, FR-034)**: Với một document không có
+    bản ghi `eutr_references` nào (dữ liệu cũ, hoặc tạo qua `POST /eutr-documents` CRUD thuần nếu còn
+    khả dụng), nhấn Edit → xác nhận popup hiển thị Type/chip ở trạng thái trống, **không có** trường
+    Step, chỉ Valid from/Valid to khả dụng để sửa; Save chỉ gọi cập nhật Valid from/to (không gọi
+    endpoint `{id}/step`).
+18h. **Cột Conditions hiển thị RefValue phẳng, dedupe đúng (Update 19, FR-005/SC-002)**: Với document
+    Type="PO" khớp 2 `StepId` phân biệt cùng 1 mã PO (kịch bản 17) → xác nhận cột Conditions hiển thị
+    **đúng 1 chip** (không lặp lại 2 lần cùng mã PO). Với document Type khác có nhiều chip Value khác
+    nhau (kịch bản 15) → xác nhận Conditions hiển thị đầy đủ từng giá trị dưới dạng chip riêng, dùng
+    mẫu "+N more" khi vượt quá số lượng hiển thị trực tiếp (giống cột Step name). Với document có
+    `eutr_references` nhưng `RefValue = null` (dữ liệu cũ trước Update 19, nếu còn) → xác nhận
+    Conditions hiển thị trống, không lỗi.
+18i. **Đóng popup không lưu (Update 19, FR edge case)**: Mở popup Edit, đổi Step/Valid from/to rồi
+    đóng popup bằng nút Cancel/click ra ngoài (không nhấn Save) → xác nhận danh sách chính KHÔNG có
+    thay đổi nào được lưu (Step name/Valid from/to giữ nguyên như trước khi mở popup).
+19. **Combobox Step lọc theo Assign Steps của Type, mặc định chọn dòng đầu (Update 20, FR-043 đến
+    FR-045)**: Trước tiên, mở màn hình **EUTR > Reference Types** (feature `006-eutr-reference-types`),
+    chọn một reference type chưa gán Step nào ở "Assign Steps" (danh sách rỗng) và một reference type
+    khác đã gán ≥2 Step. Quay lại `/eutr/documents`, nhấn Add, chọn Type = reference type **chưa gán
+    Step nào** → xác nhận combobox Step hiển thị **trống** và nút Upload vẫn vô hiệu hóa (Step vẫn bắt
+    buộc, Type khác "PO"). Đổi sang Type = reference type **đã gán ≥2 Step** → xác nhận danh sách Step
+    chỉ gồm đúng các Step đã gán cho Type đó ở "Assign Steps" (không có Step nào khác dù tồn tại trong
+    `eutr_steps`), và dòng đầu tiên trong danh sách được **chọn sẵn** làm mặc định (không để trống).
+    Đổi sang một Type thứ ba (cũng đã gán Step) → xác nhận danh sách Step tải lại đúng theo Type mới và
+    dòng đầu tiên của danh sách mới được chọn sẵn.
+19a. **Step hiện tại của document vẫn hiển thị trong Edit dù đã bị gỡ khỏi Assign Steps (Update 20,
+    FR-045)**: Tạo 1 document với Type = reference type đã gán ≥2 Step ở kịch bản 19 (chọn 1 Step bất
+    kỳ khi Upload). Sau đó, ở màn Assign Steps (feature `006`), **gỡ (Delete)** đúng Step đã chọn khỏi
+    Type đó. Quay lại `/eutr/documents`, nhấn Edit trên document vừa tạo → xác nhận combobox Step vẫn
+    hiển thị và đang chọn **đúng Step hiện tại** của document (không bị đổi sang Step khác hay để
+    trống), dù Step đó không còn nằm trong danh sách Assign Steps của Type này nữa; người dùng vẫn có
+    thể giữ nguyên hoặc đổi sang một Step khác trong danh sách đã lọc rồi Save bình thường (như kịch
+    bản 18e).
+19b. **Type = "PO" không đổi (Update 20)**: Lặp lại nhanh với Type = "PO" ở popup Add → xác nhận
+    combobox Step tiếp tục **ẩn hoàn toàn** như trước Update 20 (không liên quan tới thay đổi này).
+20. **Search box lọc danh sách theo Type/Step name/Conditions (US6, Update 21, FR-046 đến FR-050)**:
+    Mở `/eutr/documents` → xác nhận phía trên bảng hiển thị search box gồm dropdown **Type**, dropdown
+    **Step name**, ô nhập **Conditions**, và nút **Search**. Chọn 1 Type mà đã biết có ít nhất 1
+    document liên kết (ví dụ Type "PO" từ kịch bản 17) → bấm Search → kiểm tra tab Network: request
+    `POST /eutr-documents/get-all` có body `filters` chứa `{ "column": "TypeId", ... }` → bảng chỉ còn
+    hiển thị document có Type đó. Xóa lựa chọn Type ("All"), chọn 1 Step name đã biết có document liên
+    kết → Search → xác nhận request có `{ "column": "StepId", ... }`, bảng chỉ còn document có Step đó.
+    Xóa Step name, nhập một phần giá trị Conditions đã biết trước (ví dụ mã PO đã dùng ở kịch bản 9g)
+    → Search → xác nhận request có `{ "column": "Conditions", "operator": "like", ... }`, bảng chỉ còn
+    document có `RefValue` chứa chuỗi đó.
+20a. **Kết hợp cả 3 điều kiện + reset về danh sách đầy đủ (Update 21, FR-047/FR-048)**: Chọn đồng thời
+    Type + Step name + nhập Conditions (chọn tổ hợp mà bạn biết trước sẽ khớp ít nhất 1 document, kể
+    cả khi mỗi điều kiện khớp một bản ghi `eutr_references` khác nhau của cùng document, ví dụ Type
+    khớp qua dòng A, Conditions khớp qua dòng B của cùng document Type="PO" nhiều Step ở kịch bản 9n)
+    → Search → xác nhận bảng chỉ còn đúng (các) document thỏa cả 3. Sau đó xóa hết cả 3 điều kiện (Type
+    /Step name về "All", Conditions về trống) → Search lại → xác nhận danh sách đầy đủ hiển thị lại
+    (giống trạng thái ban đầu khi mở màn hình).
+20b. **Không có document nào khớp (Update 21, FR-047)**: Chọn 1 tổ hợp Type/Step name/Conditions mà
+    bạn biết chắc không document nào khớp (ví dụ Conditions nhập 1 chuỗi ngẫu nhiên không tồn tại) →
+    Search → xác nhận bảng hiển thị trạng thái trống ("No data") thay vì lỗi; kiểm tra tab Network xác
+    nhận vẫn có request `get-all` trả về thành công (`success: true`, `data.items: []`), không phải
+    lỗi 4xx/5xx.
+21. **Edit — thêm/xóa chip Value khi Type khác "PO" (Update 22, FR-051 đến FR-055)**: Với một document
+    Type = "Invoice" (hoặc bất kỳ Type khác "PO"/"Vendor") có ≥2 chip Value hiện có (ví dụ kịch bản 15),
+    nhấn Edit → xác nhận vùng chip hiển thị **có nút xóa** trên mỗi chip VÀ có lại ô Value (combobox
+    gợi ý theo Type, giống popup Add). Xóa 1 chip hiện có, gõ/chọn thêm 1 giá trị mới, đổi Step, nhấn
+    Save → xác nhận: (a) bảng chính hiển thị đúng cột Conditions mới (đã mất chip bị xóa, có thêm chip
+    mới) và Step name mới; (b) kiểm tra trực tiếp DB: `eutr_references` của document đó không còn dòng
+    `RefValue` = chip đã xóa, có thêm đúng 1 dòng `RefValue` = chip mới (`StepId` = Step mới chọn,
+    `RefType` giữ nguyên = Id của Type "Invoice"), các dòng không đổi khác giữ nguyên `Id` (kiểm tra qua
+    tab Network response của `get-by-id`/`get-all` trước và sau Save nếu không có quyền truy vấn DB
+    trực tiếp).
+21a. **Type = "PO" không đổi (Update 22)**: Với một document Type = "PO" (kịch bản 17), nhấn Edit →
+    xác nhận vùng chip **vẫn chỉ đọc** như trước Update 22 (không có nút xóa, không có ô Value) — chỉ
+    Step/Valid from/Valid to sửa được.
+21b. **Type = "Vendor" — vẫn giới hạn 1 chip khi sửa (Update 22, FR-013/FR-051)**: Tạo 1 document
+    Type = "Vendor" (1 chip) qua popup Add. Nhấn Edit trên document đó → xác nhận vùng chip có nút xóa
+    + ô Value (giống kịch bản 21). Thử thêm 1 giá trị Vendor khác **mà chưa xóa** chip hiện có → xác
+    nhận hệ thống chặn thêm kèm thông báo (giống hành vi Add, FR-013) — chip hiện có không đổi. Xóa
+    chip hiện có rồi thêm 1 giá trị Vendor khác, Save → xác nhận Conditions trên bảng chính đổi đúng
+    sang giá trị Vendor mới (vẫn đúng 1 chip).
+21c. **Chặn Save khi xóa hết chip (Update 22, FR-051, spec kịch bản 17)**: Mở popup Edit của 1 document
+    Type khác "PO" có đúng 1 chip → xóa chip đó, không thêm lại chip nào → xác nhận nút Save chuyển
+    sang trạng thái vô hiệu hóa (hoặc nhấn Save bị chặn kèm thông báo lỗi yêu cầu còn lại ≥1 chip) —
+    không có request `PUT {id}/step` nào được gửi.
+21d. **Đóng popup không lưu thay đổi chip (Update 22)**: Mở popup Edit của 1 document Type khác "PO",
+    xóa 1 chip và thêm 1 chip mới trên giao diện, sau đó đóng popup bằng Cancel/click ra ngoài (không
+    Save) → xác nhận danh sách chính và cột Conditions của document đó **không đổi** — mở lại Edit lần
+    nữa để xác nhận chip hiện có vẫn y như trước khi thao tác thử ở bước này (không có
+    `eutr_references` nào bị tạo/xóa).
 
 ## Tiêu chí đạt
 
-- Tất cả 17 kịch bản trên (cùng các kịch bản phụ 9a-9s, 10a, 11a-11b, 15a-15e, 16a-16b, 17a, 1a,
-  5a-5c, 6a) hoạt động đúng.
+- Tất cả 21 kịch bản trên (cùng các kịch bản phụ 9a-9s, 10a, 11a-11b, 15a-15e, 16a-16b, 17a, 18a-18i,
+  19a-19b, 20a-20b, 21a-21d, 1a, 5a-5c, 6a) hoạt động đúng.
+- **(Update 22)** Ở popup Edit, vùng chip Value chỉ còn chỉ đọc khi Type = "PO" — Type khác "PO" (kể
+  cả "Vendor") cho phép thêm/xóa chip, đối chiếu đúng với `eutr_references` khi Save (INSERT chip mới,
+  DELETE chip đã xóa, UPDATE `StepId` mọi dòng còn lại) — xem SC-012/FR-051 đến FR-055; Vendor vẫn giới
+  hạn 1 chip; xóa hết chip mà không thêm lại chặn Save; đóng popup không Save không để lại thay đổi
+  nào. Endpoint `PUT {id}/step` không đổi route/policy, chỉ thêm field `refValues` tùy chọn.
+- **(Update 21)** Search box (Type/Step name/Conditions/Search) lọc đúng danh sách chính theo mọi điều
+  kiện đã cung cấp, kết hợp AND, mỗi điều kiện chỉ cần khớp một bản ghi `eutr_references` bất kỳ của
+  document (không bắt buộc cùng bản ghi) — xem SC-011/FR-047/FR-048; không cung cấp điều kiện nào rồi
+  Search hiển thị lại đầy đủ danh sách gốc; endpoint `get-all` không đổi path/policy/request-response
+  shape công khai (chỉ diễn giải thêm 3 tên cột lọc ảo).
+- **(Update 20)** Combobox Step trong popup Add/Edit (Type khác "PO") chỉ liệt kê Step đã được gán
+  (Assign Steps, feature `006-eutr-reference-types`) cho Type đang chọn qua bảng
+  `eutr_reference_type_details` — xem SC-010/FR-043. Mode Add mặc định chọn sẵn dòng đầu tiên của danh
+  sách đã lọc (FR-044); đổi Type tải lại danh sách và mặc định lại. Mode Edit đảm bảo Step hiện tại của
+  document luôn hiển thị được kể cả khi đã bị gỡ khỏi Assign Steps sau khi document được tạo, không tự
+  động thay bằng Step khác (FR-045). Type = "PO" không đổi (Step tiếp tục ẩn hẳn). **0 thay đổi
+  backend** — toàn bộ hạ tầng đọc tái sử dụng nguyên vẹn từ feature `006` (research Quyết định 61).
+- **(Update 19)** Trang Add cũ (`/eutr/documents/add`) và popup Assign condition (cả 2 mode) không
+  còn tồn tại — Add/Edit dùng chung đúng 1 popup (SC-004). Popup Add có thêm Valid from/Valid to,
+  editable, mặc định hôm nay/`9999-12-31`; document tạo ra dùng đúng giá trị hiển thị tại thời điểm
+  Upload — xem SC-003; Valid from muộn hơn Valid to bị chặn kèm lỗi rõ ràng — xem SC-009. Edit khóa
+  Type, chip chỉ đọc — xem SC-004; Save chỉ đổi Step (mọi bản ghi `eutr_references` của document,
+  giữ nguyên `RefValue`/`RefType`/số lượng) và/hoặc Valid from/to, không thêm/xóa bản ghi nào — xem
+  SC-005; Step hiển thị và sửa được ở Edit cho **mọi** Type kể cả PO (khác Add, nơi PO ẩn Step) — xem
+  research Quyết định 60. Document không có `eutr_references` nào: Edit ẩn Step, chỉ sửa Valid
+  from/to (FR-034). Cột Conditions đổi nguồn sang `RefValue` phẳng của `eutr_references`
+  (dedupe khi trùng), không còn đọc `eutr_reference_details` — xem SC-002/FR-005. Xóa document (đơn/
+  nhiều) không đổi hành vi so với Update 9 (vẫn dọn `eutr_references`, và vẫn dọn kèm
+  `eutr_reference_details` mồ côi nếu có dữ liệu cũ — research Quyết định 58).
 - **(Update 18)** Khi Type = "PO" trong popup Add, request Upload gửi kèm `typeId` = `Id` thật của
   Type "PO" đang chọn ở dropdown (không phải giá trị rỗng/cố định); mỗi `eutr_references` ghi cho
   document tạo qua luồng này có `RefType` khớp đúng `typeId` đó — xem SC-044. Trang Add cũ độc lập

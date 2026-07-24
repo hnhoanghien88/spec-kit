@@ -59,3 +59,55 @@ Mở SPA, đăng nhập bằng user đã được cấp quyền + menu ở trên
   chung (FR-009, SC-006).
 - Toàn bộ văn bản hiển thị (label cột, nút, breadcrumb, thông báo, trạng thái rỗng, hộp thoại xác
   nhận) đều bằng **tiếng Anh** (FR-012).
+
+---
+
+## Update 1 — Assign Steps
+
+### Tiền đề bổ sung
+
+- Bảng `eutr_reference_type_details` đã tồn tại trên DB (theo `docs/design/eutr/eutr_db.sql` dòng
+  152-164), kèm FK `eutr_reference_type_details_typeid_foreign`,
+  `eutr_reference_type_details_stepid_foreign`.
+- Backend đã implement xong endpoint `api/eutr-reference-type-details` (xem
+  [contracts/eutr-reference-types-api.md](./contracts/eutr-reference-types-api.md)).
+- Đã có ít nhất 1-2 bản ghi trong `eutr_steps` (feature `001-eutr-steps`) để combobox Step có dữ
+  liệu chọn.
+- KHÔNG cần seed `userMenu`/quyền mới — Assign Steps là route con tĩnh trong `MainRoutes.jsx`, tái
+  sử dụng quyền `EutrReferenceTypes.*` đã seed ở T021 (xem plan.md Update 1, Quyết định 10/11 trong
+  research.md).
+
+### Kịch bản kiểm thử (ánh xạ Acceptance Scenarios của User Story 5)
+
+8. **Mở màn hình Assign Steps (US5)**: Từ danh sách `/eutr/reference-types`, nhấn icon **Assign
+   Steps** trên một dòng → điều hướng tới `/eutr/reference-types/assign-steps/{id}` → thấy
+   breadcrumb "EUTR > Reference Types > {Name} > Assign Steps" và bảng step đã gán (rỗng nếu chưa
+   gán step nào, hiển thị "No data").
+9. **Gán step mới (US5)**: Nhấn Add → chọn 1 step từ combobox (nạp từ `GET /api/eutr-steps`) → lưu
+   → step xuất hiện trong bảng, dữ liệu ghi vào `eutr_reference_type_details`. Không chọn step nào
+   → bị chặn, hiện lỗi yêu cầu chọn step.
+10. **Gán trùng bị chặn (US5, FR-017/SC-008)**: Với step đã gán ở bước trên, mở lại Add, chọn đúng
+    step đó lần nữa → lưu → hệ thống báo lỗi "This step is already assigned to this reference
+    type." và KHÔNG tạo bản ghi trùng.
+11. **Sửa step đã gán (US5)**: Nhấn Edit trên 1 dòng đã gán → chọn 1 step khác chưa được gán → lưu
+    → bảng hiển thị step mới, bản ghi cũ (Id) được cập nhật đè (không tạo dòng mới).
+12. **Xóa step đã gán (US5)**: Nhấn Delete trên 1 dòng → `ConfirmDialog` nêu tên step → xác nhận →
+    dòng biến mất, bản ghi bị xóa thật khỏi `eutr_reference_type_details`. Hủy ở hộp xác nhận →
+    không có gì thay đổi.
+13. **Không có Import/Export (US5, FR-019)**: Xác nhận toolbar của màn hình Assign Steps KHÔNG có
+    nút Import/Export.
+14. **Quyền (US5)**: User thiếu quyền Update trên `EutrReferenceTypes` → icon Assign Steps trên
+    danh sách ẩn/disable giống Edit; user thiếu quyền Delete → icon Delete trên bảng step đã gán
+    ẩn/disable.
+
+### Tiêu chí đạt (bổ sung)
+
+- Toàn bộ 7 kịch bản mới (8-14) hoạt động đúng.
+- Gọi đúng các endpoint mới trong
+  [contracts/eutr-reference-types-api.md](./contracts/eutr-reference-types-api.md) (mục "Assign
+  Steps — EutrReferenceTypeDetails").
+- Gán trùng step trả về lỗi validate rõ ràng (không phải lỗi 500 chung chung) — FR-017/SC-008.
+- Xóa step đã gán là xóa thật (kiểm tra trực tiếp trong DB nếu cần), không còn xuất hiện lại sau
+  khi tải lại trang.
+- Toàn bộ văn bản hiển thị trên màn hình Assign Steps (breadcrumb, nút, dialog, thông báo, trạng
+  thái rỗng, hộp thoại xác nhận) bằng **tiếng Anh** (FR-020).

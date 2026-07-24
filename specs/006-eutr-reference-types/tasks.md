@@ -1,4 +1,4 @@
-# Tasks: EUTR Reference Types Management
+﻿# Tasks: EUTR Reference Types Management
 
 **Feature**: `006-eutr-reference-types` | **Plan**: [plan.md](./plan.md) | **Spec**: [spec.md](./spec.md)
 
@@ -300,3 +300,256 @@ thể demo độc lập sau khi Phase 1+2 hoàn tất (kể cả seed T021 để
 - Theo story: US1 = 5 (T022–T026), US2 = 2 (T027–T028), US3 = 1 (T029), US4 = 6 (T030–T035).
 - Setup = 4 (T001–T004), Foundational = 17 (T005–T021: 9 backend, 6 frontend, 2 ops), Polish = 5
   (T036–T040).
+
+---
+
+## Update 2026-07-24 (Update 1) — Assign Steps
+
+**Input**: "cập nhật 006-eutr-reference-types thêm tính năng assign steps giống với Apply to
+customer trong 003-eutr-templates, nhưng hiển thị step ở eutr_steps, không cần tính năng Import,
+Export. Khi Add chỉ cần chọn step, không cần thông tin From Date, To date, dữ liệu lưu vào bảng
+eutr_reference_type_details."
+
+**Phạm vi**: **Full-stack**, bảng `eutr_reference_type_details` đã có sẵn trên DB
+(`docs/design/eutr/eutr_db.sql` dòng 152-164) nhưng CHƯA có backend/frontend nào — tạo mới toàn bộ.
+Mẫu tham chiếu: `EutrTemplateReferences`/`ApplyCustomerPage` (`003-eutr-templates`, Apply to
+Customer), KHÔNG phải `EutrStep`/`EutrReferenceTypes` (khác hình dạng quan hệ — đây là bảng chi
+tiết gán theo 1 bản ghi cha, không phải bảng lookup độc lập). Xem
+[plan.md](./plan.md#update-2026-07-24-update-1--assign-steps),
+[research.md](./research.md) Quyết định 9-11, [data-model.md](./data-model.md) mục
+`EutrReferenceTypeDetails`, [contracts/eutr-reference-types-api.md](./contracts/eutr-reference-types-api.md)
+mục "Assign Steps".
+
+> **Lưu ý ngôn ngữ (FR-020)**: UI của Assign Steps bằng tiếng Anh, comment code tiếng Việt. KHÔNG
+> Import/Export (FR-019). KHÔNG có From Date/To Date — chỉ 1 trường Step (FR-015). Chặn gán trùng
+> step cho cùng reference type (FR-017/SC-008) thay cho kiểm tra chồng lấn ngày.
+
+---
+
+### Phase 8: Setup (Update 1)
+
+- [X] T041 Xác nhận bảng `eutr_reference_type_details` trên DB khớp thiết kế: đối chiếu
+  `docs/design/eutr/eutr_db.sql` dòng 152-164 (cột `Id, StepId, TypeId, CreatedBy, CreatedDate,
+  UpdatedBy, UpdatedDate` + FK `eutr_reference_type_details_typeid_foreign` từ `TypeId →
+  eutr_reference_types.Id`, FK `eutr_reference_type_details_stepid_foreign` từ `StepId →
+  eutr_steps.Id`). KHÔNG sửa schema.
+- [X] T042 [P] Đọc mẫu backend tham chiếu để nắm convention (`003-eutr-templates`):
+  `compliance-sys-api/src/ComplianceSys.Domain/Entities/EutrTemplateReferences.cs`,
+  `ComplianceSys.Application/{Dtos/Request/EutrTemplateReferencesRequestDto.cs,
+  Dtos/Response/EutrTemplateReferencesResponseDto.cs,
+  Interfaces/Repositories/IEutrTemplateReferencesRepository.cs,
+  Interfaces/Services/IEutrTemplateReferencesService.cs,
+  Services/EutrTemplateReferencesService.cs,
+  Validators/EutrTemplateReferencesRequestDtoValidator.cs}`,
+  `ComplianceSys.Infrastructure/Repositories/EutrTemplateReferencesRepository.cs`,
+  `ComplianceSys.Api/Controllers/EutrTemplateReferencesController.cs`.
+- [X] T043 [P] Đọc mẫu frontend tham chiếu:
+  `compliance-client/src/presentation/pages/eutr-templates/ApplyCustomerPage.jsx`,
+  `application/usecases/eutr-template-references/`,
+  `infrastructure/{api/eutrTemplateReferencesApi.js, repositories/RestEutrTemplateReferencesRepository.js}`,
+  `app/routes/groups/MainRoutes.jsx` (route `/eutr/templates/apply/:id`); và mẫu tái sử dụng
+  `application/usecases/eutr-step/GetEutrStepsUseCase.js` +
+  `infrastructure/repositories/RestEutrStepRepository.js` (`repositories.eutrStep`, feature
+  `001-eutr-steps`) cho combobox chọn Step.
+
+---
+
+### Phase 9: Foundational (Update 1 — nền tảng backend + frontend dùng chung cho US5)
+
+**⚠️ CRITICAL**: US5 (Phase 10) không bắt đầu được trước khi phase này xong.
+
+#### Backend — tạo mới toàn bộ
+
+- [X] T044 [P] Tạo Domain entity
+  `compliance-sys-api/src/ComplianceSys.Domain/Entities/EutrReferenceTypeDetails.cs` —
+  `[Table("eutr_reference_type_details")]`, kế thừa `BaseEntity`, `[Key][Column("Id")] public long
+  Id`, `public long TypeId`, `public long? StepId`. Clone cấu trúc từ `EutrTemplateReferences.cs`
+  (bỏ `VendorCode/FromDate/ToDate`, đổi `TemplateId` → `TypeId`, thêm `StepId`).
+- [X] T045 [P] Tạo
+  `compliance-sys-api/src/ComplianceSys.Application/Dtos/Request/EutrReferenceTypeDetailsRequestDto.cs`
+  — `public long TypeId`, `public long? StepId`.
+- [X] T046 [P] Tạo
+  `compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/EutrReferenceTypeDetailsResponseDto.cs`
+  — `: EutrReferenceTypeDetails`, thêm `public string? StepName` (resolve bằng JOIN cục bộ tới
+  `eutr_steps`, không qua D365).
+- [X] T047 [P] Tạo
+  `compliance-sys-api/src/ComplianceSys.Application/Validators/EutrReferenceTypeDetailsRequestDtoValidator.cs`
+  — `: BaseValidator<EutrReferenceTypeDetailsRequestDto>`, `RuleFor(x => x.StepId).NotNull()`,
+  `RuleFor(x => x.TypeId).GreaterThan(0)`.
+- [X] T048 Tạo
+  `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrReferenceTypeDetailsRepository.cs`
+  — `: IRepository<EutrReferenceTypeDetails, long>`, thêm
+  `Task<IEnumerable<EutrReferenceTypeDetailsResponseDto>> GetByTypeIdAsync(long typeId,
+  CancellationToken ct = default)` và `Task<bool> HasStepAssignedAsync(long typeId, long stepId,
+  long? excludeId, CancellationToken ct = default)` (phụ thuộc T044).
+- [X] T049 Tạo
+  `compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrReferenceTypeDetailsRepository.cs`
+  — `: DapperRepository<EutrReferenceTypeDetails, long>, IEutrReferenceTypeDetailsRepository`.
+  `GetByTypeIdAsync`: `SELECT d.*, s.Name AS StepName FROM eutr_reference_type_details d LEFT JOIN
+  eutr_steps s ON s.Id = d.StepId WHERE d.TypeId = @typeId ORDER BY d.CreatedDate DESC`.
+  `HasStepAssignedAsync`: `SELECT COUNT(1) FROM eutr_reference_type_details WHERE TypeId = @typeId
+  AND StepId = @stepId` (+ `AND Id <> @excludeId` khi có `excludeId`) (phụ thuộc T048).
+- [X] T050 Tạo
+  `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Services/IEutrReferenceTypeDetailsService.cs`
+  — `: IBaseService<EutrReferenceTypeDetails, long, EutrReferenceTypeDetailsRequestDto>`, thêm
+  `Task<IEnumerable<EutrReferenceTypeDetailsResponseDto>> GetByTypeIdAsync(long typeId,
+  CancellationToken ct = default)` (phụ thuộc T044, T045, T046).
+- [X] T051 Tạo
+  `compliance-sys-api/src/ComplianceSys.Application/Services/EutrReferenceTypeDetailsService.cs` —
+  `: BaseService<EutrReferenceTypeDetails, long, EutrReferenceTypeDetailsRequestDto>,
+  IEutrReferenceTypeDetailsService`; override `AddAsync`/`UpdateAsync` gọi
+  `_repository.HasStepAssignedAsync(...)` trước, ném `ValidationException("This step is already
+  assigned to this reference type.")` nếu trùng (FR-017/SC-008); implement `GetByTypeIdAsync` gọi
+  thẳng `_repository.GetByTypeIdAsync`. KHÔNG override `DeleteAsync` — hard delete mặc định của
+  `BaseService` là đủ (không có bảng nào tham chiếu ngược tới `eutr_reference_type_details`) (phụ
+  thuộc T049, T050).
+- [X] T052 [P] Thêm 2 dòng `CreateMap` cho `EutrReferenceTypeDetails` vào
+  `compliance-sys-api/src/ComplianceSys.Application/Mappings/EutrMappingProfile.cs` (file đã có,
+  chỉ thêm block mới): `CreateMap<EutrReferenceTypeDetailsRequestDto,
+  EutrReferenceTypeDetails>().ForMember(dest => dest.Id, opt => opt.Ignore()).IgnoreAuditable()`,
+  `CreateMap<EutrReferenceTypeDetails, EutrReferenceTypeDetailsResponseDto>()` (phụ thuộc T044,
+  T045, T046).
+- [X] T053 Đăng ký DI: `compliance-sys-api/src/ComplianceSys.Application/DependencyInjection.cs`
+  (SỬA, thêm 2 dòng) `services.AddScoped<IEutrReferenceTypeDetailsService,
+  EutrReferenceTypeDetailsService>();`, `services.AddScoped<IValidator<EutrReferenceTypeDetailsRequestDto>,
+  EutrReferenceTypeDetailsRequestDtoValidator>();`; và
+  `compliance-sys-api/src/ComplianceSys.Infrastructure/DependencyInjection.cs` (SỬA, thêm 1 dòng)
+  `services.AddScoped<IEutrReferenceTypeDetailsRepository, EutrReferenceTypeDetailsRepository>();`
+  (phụ thuộc T047, T049, T051).
+- [X] T054 Tạo
+  `compliance-sys-api/src/ComplianceSys.Api/Controllers/EutrReferenceTypeDetailsController.cs` —
+  `[Authorize][ApiController][Route("api/eutr-reference-type-details")]`; clone cấu trúc mỏng của
+  `EutrTemplateReferencesController`, TÁI SỬ DỤNG policy `EutrReferenceTypes.*` (không tạo policy
+  family riêng): `GET by-type/{typeId:long}` (policy `EutrReferenceTypes.ReadOne`), `POST` (policy
+  `EutrReferenceTypes.Update`), `PUT {id:long}` (policy `EutrReferenceTypes.Update`), `DELETE
+  {id:long}` (policy `EutrReferenceTypes.Delete`) (phụ thuộc T051, T053).
+
+**Checkpoint backend**: `dotnet build` thành công; có thể gọi thử 4 endpoint qua Postman/Swagger
+trước khi làm frontend.
+
+#### Frontend — tạo mới toàn bộ
+
+- [X] T055 [P] Tạo `compliance-client/src/domain/entities/EutrReferenceTypeDetails.js` — class
+  `EutrReferenceTypeDetails` với `{ id, typeId, stepId, stepName, createdBy, createdDate, updatedBy,
+  updatedDate }` (constructor nhận object).
+- [X] T056 [P] Tạo
+  `compliance-client/src/domain/interfaces/IEutrReferenceTypeDetailsRepository.js` — method
+  `getByTypeId`, `create`, `update`, `delete` (throw 'Not implemented').
+- [X] T057 [P] Tạo `compliance-client/src/infrastructure/api/eutrReferenceTypeDetailsApi.js` — base
+  `/eutr-reference-type-details`; `getByTypeId(typeId)` → `GET
+  /eutr-reference-type-details/by-type/{typeId}`, `create` POST, `update` PUT `/{id}`, `delete`
+  DELETE `/{id}`.
+- [X] T058 Tạo
+  `compliance-client/src/infrastructure/repositories/RestEutrReferenceTypeDetailsRepository.js` —
+  extends `IEutrReferenceTypeDetailsRepository`, gọi `eutrReferenceTypeDetailsApi`, bọc kết quả
+  bằng `EutrReferenceTypeDetails` (phụ thuộc T056, T057).
+- [X] T059 Đăng ký DI trong `compliance-client/src/di/repositories.js` (file đã có, chỉ thêm import
+  + 1 dòng): import `RestEutrReferenceTypeDetailsRepository`, thêm `eutrReferenceTypeDetails: new
+  RestEutrReferenceTypeDetailsRepository()` (phụ thuộc T058).
+- [X] T060 [P] Tạo 4 use case trong
+  `compliance-client/src/application/usecases/eutr-reference-type-details/`:
+  `GetByTypeIdEutrReferenceTypeDetailsUseCase.js`, `CreateEutrReferenceTypeDetailsUseCase.js`,
+  `UpdateEutrReferenceTypeDetailsUseCase.js`, `DeleteEutrReferenceTypeDetailsUseCase.js` (mỗi class
+  nhận repo qua constructor, `execute(...)` gọi method tương ứng) (phụ thuộc T056).
+
+**Checkpoint**: Toàn bộ tầng domain/infrastructure/application (backend + frontend) cho Assign Steps
+sẵn sàng; API hoạt động được; UI có thể build trên đó.
+
+---
+
+### Phase 10: User Story 5 — Gán các bước (step) cho reference type (Priority: P2) 🎯
+
+**Mục tiêu**: Icon Assign Steps trên danh sách reference type mở trang riêng quản lý các step đã
+gán (Add/Edit/Delete), chặn gán trùng, không có Import/Export.
+**Independent test**: Mở `/eutr/reference-types/assign-steps/:id`, Add 1 step → xuất hiện trong
+bảng; Add lại đúng step đó → bị chặn trùng; Edit đổi sang step khác → cập nhật đúng; Delete → xác
+nhận rồi biến mất; không thấy nút Import/Export trên toolbar.
+
+- [X] T061 [US5] Tạo trang
+  `compliance-client/src/presentation/pages/eutr-reference-types/AssignStepsPage.jsx` — trang độc
+  lập (không phải modal trong `index.jsx`), theo cấu trúc `ApplyCustomerPage.jsx`: tải reference
+  type theo `:id` (route param) qua `GetEutrReferenceTypesUseCase`/`getById` để lấy `Name` cho
+  breadcrumb "EUTR > Reference Types > {Name} > Assign Steps"; tải danh sách step đã gán qua
+  `GetByTypeIdEutrReferenceTypeDetailsUseCase`, hiển thị bảng cột **Step** (`stepName`) + **Action**
+  (Edit, Delete); tải TOÀN BỘ danh sách `eutr_steps` một lần qua `GetEutrStepsUseCase`
+  (`repositories.eutrStep`) làm `options` cho `Autocomplete` chọn Step; dialog Add/Edit inline CHỈ
+  có 1 field Autocomplete Step (bắt buộc, `getOptionLabel={opt => opt?.name || ''}`); nút Save gọi
+  `Create`/`UpdateEutrReferenceTypeDetailsUseCase` (kèm `typeId` từ route); validate trùng step
+  client-side trước khi gọi API (đối chiếu danh sách đã tải, tương tự `hasOverlap()` của
+  `ApplyCustomerPage.jsx`) hiển thị lỗi tại field Step; nút Delete dùng `ConfirmDialog` (nêu tên
+  step) rồi gọi `DeleteEutrReferenceTypeDetailsUseCase`; toolbar KHÔNG có nút Import/Export; toàn
+  bộ text tiếng Anh (breadcrumb, nút Add/Edit/Delete/Save/Cancel, tiêu đề dialog, label Step, thông
+  báo lỗi/thành công, "No data", `ConfirmDialog`) (phụ thuộc T054, T059, T060). **Ghi chú
+  implement**: `GetEutrReferenceTypesUseCase` hiện tại chỉ gọi `getAll()`, không có sẵn use case
+  bọc `getById`; đã bổ sung thêm 1 file nhỏ
+  `application/usecases/eutr-reference-types/GetByIdEutrReferenceTypesUseCase.js` (cùng thư mục,
+  cùng convention 1-use-case-1-thao-tác) để tải reference type theo id cho breadcrumb, thay vì gọi
+  thẳng `repositories.eutrReferenceTypes.getById()` từ trang (giữ đúng Nguyên tắc I — Presentation
+  chỉ qua use case).
+- [X] T062 [US5] Thêm route trong `compliance-client/src/app/routes/groups/MainRoutes.jsx`: lazy
+  import `const AssignStepsPage = Loadable(lazy(() =>
+  import('@presentation/pages/eutr-reference-types/AssignStepsPage')))` và route object `{ path:
+  '/eutr/reference-types/assign-steps/:id', element: <AssignStepsPage /> }` trong mảng con đã bọc
+  `PrivateRoute`. KHÔNG cần sửa `RouteResolver.jsx`/menu-items/seed menu mới (route con tĩnh, tái
+  sử dụng quyền/menu cha `eutr-reference-types`) (phụ thuộc T061).
+- [X] T063 [US5] Thêm icon **Assign Steps** vào
+  `compliance-client/src/presentation/pages/eutr-reference-types/components/EutrReferenceTypesActionCell.jsx`
+  (cạnh Edit/Delete hiện có), `onClick` điều hướng `navigate(\`/eutr/reference-types/assign-steps/${row.id}\`)`,
+  gated theo cùng điều kiện quyền của Edit (`canEdit`) vì tái sử dụng policy
+  `EutrReferenceTypes.Update` (phụ thuộc T062).
+
+**Checkpoint**: US5 hoạt động end-to-end (Add/Edit/Delete step, chặn gán trùng, không
+Import/Export, quyền đúng).
+
+---
+
+### Phase 11: Polish & Cross-cutting (Update 1)
+
+- [X] T064 [P] Rà soát: toàn bộ văn bản hiển thị trên `AssignStepsPage` bằng tiếng Anh (breadcrumb,
+  nút, tiêu đề dialog, label combobox Step, thông báo lỗi/thành công — kể cả thông báo "đã được
+  gán", trạng thái rỗng "No data", `ConfirmDialog`) — FR-020. Comment code có thể giữ tiếng Việt.
+- [X] T065 [P] Kiểm tra quyền: icon Assign Steps trên danh sách `index.jsx` và nút
+  Add/Edit/Delete trên `AssignStepsPage` ẩn/disable đúng theo `permissionList` (dựa trên quyền
+  `EutrReferenceTypes.Update/Delete/ReadOne` đã seed ở T021 — không cần seed quyền mới, FR-021).
+- [X] T066 Chạy `dotnet build` trong `compliance-sys-api` — 0 lỗi biên dịch cho các file mới/sửa
+  của Update 1.
+- [X] T067 Chạy `npm run lint`/`npm run build` trong `compliance-client` và sửa cảnh báo của file
+  mới.
+- [ ] T068 Kiểm thử thủ công theo [quickstart.md](./quickstart.md) mục "Update 1 — Assign Steps" —
+  7 kịch bản (8-14): mở màn hình, gán step mới, chặn gán trùng, sửa, xóa, xác nhận không có
+  Import/Export, kiểm tra quyền. Yêu cầu backend chạy thật + có ít nhất 1-2 bản ghi `eutr_steps`.
+  **CHƯA CHẠY** — không có dev server/backend đang chạy + DB seed trong phiên làm việc này (không
+  tương tác/không có trình duyệt); `dotnet build` (T066) và `npm run lint`/`build` (T067) đều pass
+  sạch. Khuyến nghị chạy thủ công 7 kịch bản trên trình duyệt thật trước khi coi feature này sẵn
+  sàng production.
+
+---
+
+## Update 1 Dependencies & thứ tự
+
+- **Phase 8** (Setup) → **Phase 9** (Foundational) là điều kiện tiên quyết của **Phase 10** (US5).
+- Trong Phase 9 (backend): T044/T045/T046/T047 song song; T048 cần T044; T049 cần T048; T050 cần
+  T044+T045; T051 cần T049+T050; T052 cần T044+T045+T046 (song song với T048-T051, khác file); T053
+  cần T047+T049+T051; T054 cần T051+T053.
+- Trong Phase 9 (frontend): T055/T056/T057 song song; T058 cần T056+T057; T059 cần T058; T060 cần
+  T056 (song song với T058/T059, khác file).
+- **Phase 10** (US5): T061 cần T054+T059+T060 (Foundational xong hoàn toàn); T062 cần T061; T063
+  cần T062 (cùng liên quan routing/permission nên tuần tự).
+- **Phase 11** (Polish) sau khi Phase 10 xong.
+
+### Cơ hội song song (Update 1)
+
+- Phase 8: `[P]` T042, T043 cùng lúc (T041 độc lập).
+- Phase 9 backend: `[P]` T044, T045, T046, T047 cùng lúc; T052 có thể song song với T048-T051 (khác
+  file).
+- Phase 9 frontend: `[P]` T055, T056, T057 cùng lúc; T060 song song với T058/T059 (khác file, chỉ
+  cần T056).
+- Phase 11: `[P]` T064, T065 cùng lúc.
+
+## Tổng quan (Update 1)
+
+- Tổng task mới: **28** (T041–T068).
+- Theo story: US5 = 3 (T061–T063).
+- Setup = 3 (T041–T043), Foundational = 17 (T044–T060: 11 backend, 6 frontend), Polish = 5
+  (T064–T068).
+- Tổng cộng toàn bộ feature (gốc + Update 1): **68 task** (T001–T068).
