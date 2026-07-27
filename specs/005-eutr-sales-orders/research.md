@@ -614,3 +614,770 @@ is short: there is no backend gap to fill at all, only a frontend orchestration/
   (Decision 20), not silently kept as an always-passing check.
 - `mock/eutrSteps.js` and its one remaining consumer (`utils/treeUtils.js`'s `getStepName` fallback)
   are left untouched — cleaning that up is out of scope for this update (Decision 22).
+
+## Update 5 (2026-07-27) — Template tree toolbar reload + AVAILABLE FILES dynamic badges
+
+Covers spec FR-047..FR-052: (a) clicking a template chip in the Step 2 toolbar
+(`data-marker="template-tree-toolbar"`) refetches `templatesData`; (b) the three currently-static
+labels on each AVAILABLE FILES row ("Map status", "File type", "PO value") become dynamic, sourced
+from `eutr_references`.
+
+## Decision 23 — Toolbar reload: extract the existing template-build effect into a callable function
+
+- **Decision**: `MapFilePage.jsx`'s `useEffect` that builds `templatesData` from
+  `purchaseAttachments` (Update 2, Decision 13) currently only re-runs when `purchaseAttachments`
+  changes. Extract its body into a `loadTemplatesData(templateCodes)` `useCallback` (same pattern
+  already used for `loadPurchaseAttachments`, Decision 12) and call it both from the `useEffect`
+  (auto-load) and from an `onClick` on each template `Chip` in the toolbar (manual reload). Both call
+  sites resolve `templateCodes` the same way — `[...new Set(purchaseAttachments.map(pa =>
+  pa.templateCode))]` — so a manual click re-fetches the exact same set fresh from
+  `GetPagingEutrTemplatesUseCase`/`GetEutrTemplatesUseCase`, picking up any change made elsewhere
+  (e.g. a template's steps edited in `003-eutr-templates` since page load) without a full page reload.
+- **Rationale**: this is the same "extract effect body into a reusable callback" shape already
+  established in this same file for `loadPurchaseAttachments` (Decision 12) — Principle II reuse of
+  an in-file precedent, not a new pattern. Zero new backend, zero new use case — same two existing
+  calls (`get-all` filtered by `Code`, then `GetById`), just invoked on demand as well as on mount.
+- **Alternatives considered**:
+  - *Force-reload via a state "cache-buster" key (e.g. bump a `reloadNonce` counter, add it as a
+    `useEffect` dependency)*: rejected — indirect and harder to read than calling the extracted
+    function directly from the `onClick`; no benefit here since there is no request de-duplication
+    concern (`Promise.all` over a handful of distinct `TemplateCode`s is cheap, same as today).
+  - *Reload only the clicked template's own tree, leave the others as-is*: rejected — spec Update 5
+    explicitly documents (as an Assumption) that Step 2 always renders every template tree together,
+    so a full-list reload is the reasonable default; a per-template partial reload would need to key
+    `templatesData` differently (by which entries are "stale") for no material benefit, since a full
+    reload of a handful of templates is already fast.
+
+## Decision 24 — Map status badge: extend `list-po-references`'s response additively with raw `StepId`s
+
+- **Decision**: `POST /api/eutr-documents/list-po-references` (owned by `004-eutr-documents`, Decision
+  14) currently returns `stepNames: string[]` per document (JOIN `eutr_steps.Name`), no raw `StepId`.
+  Spec FR-049 requires comparing `StepId` directly, not step name. Add one **additive** field
+  `stepIds: long[]` to `EutrDocumentsPoReferenceItemDto` (`ComplianceSys.Application/Dtos/Response/`),
+  populated the same way `stepNames` already is (`EutrReferencesRepository.GetDocumentsByPoCodesAsync`
+  already `SELECT`s from `eutr_references r`, which already carries `r.StepId` — just add it to the
+  `SELECT` list and the `EutrReferencePoDocumentInfo` projection class, then group/distinct it into
+  `stepIds` in `EutrDocumentsService.GetPoReferencesAsync` the same way `stepNames` is grouped today).
+  `stepNames` itself is left untouched (still consumed as-is by `ViewSalesOrderPage.jsx`'s own Template
+  Checklist mapping, Decision 14/19 — out of scope for this update). Frontend: a file is "Mapped" when
+  `file.stepIds` intersects the `stepId` of any node in `allDetails` (already carries `stepId`,
+  Decision 13's `normalizeTemplateDetail`) — "No map" otherwise.
+- **Rationale**: Principle III — reuse the already-existing, already-correct JOIN
+  (`eutr_references r LEFT JOIN eutr_documents d LEFT JOIN eutr_steps s WHERE r.RefValue IN
+  @PoCodes`); the only gap is one column missing from the `SELECT`/DTO, not a new query or endpoint.
+  This mirrors the exact same additive-DTO-extension precedent already used repeatedly in this
+  codebase (e.g. `004-eutr-documents` Update 8/10/14 adding `stepNames`/`refType`/`fileId`/`typeName`
+  to existing DTOs without breaking existing consumers).
+- **Alternatives considered**:
+  - *Keep matching by `stepName` string, like the tree's own existing "already mapped" indicator
+    (Decision 14)*: rejected — spec FR-049 explicitly requires `StepId` equality, and step names are
+    not guaranteed globally unique the way `StepId` is (the existing name-match was an accepted
+    approximation for the tree's internal indicator, not a hard spec requirement at the time).
+  - *Add a brand-new endpoint specific to this page*: rejected — pure duplication of a working,
+    shared, already-frontend-wired endpoint (Principle III).
+
+## Decision 25 — File type / PO value badges: additive `RefType`/`TypeName`; PO value needs no backend change
+
+- **Decision**: PO value is already returned today — `EutrDocumentsPoReferenceDto.poCode` (the same
+  `RefValue` the query filtered on, since `GetDocumentsByPoCodesAsync`'s `WHERE r.RefValue IN
+  @PoCodes` guarantees `PoCode == RefValue` for every row it returns). No backend or DTO change is
+  needed for FR-051 — `MapFilePage.jsx` only needs to carry `poDoc.poCode` through onto each file
+  object it already builds inside its existing `poReferenceDocs.forEach(poDoc => ...)` loop (today it
+  reads `doc.*` but drops `poDoc.poCode` on the floor). For File type (FR-050), add one more additive
+  field alongside `stepIds` (Decision 24): `refType: byte?` + `typeName: string?` on
+  `EutrDocumentsPoReferenceItemDto`, sourced by extending the same SQL with `LEFT JOIN
+  eutr_reference_types t ON t.Id = r.RefType` + `t.Name AS TypeName`, and grouping `refType`/`typeName`
+  as "first non-null value across the document's rows for this PO" — the exact same aggregation shape
+  `EutrDocumentsService.AttachStepAndConditionInfoAsync` already uses for `get-all`/`get-by-id` (Update
+  13/14 of `004-eutr-documents`), cloned here rather than invented.
+- **Rationale**: Principle II/III — clone the already-working `RefType`→`TypeName` lookup-and-attach
+  pattern from `AttachStepAndConditionInfoAsync` instead of inventing a new join or a new lookup
+  endpoint; Principle III — `poCode` reuse for PO value needs zero backend change at all, just a
+  frontend field that was already available and simply unused.
+- **Alternatives considered**:
+  - *Display raw `RefType` (numeric) instead of a joined name*: rejected — spec FR-050 explicitly says
+    "hiển thị tên loại" (show the type name), and every other Type-like column in this codebase
+    already resolves a name from an id (`004-eutr-documents`'s own Type column, Update 14) — showing a
+    bare number would be an inconsistent regression against that established UI convention.
+  - *Re-fetch `RefValue` per document via a second call*: rejected — unnecessary extra round-trip; the
+    value is already present as `poCode` on the exact same response object, one loop away from where
+    it is currently discarded.
+
+## Updated non-goals (Update 5)
+
+- No new endpoint, no new controller action, no migration — `eutr_references.StepId`/`RefType` and
+  `eutr_reference_types.Name` already exist; this update only widens one existing response DTO
+  additively (`stepIds`, `refType`, `typeName`) and reads one existing field the frontend already
+  receives but currently discards (`poCode`).
+- No change to `stepNames`' existing shape/consumers — `ViewSalesOrderPage.jsx`'s own Template
+  Checklist mapping (Decision 19) keeps reading `stepNames` exactly as before; this update is purely
+  additive on the shared DTO.
+- No change to the tree's own existing "already mapped" indicator (the `derivedFileMappings`
+  stepName-based match driving the tree's success/error coloring, Decision 14) — FR-049's Map status
+  badge is a separate, new, per-file-row computation living alongside it, not a replacement of it.
+- No change to Step 2's Upload/Save no-op behavior (FR-029/FR-030, unaffected by this update).
+
+---
+
+## Update 6 (2026-07-27) — Wire Step 2 Upload/Edit to `004-eutr-documents`' Add/Edit popup
+
+Spec Update 6 replaces FR-029/FR-030 (previously demo/no-op) and adds FR-030a/FR-030b: Step 2's
+Upload button (UploadIcon) and each file's Edit action in `MapFilePage.jsx` MUST now perform real
+writes, by reusing the already-built Add/Edit document popup from `004-eutr-documents`
+(`EutrDocumentsFormDialog.jsx`) rather than continuing with the page's own two fully-local dialogs
+(`UploadDialog`, `MapFileDialog`). Investigation confirms this is a pure frontend reuse — the popup
+already performs every real write this update needs; the only genuinely new question is how to
+source enough real data to open it in **edit** mode for a document `MapFilePage.jsx` did not create
+the row for.
+
+## Decision 26 — Reuse `EutrDocumentsFormDialog.jsx` directly, not a fork or a new dialog
+
+- **Decision**: `MapFilePage.jsx` imports `EutrDocumentsFormDialog` from `presentation/pages/
+  eutr-documents/components/EutrDocumentsFormDialog.jsx` and renders it twice: once for **Add**
+  (`mode="add"`, `initialData={null}`) wired to the Step 2 Upload button, once for **Edit**
+  (`mode="edit"`, `initialData={<fetched row, see Decision 27>}`) wired to each AVAILABLE FILES row's
+  Edit icon — replacing the two fully-local components this page currently defines internally
+  (`UploadDialog`, `MapFileDialog`) and their local-state-only handlers (`handleUpload`,
+  `handleMapDialogConfirm`, and the `newlyUploadedFiles`/`stepFilePO` local state they mutate).
+- **Rationale**: the spec (Update 6, confirmed with the requester before drafting) explicitly calls
+  for reusing 004-eutr-documents' Add/Edit functionality — the **full**, unrestricted Add popup (no
+  Type/Step/Value auto-lock to the PO/node currently selected in Map File) and a **full replacement**
+  of the old local Edit dialog. `EutrDocumentsFormDialog` already implements every rule the new
+  FR-029/FR-030 require (Type/Step/Value-chip/Valid-dates fields and validation, real SharePoint
+  upload, real `eutr_documents`/`eutr_references` writes) — reusing the component outright is
+  Principle II/III in their purest form: zero duplicated logic, zero new backend code. Verified: the
+  component has no dependency on anything specific to the `eutr-documents` page/route context (it
+  only reads its own props and calls already-DI-registered use cases), so importing it cross-feature
+  works today with no relocation needed.
+- **Alternatives considered**:
+  - *Fork a copy of the dialog's JSX/logic into a new `eutr-sales-orders/components/` file*: rejected
+    — pure duplication of a working, already-tested component; any future fix to 004's Add/Edit rules
+    would then need to be applied twice, violating Principle II.
+  - *Move `EutrDocumentsFormDialog` into a shared/common presentation folder before reuse*: considered
+    reasonable long-term hygiene, but out of scope for this update — nothing about the component
+    requires relocation to be importable from another page folder; treated as a candidate for a later
+    cleanup, not required for spec compliance.
+  - *Build a smaller, Map-File-scoped dialog (Type/Value auto-locked to the current PO/node)*:
+    rejected — the requester's clarification explicitly asked for the full, unrestricted 004 Add
+    popup, not a scoped-down variant.
+
+## Decision 27 — Edit-detail fetch: reuse `GetPagingEutrDocumentsUseCase` filtered by `Id`, no new backend endpoint
+
+- **Decision**: before opening the Edit popup for a given `documentId` (from the AVAILABLE FILES row
+  the user clicked Edit on), `MapFilePage.jsx` calls the same
+  `GetPagingEutrDocumentsUseCase.execute(1, 1, 'Id', 'asc', [{ column: 'Id', operator: 'eq', value:
+  documentId }])` that `eutr-documents/index.jsx`'s own grid already uses for its listing
+  (`POST /api/eutr-documents/get-all`) — the one returned row (`EutrDocumentsResponseDto`: `id`,
+  `name`, `refType`, `stepId`, `conditions`, `validFrom`, `validTo`) is passed straight through as
+  `initialData` to `EutrDocumentsFormDialog` in edit mode. This exactly matches the fields the dialog
+  reads in edit mode (verified by reading the component: `initialData.id`/`.name`/`.refType`/
+  `.stepId`/`.conditions`/`.validFrom`/`.validTo`, nothing else — the dialog performs **no** internal
+  re-fetch by `initialData.id` itself; it relies entirely on what the caller passes in).
+- **Rationale**: two existing single-document read paths were considered and ruled out first:
+  - `GET /api/eutr-documents/get-by-id/{id}` falls through to the generic `BaseService.GetByIdAsync`
+    and returns the bare `EutrDocuments` domain entity (`Id, Name, FileId, ValidFrom, ValidTo` + audit
+    fields only) — **no** `RefType`/`StepId`/`Conditions`/`TypeName` — confirmed by reading
+    `EutrDocumentsService.cs` (no override of `GetByIdAsync`) and the domain entity class. Cannot feed
+    the dialog as-is.
+  - There is no dedicated frontend use case wrapping any "get one document's full edit-ready detail"
+    endpoint today (`GetEutrDocumentsFileByIdRefUseCase` is unrelated — it fetches the raw file
+    blob/URL for the View/preview dialog, not document metadata).
+  - However, `EutrDocumentsService.GetPagedAsync`'s own internal search-box-filter rewrite
+    (`ApplySearchBoxFiltersAsync`) already injects a `FilterRequest { Column = "Id", Operator = "in",
+    Value = "<ids>" }` into this exact same paging pipeline (verified by reading
+    `EutrDocumentsService.cs`) — direct, in-code proof that the underlying generic repository filter
+    mechanism already supports filtering this endpoint by `Id` server-side. Repurposing the paging
+    endpoint with a single-`Id` filter (`page=1, pageSize=1`) is therefore a verified-working,
+    zero-backend-change path to exactly the `EutrDocumentsResponseDto` shape the dialog needs — a
+    pure frontend orchestration change (one more use-case call site), not a backend gap.
+- **Alternatives considered**:
+  - *Add a new backend action returning `EutrDocumentsResponseDto` for a single `Id`* (e.g.
+    `GET /api/eutr-documents/get-detail/{id}`): rejected as unnecessary churn — Principle III favors
+    reusing the already-existing, already-correct paging pipeline (proven to support `Id` filtering
+    internally) over adding a new, narrowly-scoped endpoint that would just wrap the same underlying
+    query for one row.
+  - *Widen `list-po-references`'s response (already used by Map File, Update 2/5) to also carry
+    `conditions`/`validFrom`/`validTo`/a singular `stepId`*: rejected — that endpoint is deliberately
+    shaped per-PO-context (values/steps aggregated across a document's rows within one PO's context);
+    forcing it to also carry the full edit-ready document shape would conflate two different response
+    shapes for two different consumers (AVAILABLE FILES display vs. Edit-popup hydration) for no
+    benefit, when a second, already-existing endpoint (paging, filtered) already returns exactly the
+    right shape.
+
+## Decision 28 — Refresh AVAILABLE FILES/Map status after Upload or Edit succeeds
+
+- **Decision**: pass an `onSubmitted` callback to both `EutrDocumentsFormDialog` instances that
+  re-invokes the same `GetEutrDocumentsPoReferencesUseCase.execute(purchIds)` call Step 2's AVAILABLE
+  FILES already uses on load (Decision 14/Update 2), using the currently-selected/saved `PurchId`s —
+  mirroring the extraction-into-a-callable-function pattern already established in this same file for
+  `loadPurchaseAttachments` (Decision 12) and `loadTemplatesData` (Decision 23).
+- **Rationale**: spec FR-030a requires AVAILABLE FILES/Map status to reflect a just-completed
+  Upload/Edit without a full page reload; re-running the exact same already-correct query is the
+  simplest way to guarantee this without risking client-side state drifting from what the backend
+  actually persisted — especially relevant for Edit, whose real chip-diff/step-sync rules
+  (`004-eutr-documents` FR-052/FR-053: rows added/removed per Save) are non-trivial to replicate by
+  hand-patching local state.
+- **Alternatives considered**:
+  - *Optimistically patch local `availableFiles` state from the popup's own submitted values*:
+    rejected — would require re-implementing Edit's chip-diff/step-sync rules a second time on the
+    005 side just to predict the resulting rows, for a result the backend can already tell us
+    authoritatively with one more read call.
+
+## Updated non-goals (Update 6)
+
+- No new backend endpoint, controller action, DTO, or migration — Upload writes go through the
+  already-existing `POST /api/sharepoint/eutr-upload-multi` (Type = "PO") /
+  `POST /api/sharepoint/eutr-upload-multi-by-type` (other Types) actions; Edit writes go through the
+  already-existing `PUT /api/eutr-documents/{id}` (document fields) and
+  `PUT /api/eutr-documents/{id}/step` (step + reference values) actions; the one new read reuses
+  `POST /api/eutr-documents/get-all` filtered by `Id`.
+- `EutrDocumentsFormDialog.jsx` itself, and every use case/repository/api-client it internally calls
+  (`GetEutrReferenceTypesUseCase`, `GetEutrStepsUseCase`, `GetByTypeIdEutrReferenceTypeDetailsUseCase`,
+  `UploadToSharePointUseCase`, `UpdateEutrDocumentsUseCase`,
+  `UpdateEutrDocumentReferenceStepUseCase`), are unchanged — reused as-is, not edited, by this update.
+- The old local `UploadDialog`/`MapFileDialog` components and the local-state-only mutation logic
+  they drove (`newlyUploadedFiles`, `stepFilePO`, local `fileMappings` edits) are **removed** from
+  `MapFilePage.jsx`, not kept running in parallel — the requester confirmed a full replacement, not a
+  side-by-side second path, before this update was drafted.
+
+---
+
+## Update 7 (2026-07-27) — Map status/AVAILABLE FILES scoped by PO ↔ Template
+
+Spec Update 7 adds FR-053..FR-057: Step 2's AVAILABLE FILES list and its Map status badges/tree
+"already has a file" indicators currently match/merge across **all** saved templates' steps and
+**all** selected POs' documents, without checking that a document's own PO actually belongs (via
+`eutr_purchase_attachments`) to the template being evaluated. Investigation of the shipped
+`MapFilePage.jsx` (Updates 2/5) confirms the exact mechanism: `allDetails =
+templatesData.flatMap(t => t.flatDetails)` flattens every saved template's step definitions into one
+combined list, and both `derivedFileMappings` (the tree's own "already mapped" indicator, matched by
+`stepName`) and `isMappedByStepId` (the AVAILABLE FILES Map-status badge, matched by `stepId`) compare
+against this combined list — with no check that the candidate file's PO belongs to the template the
+step came from. Since different templates can legitimately reuse the same `StepId`/step name from the
+shared `eutr_steps` table (e.g. both templates define an "Invoice" step), this can mark a document
+"Mapped" against an unrelated template's node purely by name/id coincidence.
+
+## Decision 29 — Scope AVAILABLE FILES + Map status by PO→Template via already-loaded `purchaseAttachments`, zero backend change
+
+- **Decision**: `MapFilePage.jsx` already loads `purchaseAttachments` (`{purchId, templateCode}[]`,
+  from Update 2's `GetBySalesIdAsync`/`GET /api/eutr-purchase-attachments/by-sales-id/{salesId}`) and
+  each AVAILABLE FILES entry already carries its own `poCode` (added in Update 5, `realAvailableFiles`
+  in the current implementation). Build one new small lookup:
+  ```js
+  const purchIdToTemplateCode = useMemo(() => {
+    const map = new Map();
+    purchaseAttachments.forEach(pa => map.set(pa.purchId, pa.templateCode));
+    return map;
+  }, [purchaseAttachments]);
+  ```
+  Then, for a given template `t` (identified by `t.templateCode`), scope its own candidate files:
+  `filesForTemplate = realAvailableFiles.filter(f => purchIdToTemplateCode.get(f.poCode) ===
+  t.templateCode)`. AVAILABLE FILES' rendered list (search, pagination, the Map-status badge) MUST use
+  `filesForTemplate(selectedTemplateCode)` instead of the full, unscoped `realAvailableFiles`/`allFiles`
+  list — this directly implements FR-053/FR-054. The tree's own "already mapped" indicator (currently
+  `derivedFileMappings`, matched by `stepName` against `allDetails`) MUST likewise be recomputed per
+  template, matching `t.flatDetails` only against `filesForTemplate(t.templateCode)` — never against
+  another template's files, even when `stepName`/`stepId` coincide (FR-055/FR-056). Because both sides
+  of the match (steps and files) are now scoped to the same `templateCode` before comparing, a document
+  belonging to an unrelated template's PO can never satisfy the match, regardless of `StepId`/name
+  coincidence — the fix is structural (scope-then-match), not an extra conditional bolted onto the old
+  global match.
+- **Rationale**: the PO→Template link this fix needs (`eutr_purchase_attachments.PurchId`→
+  `TemplateCode`) is already fully available client-side — no new endpoint, no new DTO field, no new
+  query. This is Constitution Principle III in its purest form: the gap is a client-side under-use of
+  already-fetched data, not a missing backend capability. Scoping by filtering-then-matching (rather
+  than matching-then-filtering) is also the simplest correct shape: it reuses the exact same per-detail
+  `stepName`-match / per-file `stepIds`-vs-`stepId`-match logic already written for
+  `derivedFileMappings`/`isMappedByStepId` (Update 2/5), just called once per template against that
+  template's own scoped file subset instead of once globally against everything combined.
+- **Alternatives considered**:
+  - *Keep one global match, but add a post-hoc filter that discards a match if the file's PO doesn't
+    belong to the matched node's template*: rejected — requires threading "which template does this
+    node belong to" back through every matched pair after the fact (the flattened `allDetails` loses
+    that association), more code and more error-prone than simply never mixing the two lists together
+    in the first place.
+  - *Add a new backend endpoint that returns documents pre-grouped by `TemplateCode`*: rejected — the
+    grouping key (`PurchId`→`TemplateCode`) is a local, already-fetched, tiny lookup; standing up new
+    backend surface for a client-side `Map.get()` would be unjustified new API surface for zero backend
+    gap (Principle III explicitly limits backend changes to verified gaps only — there is none here).
+  - *Filter `poReferenceDocs` at fetch time (only request `list-po-references` for the currently-viewed
+    template's own POs)*: rejected — `loadAvailableFiles` is called with the full `selectedPOs` set for
+    reasons independent of this fix (Step 1's selection, not the toolbar's per-template view), and
+    re-fetching on every toolbar click would be slower than filtering the already-fetched response
+    client-side (no new network round-trip needed since `poCode` is already present per file).
+
+## Decision 30 — Aggregate progress: sum of per-template, correctly-scoped completions
+
+- **Decision**: The header card's aggregate progress (`Required/completed`, `%`, missing-step count)
+  stays **Sales-Order-wide** (sum across every saved template), per the spec's explicit Update 7
+  clarification — it is NOT narrowed to only the currently-viewed template. To keep this aggregate
+  correct under the Decision 29 scoping fix: for each `t` in `templatesData`, compute
+  `computeProgress(t.flatDetails, effectiveMappingsForT)` using that template's own
+  `filesForTemplate(t.templateCode)`-scoped mappings (Decision 29), then sum `completed`/`total` across
+  all templates' results before deriving the displayed `%`. This replaces the current single call
+  `computeProgress(allDetails, effectiveFileMappings)` (one global match across every template's steps
+  and every selected PO's files combined) with N small per-template calls whose results are summed —
+  same final shape (`{completed, total, pct}`), corrected inputs.
+- **Rationale**: narrowing the header's aggregate to only the currently-viewed template would silently
+  hide missing-document counts for templates not currently displayed — a regression the spec explicitly
+  does not want (a user who only opens Template A's tab should still see the true total across A and B
+  combined). Computing per-template first and summing after is the only way to keep both correctness
+  (no cross-template contamination, Decision 29) and completeness (every template's contribution still
+  counted) at the same time.
+- **Alternatives considered**:
+  - *Narrow the header's aggregate to only the currently-selected template*: rejected — contradicts the
+    spec's explicit Update 7 requirement that the aggregate stay Sales-Order-wide; would also make the
+    header's number change every time the user clicks a different toolbar chip, which is confusing for
+    a value meant to represent the whole Sales Order's completion state.
+  - *Keep the single global `computeProgress(allDetails, effectiveFileMappings)` call, since the sum of
+    per-template completions equals a naive global count only when no cross-template contamination
+    exists*: rejected — this is exactly the bug being fixed; a global match over-counts `completed`
+    whenever a step in one template is (wrongly) satisfied by a file that actually belongs to another
+    template's PO, so the sum must be computed from the corrected per-template inputs, not the old
+    flattened one.
+
+## Updated non-goals (Update 7)
+
+- No backend change of any kind (no new/edited controller, service, repository, entity, DTO, or
+  migration) — the PO↔Template link needed is already delivered by the existing
+  `by-sales-id/{salesId}` response (Update 2) and the existing `poCode` field on each AVAILABLE FILES
+  entry (Update 5).
+
+## Update 8 (2026-07-27) — View Sales Order: Template Tree Toolbar + PO/Template-scoped Map status
+
+Spec Update 8 adds FR-058..FR-063: `ViewSalesOrderPage.jsx`'s toolbar (`data-marker=
+"template-tree-toolbar"`, lines 815-825) currently renders three hardcoded `Chip`s ("template
+code1"/"template code2"/"All", not sourced from `templatesData`) with no `onClick`, and the Template
+Checklist below (lines 872-899) stacks **every** saved template's tree in sequence via
+`templatesData.map(...)`. The per-step "has document" status (`fileMappings`, lines 535-545) is
+matched by `stepName` against `allDetails = templatesData.flatMap(t => t.flatDetails)` — every saved
+template's steps flattened together — with no check that a candidate document's own PO belongs (via
+`eutr_purchase_attachments`) to the template the step came from. This is the exact same class of
+cross-template mismatch already found and fixed for `MapFilePage.jsx` in Update 7 (both screens share
+the same underlying data shapes; `ViewSalesOrderPage.jsx` was modeled on `MapFilePage.jsx` as of
+Update 4, before the Update 7 fix existed to clone).
+
+## Decision 31 — Give the toolbar real per-template chips + click-to-select-one-template, defaulting to the first template (clone `MapFilePage.jsx` verbatim)
+
+- **Decision**: Add a `selectedTemplateCode` state to `ViewSalesOrderPage.jsx`, initialized `null`,
+  cloned from `MapFilePage.jsx` line 360. Add a default-first-template `useEffect` cloned verbatim
+  from `MapFilePage.jsx` lines 500-509 (runs whenever `templatesData` changes: if there's no previous
+  selection, or the previous selection no longer exists in `templatesData`, fall back to
+  `templatesData[0].templateCode`; if `templatesData` is empty, `selectedTemplateCode` is `null`).
+  Replace the toolbar's 3 hardcoded `Chip`s (lines 822-824) with `templatesData.map(t => <Chip
+  label={t.templateName} variant={t.templateCode === selectedTemplateCode ? 'filled' : 'outlined'}
+  onClick={() => setSelectedTemplateCode(t.templateCode)} />)`, cloned from `MapFilePage.jsx` lines
+  1145-1187 minus the `loadTemplatesData(...)` refetch call inside that `onClick` (spec FR-063 — this
+  screen is read-only, no refetch needed). Replace the Template Checklist's `templatesData.map(...)`
+  stacked-tree render (lines 872-899) with a single selected-template render, cloned from
+  `MapFilePage.jsx` lines 1226-1231: `const t = templatesData.find(item => item.templateCode ===
+  selectedTemplateCode) ?? templatesData[0]`, then render only `t.tree` (one `Box`/header/tree, not one
+  per template).
+- **Rationale**: this is a straight clone of already-shipped, already-working code in the sibling
+  screen (Principle II) — `MapFilePage.jsx`'s toolbar/default-selection/single-tree-render logic is
+  the concrete reference the spec explicitly asks View to match. Cloning verbatim (rather than
+  re-deriving a similar-but-different implementation) minimizes the risk of the two screens drifting
+  in subtly different ways for what the spec treats as one behavior.
+- **Alternatives considered**:
+  - *Keep rendering all templates' trees but visually highlight the "selected" one*: rejected — does
+    not satisfy spec FR-059 ("chỉ hiển thị đúng cây của template được chọn"), and does not fix the
+    underlying cross-template Map-status contamination this update also needs to address (Decision
+    33 below still requires per-template scoping regardless of how many trees are visible at once).
+  - *Extract the toolbar/single-tree-render into a genuinely shared component used by both
+    `MapFilePage.jsx` and `ViewSalesOrderPage.jsx`*: rejected for this update — `MapFilePage.jsx`'s
+    toolbar is interactive (drives `loadTemplatesData` refetch, Step 2 editing state) while View's is
+    purely a display selector; extracting a shared component now would require carefully separating
+    the read-only display concern from Map File's write-capable one, a larger refactor than this
+    update's scope (FR-058..FR-063) calls for. Cloning the JSX shape (not the component) is the
+    smaller, lower-risk change consistent with how Update 4 already related the two files.
+
+## Decision 32 — Add `poCode` to `ViewSalesOrderPage.jsx`'s `realAvailableFiles` builder (field already exists in the response, just not yet read)
+
+- **Decision**: `ViewSalesOrderPage.jsx`'s `realAvailableFiles` `useMemo` (lines 512-527) builds one
+  file object per document from `poReferenceDocs` (the `list-po-references` response), but does not
+  currently copy `poDoc.poCode` onto the built object — even though `poDoc.poCode` is already present
+  on every element of `poReferenceDocs` (same response shape `MapFilePage.jsx` consumes, and
+  `MapFilePage.jsx`'s own builder has copied `poCode` since this feature's own Update 5, line 559).
+  Add `poCode: poDoc.poCode` to the object literal at line ~522, immediately available for Decision 33
+  below.
+- **Rationale**: zero backend change — the field is already in the response payload today; this is a
+  one-line additive fix to a frontend builder that simply never read a field it already had access
+  to. Confirmed via direct code read of both pages' `realAvailableFiles` builders side by side.
+- **Alternatives considered**: none — there is no other way to obtain this value that isn't already
+  strictly worse (e.g. re-deriving PO from `stepNames` is not possible; the field is already present
+  and named, it just needs to be read).
+
+## Decision 33 — Scope the Template Checklist's "has document" status by PO→Template, cloning Update 7's `purchIdToTemplateCode`/`templateComputations` pattern verbatim
+
+- **Decision**: Add a `purchIdToTemplateCode` `useMemo` to `ViewSalesOrderPage.jsx`, built from its
+  already-loaded `purchaseAttachments` state (`new Map(purchaseAttachments.map(pa => [pa.purchId,
+  pa.templateCode]))`) — identical in shape to `MapFilePage.jsx`'s own (lines 571-575, added in
+  Update 7). Add a `templateComputations` `useMemo`, cloned from `MapFilePage.jsx` lines 582-605: for
+  each `t` in `templatesData`, compute `filesForTemplate = realAvailableFiles.filter(f =>
+  purchIdToTemplateCode.get(f.poCode) === t.templateCode)` (using Decision 32's newly-added `poCode`
+  field), then match `t.flatDetails` against `filesForTemplate` by `stepName` to build that template's
+  own `derivedFileMappings` — never against another template's files, even when `stepName` coincides.
+  Feed the single selected-template tree (Decision 31) with `selectedTemplateComputation.
+  derivedFileMappings` directly as its `fileMappings` prop (unlike `MapFilePage.jsx`, `ViewSalesOrderPage.jsx`
+  has no local map/unmap overrides to merge in — Decision 21/Update 4 already established this screen
+  has nothing else to combine, so no `mergeWithLocalFileMappings`-equivalent step is needed here), and
+  `selectedTemplateComputation.filesForTemplate` as its `files` prop (replacing the current global
+  `fileMappings`/`realAvailableFiles` props at lines 892-893).
+- **Rationale**: identical reasoning to Update 7's Decision 29 (Constitution Principle III in its
+  purest form — the PO→Template link is already client-side, no new endpoint/DTO/query needed) plus
+  Principle II (clone the already-verified-correct pattern rather than re-deriving a parallel one for
+  the sibling screen). Scoping by filtering-then-matching (not matching-then-filtering) structurally
+  rules out cross-template contamination for the same reason it did for `MapFilePage.jsx`.
+- **Alternatives considered**: same three alternatives Decision 29 already rejected for
+  `MapFilePage.jsx` (post-hoc filter after a global match; new backend endpoint pre-grouping by
+  template; fetch-time filtering of `poReferenceDocs`) — rejected here for the identical reasons, with
+  no new considerations specific to the read-only screen.
+
+## Decision 34 — Validation Summary: sum of per-template, correctly-scoped completions (clone Update 7's Decision 30 verbatim)
+
+- **Decision**: Replace `ViewSalesOrderPage.jsx`'s current single-pass computation (`requiredDetails`/
+  `mappedRequired`/`missingRequired`/`pct`, lines 580-588, computed once over the globally-flattened
+  `allDetails`/`fileMappings`) with a per-template computation summed across all of `templatesData`,
+  cloned from `MapFilePage.jsx`'s `progress` `useMemo` (Update 7, lines 707-721): for each `t` in
+  `templateComputations` (Decision 33), filter `t.flatDetails` to `Required` steps (excluding
+  `AUTO_SOURCES`, preserving `ViewSalesOrderPage.jsx`'s own existing exclusion from Decision 20/Update
+  4 — `MapFilePage.jsx`'s own `computeProgress` helper does not exclude `AUTO_SOURCES`, a pre-existing,
+  out-of-scope difference between the two pages not touched by this update), determine
+  completed/missing per step from `t.derivedFileMappings`, then sum `completed`/`total` across every
+  template and concatenate each template's own missing-step names into one combined `missingRequired`
+  list for display. The aggregate stays Sales-Order-wide (every saved template contributes,
+  regardless of which one is currently selected in the toolbar) per spec FR-062.
+- **Rationale**: identical reasoning to Update 7's Decision 30 — narrowing the Validation Summary to
+  only the currently-selected template would hide missing-document counts for templates not currently
+  displayed (a regression the spec explicitly disallows, FR-062), and would make the number change
+  every time the user clicks a different toolbar chip, confusing for a value meant to represent the
+  whole Sales Order.
+- **Alternatives considered**: same two alternatives Decision 30 already rejected for `MapFilePage.jsx`
+  (narrow to only the selected template; keep one global match despite the cross-template
+  over-counting bug) — rejected here for the identical reasons.
+
+## Updated non-goals (Update 8)
+
+- No backend change of any kind (no new/edited controller, service, repository, entity, DTO, or
+  migration) — the PO↔Template link needed is already delivered by the existing
+  `by-sales-id/{salesId}` response (Update 4) and the existing `poCode` field already returned by
+  `list-po-references` (Update 5), just not yet read by `ViewSalesOrderPage.jsx`'s own builder.
+- No refetch of PO/document data on toolbar click — unlike `MapFilePage.jsx`'s FR-048
+  reload-on-click, `ViewSalesOrderPage.jsx` stays read-only with no concurrent edit happening on this
+  screen, so the data already loaded when the page opened is sufficient (spec FR-063, Assumptions).
+- No change to `AUTO_SOURCES`-exclusion behavior already established for this page in Update 4
+  (Decision 20) — this update only re-scopes which files count as a match per template, not which
+  steps count as "Required" for progress purposes.
+- No new frontend file (no new use case, repository, or component) — the fix is confined to
+  `ViewSalesOrderPage.jsx`'s existing state/derived-state (`useState`/`useEffect`/`useMemo`)
+  computations.
+- The header's/Validation Summary's aggregate progress is NOT narrowed to only the currently-viewed
+  template — it remains a sum across every saved template, per spec Update 8's explicit
+  clarification (Decision 34), mirroring the same rule already established for Map File (Update 7,
+  Decision 30).
+- No change to the "Purchase Orders đã chọn" table, the Edit/Map File button, or the Download button
+  (Update 4) — this update only touches the Template Checklist toolbar/tree render and the Validation
+  Summary's underlying computation.
+
+## Update 9 (2026-07-27) — View button on AVAILABLE FILES (Map File), reusing `004-eutr-documents`'s file-content preview popup
+
+Spec Update 9 adds FR-064..FR-068: each document in `MapFilePage.jsx`'s Step 2 AVAILABLE FILES list
+currently has only an Edit button (opens `EutrDocumentsFormDialog` in edit mode, Update 6) — users
+want to quickly view a file's actual content (PDF/Word/Excel/image) without opening the Edit popup
+(which is about editing Type/Step/Value/Valid dates, not rendering file content) or downloading the
+file. Investigation of the codebase found this exact capability already built and shipped for
+`004-eutr-documents`'s own document grid.
+
+## Decision 35 — Reuse `EutrFileViewerDialog.jsx` directly; add a View `IconButton` next to Edit
+
+- **Decision**: `004-eutr-documents/index.jsx` already has a working "View" action on its grid: a
+  `viewerFile` state (`{ open, fileId, fileName }`), an `onView` handler
+  (`row => setViewerFile({ open: true, fileId: row.fileId, fileName: row.name })`), and a rendered
+  `<EutrFileViewerDialog open={viewerFile.open} fileId={viewerFile.fileId}
+  fileName={viewerFile.fileName} onClose={...} />`. `EutrFileViewerDialog.jsx`
+  (`presentation/pages/eutr-documents/components/EutrFileViewerDialog.jsx`) wraps the shared
+  `presentation/components/FilePreviewer.jsx` (already handles PDF via `<object>`, DOCX via
+  `docx-preview`, XLSX via Luckysheet, and images inline, given base64 content), fetching content via
+  `fetchFile={(idRef) => getEutrDocumentsFileByIdRefUseCase.execute(idRef)}` — i.e.
+  `GetEutrDocumentsFileByIdRefUseCase` → `GET /api/eutr-documents/get-file-by-idref?idRef={fileId}`,
+  returning `{ content (base64), contentType, fileName }`. The dialog also has its own simple
+  Download button (blob-download from the already-loaded preview content, no zip/progress dialog) and
+  a Close button — no Type/Step/Value/Valid-dates field, no Save action, matching spec FR-066/FR-067's
+  read-only requirement exactly as-is, with zero new code needed for that constraint.
+
+  `MapFilePage.jsx`'s own AVAILABLE FILES file objects (`realAvailableFiles`, built since Update 5)
+  already carry `fileId: doc.fileId` on every entry — the exact field `EutrFileViewerDialog` needs.
+  The fix: import `EutrFileViewerDialog` from `../eutr-documents/components/EutrFileViewerDialog`
+  (same cross-feature presentation-to-presentation import already established for
+  `EutrDocumentsFormDialog` in Update 6); add one new `viewerFile` state, cloned from
+  `004-eutr-documents/index.jsx`'s own shape; add one new View `IconButton` (MUI `Visibility` icon,
+  matching the icon `004-eutr-documents`'s own `EutrDocumentsActionCell.jsx` already uses for its View
+  action) next to the existing Edit `IconButton` at `MapFilePage.jsx` lines 1434-1450, with
+  `onClick={() => setViewerFile({ open: true, fileId: file.fileId, fileName: file.name })}`; render
+  `<EutrFileViewerDialog open={viewerFile.open} fileId={viewerFile.fileId}
+  fileName={viewerFile.fileName} onClose={() => setViewerFile(prev => ({ ...prev, open: false }))} />`
+  once, alongside the page's existing `EutrDocumentsFormDialog` renders.
+- **Rationale**: this is Constitution Principle III/II in their purest form — an already-working
+  component, already-working endpoint, and an already-available field on the exact object being
+  rendered. Building a second preview mechanism (or forking `EutrFileViewerDialog`'s JSX into a
+  `005`-owned copy) would duplicate working code for zero benefit, directly against Principle III's
+  reuse mandate; the View button's independence from Edit (spec FR-067) and its read-only guarantee
+  (spec FR-066) are automatic consequences of reusing this specific dialog as-is, not something that
+  needs to be separately implemented.
+- **Alternatives considered**:
+  - *Build a new, Map-File-specific preview dialog*: rejected — `EutrFileViewerDialog`/`FilePreviewer`
+    already do exactly what's needed, with the same `fileId`-based fetch already available; a new
+    dialog would duplicate rendering logic for PDF/DOCX/XLSX/images for no reason.
+  - *Add view/preview fields directly inside the existing Edit popup (`EutrDocumentsFormDialog`)*:
+    rejected — would blur a strictly-editing popup with a strictly-viewing one (spec FR-066 requires
+    View to have no editable fields/Save action at all), and would require changing a component
+    shared with `004-eutr-documents`'s own screen for a concern that screen doesn't need.
+  - *Open the file in a new browser tab/window via a direct URL instead of a popup*: rejected — no
+    public/direct URL exists for a stored document (content is fetched by id as base64 through the
+    existing endpoint, not served at a stable URL); a new tab would also require re-implementing
+    PDF/DOCX/XLSX rendering that `FilePreviewer` already provides inside a popup.
+
+## Updated non-goals (Update 9)
+
+- No backend change of any kind (no new/edited controller, service, repository, entity, DTO, or
+  migration) — `GET /api/eutr-documents/get-file-by-idref` already exists, already implemented, and
+  already DI-wired for `004-eutr-documents`'s own View action.
+- No new frontend component, use case, repository, or domain interface — `EutrFileViewerDialog.jsx`,
+  `FilePreviewer.jsx`, and `GetEutrDocumentsFileByIdRefUseCase` are all reused verbatim, unmodified.
+- No change to the existing Edit button/popup (`EutrDocumentsFormDialog`, Update 6) — View is an
+  additive, independent control; Edit's own behavior, props, and write flow are untouched.
+- No change to Map status/File type/PO value badges (Update 5/7), Upload (Update 6), the toolbar
+  (Update 5), or any Step 1 behavior — this update only adds one new button + one new popup render to
+  Step 2's AVAILABLE FILES row markup.
+
+---
+
+## Update 10 (2026-07-27) — Real Download on View Sales Order: zip organized by Template
+
+Spec Update 10 adds FR-069..FR-076: the Download button on `ViewSalesOrderPage.jsx`, currently a
+no-op (FR-044/Update 4), must download a real zip named `{SalesId}-{CustomerCode}-{CustomerName}`,
+containing one subfolder per saved template (named with the template's real display name), each
+containing only that template's **"Mapped"** documents. Three scope-defining points were confirmed
+directly with the requester before drafting the spec (recorded there as Assumptions, not
+`[NEEDS CLARIFICATION]` markers): Mapped-only document scope, real-template-name folders, and an
+always-clickable button that shows an error message when there is nothing to download.
+
+## Decision 36 — Reuse the exact zip-building/naming mechanics already shipped for `AllCompliances`, not a new pattern
+
+- **Decision**: A full-repo search for existing zip/download capability (before designing anything new)
+  found `AllCompliancesController.cs`/`ComplianceDownloadService.cs` (`compliance-sys-api/src/
+  ComplianceSys.Api/Controllers/`, `.../ComplianceSys.Application/Services/`) already implement
+  "download a Sales Order's files as a folder-organized zip" end to end for a different, unrelated
+  feature (`POST /api/all-compliances/download-so-zip`, folder = Product there). Three pieces of this
+  existing code are an exact, verified match for what spec Update 10 needs and are cloned (not
+  imported/reused as a dependency — see Decision 40 on why) into the new EUTR-owned action:
+  1. `AllCompliancesController.SanitizeFileNamePart`/`BuildSoZipFileName` already produce **exactly**
+     the root zip name format spec FR-070 requires — `{SalesId}-{CustomerCode}-{CustomerName}.zip`,
+     with invalid filename characters replaced via `Path.GetInvalidFileNameChars()`.
+  2. `ComplianceDownloadService.BuildFolderName` already replaces invalid filename characters in a
+     free-text folder name the same way spec FR-071 requires for template names.
+  3. `ComplianceDownloadService.GetUniqueEntryName` (folder-scoped) / `AllCompliancesController.
+     GetUniqueFileNameFromSet` (flat) already implement the `name_1.ext`, `name_2.ext` counter-suffix
+     disambiguation spec FR-075 requires for same-folder filename collisions.
+  All three download entirely through `ISharepointService.DownloadByFileId(fileId)` (package
+  `Shared.ExternalServices`, already DI-registered) into a `System.IO.Compression.ZipArchive` — the
+  exact same interface/mechanism this update needs for EUTR documents' own `FileId` values (same
+  SharePoint-backed storage, confirmed by `EutrDocumentsController.GetFileByIdRef`'s own use of the
+  sibling method `ISharepointService.ReadFileWithMetaAsync` on the same interface, added for
+  `004-eutr-documents`'s Update 10/this feature's own Update 9).
+- **Rationale**: Constitution Principle II — the concrete reference for "download a Sales Order's files
+  as a folder-organized zip" already exists in this exact codebase; cloning its proven naming/
+  sanitization/disambiguation mechanics is strictly lower-risk than inventing parallel logic that could
+  subtly disagree with the already-shipped, user-facing convention for the *same* root-zip-name format
+  (a user who has downloaded an `AllCompliances` SO zip before would reasonably expect the same
+  `{SalesId}-{CustomerCode}-{CustomerName}` shape from this feature's own zip).
+- **Alternatives considered**:
+  - *Take a dependency on `AllCompliancesController`/`ComplianceDownloadService` directly (call their
+    methods instead of cloning them)*: rejected — those methods are `private`/`private static` on a
+    controller/service that owns an unrelated domain (Compliance products, not EUTR documents/
+    templates); reaching into another feature's private controller internals is worse coupling than a
+    small, independent clone of a handful of pure string-sanitization/zip-naming helper methods (see
+    Decision 40).
+  - *Invent a new naming/sanitization scheme specific to this feature*: rejected — would risk a
+    different root-zip-name shape than the one already shipped and presumably already familiar to users
+    from `AllCompliances`' own SO zip download, for no benefit.
+
+## Decision 37 — New endpoint carries zero EUTR business logic; client supplies the already-correct folder→file grouping
+
+- **Decision**: `POST /api/eutr-documents/download-zip` (new action on the already-`ISharepointService`-
+  injected `EutrDocumentsController`, per Decision 25/Update 9's established thin-proxy precedent)
+  accepts `{ salesId, customerCode, customerName, folders: [{ folderName, files: [{ fileId, fileName }] }] }`
+  and performs **no** re-derivation of which documents are "Mapped" or which PO belongs to which
+  template (spec FR-055/FR-056) — `ViewSalesOrderPage.jsx` already computes this correctly client-side
+  via `templateComputations`/`derivedFileMappings` (Update 7/8, Decisions 29/33), and re-implementing
+  the same matching rule a second time, server-side, in a different language, would risk the two
+  implementations silently drifting apart over time (the same category of risk this feature's own
+  Update 7/8 fixed for the *first* case of duplicated matching logic). The endpoint's only job: for each
+  folder, create a zip directory entry (even if `files` is empty — see Decision 39), and for each file
+  in it, fetch via `_sharepointService.DownloadByFileId(fileId)` and write it into that folder's zip
+  entry (client-supplied `fileName` used directly — no separate SharePoint metadata lookup needed,
+  since `list-po-references`' response already carries a real file name for every entry the client
+  builds `folders` from).
+- **Rationale**: this mirrors an already-accepted precedent in the very code this update clones from —
+  `AllCompliancesController.InitiateDownloadMultipleFiles`/`DownloadMultipleFiles` already accept a
+  raw, client-supplied `FileIds: string[]` list with **zero** server-side re-validation of "should this
+  file be included" business rules; the server's job there, too, is purely "fetch what I'm told, zip
+  it, stream it back". Extending that same accepted shape to also carry a folder path per file (instead
+  of only a flat file list) is a minimal, additive generalization, not a new trust model.
+- **Alternatives considered**:
+  - *Re-derive the Mapped/PO↔Template scoping server-side from `salesId` alone (fetch
+    `eutr_purchase_attachments`/`eutr_templates`/`eutr_references` again, server-side)*: rejected — this
+    is exactly the class of duplicated business logic Constitution Principle III/the feature's own
+    Update 7/8 already moved away from; it would also require the backend to independently re-implement
+    the "Mapped" step-matching rule a second time for zero benefit, since the frontend already computes
+    it correctly for on-screen rendering.
+  - *Pass only `salesId` + a list of `documentId`s (no folder grouping), and have the backend derive
+    which template folder each document belongs to*: rejected — this still requires the backend to
+    know the PO↔Template mapping (re-deriving Decision 29/33's logic) just to pick a folder name; no
+    benefit over having the client (which already computed this) supply the grouping directly.
+
+## Decision 38 — Server-side sanitization of names, even though the client already computes them
+
+- **Decision**: `salesId`/`customerCode`/`customerName` (root zip name inputs) and each `folderName`
+  are sanitized **server-side** inside the new action (cloning `SanitizeFileNamePart`/`BuildFolderName`,
+  Decision 36), not trusted as pre-sanitized from the client, even though `ViewSalesOrderPage.jsx`
+  already has real template names and Sales Order header fields available.
+- **Rationale**: the server is the layer that actually writes filesystem-adjacent names (zip entry
+  paths); trusting client-side sanitization would mean a future caller of this endpoint (or a modified
+  frontend build) could send unsanitized names straight into `ZipArchive.CreateEntry`, which is the
+  exact class of defensive-boundary validation Constitution's "only validate at system boundaries"
+  guidance calls for — this endpoint's request body is a system boundary (any authenticated client can
+  call it directly, not only through the UI).
+- **Alternatives considered**:
+  - *Trust the client's already-correct template names, skip server-side sanitization*: rejected —
+    cheap to add (a few lines, already proven in `SanitizeFileNamePart`/`BuildFolderName`), and removes
+    a class of bug (a template display name containing `/` or another invalid character breaking the
+    zip's folder structure) that costs nothing to close given the exact fix already exists to clone.
+
+## Decision 39 — Empty-folder and fully-empty-request handling
+
+- **Decision**: A folder entry with `files: []` still gets a `ZipArchive.CreateEntry("{folderName}/")`
+  empty-directory entry (spec FR-073) — the action does not skip folders with no files. If `folders`
+  is empty, or every folder's `files` list is empty (spec FR-074 — nothing to download anywhere), the
+  action returns `400 BadRequest` with a clear message instead of producing a technically-valid but
+  empty zip. `ViewSalesOrderPage.jsx` checks this condition **client-side first** (it already knows the
+  total Mapped-file count from `templateComputations` before ever calling the endpoint) and shows the
+  same "không có tài liệu nào để tải" message without firing the network call at all — the
+  server-side check is a defensive backstop for a direct API call bypassing the UI, not the primary
+  path a real user hits.
+- **Rationale**: FR-073/FR-074 are explicit spec requirements; checking client-side first avoids a
+  wasted round-trip for the common "nothing to download" case (the same instinct already applied
+  elsewhere in this feature, e.g. View's toolbar deliberately not refetching data it already has,
+  FR-063) while the server-side check keeps the endpoint itself correct and self-defending regardless
+  of caller.
+- **Alternatives considered**:
+  - *Skip empty folders entirely (don't create a directory entry for a template with zero Mapped
+    documents)*: rejected — contradicts spec FR-073's explicit requirement that every saved template
+    gets its own subfolder in the zip, even when empty, so a user can see at a glance which templates
+    have no Mapped documents yet.
+  - *Only check emptiness server-side (skip the client-side pre-check)*: rejected — would always cost a
+    network round-trip even for the common "nothing to download" case, for no benefit given the client
+    already has the exact count needed to decide this locally.
+
+## Decision 40 — Clone the small helper methods into `EutrDocumentsController`, do not extract a shared util
+
+- **Decision**: `SanitizeFileNamePart`-equivalent, `BuildFolderName`-equivalent, and
+  `GetUniqueEntryName`-equivalent logic are each re-implemented as new, small, private methods scoped
+  to `EutrDocumentsController` (or a private helper class local to it) — not extracted into a new
+  shared/common util module referenced by both `AllCompliancesController` and `EutrDocumentsController`.
+- **Rationale**: this is the second use of this exact shape of helper in this codebase (the first being
+  `AllCompliancesController`/`ComplianceDownloadService`'s own internal duplication of similar
+  filename-sanitizing/unique-naming logic between `DownloadMultipleFiles` and `BuildSoZipWithProgressAsync`
+  themselves) — this codebase's own established precedent (confirmed in `004-eutr-documents`'s own
+  research.md, which explicitly copied `ComplUploadService`'s unique-filename helper rather than
+  extracting a shared util "vì đây là lần dùng thứ 2 duy nhất — YAGNI") is to clone a small helper on
+  its second use rather than introducing a new shared module prematurely. Extracting a shared util
+  would also require touching `AllCompliancesController`/`ComplianceDownloadService` (a different
+  feature's owned files) merely to change how they call an internal helper — out of scope and
+  unnecessary churn for an unrelated feature's working code.
+- **Alternatives considered**:
+  - *Extract a shared `ZipNamingHelpers` static class used by both controllers*: rejected for this
+    update as premature — reasonable future cleanup if a *third* consumer appears, but not required now
+    (YAGNI, consistent with the codebase's own stated precedent above); would also require modifying
+    `AllCompliancesController`'s already-shipped, unrelated-feature code, which this update's scope does
+    not call for.
+
+## Updated non-goals (Update 10)
+
+- No new controller, Application service, repository, entity, or migration — the new action lives
+  directly on the already-existing, already-`ISharepointService`-injected `EutrDocumentsController`.
+- No new authorization policy — reuses the already-DB-seeded `EutrDocuments.ReadAll` policy (same
+  policy `list-po-references` already uses).
+- No re-derivation of Map status/PO↔Template scoping server-side — the endpoint trusts the
+  already-correct, already-loaded client-side computation (`templateComputations`) for which documents
+  belong in which folder; it only fetches and zips.
+- No dependency taken on `AllCompliancesController`/`ComplianceDownloadService` — their naming/
+  zip-building mechanics are cloned (Decision 36/40), not imported or called into.
+- No change to the async/SSE/temp-file-cache download infrastructure (`IDownloadProgressService`,
+  `IMemoryCache`-based temp file caching) — this update's expected file volume doesn't need it (see
+  plan.md Summary); the new action is fully synchronous, in-memory, single-request/response.
+
+## Update 11 (2026-07-27) — Progress figures stay Required-only; fix an `AUTO_SOURCES`-exclusion inconsistency between Map File and View
+
+Spec Update 11 (FR-077..FR-081) corrects a same-session misreading: an earlier draft of this update
+mistakenly broadened `progress.total`/`progress.completed` (Map File's `data-marker="progress-bar"`, the
+"Mapped" chip, and the footer's "Required: x/y" line) to count Optional steps as well as Required. The
+requester corrected this immediately — the count MUST stay Required-only; "tổng"/"toàn bộ template"
+("total"/"the whole template set") only ever meant the pre-existing cross-template aggregation (Update
+7/FR-057), not a broader set of step types. The requester also asked for a full review of every variable
+in both `MapFilePage.jsx` and `ViewSalesOrderPage.jsx` that counts mapped/missing step status, to make
+them consistent across both screens.
+
+## Decision 41 — Add the missing `AUTO_SOURCES` exclusion to `computeProgress()`, do not touch anything else
+
+- **Decision**: The review (reading `MapFilePage.jsx` and `ViewSalesOrderPage.jsx` side by side) found
+  four variables that count Required-step mapped/missing status:
+  1. `MapFilePage.jsx`'s `computeProgress()` (backs `progress.total`/`progress.completed`, line ~105) —
+     filters `d.requirementType === 'Required'` only; does **not** exclude `AUTO_SOURCES`.
+  2. `MapFilePage.jsx`'s `missingRequired` (line ~816) — filters `requirementType === 'Required'` **and**
+     `!AUTO_SOURCES.includes(d.takeFrom)`.
+  3. `ViewSalesOrderPage.jsx`'s `requiredDetails`/`mappedRequired` (line ~649/654) — same two conditions
+     as (2).
+  4. `ViewSalesOrderPage.jsx`'s `missingRequired` (line ~662) — same two conditions as (2).
+  Three of the four already exclude `AUTO_SOURCES`; only `computeProgress()` does not. This is fixed by
+  adding the exact same condition to `computeProgress()`'s existing `required = details.filter(d =>
+  d.requirementType === 'Required')` line: `details.filter(d => d.requirementType === 'Required' &&
+  !AUTO_SOURCES.includes(d.takeFrom))`. `ViewSalesOrderPage.jsx`'s own four variables need **no** edit —
+  they already implement the correct, consistent logic (Required-only, `AUTO_SOURCES`-excluded,
+  PO/Template-scoped per FR-061/Update 8 Decision 33-34, aggregated across all saved templates).
+- **Rationale**: without this fix, `progress.total - progress.completed` (Map File) would not always
+  equal `missingRequired` on the same screen — if an unmapped Required step ever had a `takeFrom` in
+  `AUTO_SOURCES`, the progress bar/chip would count it as "still outstanding" while the "Still missing X
+  file" line would silently omit it, a visibly self-contradictory pair of numbers on the same screen.
+  The same mismatch would also make Map File's aggregate progress diverge from View's for the same Sales
+  Order, breaking spec SC-026's matching expectation. Cloning the exclusion already applied in 3 of the 4
+  places (Constitution Principle II) is lower-risk than leaving one outlier or, worse, removing the
+  exclusion from the other three to "simplify" — removing it would be a behavior change to
+  `missingRequired`/View's variables, which the requester did not ask for and which are already correct.
+- **Alternatives considered**:
+  - *Leave `computeProgress()` as-is (no exclusion), since `AUTO_SOURCES` never matches real data
+    today*: rejected — the requester explicitly asked for a review-and-fix, not just a note; leaving a
+    known, quiet inconsistency in place would resurface silently if `AUTO_SOURCES` values ever populate
+    real data again (e.g. a future D365 auto-detect feature), exactly the kind of latent bug this
+    review's purpose was to surface and close.
+  - *Remove the `AUTO_SOURCES` exclusion from `missingRequired`/View's variables instead, to match
+    `computeProgress()`'s current (unfiltered) behavior*: rejected — this would be a real behavior change
+    to 3 already-correct variables that the requester never asked to change, purely to make the one wrong
+    variable "consistent" in the opposite direction; the fix should converge on the already-correct
+    majority, not the one outlier.
+  - *Extract a shared `isCountableRequired(detail)` helper used by all four variables*: considered
+    reasonable for a future cleanup, but out of scope for this one-line fix — none of the four variables
+    currently share a helper for this condition (each inlines its own filter), so introducing one now
+    would touch more surface area than this fix requires (YAGNI, consistent with this feature's own
+    established precedent of not extracting shared utilities on their second/third use, see Decision 40).
+
+## Updated non-goals (Update 11)
+
+- No broadening of `progress.total`/`progress.completed` to include Optional steps — the count stays
+  Required-only, per the requester's correction.
+- No change to `missingRequired` (Map File) or to any of `ViewSalesOrderPage.jsx`'s `requiredDetails`/
+  `mappedRequired`/`missingRequired`/`pct` — all four were confirmed already correct by this review.
+- No new backend endpoint, DTO, migration, or policy — this is a single client-side filter-predicate
+  edit inside an already-existing function.
+- No shared helper/utility extraction for the `AUTO_SOURCES` condition — out of scope for this fix
+  (see Decision 41's rejected alternatives).
