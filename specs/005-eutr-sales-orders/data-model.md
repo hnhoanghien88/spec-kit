@@ -918,3 +918,41 @@ the Edit/Upload controls (View stays read-only, FR-042/FR-100).
 - No refetch of PO/document data on step click or template click — both only change what is rendered
   from data already loaded when the screen opened (FR-063's existing no-refetch precedent, Update 8).
 - No change to `MapFilePage.jsx` — this update touches only `ViewSalesOrderPage.jsx`.
+
+## Update 16 (2026-07-28): Overview's default row set scoped to Sales IDs with Template (1 new read, no new entity/migration)
+
+> Covers spec FR-107..FR-112. One new backend read (`GET /api/eutr-purchase-attachments/
+> sales-ids-with-template`, a bare `string[]`, no new DTO/entity/migration/policy) plus frontend
+> orchestration that reuses the existing `refType=11` reference call's already-existing `FilterRequest[]`
+> same-bucket-OR behavior. See research.md Decisions 60-62.
+
+### New read: distinct Sales IDs with a saved Template
+
+| Field | Type | Source | Notes |
+|---|---|---|---|
+| (response) | `string[]` | `SELECT DISTINCT SalesId FROM eutr_purchase_attachments WHERE TemplateCode IS NOT NULL;` | No new DTO class; `TemplateCode IS NOT NULL` is always true today (column is `NOT NULL`, FR-022) but kept explicit for forward-consistency. |
+
+### New client-side state: `SalesOrderOverviewPage.jsx`
+
+| State | Type | Set when | Cleared/refreshed when |
+|---|---|---|---|
+| `salesIdsWithTemplate` | `string[] \| null` | Search box transitions to empty (mount, search cleared, or an empty keyword restored per Update 14/FR-110) — fetched via the new endpoint | Re-fetched on the next such transition; not read/used at all while a search keyword is non-empty |
+
+### `refType = 11` request body — two mutually-exclusive shapes (FR-107/FR-109)
+
+| Search box state | `FilterRequest[]` sent to `POST /api/dynamics/reference?refType=11` | Effect |
+|---|---|---|
+| Empty, `salesIdsWithTemplate` has ≥1 entry | `salesIdsWithTemplate.map(id => ({ column: "Code", operator: "eq", value: id }))` | D365 returns only the whitelisted Sales IDs, correctly paginated (`BuildFilterString`'s existing same-bucket `or`-join, unmodified) |
+| Empty, `salesIdsWithTemplate` is `[]` | *(no call made)* | Table renders "No data" directly (FR-112) — an empty filter array would otherwise mean "no filter" |
+| Non-empty (a search keyword) | Exactly the existing FR-011 Code/Name filter, unchanged | Every matching Sales ID is returned regardless of Template data (FR-109), same as before this update |
+
+### Non-goals confirmed (Update 16)
+
+- No new entity, DTO class (beyond a bare `string[]` response), migration, or policy — reuses
+  `EutrPurchaseAttachments.Read`.
+- No change to `ComplDynamicsService.cs`/`DynController.cs`/`ODataOperatorConverter.cs` — the same-bucket
+  OR-join behavior this update depends on already exists, unmodified.
+- No change to search behavior (FR-011/FR-109) — a non-empty keyword bypasses the whitelist path
+  entirely.
+- No per-row or per-page network calls — exactly one new call (the whitelist fetch), fired once per
+  empty-search entry, reused across page/page-size changes within that same session.

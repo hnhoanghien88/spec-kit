@@ -10,6 +10,53 @@
 
 ## Clarifications
 
+### Session 2026-07-28 (Update 16) — Overview: khi mới mở trang chỉ tải Sales ID đã có Template; khi tìm kiếm thì bỏ điều kiện này
+
+- Bối cảnh: Màn hình **EUTR Sales Orders** (Overview, `SalesOrderOverviewPage.jsx`) hiện tải danh sách
+  sales order qua nguồn tham chiếu dùng chung reference type = 11 (FR-002/FR-009) mà **không** áp dụng
+  bất kỳ điều kiện nào liên quan tới cột **Template** — mọi Sales ID trả về từ reftype = 11 đều được
+  hiển thị, kể cả những Sales ID chưa có bản ghi nào trong `eutr_purchase_attachments` (cột Template
+  hiển thị trạng thái trống theo FR-007b). Người yêu cầu tính năng muốn thay đổi hành vi **tải trang
+  lần đầu** (khi ô tìm kiếm đang trống): danh sách mặc định MUST chỉ gồm những Sales ID đã có ít nhất
+  1 bản ghi trong `eutr_purchase_attachments` với `TemplateCode` khác null — tức đúng tập Sales ID mà
+  cột Template đang hiển thị dữ liệu thật (không rơi vào trạng thái trống của FR-007b) — để người dùng
+  không phải nhìn thấy các dòng chưa có Template khi mới vào màn hình. Ngược lại, khi người dùng **đã
+  nhập từ khóa vào ô tìm kiếm** (FR-011), điều kiện lọc theo Template này KHÔNG áp dụng nữa — kết quả
+  tìm kiếm MUST khớp mọi Sales ID theo đúng quy tắc tìm kiếm hiện có (khớp kiểu "chứa" trên Sales ID/
+  Customer), bất kể Sales ID đó đã có Template hay chưa, giữ đúng khả năng tìm bất kỳ sales order nào
+  bằng ô tìm kiếm mà không bị điều kiện Template này che khuất kết quả.
+- Change: Khi ô tìm kiếm đang **trống** (bao gồm cả lần đầu mở màn hình, và cả khi người dùng xóa hết
+  từ khóa đang gõ để quay lại trạng thái trống), danh sách hiển thị trên bảng MUST chỉ gồm những Sales
+  ID đã có ít nhất 1 bản ghi trong `eutr_purchase_attachments` với `TemplateCode` khác null — cùng điều
+  kiện xác định cột Template hiển thị dữ liệu (không trống) ở FR-007/FR-007a, loại trừ đúng những Sales
+  ID đang rơi vào trạng thái trống của FR-007b. Việc phân trang (FR-010) ở trạng thái này MUST tính
+  trên đúng tập đã lọc này (tổng số trang/tổng số dòng phản ánh đúng số Sales ID có Template, không
+  phải tổng số Sales ID gốc từ reftype = 11).
+- Change: Khi người dùng nhập một từ khóa bất kỳ (khác rỗng) vào ô tìm kiếm, danh sách kết quả MUST bỏ
+  qua hoàn toàn điều kiện lọc theo Template ở trên — hiển thị mọi Sales ID khớp từ khóa theo đúng quy
+  tắc tìm kiếm hiện có (FR-011), bao gồm cả những Sales ID chưa có Template nào (cột Template của các
+  dòng này vẫn hiển thị trạng thái trống theo đúng FR-007b, không phải lỗi). Việc phân trang khi đang
+  tìm kiếm MUST tính trên tổng số kết quả khớp từ khóa đó (không áp dụng điều kiện Template).
+- Change: Việc khôi phục từ khóa/trang khi nhấn Back từ Map File/View (Update 14, FR-094 đến FR-099)
+  MUST kết hợp đúng với quy tắc mới này — nếu từ khóa được khôi phục là rỗng (người dùng Back về đúng
+  lúc ô tìm kiếm đang trống), danh sách MUST áp dụng lại điều kiện lọc theo Template (chỉ hiển thị
+  Sales ID đã có Template); nếu từ khóa được khôi phục khác rỗng, danh sách MUST bỏ qua điều kiện
+  Template và hiển thị đúng kết quả khớp từ khóa đó — không có logic khôi phục riêng nào khác cho
+  Update này ngoài việc áp dụng đúng quy tắc trống/không trống ở trên.
+- Change: Sau khi người dùng chuyển từ trạng thái đang tìm kiếm (có từ khóa) về trạng thái ô tìm kiếm
+  trống, danh sách MUST tự động quay lại áp dụng điều kiện lọc theo Template (chỉ Sales ID đã có
+  Template) và quay về trang đầu — cùng hành vi "xóa tìm kiếm" hiện có của FR-012, chỉ bổ sung thêm
+  điều kiện lọc Template cho trạng thái mặc định này.
+- Change: Nếu một Sales ID đang hiển thị ở danh sách mặc định (do đã có Template) bị mất toàn bộ bản
+  ghi trong `eutr_purchase_attachments` (ví dụ do một luồng khác xóa mapping) trong khi người dùng
+  đang xem trang, hành vi ẩn/hiện lại dòng đó chỉ áp dụng ở lần tải danh sách kế tiếp (mở lại trang,
+  tìm kiếm, hoặc chuyển trang) — không yêu cầu tự động ẩn dòng đó ngay lập tức trên một trang đã tải
+  sẵn.
+- Change: Nếu áp dụng điều kiện lọc theo Template mà không còn Sales ID nào thỏa (mọi Sales ID trả về
+  từ reftype = 11 đều chưa có Template), danh sách mặc định MUST hiển thị đúng trạng thái trống ("No
+  data") theo quy tắc hiện có (FR-012) — không hiển thị lỗi, không tự động bỏ điều kiện lọc để hiện
+  toàn bộ danh sách gốc.
+
 ### Session 2026-07-28 (Update 15) — Màn hình View: thêm khu vực AVAILABLE FILES ở box bên phải, lọc theo step khi click cây, xem trước file
 
 - Bối cảnh: Màn hình **View Sales Order** hiện có box bên phải (thẻ **Validation Summary**) chỉ hiển
@@ -583,7 +630,10 @@ Template hiển thị đúng (các) template thật tra cứu từ `eutr_purchas
 (bao gồm trường hợp một Sales ID có nhiều template); cột Progress hiển thị đúng tiến độ thật của
 từng Sales ID, khớp với số liệu Required/completed mà Map File tính cho đúng Sales Order đó; nhấn
 nút Download ở một dòng có tài liệu Mapped xác nhận tải xuống đúng 1 file zip với cấu trúc thư mục
-giống nút Download ở View cho đúng Sales Order đó.
+giống nút Download ở View cho đúng Sales Order đó. **Từ Update 16**: khi ô tìm kiếm đang trống (lần
+đầu mở màn hình), danh sách MUST chỉ hiển thị các Sales ID đã có Template (`TemplateCode` khác null
+trong `eutr_purchase_attachments`); khi gõ một từ khóa vào ô tìm kiếm, danh sách kết quả MUST khớp
+mọi Sales ID theo từ khóa đó bất kể đã có Template hay chưa.
 
 **Acceptance Scenarios**:
 
@@ -1009,6 +1059,23 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
 - (Update 15) Template đang được chọn xem ở toolbar `template-tree-toolbar` chưa có bất kỳ tài liệu nào:
   khu vực AVAILABLE FILES mới ở màn hình View hiển thị trạng thái trống rõ ràng ("No files available"),
   không lỗi, không hiển thị dữ liệu giả.
+- (Update 16) Mở màn hình lần đầu (ô tìm kiếm trống), toàn bộ Sales ID trả về từ reftype = 11 đều chưa
+  có bản ghi nào trong `eutr_purchase_attachments`: danh sách mặc định hiển thị trạng thái trống ("No
+  data") theo FR-012, không hiển thị lỗi hay tự động bỏ điều kiện lọc Template để hiện toàn bộ danh
+  sách gốc.
+- (Update 16) Ô tìm kiếm đang trống (đang áp dụng lọc Template), người dùng gõ một từ khóa khớp đúng
+  một Sales ID chưa có Template: dòng đó MUST xuất hiện trong kết quả tìm kiếm (cột Template hiển thị
+  trạng thái trống theo FR-007b) — không bị loại khỏi kết quả chỉ vì chưa có Template.
+- (Update 16) Người dùng đang xem kết quả tìm kiếm (gồm cả Sales ID chưa có Template), sau đó xóa hết
+  từ khóa để ô tìm kiếm trống trở lại: danh sách MUST áp dụng lại điều kiện lọc Template và quay về
+  trang đầu — các Sales ID chưa có Template (nếu có) không còn hiển thị trong danh sách mặc định.
+- (Update 16) Người dùng nhấn Back từ Map File/View về Overview theo đúng luồng khôi phục của Update
+  14: nếu từ khóa được khôi phục là chuỗi rỗng, danh sách MUST áp dụng lọc Template (giống lần đầu mở
+  trang); nếu từ khóa được khôi phục khác rỗng, danh sách MUST hiển thị đúng kết quả khớp từ khóa đó,
+  không áp dụng lọc Template.
+- (Update 16) Việc phân trang khi đang áp dụng lọc Template (ô tìm kiếm trống) MUST tính đúng theo
+  tổng số Sales ID đã có Template — không hiển thị số trang/tổng số dòng theo tổng số Sales ID gốc từ
+  reftype = 11 (bao gồm cả những Sales ID chưa có Template và đang bị lọc bỏ).
 - (Update 15) Step được click là một node cha có nhiều step con, một số step con có tài liệu Mapped và
   một số chưa: khu vực AVAILABLE FILES hiển thị đúng hợp tất cả tài liệu Mapped của các step con đó,
   không thiếu và không hiển thị trùng lặp nếu cùng 1 file được Mapped cho nhiều step con.
@@ -1164,7 +1231,8 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   điều hướng EUTR.
 - **FR-002**: Màn hình MUST hiển thị dữ liệu sales order dưới dạng bảng/grid, lấy dữ liệu qua nguồn
   tham chiếu dùng chung hiện có của hệ thống (endpoint reference, reference type = 11) — không xây
-  dựng một nguồn dữ liệu/API riêng mới cho tính năng này.
+  dựng một nguồn dữ liệu/API riêng mới cho tính năng này. **Từ Update 16**: khi ô tìm kiếm đang trống,
+  danh sách hiển thị từ nguồn này còn phải áp dụng thêm điều kiện lọc theo Template ở FR-107.
 - **FR-003**: Bảng MUST hiển thị cột **Sales ID** — mã định danh của sales order.
 - **FR-004**: Bảng MUST hiển thị cột **Customer** — mã/tài khoản khách hàng gắn với sales order đó.
 - **FR-005**: Bảng MUST hiển thị cột **Customer name** — tên hiển thị của khách hàng đó.
@@ -1189,7 +1257,9 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   để tính năng có dữ liệu thật.
 - **FR-010**: Users MUST có thể chuyển trang khi tổng số sales order vượt quá một trang.
 - **FR-011**: Users MUST có thể tìm kiếm/lọc danh sách theo Sales ID hoặc Customer (khớp kiểu
-  "chứa", không phân biệt hoa/thường), theo đúng mẫu tìm kiếm tham chiếu đã có trong hệ thống.
+  "chứa", không phân biệt hoa/thường), theo đúng mẫu tìm kiếm tham chiếu đã có trong hệ thống. **Từ
+  Update 16**: khi từ khóa khác rỗng, kết quả tìm kiếm này KHÔNG áp dụng điều kiện lọc Template ở
+  FR-107 (xem FR-109).
 - **FR-012**: Khi từ khóa tìm kiếm không khớp sales order nào, hệ thống MUST hiển thị trạng thái
   trống ("No data"), không phải lỗi.
 - **FR-013**: Màn hình này là **read-only** trong phạm vi tính năng — KHÔNG cung cấp chức năng thêm
@@ -1544,6 +1614,29 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   hoặc step vừa được click chưa có tài liệu Mapped nào (sau khi lọc), khu vực AVAILABLE FILES MUST
   hiển thị trạng thái trống rõ ràng (ví dụ "No files available"/"No files for this step"), không hiển
   thị lỗi hay dữ liệu giả, và không lẫn tài liệu của step/template khác.
+- **FR-107**: Khi ô tìm kiếm ở Overview đang **trống** (bao gồm lần đầu mở màn hình và khi người dùng
+  xóa hết từ khóa để quay lại trạng thái trống), danh sách hiển thị MUST chỉ gồm những Sales ID đã có
+  ít nhất 1 bản ghi trong `eutr_purchase_attachments` với `TemplateCode` khác null — đúng tập Sales ID
+  mà cột Template đang hiển thị dữ liệu thật theo FR-007/FR-007a, loại trừ những Sales ID đang ở trạng
+  thái trống của FR-007b.
+- **FR-108**: Việc phân trang (FR-010) khi ô tìm kiếm đang trống MUST tính trên đúng tập Sales ID đã
+  lọc theo FR-107 (tổng số dòng/tổng số trang phản ánh đúng số Sales ID có Template, không phải tổng
+  số Sales ID gốc trả về từ reference type = 11).
+- **FR-109**: Khi người dùng nhập một từ khóa khác rỗng vào ô tìm kiếm, hệ thống MUST bỏ qua hoàn toàn
+  điều kiện lọc theo Template ở FR-107 — danh sách kết quả hiển thị mọi Sales ID khớp từ khóa đó theo
+  đúng quy tắc tìm kiếm hiện có (FR-011), bao gồm cả Sales ID chưa có Template (cột Template của các
+  dòng này vẫn hiển thị trạng thái trống theo FR-007b). Phân trang khi đang tìm kiếm MUST tính trên
+  tổng số kết quả khớp từ khóa đó.
+- **FR-110**: Việc khôi phục từ khóa/trang khi Back từ Map File/View (FR-094 đến FR-099) MUST áp dụng
+  đúng quy tắc FR-107/FR-109 dựa trên từ khóa được khôi phục: từ khóa khôi phục rỗng → áp dụng lại điều
+  kiện lọc Template (FR-107); từ khóa khôi phục khác rỗng → bỏ điều kiện lọc Template, hiển thị đúng
+  kết quả khớp từ khóa đó (FR-109).
+- **FR-111**: Khi người dùng xóa từ khóa đang tìm kiếm để ô tìm kiếm trở lại trống, hệ thống MUST áp
+  dụng lại điều kiện lọc Template (FR-107) và quay về trang đầu — theo đúng hành vi "xóa tìm kiếm" hiện
+  có của FR-012, bổ sung thêm điều kiện lọc Template cho trạng thái mặc định.
+- **FR-112**: Nếu áp dụng điều kiện lọc Template (FR-107) mà không còn Sales ID nào thỏa điều kiện, màn
+  hình MUST hiển thị đúng trạng thái trống ("No data") theo FR-012 — không hiển thị lỗi, không tự động
+  bỏ điều kiện lọc để hiển thị toàn bộ danh sách gốc.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -1773,6 +1866,17 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   file; 0% lượt làm thay đổi bất kỳ bản ghi `eutr_documents`/`eutr_references` nào.
 - **SC-053**: 0% khu vực AVAILABLE FILES mới ở màn hình View hiển thị nút Edit hoặc nút/hành động
   Upload — giữ đúng nguyên tắc chỉ đọc của toàn màn hình View.
+- **SC-054**: 100% lượt mở màn hình Overview với ô tìm kiếm trống (bao gồm lần đầu mở màn hình) chỉ
+  hiển thị các Sales ID đã có ít nhất 1 bản ghi `TemplateCode` khác null trong
+  `eutr_purchase_attachments` — 0% dòng có cột Template ở trạng thái trống (FR-007b) lọt vào danh sách
+  mặc định.
+- **SC-055**: 100% lượt nhập từ khóa khác rỗng vào ô tìm kiếm trả về đầy đủ mọi Sales ID khớp từ khóa
+  đó (theo quy tắc "chứa", không phân biệt hoa/thường của FR-011), bao gồm cả Sales ID chưa có Template
+  — 0% kết quả tìm kiếm hợp lệ bị ẩn chỉ vì Sales ID đó chưa có Template.
+- **SC-056**: 100% lượt xóa từ khóa tìm kiếm về trạng thái trống khôi phục đúng danh sách chỉ gồm Sales
+  ID đã có Template (giống trạng thái mở màn hình lần đầu), kèm quay về trang đầu.
+- **SC-057**: 100% lượt tính tổng số trang/tổng số dòng ở trạng thái ô tìm kiếm trống khớp đúng với số
+  lượng Sales ID đã có Template — không tính lẫn Sales ID chưa có Template vào tổng số này.
 
 ## Assumptions
 
@@ -1849,6 +1953,18 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   `eutr_purchase_attachments` (chưa từng được Save PO Mapping cho Sales Order này) — khác với trường
   hợp PO hoàn toàn không có giá trị template từ D365 (trường hợp này vẫn bị chặn chọn theo FR-022).
   Miễn PO có sẵn template từ D365, PO đó luôn có thể được tick chọn dù đã lưu hay chưa.
+- (Update 16) "eutrTemplate" trong yêu cầu người dùng được hiểu là chính dữ liệu Template mà cột
+  **Template** ở Overview đang hiển thị — tức Sales ID đã có ít nhất 1 bản ghi `TemplateCode` khác
+  null trong `eutr_purchase_attachments` (điều kiện làm cột Template không rơi vào trạng thái trống
+  của FR-007b) — không phải một trường/API riêng biệt nào khác tên "eutrTemplate".
+- (Update 16) Cơ chế kỹ thuật cụ thể để áp dụng điều kiện lọc Template khi ô tìm kiếm trống (ví dụ mở
+  rộng tham số cho nguồn tham chiếu reference type = 11, hay kết hợp thêm một bước lọc dựa trên dữ liệu
+  `eutr_purchase_attachments` trước khi phân trang) là quyết định kỹ thuật ở giai đoạn plan, không thuộc
+  phạm vi đặc tả nghiệp vụ ở đây; yêu cầu nghiệp vụ duy nhất là kết quả cuối cùng đúng theo FR-107 đến
+  FR-112.
+- (Update 16) "Ô tìm kiếm đang trống" được hiểu theo đúng giá trị hiện có trên ô tìm kiếm tại một thời
+  điểm (kể cả sau khi khôi phục theo Update 14) — không phân biệt người dùng chưa từng gõ gì hay đã gõ
+  rồi xóa hết; cả hai trường hợp đều áp dụng cùng một hành vi lọc Template ở FR-107.
 - TemplateCode lưu cho các PO mới chọn thêm vẫn lấy từ cột `eutrTemplate` của nguồn dữ liệu PO ở
   Step 1 (reference type = 16) — theo đúng xác nhận của người yêu cầu tính năng, không có cơ chế nhập
   Template thủ công nào được bổ sung ở Update 3.

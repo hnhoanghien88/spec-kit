@@ -257,3 +257,19 @@
   descendant steps' files (vs. show nothing, since only leaf steps get documents mapped directly) is
   resolved as an explicit FR (FR-102) plus a matching edge case, since leaving parent nodes
   non-interactive/empty would make large trees harder to use than the source is worth.
+- **2026-07-28 (Update 16)**: Re-validated after adding FR-107..FR-112 and related acceptance
+  scenarios/edge cases/success criteria — changes the Overview screen's default (empty-search) row set
+  to only include Sales IDs that already have a non-null `TemplateCode` in `eutr_purchase_attachments`
+  (the same condition that already makes the Template column non-empty per FR-007/FR-007a, as opposed
+  to FR-007b's empty state), while search results (non-empty keyword) continue matching every Sales ID
+  per the existing FR-011 rule regardless of Template data. The user's own wording ("eutrTemplate") is
+  interpreted as this same Template-column data (documented explicitly as an Assumption), not a
+  separate field/endpoint — consistent with how this spec always names existing tables/columns as
+  business-facing data-source facts, not implementation detail. No new [NEEDS CLARIFICATION] markers
+  introduced: the one point with more than one reasonable reading — how this new default filter
+  interacts with Update 14's Back-navigation search/page restoration — is resolved as an explicit FR
+  (FR-110): an empty restored keyword re-applies the Template filter, a non-empty restored keyword
+  keeps ignoring it, so no separate restoration logic is needed beyond the existing empty/non-empty
+  rule. The exact mechanism to apply this filter server-side (extending the reference type = 11 query
+  vs. an additional join step before pagination) is left to the plan phase as a documented Assumption,
+  consistent with how this spec has always deferred implementation-mechanism choices.

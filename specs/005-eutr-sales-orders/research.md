@@ -1961,3 +1961,125 @@ list on this screen.
   precedent Update 8 established for this screen's template-tree toolbar, FR-063).
 - No Edit button, Upload button, or any write action of any kind on the new panel — the screen stays
   strictly read-only (FR-042).
+
+## Update 16 (2026-07-28) — Overview's default (empty-search) row set scoped to Sales IDs with Template; search ignores the filter
+
+Spec Update 16 (FR-107..FR-112) changes `SalesOrderOverviewPage.jsx`'s **default** row set (search box
+empty, including initial load and after clearing a search) to only include Sales IDs that already have
+at least 1 saved row in `eutr_purchase_attachments` (the same condition that already makes the Template
+column non-empty, FR-007/FR-007a, as opposed to FR-007b's empty state) — while a non-empty search keyword
+continues to match every Sales ID per the existing FR-011 rule, unfiltered by Template. Investigated
+whether any existing mechanism already lets a D365-sourced, server-paginated list (`refType = 11`, via
+`ComplDynamicsService.GetDynRefePagedAsync`) be intersected with a local MySQL table's key set:
+`ComplDynamicsService.cs`'s `GetFromDynamics<T>` (lines 433-484) already does a **one-directional** local
+→ D365 lookup (codes → names, an OR-chained `eq` filter, used for country/factory/customer/product name
+enrichment elsewhere in this codebase) but is a separate, non-paginated bulk fetch, not wired into
+`GetDynRefePagedAsync`'s own paged/filtered/sorted path. `BuildFilterString` (lines 119-197), however,
+already OR-joins multiple `FilterRequest` entries that land in the same "code"/"name" bucket (line
+189-190) — this existing behavior, unmodified, is exactly the mechanism needed to express "Sales ID in
+this specific set" as a plain `FilterRequest[]` body, with zero change to `ComplDynamicsService`/
+`DynController`/`ODataOperatorConverter`.
+
+### Decision 60 — New read: distinct Sales IDs with a saved Template, on the already-existing `EutrPurchaseAttachments` stack
+
+- **Decision**: Add `GetSalesIdsWithTemplateAsync()` (repository) → `GetSalesIdsWithTemplateAsync()`
+  (service) → `GET api/eutr-purchase-attachments/sales-ids-with-template` (controller, policy
+  `EutrPurchaseAttachments.Read`, reused) to the already-existing `EutrPurchaseAttachmentsController`/
+  `Service`/`Repository` (Update 1/2/12). SQL: `SELECT DISTINCT SalesId FROM eutr_purchase_attachments
+  WHERE TemplateCode IS NOT NULL;` — closest existing template is `GetTemplatesBySalesIdsAsync` (Update
+  1, `SELECT DISTINCT ... INNER JOIN eutr_templates ... WHERE SalesId IN @SalesIds`), with the `SalesId
+  IN @SalesIds` input predicate dropped (this read takes no input) and the `eutr_templates` join dropped
+  (only `SalesId` itself is needed, not a template name). Returns a bare `List<string>` — no new DTO
+  class.
+- **Rationale**: Principle III — verified (same full-repo-search method as Update 1) that no existing
+  action already returns "every Sales ID with a saved row, unscoped to a caller-supplied list" — every
+  action on this controller today requires an input Sales ID or list. This is a small, additive gap-fill
+  on files this feature already owns, not a new controller/service/repository/entity class.
+  `TemplateCode IS NOT NULL` is kept explicit in the SQL even though it is always true today (the column
+  is `NOT NULL`, spec FR-022) — same forward-consistency reasoning already applied once in this feature
+  (Update 11's `AUTO_SOURCES` exclusion: correct-by-construction today, defensive if the schema
+  constraint is ever relaxed).
+- **Alternatives considered**:
+  - *Reuse `by-sales-ids-raw` with an "all Sales IDs" sentinel value*: rejected — that action requires a
+    non-empty input list (`if (ids.Count == 0) return []`) and returns raw, non-deduplicated
+    `{SalesId, PurchId, TemplateCode}` rows; repurposing it would mean either changing its own contract
+    (breaking its existing Progress-column consumer, Update 12) or adding special-case sentinel handling
+    to a batch action that has no such concept today — a new, small, purpose-built action is simpler and
+    safer.
+  - *Compute this client-side by paging through `by-sales-ids-raw` for every Sales ID ever seen*:
+    rejected — there is no existing "every Sales ID" list to seed that from without first querying D365
+    for the full, unfiltered `refType=11` set (defeating the point of filtering it), and would be far
+    more network calls than one small, indexed `SELECT DISTINCT`.
+
+### Decision 61 — Reuse the existing generic reference endpoint's code-bucket OR-join for the whitelist filter; zero change to `ComplDynamicsService`/`DynController`
+
+- **Decision**: When the search box is empty, `SalesOrderOverviewPage.jsx` calls the new
+  `sales-ids-with-template` endpoint (Decision 60) once, then calls the **existing**
+  `POST /api/dynamics/reference?refType=11` exactly as it already does today, except the `FilterRequest[]`
+  body is built as `whitelist.map(salesId => ({ column: "Code", operator: "eq", value: salesId }))`
+  instead of the empty array it sends today. `BuildFilterString`'s already-existing same-bucket `or`-join
+  (line 189-190, verified unmodified) turns this into `(SalesId eq 'a') or (SalesId eq 'b') or ...` against
+  D365 — the server-side `$skip`/`$top`/`$count` pagination `GetDynRefePagedAsync` already performs
+  (`SetPaging`, `EnableCount`) then applies over exactly this filtered set, so `totalCount`/page count
+  (FR-108) is correct with zero new pagination logic.
+- **Rationale**: Principle III in its purest form — no gap exists on the D365-filtering side at all;
+  `ODataOperatorConverter.ToODataOperator` already supports `eq` (verified: `eq`/`=`/`like` all map to
+  `eq`), and same-bucket OR-joining is existing, already-tested behavior (it is exactly how the search
+  box's own Code/Name "contains" filter already works today when a user's keyword could match either
+  column). No new backend code of any kind is needed for this half of the update. When the search box has
+  a keyword instead, this whole path is skipped — `refType=11` is called with today's unmodified FR-011
+  filter, so Update 16 changes nothing about how search results are produced (FR-109).
+- **Alternatives considered**:
+  - *Add an `"in"` operator to `ODataOperatorConverter`*: rejected — confirmed unsupported today (only
+    `eq/ne/gt/ge/lt/le`); adding it would be new, generic-endpoint-wide backend code for a need the
+    existing `eq`-per-value + same-bucket-OR mechanism already satisfies without any change.
+  - *Add a `restrictToSalesIds` parameter to `GetDynRefePagedAsync`/`DynController.ReferenceData`*:
+    rejected — would touch the shared, generic reference endpoint used by many other `refType`s for a
+    need expressible entirely through its existing, unmodified `FilterRequest[]` contract; a larger,
+    riskier change for no functional benefit over Decision 61's approach.
+  - *Fetch all of `refType=11` unfiltered, then filter to the whitelist client-side per page*: rejected —
+    breaks correct pagination (FR-108: a page might yield fewer than `pageSize` rows after client-side
+    filtering, with no way to know how many more matching rows exist on the next D365 page without
+    fetching it first) and re-introduces exactly the kind of client-side-filtering-over-a-server-paginated-
+    source problem this decision's OR-filter approach avoids entirely.
+
+### Decision 62 — Frontend orchestration: fetch the whitelist once per empty-search entry, skip the network call when it's empty
+
+- **Decision**: `SalesOrderOverviewPage.jsx` fetches the Decision 60 whitelist once whenever it
+  transitions into the "search box empty" state — on mount, when the user clears the search box back to
+  empty, or when Update 14's Back-navigation restore (FR-094) lands on an empty restored keyword (FR-110)
+  — and reuses the same in-memory list across page/page-size changes within that same empty-search
+  session (re-fetched again on the next such transition, not cached indefinitely, matching the spec's own
+  edge case about staleness being resolved "at the next list load"). If the whitelist is empty, the
+  fetch call to `refType=11` is skipped entirely and the table renders "No data" directly (FR-112) —
+  sending zero `FilterRequest` entries to `refType=11` means "no filter" (existing behavior, matches
+  everything), the opposite of what an empty whitelist should produce.
+- **Rationale**: Mirrors this feature's own established "fetch once per page-load/search/pagination
+  change, not per row" batching discipline (Update 1/12's `fetchTemplatesForRows`/`fetchProgressForRows`)
+  — here applied to "once per entry into the empty-search state" rather than "once per page," since the
+  whitelist itself does not depend on which page is being viewed (the same whitelist filter is sent
+  regardless of `page`/`pageSize`; D365's own `$skip`/`$top` handles pagination over the filtered set).
+  Explicitly short-circuiting the empty-whitelist case avoids the single most likely correctness bug this
+  update could introduce (accidentally showing the full unfiltered list when it should show none).
+- **Alternatives considered**:
+  - *Re-fetch the whitelist on every page change too*: rejected as unnecessary extra network traffic —
+    the whitelist does not change based on which page of D365 results is being viewed; only fetching it
+    once per empty-search "session" (mount/clear/restore) is enough to keep pagination correct while
+    avoiding redundant calls.
+  - *Cache the whitelist across searches (never re-fetch once fetched)*: rejected — the spec's own edge
+    case explicitly allows staleness to persist only until the next list load, not indefinitely; a
+    long-lived cache could show a Sales ID that lost its last `eutr_purchase_attachments` row (or hide one
+    that just gained its first) well past what the spec's leniency intends.
+
+## Updated non-goals (Update 16)
+
+- No change to `ComplDynamicsService.cs`, `DynController.cs`, or `ODataOperatorConverter.cs` — the
+  same-bucket OR-join behavior this update depends on already exists and is already exercised by the
+  search box's own Code/Name filter.
+- No new DTO class — the new `sales-ids-with-template` endpoint returns a bare `string[]`.
+- No new policy — reuses `EutrPurchaseAttachments.Read`, already seeded for this controller's other read
+  actions.
+- No batching/N+1 concern — this update adds exactly one new network call (the whitelist fetch), fired
+  once per empty-search entry, not once per row or once per page.
+- No change to search behavior — a non-empty keyword continues to use the exact same `refType=11` filter
+  construction FR-011 already established, completely bypassing the new whitelist path (FR-109).

@@ -830,3 +830,66 @@ Open View (`/eutr/sales-orders/:salesId/view`) for a Sales Order with:
 - SC-052 (View button opens the read-only preview popup; no document data is modified) → frontend
   step 7.
 - SC-053 (no Edit/Upload control appears in the new panel) → frontend step 1.
+
+## Update 16 (2026-07-28) — Overview's default row set scoped to Sales IDs with Template; search ignores the filter
+
+This update introduces one new endpoint (`GET /api/eutr-purchase-attachments/sales-ids-with-template` —
+research.md Decision 60) — verify it directly first, then verify Overview's default list/search behavior
+end to end.
+
+### Fixture setup
+
+Prepare (or reuse existing data for) at least:
+- Two or more Sales IDs that already have a saved Template (at least one `eutr_purchase_attachments` row
+  each) — e.g. `SO-A`/`SO-C` from the Update 12 fixture.
+- One Sales ID that exists in D365 (`refType=11`) but has **no** `eutr_purchase_attachments` row at all —
+  e.g. `SO-B` from the Update 12 fixture.
+
+### Backend verification
+
+1. Call `GET /api/eutr-purchase-attachments/sales-ids-with-template`.
+   **Expected**: `200 OK`; the response includes `SO-A`/`SO-C` (or your fixture's equivalents) and does
+   **not** include `SO-B`.
+2. Call `POST /api/dynamics/reference?refType=11` with a `FilterRequest[]` body of
+   `[{ "column": "Code", "operator": "eq", "value": "SO-A" }, { "column": "Code", "operator": "eq",
+   "value": "SO-C" }]`.
+   **Expected**: `200 OK`; `items` contains only `SO-A`/`SO-C`, `totalCount` = 2 — confirms the existing
+   same-bucket OR-join already produces a correct whitelist-filtered, correctly-counted result with zero
+   backend change.
+
+### Frontend verification (manual)
+
+1. Open **EUTR Sales Orders** (Overview) fresh (empty search box, e.g. via the nav menu).
+   **Expected**: the grid shows only Sales IDs that already have a Template value in the Template column
+   — `SO-B` (no saved Template) does **not** appear in the default list (FR-107).
+2. Check the pagination controls (total rows/total pages).
+   **Expected**: the total reflects only the Sales-IDs-with-Template count, not the full count of every
+   Sales Order in D365 (FR-108).
+3. Type `SO-B`'s Sales ID into the search box.
+   **Expected**: `SO-B` now appears in the results — its Template column cell shows the existing empty
+   state (FR-007b), not an error — confirming search ignores the Template filter entirely (FR-109).
+4. Clear the search box back to empty.
+   **Expected**: the grid returns to the Template-only default list from step 1 (`SO-B` disappears again),
+   and the page resets to page one (FR-111).
+5. With the search box empty, open Map File or View for one of the visible rows, then press that screen's
+   Back button (Update 14 behavior).
+   **Expected**: Overview shows the same Template-only default list restored (not the full unfiltered
+   list) — the empty restored keyword re-applies the Template filter (FR-110).
+6. Repeat step 5 but first type a keyword into the search box before navigating away.
+   **Expected**: Back restores that exact keyword and its (unfiltered-by-Template) results, per Update
+   14's existing behavior, unaffected by this update.
+7. Open the browser's network tab and reload the page with the search box empty.
+   **Expected**: exactly one call to `sales-ids-with-template`, followed by exactly one call to
+   `POST /api/dynamics/reference?refType=11` — no repeated whitelist calls per page/pagination change
+   within the same empty-search view.
+8. If your test data allows temporarily emptying `eutr_purchase_attachments` entirely (or point to an
+   environment where it already is), reload Overview with the search box empty.
+   **Expected**: the grid shows the existing "No data" empty state (FR-112) — not an error, and not the
+   full unfiltered list.
+
+### Success criteria mapping (Update 16)
+
+- SC-054 (empty search shows only Sales IDs with Template) → frontend step 1.
+- SC-055 (non-empty search matches every Sales ID regardless of Template) → frontend step 3.
+- SC-056 (clearing search restores the Template-only default + page one) → frontend step 4.
+- SC-057 (pagination total reflects the filtered set, not the full D365 count) → frontend step 2.

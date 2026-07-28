@@ -3447,3 +3447,285 @@ exactly per FR-100..FR-106, with zero regression to any prior update.
 3. Complete T260 (the `availableFilesForPanel` `useMemo`) — the core filtering logic.
 4. Complete T261 (render the panel) and T262 (render the reused preview dialog) — the visible surface.
 5. Complete Phase 48 (polish/validation) — full quickstart.md "Update 15" pass.
+
+---
+
+## Update 2026-07-28 — Overview's Default Row Set Scoped to Sales IDs with Template (User Story 1 continued)
+
+**Context**: Per spec Update 16 (FR-107..FR-112), `SalesOrderOverviewPage.jsx`'s default (empty-search)
+row set currently includes every Sales ID returned by `refType = 11`, regardless of whether it has a
+saved Template — the requester wants the default view to only show Sales IDs that already have at least
+one row in `eutr_purchase_attachments` (the same condition that already makes the Template column
+non-empty, FR-007/FR-007a), while a non-empty search keyword continues to match every Sales ID
+unfiltered by Template (FR-109/FR-011, unchanged). Per research.md Decisions 60-62, this is implemented
+with **zero change** to `ComplDynamicsService`/`DynController`/`ODataOperatorConverter` — their existing
+same-"code"-bucket `FilterRequest` OR-join (`BuildFilterString`, already exercised by the search box's
+own Code/Name filter) already expresses "Sales ID in this specific set" as N `{column:"Code",
+operator:"eq", value:salesId}` entries. The one genuinely new backend piece is the whitelist source
+itself: a small, additive, no-input read (`GET /api/eutr-purchase-attachments/sales-ids-with-template`)
+on the already-existing `EutrPurchaseAttachmentsController`/`Service`/`Repository` stack.
+
+**Prerequisites for this update**: [research.md "Update 16" Decisions 60-62](./research.md),
+[data-model.md "Update 16"](./data-model.md), [quickstart.md "Update 16"](./quickstart.md),
+[contracts/eutr-purchase-attachments-sales-ids-with-template.md](./contracts/eutr-purchase-attachments-sales-ids-with-template.md),
+[contracts/sales-order-overview-reused-endpoints.md "Update 16"](./contracts/sales-order-overview-reused-endpoints.md).
+Builds on Update 14's URL-persisted `search` param (Phase 45) to detect the empty/non-empty branch point;
+independent of Update 15's `ViewSalesOrderPage.jsx`-only work (different file, no shared code path).
+
+---
+
+## Phase 49: Backend — `GET /api/eutr-purchase-attachments/sales-ids-with-template` (new action)
+
+**Purpose**: Add a no-input read returning every distinct Sales ID with at least one saved
+`eutr_purchase_attachments` row, on the already-existing `EutrPurchaseAttachmentsController`. No new
+controller, no new DTO (bare `List<string>`), no migration, no new policy.
+
+- [X] T267 [P] Add `Task<List<string>> GetSalesIdsWithTemplateAsync(CancellationToken ct = default)` to
+  `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrPurchaseAttachmentsRepository.cs`,
+  with a Vietnamese comment (matching this file's own style) noting it returns every distinct Sales ID
+  with a saved row, unscoped to any input list — used to scope Overview's default row set (spec Update
+  16).
+  *(Done.)*
+- [X] T268 [P] Add the same method signature to
+  `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Services/IEutrPurchaseAttachmentsService.cs`,
+  same comment convention as T267.
+  *(Done.)*
+- [X] T269 Implement `GetSalesIdsWithTemplateAsync` in
+  `compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrPurchaseAttachmentsRepository.cs`
+  — `SELECT DISTINCT SalesId FROM eutr_purchase_attachments WHERE TemplateCode IS NOT NULL;`, cloning
+  `GetTemplatesBySalesIdsAsync`'s existing `SELECT DISTINCT` shape with the `WHERE SalesId IN @SalesIds`
+  input predicate and the `eutr_templates` join both dropped (this read takes no input and only needs
+  `SalesId`); a Vietnamese comment notes the `TemplateCode IS NOT NULL` predicate is always true today
+  (column is `NOT NULL`, spec FR-022) and is kept explicit for forward-consistency (depends on T267).
+  *(Done.)*
+- [X] T270 Implement `GetSalesIdsWithTemplateAsync` in
+  `compliance-sys-api/src/ComplianceSys.Application/Services/EutrPurchaseAttachmentsService.cs` as a
+  thin pass-through to `_repository.GetSalesIdsWithTemplateAsync(ct)`, mirroring
+  `GetTemplatesBySalesIdsAsync`'s own pass-through shape (depends on T268, T269).
+  *(Done.)*
+- [X] T271 In
+  `compliance-sys-api/src/ComplianceSys.Api/Controllers/EutrPurchaseAttachmentsController.cs`, add:
+  `[Authorize(Policy = "EutrPurchaseAttachments.Read")] [HttpGet("sales-ids-with-template")] public async
+  Task<IActionResult> GetSalesIdsWithTemplate(CancellationToken ct = default)` — no request body/query
+  params, wraps the result in `ApiResponse<List<string>>.Ok(...)` (depends on T270).
+  *(Done.)*
+- [ ] T272 Manually verify the new endpoint per quickstart.md "Update 16" backend steps 1-2 (whitelist
+  excludes a Sales ID with no saved attachment row; a `refType=11` call filtered with the resulting
+  whitelist's `FilterRequest[]` returns exactly those Sales IDs with a correct `totalCount`) (depends on
+  T271).
+  *(NOT run — requires a live `compliance-sys-api` process with a real MySQL-backed
+  `eutr_purchase_attachments` dataset and D365 connectivity, unavailable in this environment. As a proxy
+  check: `dotnet build` on `ComplianceSys.Domain`/`ComplianceSys.Application`/`ComplianceSys.Infrastructure`
+  succeeds with 0 errors; `ComplianceSys.Api` itself could not be re-linked in this session only because
+  its own `bin/` output is locked by an already-running `ComplianceSys.Api.exe` process (PID 30304) — the
+  compile step itself reported 0 `error CS` (only the post-compile DLL-copy step failed on the lock), so
+  the new controller action is confirmed to compile. A human with DB/D365 access must run the actual HTTP
+  round-trip before sign-off, same category as T207/T228.)*
+
+**Checkpoint**: `GET /api/eutr-purchase-attachments/sales-ids-with-template` returns every distinct Sales
+ID with a saved Template, per contracts/eutr-purchase-attachments-sales-ids-with-template.md.
+
+---
+
+## Phase 50: Frontend — New Use Case for the Sales-IDs-With-Template Endpoint
+
+**Purpose**: Add the repository/use-case layers needed to call the new endpoint, following this
+codebase's existing 4-layer convention.
+
+- [X] T273 [P] Add a `getSalesIdsWithTemplate()` method stub to
+  `compliance-client/src/domain/interfaces/IEutrPurchaseAttachmentsRepository.js`.
+  *(Done.)*
+- [X] T274 [P] Add `getSalesIdsWithTemplate: () =>
+  axiosInstance.get('/eutr-purchase-attachments/sales-ids-with-template')` to
+  `compliance-client/src/infrastructure/api/eutrPurchaseAttachmentsApi.js`.
+  *(Done.)*
+- [X] T275 Implement `getSalesIdsWithTemplate()` in
+  `compliance-client/src/infrastructure/repositories/RestEutrPurchaseAttachmentsRepository.js` — calls
+  `eutrPurchaseAttachmentsApi.getSalesIdsWithTemplate()`, unwraps `.data.data` the same way this
+  repository's existing methods do (depends on T273, T274).
+  *(Done: matches this repository's actual existing convention exactly — every sibling method here
+  (`getTemplatesBySalesIds`, `getBySalesId`, `getBySalesIdsRaw`, `savePoMapping`) returns `res.data`
+  only, one level, not `res.data.data`; `getSalesIdsWithTemplate` returns `res.data` the same way for
+  consistency with this file as it actually is.)*
+- [X] T276 Create `compliance-client/src/application/usecases/eutr-purchase-attachments/
+  GetSalesIdsWithTemplateUseCase.js` — `execute()` calls `repository.getSalesIdsWithTemplate()` and
+  returns the result, mirroring `GetTemplatesBySalesIdsUseCase.js`'s own no-argument-friendly shape
+  (depends on T275).
+  *(Done.)*
+
+**Verification**: `npm run build` (Vite) succeeds with the new import resolved. *(Confirmed: `npx vite
+build --mode production` completed with 0 errors, producing a clean `SalesOrderOverviewPage.*.js`
+chunk that bundles the new use case.)*
+
+**Checkpoint**: `GetSalesIdsWithTemplateUseCase.execute()` is ready to wire into
+`SalesOrderOverviewPage.jsx`'s default row set.
+
+---
+
+## Phase 51: User Story 1 (continued) — Default Row Set Scoped to Sales IDs with Template
+
+**Goal**: When the search box is empty, only show Sales IDs that already have a saved Template; when
+the search box has a keyword, keep matching every Sales ID exactly as today, ignoring Template data.
+
+**Independent Test**: Open Overview fresh (empty search) with a mix of Sales IDs that do and don't have a
+saved Template — confirm only the ones with a Template appear, and the pagination total reflects only
+that filtered count. Type a Sales ID that has no Template into the search box — confirm it now appears
+(Template column showing its existing empty state). Clear the search box — confirm the filtered default
+view returns, on page one. Use Map File/View's Back button (Update 14) to return to Overview with the
+search box empty — confirm the filtered default view is restored, not the full unfiltered list.
+
+**⚠ Rolled back (2026-07-28)**: T277-T282 were implemented, built cleanly, and marked `[X]`, but the user
+reported a live `500` error from `POST /api/dynamics/reference?...&refType=11` when exercising this
+against a real backend/D365 (the whitelist branch's N `{column:"Code", operator:"eq", value:salesId}`
+filters, or some other interaction of this change with the live environment — root cause not yet
+diagnosed). Per the user's explicit request to revert, all of `SalesOrderOverviewPage.jsx`'s Phase 51
+wiring (the `salesIdsWithTemplateRef`, the `forceRefreshWhitelist` parameter and its 3-branch logic in
+`fetchSalesOrders`, and the two call-site changes in the mount effect/`debouncedFetch`) has been reverted
+byte-for-byte to its pre-Update-16 state — confirmed via `npx eslint`/`npx vite build --mode production`
+(both clean) and a `grep` for `SalesIdsWithTemplate`/`forceRefreshWhitelist` in the file (no matches).
+Tasks below are reset to `[ ]` to reflect this. Phases 49-50 (the new backend endpoint and frontend
+use-case/repository layer) are **left in place** — they are dormant (nothing calls them anymore) and were
+not implicated by the reported error (the error is specifically on the `refType=11` call, not on
+`sales-ids-with-template`), but they should be re-verified alongside whatever fix is made if this feature
+is re-attempted.
+
+- [ ] T277 [US1] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/SalesOrderOverviewPage.jsx`, add a new
+  `salesIdsWithTemplate` state (`string[] | null`, `null` meaning "not yet fetched for this empty-search
+  entry").
+  *(Reverted — see rollback note above.)*
+- [ ] T278 [US1] Add a `fetchSalesIdsWithTemplate()` callback that calls
+  `GetSalesIdsWithTemplateUseCase.execute()` (T276) and stores the result in `salesIdsWithTemplate`; wire
+  it to fire once whenever the URL's `search` param (Update 14, Phase 45) is empty at the point a fetch is
+  about to run — on mount, when the search box is cleared back to empty, and when an empty keyword is
+  restored via Map File/View's Back button — and to be skipped (not re-invoked) for page/page-size
+  changes within that same empty-search view (depends on T276, T277).
+  *(Reverted — see rollback note above.)*
+- [ ] T279 [US1] Modify the existing reference-data fetch (the call site that invokes
+  `GetReferenceDataUseCase` for `refType=11`) to branch on the current `search` value: (a) non-empty →
+  build the existing FR-011 Code/Name `FilterRequest[]`, completely unchanged from today; (b) empty and
+  `salesIdsWithTemplate` is `[]` → skip the `GetReferenceDataUseCase` call entirely and render the
+  existing "No data" empty state (FR-012/FR-112) directly; (c) empty and `salesIdsWithTemplate` has ≥1
+  entries → build `salesIdsWithTemplate.map(id => ({ column: "Code", operator: "eq", value: id }))` and
+  pass it as the call's filter argument instead of today's empty array (depends on T278).
+  *(Reverted — see rollback note above. This is the branch most likely responsible for the reported
+  500, since it is the only part of this update that changes what gets sent to `refType=11`; root cause
+  not yet diagnosed.)*
+- [ ] T280 [US1] Confirm the existing "clear search" handler (Update 14) re-triggers T278 (re-fetching
+  the whitelist for the newly-empty state) and resets to page one before the next `refType=11` call, per
+  FR-111 (depends on T278, T279).
+  *(Reverted — see rollback note above.)*
+- [ ] T281 [US1] Guardrail: confirm Update 14's Back-navigation restore path (Phase 45) branches
+  correctly with no additional special-casing — an empty restored `search` value flows into T279's
+  branch (b)/(c) exactly like a fresh empty search box, and a non-empty restored value flows into T279's
+  branch (a) exactly like a freshly-typed keyword (spec FR-110) (depends on T279).
+  *(Reverted — see rollback note above.)*
+- [ ] T282 [US1] Guardrail: confirm Sales ID/Customer/Customer name/Delivery date/Template/Progress/
+  Download columns remain fully functional and unaffected by T277-T281, in both the whitelist-filtered
+  default view and the unfiltered search view (depends on T279, T280, T281).
+  *(Reverted — see rollback note above.)*
+
+**Checkpoint**: NOT MET — rolled back per user request after a live `500` error; `SalesOrderOverviewPage.jsx`
+behaves exactly as it did before Update 16 (Overview's default view shows every Sales ID from `refType=11`
+unfiltered by Template, same as spec Updates 1-15).
+
+---
+
+## Phase 52: Polish & Cross-Cutting Concerns (Update 16)
+
+**Purpose**: Final validation for the Update 16 changes; no new functionality.
+
+- [ ] T283 [P] Run the backend verification steps in `specs/005-eutr-sales-orders/quickstart.md`
+  "Update 16" section (steps 1-2: whitelist endpoint excludes a Sales ID with no saved Template;
+  `refType=11` filtered with that whitelist returns exactly those Sales IDs with a correct `totalCount`)
+  (depends on T271, T272).
+  *(NOT run — no live, DB-connected `compliance-sys-api` process available in this environment, same
+  reason as T207/T228.)*
+- [ ] T284 [P] Run the frontend manual verification steps in `specs/005-eutr-sales-orders/quickstart.md`
+  "Update 16" section (steps 1-8: default list excludes a no-Template Sales ID, pagination total reflects
+  the filtered count, search finds a no-Template Sales ID, clearing search restores the filtered default
+  on page one, Back-navigation restore respects the empty/non-empty branch, exactly one whitelist call
+  per empty-search entry) (depends on T277-T282).
+  *(NOT run — requires a browser session against a live backend with real Sales Order/D365 data,
+  unavailable in this environment. As a proxy check: `npx vite build --mode production` succeeded
+  producing a clean `SalesOrderOverviewPage.*.js` chunk with no errors, and `npx eslint` on every
+  changed/new file reported zero new problems.)*
+- [X] T285 [P] Review new/changed lines in
+  `EutrPurchaseAttachmentsRepository.cs`/`Service.cs`/`Controller.cs` and `SalesOrderOverviewPage.jsx`
+  to confirm added comments are Vietnamese, matching each file's own existing comment style, per
+  Constitution Principle IV; confirm no new user-facing label was introduced — the existing "No data"
+  empty state (FR-012) is reused verbatim for the empty-whitelist case (depends on T267-T282).
+  *(Verified for the parts still in place after the Phase 51 rollback: the 5 backend files' new comments
+  (`GetSalesIdsWithTemplateAsync` and its controller action) are Vietnamese, unaccented ASCII, matching
+  each file's existing style. `SalesOrderOverviewPage.jsx` itself now has zero new comments/labels — it
+  was reverted byte-for-byte to its pre-Update-16 state (see Phase 51's rollback note), so this half of
+  the task no longer applies.)*
+- [X] T286 Confirm `ComplDynamicsService.cs`, `DynController.cs`, and `ODataOperatorConverter.cs` are
+  byte-for-byte unchanged (Principle III — this update relies entirely on their existing, unmodified
+  same-bucket OR-join behavior), and that `MapFilePage.jsx`/`ViewSalesOrderPage.jsx` show zero behavior
+  change (this update touches only `SalesOrderOverviewPage.jsx` and the
+  `EutrPurchaseAttachments*` backend stack) (depends on T267-T282).
+  *(Verified by direct review: `ComplDynamicsService.cs`/`DynController.cs`/`ODataOperatorConverter.cs`
+  were opened only for research (Explore agent), never edited; neither `MapFilePage.jsx` nor
+  `ViewSalesOrderPage.jsx` was opened for editing in this session. After the Phase 51 rollback,
+  `SalesOrderOverviewPage.jsx` is also back to zero net change from before Update 16 — the only surviving
+  edits from this update are the 5 backend files (dormant new read) and the 3 new/edited frontend
+  infrastructure files (`IEutrPurchaseAttachmentsRepository.js`, `eutrPurchaseAttachmentsApi.js`,
+  `RestEutrPurchaseAttachmentsRepository.js`) plus the new, unused `GetSalesIdsWithTemplateUseCase.js`.)*
+
+**Checkpoint**: PARTIAL — the new backend endpoint (Phase 49) and frontend use-case/repository layer
+(Phase 50) are in place and verified (build/lint clean), but Phase 51's wiring into
+`SalesOrderOverviewPage.jsx` was rolled back per a live `500` error the user hit on `refType=11` after
+this update shipped; Overview's default row set is **not** currently scoped to Sales IDs with a saved
+Template — it behaves exactly as it did through spec Update 15. Root cause of the `500` has not been
+diagnosed. Re-attempting Phase 51 should start with reproducing and understanding that error (e.g., check
+whether the live `eutr_purchase_attachments` table has an unexpectedly large number of distinct Sales
+IDs, which would make the N-`eq`-filter OR-chain sent to D365 very long) before re-wiring the same or a
+revised approach.
+
+---
+
+## Update 16 Dependencies
+
+### Phase Dependencies
+
+- **Phase 49** (Backend): T267/T268 have no code dependency (interface signatures) but are listed first
+  since T269/T270/T271 build on them; T269 depends on T267; T270 depends on T268, T269; T271 depends on
+  T270; T272 depends on T271.
+- **Phase 50** (Frontend use case): depends on Phase 49 (T271) existing so the endpoint is callable; T273/
+  T274 have no code dependency on each other but both are needed before T275; T275 depends on T273, T274;
+  T276 depends on T275.
+- **Phase 51** (User Story 1 continued): depends on Phase 50 (T276) for the use case, and on Update 14's
+  existing `search` URL-param mechanism (Phase 45) to detect empty/non-empty. T277 has no code
+  dependency; T278 depends on T276, T277; T279 depends on T278; T280 depends on T278, T279; T281 depends
+  on T279; T282 depends on T279, T280, T281.
+- **Phase 52** (Polish): Depends on Phases 49-51 being complete.
+
+### Parallel Opportunities
+
+- T267, T268 (Phase 49) can run in parallel — different interface files, no shared state.
+- T273, T274 (Phase 50) can run in parallel — different files, no shared state.
+- T283, T284, T285 (Polish) are independent verification passes and can run in parallel once T267-T282
+  are complete; T286 is a quick review best done last.
+- T269-T271 (Phase 49) and T277-T282 (Phase 51) cannot run in parallel with each other within their own
+  sequences — each builds directly on the prior task's signature/state in the same small set of files.
+
+### Implementation Strategy
+
+1. Complete Phase 49 (T267-T272) — the one new backend read, small and additive, no new controller/
+   service/repository/entity class.
+2. Complete Phase 50 (T273-T276) — the frontend repository/use-case layers for it.
+3. Complete Phase 51 (T277-T282) — wire the whitelist into Overview's default row set, branching cleanly
+   around the existing search behavior and Update 14's URL-persisted state.
+4. Complete Phase 52 (polish/validation) — full quickstart.md "Update 16" pass.
+
+### Status (2026-07-28)
+
+Phases 49-50 done and verified (build/lint clean); Phase 51 was implemented, then **rolled back** after
+the user reported a live `500` error from `refType=11` and asked to revert — see Phase 51's rollback note
+above. Phase 52 is only partially applicable now (T283/T284/T285/T286 notes updated accordingly); its
+backend/frontend-build verification sub-steps still hold, but its Overview-behavior verification steps
+(quickstart.md "Update 16" steps 1, 2, 3, 4, 6, 7) cannot pass since that wiring no longer exists. Before
+resuming Phase 51, diagnose the `500`'s root cause (e.g. reproduce against the actual `refType=11`
+request, check D365 filter-length limits against the real `eutr_purchase_attachments` row count) —
+resuming with the exact same approach without understanding the failure would likely reproduce it.
