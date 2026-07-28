@@ -10,6 +10,186 @@
 
 ## Clarifications
 
+### Session 2026-07-28 (Update 15) — Màn hình View: thêm khu vực AVAILABLE FILES ở box bên phải, lọc theo step khi click cây, xem trước file
+
+- Bối cảnh: Màn hình **View Sales Order** hiện có box bên phải (thẻ **Validation Summary**) chỉ hiển
+  thị 2 dòng kết quả kiểm tra (đủ PO đã chọn/đủ step Required có tài liệu) và bên dưới là danh sách
+  **"Steps missing files:"** — danh sách này CHỈ liệt kê **tên** các step Required còn thiếu tài liệu,
+  không hiển thị bất kỳ tài liệu thật (file) nào. Trong khi đó, khu vực **AVAILABLE FILES** ở Step 2
+  màn hình **Map File** (Update 5/7/9) liệt kê đầy đủ các tài liệu thật đang có, mỗi dòng gồm tên file
+  và các chip **Map status**/**File type**/**PO value**/**Step name** động, kèm nút **View** để xem
+  trước nội dung file ngay tại đó. Người yêu cầu tính năng muốn bổ sung thêm, ngay **bên dưới** danh
+  sách "Steps missing files" hiện có trên box bên phải của màn hình View, một khu vực mới liệt kê tài
+  liệu thật, trình bày giống hệt khu vực AVAILABLE FILES của Map File — nhưng gắn thêm hành vi lọc mới:
+  mặc định hiển thị toàn bộ tài liệu của template đang xem; khi người dùng click vào một step trong cây
+  Template Checklist bên trái thì chỉ còn hiển thị tài liệu của đúng step đó; khi người dùng chọn lại
+  template ở toolbar cây (`template-tree-toolbar`) thì quay lại hiển thị toàn bộ.
+- Change: Box bên phải của màn hình View MUST bổ sung một khu vực mới tên **"AVAILABLE FILES"**, đặt
+  ngay bên dưới danh sách "Steps missing files" hiện có (không thay thế danh sách đó, không đổi vị trí/
+  nội dung danh sách đó). Mỗi dòng tài liệu trong khu vực mới này MUST hiển thị tên file và các chip
+  Map status/File type/PO value/Step name, kèm nút **View** — theo đúng cách trình bày của khu vực
+  AVAILABLE FILES ở Map File (Update 5/7) — nhưng KHÔNG có nút **Edit** và KHÔNG có nút/hành động
+  **Upload** nào (màn hình View tiếp tục ở chế độ chỉ đọc — FR-042).
+- Change: Mặc định khi mở màn hình View, hoặc bất cứ khi nào người dùng click chọn một chip template ở
+  toolbar `template-tree-toolbar` (kể cả click lại đúng chip đang được chọn), khu vực AVAILABLE FILES
+  MUST hiển thị **toàn bộ** tài liệu thuộc đúng template đang được chọn xem (`selectedTemplateCode`) —
+  cùng tập tài liệu mà Template Checklist bên trái đang dùng để xác định Map status cho template đó
+  (đúng quy tắc PO/Template đã áp dụng ở Update 7/8), không lọc theo bất kỳ step nào.
+- Change: Khi người dùng click vào một step (node) bất kỳ trong cây Template Checklist bên trái, khu
+  vực AVAILABLE FILES bên phải MUST cập nhật lại ngay để chỉ còn hiển thị (các) tài liệu đã "Mapped"
+  cho đúng step đó — nếu step được click có step con (là một node cha), danh sách MUST gồm tài liệu đã
+  Mapped cho chính step đó và cho toàn bộ step con/cháu của nó trong cùng cây. Việc click chọn step này
+  chỉ thay đổi tài liệu nào đang liệt kê trên giao diện — KHÔNG kích hoạt bất kỳ hành vi map/unmap/tick
+  chọn/ghi dữ liệu nào (giữ đúng nguyên tắc chỉ đọc của màn hình View, FR-042), và KHÔNG làm thay đổi
+  trạng thái mở rộng/thu gọn hiện tại của cây.
+- Change: Sau khi đã lọc theo 1 step, khi người dùng click vào một chip template bất kỳ ở toolbar
+  `template-tree-toolbar` MUST xoá bộ lọc theo step đó, đưa khu vực AVAILABLE FILES quay lại hiển thị
+  toàn bộ tài liệu của template đang được chọn xem — áp dụng bất kể người dùng click vào chip của cùng
+  template đang xem hay chip của một template khác.
+- Change: Nút **View** trên mỗi dòng tài liệu ở khu vực AVAILABLE FILES mới này MUST mở đúng popup xem
+  trước nội dung file đã dùng cho nút View ở AVAILABLE FILES của Map File (Update 9, dùng lại popup xem
+  trước có sẵn của 004-eutr-documents) — popup chỉ đọc hoàn toàn, không có trường chỉnh sửa hay nút Save
+  nào; đóng popup KHÔNG ghi/sửa/xóa bất kỳ dữ liệu tài liệu nào.
+- Change: Nếu template đang được chọn xem không có bất kỳ tài liệu nào (trước khi lọc theo step), hoặc
+  step vừa được click chưa có tài liệu Mapped nào (sau khi lọc), khu vực AVAILABLE FILES MUST hiển thị
+  trạng thái trống rõ ràng (ví dụ "No files available"/"No files for this step"), không hiển thị lỗi hay
+  dữ liệu giả, và không lẫn tài liệu của step/template khác.
+
+### Session 2026-07-28 (Update 14) — Giữ nguyên từ khóa tìm kiếm/trang đang xem ở Overview khi Back từ Map File hoặc View
+
+- Bối cảnh: Màn hình **EUTR Sales Orders** (Overview, `SalesOrderOverviewPage.jsx`) hiện lưu từ khóa
+  tìm kiếm (search) và trang đang xem (page/pageSize) chỉ bằng state cục bộ trên component
+  (`useState`), không đồng bộ với URL hay bất kỳ nơi lưu trữ nào khác. Khi component này bị unmount
+  (ví dụ vì người dùng điều hướng sang Map File hoặc View), toàn bộ state đó bị mất; đồng thời hiệu
+  ứng tải dữ liệu ban đầu của Overview luôn gọi lại với từ khóa rỗng và trang đầu mỗi khi component
+  được mount lại — bất kể trước đó người dùng đã tìm kiếm hay chuyển trang gì. Nút Back trên cả màn
+  hình **Map File** (FR-033, Update 3) và màn hình **View** (đã có sẵn trên giao diện nhưng chưa được
+  đặc tả trong tài liệu này) đều điều hướng bằng cách chuyển thẳng tới route cố định
+  `/eutr/sales-orders` (không dùng lại lịch sử trình duyệt) — nghĩa là Overview luôn được mount lại từ
+  đầu, mất y nguyên từ khóa/trang đã tìm trước đó. Người yêu cầu tính năng phát hiện đúng vấn đề này:
+  lọc theo "SO004957" ở Overview, mở Map File hoặc View, nhấn Back, quay lại Overview nhưng ô tìm kiếm
+  trống và danh sách hiển thị lại toàn bộ (không còn lọc).
+- Change: Khi người dùng nhấn nút Back trên màn hình Map File hoặc màn hình View để quay lại Overview,
+  hệ thống MUST khôi phục đúng từ khóa tìm kiếm đang có trên ô tìm kiếm của Overview tại thời điểm
+  người dùng điều hướng đi (trước khi mở Map File/View) — ô tìm kiếm hiển thị lại chính xác từ khóa đó,
+  không bị xóa trắng.
+- Change: Cùng với từ khóa tìm kiếm, hệ thống MUST khôi phục đúng trang (page) đang xem trên Overview
+  tại thời điểm điều hướng đi — không tự động nhảy về trang đầu nếu người dùng đã chuyển sang một trang
+  khác trước đó.
+- Change: Sau khi khôi phục từ khóa/trang, bảng MUST hiển thị lại đúng danh sách sales order khớp với
+  từ khóa/trang đó, dựa trên dữ liệu tải mới nhất từ nguồn dữ liệu thật tại thời điểm quay lại (không
+  phải một bản chụp/cache tĩnh giữ nguyên từ trước khi điều hướng đi) — giữ đúng nguyên tắc luôn phản
+  ánh dữ liệu thật đã áp dụng cho cột Template/Progress/Download ở các Update trước.
+- Change: Hành vi khôi phục này áp dụng giống nhau bất kể người dùng dùng nút Back trong màn hình Map
+  File/View hay dùng nút Back của trình duyệt/thiết bị để quay lại Overview.
+- Change: Màn hình View hiện đã có sẵn một nút Back trên giao diện nhưng chưa được đặc tả trong tài
+  liệu này; Update này bổ sung đặc tả cho nút đó — nhấn Back trên màn hình View MUST điều hướng người
+  dùng quay lại Overview, cùng đích đến với nút Back của Map File (FR-033).
+- Change: Nếu người dùng vào Overview bằng một cách khác — ví dụ chọn lại mục điều hướng "EUTR Sales
+  Orders" từ menu, hoặc theo liên kết breadcrumb "EUTR Sales Orders" từ một màn hình khác — không phải
+  bằng việc Back từ Map File/View của cùng một lượt xem, Overview KHÔNG bắt buộc phải khôi phục từ
+  khóa/trang của lần xem trước; màn hình MUST hiển thị lại danh sách mặc định (không lọc, trang đầu)
+  giống hành vi hiện tại khi mở màn hình lần đầu.
+- Change: Nếu từ khóa tìm kiếm đã khôi phục không còn khớp bất kỳ sales order nào (ví dụ dữ liệu vừa
+  thay đổi trong lúc người dùng ở Map File/View), bảng MUST hiển thị đúng trạng thái trống ("No data")
+  theo quy tắc hiện có (FR-012) — không hiển thị lỗi hay dữ liệu sai.
+
+### Session 2026-07-27 (Update 13) — Nút Download ở EUTR Sales Orders (Overview) tải file zip thật, giống nút Download ở View Sales Order
+
+- Bối cảnh: Mỗi dòng ở màn hình **EUTR Sales Orders** (Overview) hiện có nút **Download**
+  (`DownloadIcon`, tooltip "Download hồ sơ EUTR") nhưng chưa gắn bất kỳ xử lý nào khi nhấn (không có
+  `onClick`) — cùng dạng demo/no-op mà nút Download ở màn hình **View Sales Order** từng có trước
+  Update 10. Update 10 đã chuyển nút Download của View sang tải xuống một file zip thật: tên file/thư
+  mục gốc đặt động `{SalesId}-{CustomerCode}-{CustomerName}`, chia theo thư mục con cho từng template
+  đã lưu của Sales Order đó (tên thư mục = tên thật template), mỗi thư mục con chỉ chứa tài liệu có Map
+  status = "Mapped" đúng cho template đó (quy tắc cặp PO/Template ở FR-055/FR-056), và hiển thị thông
+  báo rõ ràng thay vì tải file zip rỗng khi không có tài liệu Mapped nào. Người yêu cầu tính năng muốn
+  nút Download ở Overview thực hiện đúng cùng hành vi này cho Sales Order của dòng đó — không cần điều
+  hướng sang View hay Map File trước.
+- Change: Nút Download ở mỗi dòng Overview MUST tải xuống đúng 1 file zip cho Sales Order của dòng đó,
+  áp dụng nguyên vẹn toàn bộ quy tắc đã có ở nút Download của View (Update 10, FR-069 đến FR-076): tên
+  file/thư mục gốc `{SalesId}-{CustomerCode}-{CustomerName}` (sanitize ký tự không hợp lệ cho tên file/
+  thư mục), một thư mục con cho mỗi template đã lưu của Sales Order đó (tên thư mục = tên thật template,
+  tra `eutr_templates.Name`), mỗi thư mục con chỉ chứa tài liệu có Map status = "Mapped" đúng cho
+  template đó, thư mục con vẫn được tạo ở trạng thái rỗng nếu template đó chưa có tài liệu Mapped nào,
+  và tự động phân biệt tên file khi trùng tên gốc trong cùng một thư mục con — không định nghĩa lại hay
+  rút gọn bất kỳ quy tắc nào trong số này riêng cho Overview.
+- Change: Dữ liệu cần để dựng danh sách thư mục/tài liệu Mapped cho Sales Order của dòng vừa nhấn
+  Download (template nào đã lưu, tài liệu nào Mapped cho từng template đó) MUST được tải tại thời điểm
+  người dùng nhấn nút Download của dòng đó (theo yêu cầu, on-demand cho đúng 1 Sales ID) — KHÔNG bắt
+  buộc phải tải trước cho toàn bộ các dòng đang hiển thị trên trang giống cách cột Template/Progress
+  đang tải theo lô khi mở trang (FR-007/FR-085). Việc tải này dùng lại đúng các nguồn dữ liệu và thứ tự
+  tải đã áp dụng ở View/Map File (purchase attachments của Sales ID đó → chi tiết từng template đã lưu
+  → tài liệu thật qua các PO đó), và dùng lại đúng công thức xác định Map status theo cặp PO/Template đã
+  có ở FR-055/FR-056 — không xây dựng logic tính Map status mới nào khác cho Overview.
+- Change: Nếu Sales Order của dòng đó không có bất kỳ tài liệu "Mapped" nào ở mọi template (bao gồm
+  trường hợp chưa Save PO Mapping/chưa có template nào), nhấn Download MUST hiển thị thông báo rõ ràng
+  cho biết không có tài liệu nào để tải (cùng nội dung thông báo đã áp dụng ở View, FR-074) và KHÔNG tải
+  xuống một file zip rỗng. Nút Download ở mỗi dòng luôn ở trạng thái có thể bấm được (không disable chủ
+  động trước khi biết kết quả), theo đúng nguyên tắc đã áp dụng cho nút Download ở View (FR-074).
+- Change: Trong lúc đang tải dữ liệu/đóng gói file zip cho dòng vừa nhấn Download, đúng dòng đó MUST
+  hiển thị trạng thái đang xử lý (ví dụ icon loading) ngay tại nút Download của dòng đó — không chặn hay
+  ảnh hưởng tới các dòng khác hoặc phần còn lại của bảng; người dùng vẫn có thể tìm kiếm/chuyển trang/
+  nhấn Download ở một dòng khác trong lúc dòng này đang xử lý.
+- Change: Nếu việc tải dữ liệu hoặc tạo file zip cho dòng đó thất bại (lỗi mạng/nguồn dữ liệu tạm thời
+  không phản hồi), hệ thống MUST hiển thị thông báo lỗi rõ ràng cho đúng dòng đó (cùng dạng thông báo lỗi
+  đã áp dụng ở View) — không làm lỗi/crash toàn bảng, không ảnh hưởng tới các dòng khác.
+- Change: Thao tác Download ở Overview KHÔNG được ghi/sửa/xóa bất kỳ bản ghi tài liệu/tham chiếu/
+  purchase attachment nào — giữ đúng nguyên tắc chỉ đọc đã áp dụng cho nút Download ở View (Update 10)
+  và cho toàn bộ màn hình Overview (FR-013).
+
+### Session 2026-07-27 (Update 12) — Cột Progress ở Overview lấy dữ liệu thật theo salesId, dùng đúng logic progress của Map File
+
+- Bối cảnh: Cột **Progress** trên màn hình **EUTR Sales Orders** (`SalesOrderOverviewPage.jsx`) từ khi
+  tính năng này được tạo (yêu cầu ban đầu) đến hết Update 11 luôn hiển thị một giá trị **demo cố định**
+  (hằng số `DEMO_PROGRESS = { completed: 3, total: 5, pct: 60 }`), giống nhau ở mọi dòng, không gắn với
+  bất kỳ Sales ID nào (FR-008, tái xác nhận ở Update 1). Trong khi đó, màn hình **Map File**
+  (`MapFilePage.jsx`) đã có sẵn biến `progress` (tính qua `computeProgress()` và vòng lặp cộng dồn qua
+  `templateComputations`, xem FR-057/FR-077 đến FR-079) tính đúng tiến độ Required steps thật của MỘT
+  Sales Order (theo `salesId` trên URL) — cộng dồn qua toàn bộ template đã lưu trong
+  `eutr_purchase_attachments` của Sales Order đó, mỗi template xác định "đã có tài liệu" theo đúng quy
+  tắc cặp PO/Template (FR-055/FR-056: PO của tài liệu phải thuộc đúng template đang xét, và Step của tài
+  liệu khớp một node trong chính cây của template đó), chỉ đếm step `requirementType` = Required, loại
+  trừ step có `takeFrom` thuộc `AUTO_SOURCES`. Người yêu cầu tính năng muốn cột Progress ở Overview thay
+  thế `DEMO_PROGRESS` bằng đúng phép tính này, áp dụng riêng cho từng dòng theo `salesId` của dòng đó —
+  giống cách cột **Template** (Update 1) đã chuyển từ demo sang dữ liệu thật theo từng `salesId`.
+- Change: Cột **Progress** ở Overview KHÔNG còn hiển thị `DEMO_PROGRESS` — thay bằng tiến độ thật của
+  từng Sales Order, tính theo đúng công thức và phạm vi dữ liệu mà biến `progress` của Map File đang
+  dùng (`completed`/`total`/`pct`), áp dụng cho `salesId` = giá trị Sales ID của dòng đó (không phải
+  Sales Order đang mở như ở Map File).
+- Change: Phép tính cho mỗi dòng MUST cộng dồn qua **toàn bộ** template đã lưu trong
+  `eutr_purchase_attachments` của Sales ID đó (đúng tập template đang hiển thị ở cột Template, Update 1)
+  — không chỉ 1 template đầu tiên. Với mỗi template trong phép cộng dồn: (1) chỉ đếm step có
+  `requirementType` = Required (loại Optional); (2) loại trừ step có `takeFrom` thuộc `AUTO_SOURCES`;
+  (3) một step Required được tính "đã map" khi có tối thiểu 1 tài liệu thật thỏa quy tắc cặp PO/Template
+  đã áp dụng ở Map File (PO của tài liệu thuộc đúng `PurchId` gắn với template đó trong
+  `eutr_purchase_attachments`, và Step của tài liệu khớp một node trong chính cây của template đó) — hoàn
+  toàn giống công thức `computeProgress()`/vòng lặp `templateComputations` của Map File, không định
+  nghĩa lại hay rút gọn quy tắc riêng cho Overview.
+- Change: Nếu Sales ID chưa có bản ghi nào trong `eutr_purchase_attachments` (chưa Save PO Mapping lần
+  nào — cùng điều kiện với Template hiển thị trống ở FR-007b), cột Progress MUST hiển thị trạng thái
+  trống rõ ràng (ví dụ "—" hoặc "Chưa có template"), KHÔNG hiển thị `0/0`/`0%` gây hiểu nhầm là đã có
+  template nhưng chưa hoàn thành, và KHÔNG hiển thị lại giá trị demo.
+- Change: Nếu Sales ID có template đã lưu nhưng tổng số step Required (sau khi loại trừ `AUTO_SOURCES`)
+  bằng 0 ở mọi template đó, cột Progress MUST hiển thị trạng thái riêng biệt với trường hợp "chưa có
+  template" ở trên (ví dụ "Không có step bắt buộc" hoặc `0/0` kèm chú thích) — không suy ra 0% "chưa hoàn
+  thành" một cách gây hiểu nhầm.
+- Change: Vì bảng Overview hiển thị nhiều dòng cùng lúc (tối đa theo `pageSize` hiện tại, mặc định 100),
+  việc tải dữ liệu để tính Progress cho các dòng đang hiển thị trên trang hiện tại MUST áp dụng theo cơ
+  chế nạp theo lô (batch) đã áp dụng cho cột Template (Update 1, qua use case nạp Template theo nhiều
+  Sales ID cùng lúc) — không phát sinh việc gọi lần lượt từng API riêng cho từng dòng theo kiểu N+1; số
+  lượng/loại lệnh gọi dữ liệu cụ thể để tính đủ Required steps + tài liệu đã map cho nhiều Sales ID trong
+  1 lượt là quyết định kỹ thuật ở giai đoạn plan.
+- Change: Khi việc tải dữ liệu để tính Progress cho một hoặc nhiều dòng bị lỗi (nguồn dữ liệu template/
+  tài liệu tạm thời không phản hồi), (các) dòng bị ảnh hưởng MUST hiển thị trạng thái lỗi/tải thất bại rõ
+  ràng ở đúng ô Progress của dòng đó (không phải lỗi chặn toàn bảng, và không hiển thị lại giá trị demo
+  để che lỗi) — các dòng khác không bị ảnh hưởng vẫn hiển thị Progress thật bình thường.
+- Change: Sau Update 12, hằng số `DEMO_PROGRESS` không còn được dùng ở Overview; nếu Sales Order đó cũng
+  đang được mở ở Map File hoặc View cùng lúc bởi người dùng khác, số Required/completed hiển thị ở
+  Overview cho Sales ID đó MUST khớp với số Required/completed hiển thị ở Map File/View cho đúng Sales
+  ID đó tại cùng một thời điểm dữ liệu (cùng công thức, cùng nguồn dữ liệu thật) — mở rộng đúng kỳ vọng
+  khớp nhau giữa các màn hình đã xác nhận ở Update 11 (SC-026) sang cả màn hình Overview.
+
 ### Session 2026-07-27 (Update 11) — Số liệu progress/mappedRequired/missingRequired chỉ tính step Required, cộng dồn trên toàn bộ template, nhất quán giữa Map File và View
 
 - Bối cảnh: Đọc lại toàn bộ các biến đang đếm số lượng step "đã map"/"còn thiếu" ở cả hai màn hình:
@@ -320,7 +500,8 @@
   với Sales ID đó (mỗi template duy nhất chỉ hiển thị 1 lần, không lặp lại dù có nhiều `PurchId`
   cùng dùng chung 1 template).
 - Cột **Progress** không thuộc phạm vi thay đổi này — vẫn tiếp tục hiển thị giá trị demo cố định
-  như hiện tại (FR-008 giữ nguyên).
+  như hiện tại (FR-008 giữ nguyên). **Cập nhật ở Update 12**: cột Progress đã chuyển sang dữ liệu thật
+  theo `salesId`, không còn áp dụng giới hạn này — xem Update 12 và FR-008/FR-082 đến FR-086.
 
 ### Session 2026-07-20 (Update 3) — Step 1: cho phép chọn thêm PO chưa gắn Template; nút Back về Sales Orders
 
@@ -385,8 +566,12 @@ Người dùng vào mục **EUTR > EUTR Sales Orders** từ thanh điều hướ
 sales order lấy từ hệ thống ERP (D365) thông qua nguồn dữ liệu tham chiếu dùng chung đã có sẵn
 trong hệ thống (reference type 11). Bảng hiển thị các cột: **Sales ID**, **Customer**, **Customer
 name**, **Delivery date**, cột **Template** hiển thị (các) template thật gắn với Sales ID đó (tra
-cứu từ bảng `eutr_purchase_attachments`), và cột **Progress** vẫn hiển thị giá trị mẫu cố định
-(demo, chưa gắn dữ liệu/logic thật) cho mọi dòng.
+cứu từ bảng `eutr_purchase_attachments`), và cột **Progress** (từ Update 12) hiển thị tiến độ thật
+của chính Sales ID đó — số step Required đã có tài liệu/tổng số step Required và tỷ lệ %, tính theo
+đúng công thức mà màn hình Map File đang dùng cho Sales Order đang mở, cộng dồn qua toàn bộ template
+đã lưu của Sales ID đó. Mỗi dòng còn có nút **Download** (từ Update 13) — khi nhấn, tải xuống đúng 1
+file zip cho Sales Order của dòng đó, theo đúng cấu trúc thư mục/quy tắc tài liệu Mapped đã áp dụng
+cho nút Download ở màn hình View (Update 10), không cần điều hướng khỏi Overview.
 
 **Why this priority**: Đây là giá trị cốt lõi và duy nhất của tính năng ở giai đoạn này — cho phép
 người dùng xem được danh sách sales order ngay khi mở màn hình; không có giá trị nào khác nếu thiếu
@@ -395,8 +580,10 @@ bước này.
 **Independent Test**: Mở màn hình EUTR Sales Orders, xác nhận bảng hiển thị đúng các cột Sales ID,
 Customer, Customer name, Delivery date với dữ liệu thật lấy từ nguồn tham chiếu reftype = 11; cột
 Template hiển thị đúng (các) template thật tra cứu từ `eutr_purchase_attachments` theo Sales ID
-(bao gồm trường hợp một Sales ID có nhiều template); cột Progress vẫn hiển thị giá trị demo cố định
-giống nhau ở mọi dòng.
+(bao gồm trường hợp một Sales ID có nhiều template); cột Progress hiển thị đúng tiến độ thật của
+từng Sales ID, khớp với số liệu Required/completed mà Map File tính cho đúng Sales Order đó; nhấn
+nút Download ở một dòng có tài liệu Mapped xác nhận tải xuống đúng 1 file zip với cấu trúc thư mục
+giống nút Download ở View cho đúng Sales Order đó.
 
 **Acceptance Scenarios**:
 
@@ -418,6 +605,36 @@ giống nhau ở mọi dòng.
 7. **Given** một Sales ID chưa có bản ghi nào trong `eutr_purchase_attachments`, **When** bảng hiển
    thị dòng đó, **Then** cột Template hiển thị trạng thái trống rõ ràng (không lỗi, không hiển thị
    dữ liệu demo/giả).
+8. **Given** một Sales ID có 1 hoặc nhiều template đã lưu với một số step Required chưa có tài liệu,
+   **When** bảng hiển thị dòng đó, **Then** cột Progress hiển thị đúng `completed`/`total`/`pct` tính
+   theo đúng công thức Map File đang dùng cho Sales Order đó (cộng dồn qua toàn bộ template đã lưu,
+   loại trừ `AUTO_SOURCES`, chỉ đếm step Required) — không phải giá trị demo cố định.
+9. **Given** một Sales ID chưa có bản ghi nào trong `eutr_purchase_attachments`, **When** bảng hiển
+   thị dòng đó, **Then** cột Progress hiển thị trạng thái trống rõ ràng, không hiển thị `0/0`/`0%`
+   hay giá trị demo.
+10. **Given** một Sales ID có template đã lưu nhưng tổng số step Required (sau loại trừ
+    `AUTO_SOURCES`) của mọi template đó bằng 0, **When** bảng hiển thị dòng đó, **Then** cột Progress
+    hiển thị trạng thái riêng cho biết không có step bắt buộc, không suy diễn thành 0% "chưa hoàn
+    thành".
+11. **Given** cùng một Sales ID đang được xem đồng thời ở cả Overview và Map File (hoặc View),
+    **When** so sánh số liệu Progress ở Overview với số liệu Required/completed ở Map File/View cho
+    đúng Sales ID đó, **Then** hai số liệu này khớp nhau tại cùng một thời điểm dữ liệu.
+12. **Given** một dòng có Sales Order với ít nhất 1 tài liệu "Mapped" ở một template bất kỳ, **When**
+    nhấn nút Download của dòng đó, **Then** hệ thống tải xuống đúng 1 file zip tên
+    `{SalesId}-{CustomerCode}-{CustomerName}`, chứa đúng thư mục con cho mỗi template đã lưu (tên thư
+    mục = tên thật template) và mỗi thư mục con chỉ chứa đúng các tài liệu đã "Mapped" cho template đó.
+13. **Given** một dòng có Sales Order chưa Save PO Mapping/chưa có template nào, hoặc có template
+    nhưng không có tài liệu Mapped nào, **When** nhấn Download của dòng đó, **Then** hệ thống hiển thị
+    thông báo rõ ràng cho biết không có tài liệu để tải, không tải xuống file zip rỗng.
+14. **Given** đang tải dữ liệu/đóng gói file zip cho một dòng, **When** người dùng tìm kiếm, chuyển
+    trang, hoặc nhấn Download ở một dòng khác, **Then** các tương tác đó vẫn hoạt động bình thường,
+    không bị chặn bởi lượt Download đang xử lý của dòng trước.
+15. **Given** việc tải dữ liệu hoặc tạo file zip cho một dòng thất bại (lỗi mạng/nguồn dữ liệu), **When**
+    lỗi xảy ra, **Then** hệ thống hiển thị thông báo lỗi rõ ràng cho đúng dòng đó, không làm lỗi hay
+    crash phần còn lại của bảng.
+16. **Given** đã nhấn Download thành công cho một Sales Order ở Overview, **When** kiểm tra dữ liệu
+    tài liệu/tham chiếu/purchase attachment của Sales Order đó, **Then** không có bản ghi nào bị
+    ghi/sửa/xóa bởi thao tác Download.
 
 ---
 
@@ -425,7 +642,9 @@ giống nhau ở mọi dòng.
 
 Người dùng nhập từ khóa vào ô tìm kiếm phía trên bảng để lọc nhanh sales order theo Sales ID hoặc
 theo Customer, theo đúng kiểu tìm kiếm ("chứa") đã dùng ở các ô tìm kiếm tham chiếu khác trong hệ
-thống.
+thống. Nếu người dùng đã tìm kiếm rồi mở Map File hoặc View của một dòng, sau đó nhấn nút Back để
+quay lại Overview (từ Update 14), ô tìm kiếm và trang đang xem MUST hiển thị lại đúng như trước khi
+điều hướng đi — không bị xóa trắng hay nhảy về trang đầu.
 
 **Why this priority**: Giá trị bổ sung — giúp người dùng tìm nhanh một sales order cụ thể khi danh
 sách dài, nhưng không phải điều kiện tối thiểu để tính năng có giá trị (User Story 1 vẫn dùng được
@@ -443,6 +662,23 @@ chỉ còn hiển thị các dòng khớp; xóa từ khóa, xác nhận bảng q
    trạng thái trống ("No data"), không phải lỗi.
 3. **Given** đã nhập từ khóa tìm kiếm, **When** xóa hết từ khóa, **Then** bảng tải lại danh sách mặc
    định (không lọc).
+4. **Given** người dùng đã nhập từ khóa tìm kiếm (ví dụ "SO004957") và bảng đang chỉ hiển thị (các)
+   dòng khớp, **When** nhấn nút Map File hoặc View trên một dòng rồi nhấn nút Back để quay lại
+   Overview, **Then** ô tìm kiếm hiển thị lại đúng từ khóa đã nhập trước đó, và bảng hiển thị lại đúng
+   các dòng khớp với từ khóa đó — không hiển thị danh sách mặc định/trống từ khóa.
+5. **Given** người dùng đã tìm kiếm và/hoặc chuyển sang một trang khác trang đầu, **When** mở Map
+   File hoặc View của một dòng rồi nhấn Back để quay lại Overview, **Then** bảng hiển thị lại đúng
+   trang đang xem trước đó (không tự nhảy về trang đầu).
+6. **Given** người dùng dùng nút Back của trình duyệt/thiết bị (không phải nút Back trong màn hình
+   Map File/View) để quay lại Overview, **When** quay lại, **Then** từ khóa tìm kiếm và trang đang
+   xem được khôi phục giống hoàn toàn như khi dùng nút Back trong màn hình đó.
+7. **Given** người dùng vào lại Overview bằng cách chọn mục điều hướng "EUTR Sales Orders" từ menu
+   hoặc breadcrumb (không phải quay lại từ Map File/View của cùng một lượt xem), **When** mở màn
+   hình, **Then** bảng hiển thị danh sách mặc định (không lọc, trang đầu) — không giữ lại từ khóa của
+   một lần xem trước đó.
+8. **Given** từ khóa tìm kiếm đã được khôi phục sau khi Back không còn khớp bất kỳ sales order nào
+   (dữ liệu đã thay đổi trong lúc ở Map File/View), **When** bảng tải lại dữ liệu mới nhất, **Then**
+   bảng hiển thị trạng thái trống ("No data"), không phải lỗi.
 
 ---
 
@@ -549,6 +785,9 @@ màn hình EUTR Sales Orders.
     công), đồng thời vẫn giữ nguyên các bản ghi của các PO đã chọn từ trước đó chưa bị bỏ tick.
 12. **Given** đang ở màn hình Map File (Step 1 hoặc Step 2), **When** người dùng nhấn nút **Back**,
     **Then** hệ thống điều hướng về màn hình **EUTR Sales Orders** (Overview).
+12a. **Given** người dùng đã tìm kiếm/lọc và/hoặc chuyển trang trên Overview trước khi mở Map File
+    của một dòng, **When** nhấn nút Back trên Map File, **Then** hệ thống quay lại Overview với đúng
+    từ khóa tìm kiếm và trang đã xem trước đó (Update 14) — không phải danh sách mặc định/trang đầu.
 13. **Given** Step 2 đang hiển thị (các) template ở toolbar cây template, **When** người dùng click
     vào một template, **Then** hệ thống tải lại đúng danh sách `templatesData` mới nhất từ dữ liệu
     thật (không hiển thị lại dữ liệu cũ một cách tĩnh).
@@ -606,7 +845,9 @@ template khác ở toolbar sẽ chuyển sang hiển thị đúng cây của tem
 thuộc **đúng PO của chính template đang xem** (tra theo `eutr_purchase_attachments`) — không nhầm lẫn
 với tài liệu thuộc PO của một template khác dù hai template dùng chung tên Step. Toàn bộ màn hình chỉ
 ở chế độ xem — không có thao tác tick chọn PO, map/unmap tài liệu hay upload nào. Muốn thay đổi, người
-dùng nhấn nút **Edit / Map File** để chuyển sang màn hình Map File. Nút **Download** tải xuống một file
+dùng nhấn nút **Edit / Map File** để chuyển sang màn hình Map File. Nút **Back** đưa người dùng quay
+lại Overview, khôi phục đúng từ khóa tìm kiếm/trang đã xem trước đó nếu người dùng mở màn hình View
+này từ một dòng đang được lọc (Update 14). Nút **Download** tải xuống một file
 zip có tên động `{SalesId}-{CustomerCode}-{CustomerName}`, bên trong chia theo thư mục con cho từng
 template đã lưu (tên thư mục = tên thật của template), mỗi thư mục con chỉ chứa các tài liệu đã
 "Mapped" đúng cho template đó; nếu không có tài liệu Mapped nào, hệ thống hiển thị thông báo rõ ràng
@@ -690,6 +931,31 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
 15. **Given** người dùng click liên tiếp nhiều lần vào các chip template khác nhau ở toolbar,
     **When** chuyển đổi qua lại, **Then** mỗi lượt chuyển chỉ đổi template đang hiển thị trên giao
     diện, không gọi API ghi nào và không làm thay đổi bất kỳ dữ liệu nào.
+16. **Given** đang ở màn hình View, **When** người dùng nhấn nút **Back**, **Then** hệ thống điều
+    hướng về màn hình **EUTR Sales Orders** (Overview) — cùng đích đến với nút Back của Map File.
+17. **Given** người dùng đã tìm kiếm/lọc và/hoặc chuyển trang trên Overview trước khi mở View của một
+    dòng, **When** nhấn nút Back trên màn hình View, **Then** hệ thống quay lại Overview với đúng từ
+    khóa tìm kiếm và trang đã xem trước đó (Update 14) — không phải danh sách mặc định/trang đầu.
+18. **Given** đang mở màn hình View với một template đã được chọn xem ở toolbar, **When** khu vực
+    AVAILABLE FILES ở box bên phải hiển thị lần đầu, **Then** danh sách hiển thị đầy đủ toàn bộ tài
+    liệu thuộc đúng template đó (không lọc theo step nào), mỗi dòng gồm tên file, các chip Map
+    status/File type/PO value/Step name và nút View — cùng cách trình bày với AVAILABLE FILES ở Map
+    File, nhưng không có nút Edit/Upload (Update 15).
+19. **Given** khu vực AVAILABLE FILES đang hiển thị toàn bộ tài liệu của template đang xem, **When**
+    người dùng click vào một step (node) bất kỳ trong Template Checklist, **Then** khu vực AVAILABLE
+    FILES chỉ còn hiển thị (các) tài liệu đã "Mapped" cho đúng step đó (và step con/cháu của nó, nếu
+    step đó là node cha).
+20. **Given** step vừa click ở kịch bản 19 chưa có tài liệu Mapped nào, **When** xem khu vực AVAILABLE
+    FILES, **Then** khu vực này hiển thị trạng thái trống rõ ràng ("No files for this step"), không
+    hiển thị nhầm tài liệu của step khác.
+21. **Given** khu vực AVAILABLE FILES đang lọc theo 1 step, **When** người dùng click vào một chip
+    template ở toolbar `template-tree-toolbar` (kể cả click lại đúng chip đang chọn), **Then** bộ lọc
+    theo step bị xoá, khu vực AVAILABLE FILES hiển thị lại toàn bộ tài liệu của template đang được
+    chọn xem.
+22. **Given** một dòng tài liệu bất kỳ ở khu vực AVAILABLE FILES mới này, **When** người dùng nhấn nút
+    View, **Then** hệ thống mở đúng popup xem trước nội dung file (giống Update 9 ở Map File) ở chế độ
+    chỉ đọc — đóng popup không ghi/sửa/xóa dữ liệu nào; khu vực này và popup không hiển thị bất kỳ nút
+    Edit/Upload/Save nào.
 
 ---
 
@@ -698,6 +964,61 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
 - Nguồn dữ liệu tham chiếu (reftype = 11) tạm thời không phản hồi hoặc trả lỗi: bảng hiển thị trạng
   thái lỗi/tải thất bại rõ ràng, không hiển thị dữ liệu demo Template/Progress đè lên một bảng rỗng
   gây hiểu nhầm là có dữ liệu thật.
+- (Update 12) Nguồn dữ liệu template/tài liệu dùng để tính Progress (batch theo trang hiện tại) tạm
+  thời không phản hồi hoặc trả lỗi cho một hoặc nhiều Sales ID: (các) dòng bị ảnh hưởng hiển thị trạng
+  thái lỗi/tải thất bại rõ ràng ngay tại ô Progress của dòng đó (không phải giá trị demo, không chặn
+  toàn bảng); các dòng khác (không bị lỗi) vẫn hiển thị Progress thật bình thường.
+- (Update 12) Sales ID chưa có bản ghi nào trong `eutr_purchase_attachments` (cùng điều kiện trống với
+  cột Template): cột Progress hiển thị trạng thái trống, không suy diễn `0/0`/`0%`.
+- (Update 12) Sales ID có template đã lưu nhưng tổng số step Required (sau loại trừ `AUTO_SOURCES`) của
+  toàn bộ template đó bằng 0: cột Progress hiển thị trạng thái riêng ("không có step bắt buộc"), khác
+  với trạng thái trống ở trên và khác với 0%.
+- (Update 12) Sales ID có nhiều template đã lưu, một vài template có step Required chưa map và một vài
+  template khác đã map đủ: `progress.total`/`progress.completed` của dòng đó là tổng cộng dồn qua toàn
+  bộ các template này (đúng phạm vi tổng hợp đã áp dụng cho Map File ở FR-057), không chỉ tính riêng 1
+  template.
+- (Update 13) Nhấn Download ở một dòng khi Sales ID đó chưa Save PO Mapping/chưa có template nào: hiển
+  thị thông báo không có tài liệu để tải (giống View, FR-074), không tải file zip rỗng.
+- (Update 13) Nhấn Download ở một dòng có template đã lưu nhưng không template nào có tài liệu Mapped:
+  cùng hiển thị thông báo không có tài liệu để tải, không tải file zip rỗng — giống trường hợp trên.
+- (Update 13) Người dùng nhấn Download liên tiếp ở nhiều dòng khác nhau trước khi lượt tải trước hoàn
+  tất: mỗi dòng xử lý độc lập (trạng thái loading/kết quả riêng theo dòng), không có dòng nào bị chặn
+  hay hiển thị sai trạng thái của dòng khác.
+- (Update 13) Nhấn Download ở một dòng trong lúc đang tìm kiếm/lọc hoặc chuyển trang: lượt tải zip của
+  dòng đó vẫn tiếp tục xử lý bình thường, không bị hủy hay lỗi chỉ vì bảng đang tải lại danh sách khác.
+- (Update 14) Người dùng tìm kiếm "SO004957" ở Overview, mở Map File hoặc View của dòng đó, không thực
+  hiện thay đổi gì (hoặc có Save), rồi nhấn Back: Overview MUST hiển thị lại đúng từ khóa "SO004957"
+  trong ô tìm kiếm và đúng danh sách dòng khớp — không phải danh sách đầy đủ/không lọc.
+- (Update 14) Người dùng tìm kiếm rồi chuyển sang trang 2 (hoặc trang khác trang đầu), mở Map File
+  hoặc View của một dòng ở trang đó, rồi nhấn Back: Overview MUST quay lại đúng trang đó, không nhảy
+  về trang đầu.
+- (Update 14) Người dùng dùng nút Back của trình duyệt/thiết bị (thay vì nút Back trong màn hình Map
+  File/View) để quay lại Overview: hành vi khôi phục từ khóa/trang MUST giống hoàn toàn như khi dùng
+  nút Back trong màn hình đó — không phân biệt nguồn gốc của lượt điều hướng quay lại.
+- (Update 14) Người dùng vào Overview trực tiếp từ mục điều hướng/breadcrumb (không phải quay lại từ
+  Map File/View của cùng một lượt xem): Overview hiển thị danh sách mặc định, không giữ lại từ khóa
+  của một lượt xem trước đó — tránh gây hiểu lầm "tìm kiếm bị dính lại" khi người dùng chủ động muốn
+  xem lại toàn bộ danh sách.
+- (Update 14) Trong lúc người dùng đang ở Map File/View, dữ liệu Template/Progress của chính Sales
+  Order đang xem thay đổi (ví dụ vừa Save PO Mapping): khi Back về Overview với từ khóa/trang đã khôi
+  phục, dòng đó MUST hiển thị đúng dữ liệu Template/Progress mới nhất — không hiển thị lại dữ liệu cũ
+  từ trước khi điều hướng đi.
+- (Update 14) Từ khóa tìm kiếm đã khôi phục sau khi Back không còn khớp sales order nào (dữ liệu vừa
+  thay đổi): bảng hiển thị trạng thái trống ("No data") theo đúng quy tắc hiện có (FR-012), không phải
+  lỗi hay danh sách mặc định.
+- (Update 15) Template đang được chọn xem ở toolbar `template-tree-toolbar` chưa có bất kỳ tài liệu nào:
+  khu vực AVAILABLE FILES mới ở màn hình View hiển thị trạng thái trống rõ ràng ("No files available"),
+  không lỗi, không hiển thị dữ liệu giả.
+- (Update 15) Step được click là một node cha có nhiều step con, một số step con có tài liệu Mapped và
+  một số chưa: khu vực AVAILABLE FILES hiển thị đúng hợp tất cả tài liệu Mapped của các step con đó,
+  không thiếu và không hiển thị trùng lặp nếu cùng 1 file được Mapped cho nhiều step con.
+- (Update 15) Người dùng click sang xem một template khác ở toolbar trong lúc khu vực AVAILABLE FILES
+  đang lọc theo 1 step của template cũ: bộ lọc theo step cũ MUST được xoá ngay, khu vực AVAILABLE FILES
+  chuyển sang hiển thị toàn bộ tài liệu của template mới được chọn — không còn áp dụng bộ lọc step của
+  template trước đó.
+- (Update 15) Loại file của tài liệu không được popup xem trước hỗ trợ hiển thị nội dung (theo đúng giới
+  hạn hỗ trợ hiện có của popup này ở 004-eutr-documents/Update 9): popup hiển thị trạng thái rõ ràng cho
+  biết không xem trước được, không gây lỗi trang hay crash màn hình View.
 - Không có sales order nào trong nguồn dữ liệu: bảng hiển thị trạng thái trống ("No data").
 - Customer name quá dài: hiển thị rút gọn (ellipsis/tooltip) theo cùng mẫu đã dùng ở các cột tên dài
   khác trong hệ thống, không làm vỡ bố cục bảng.
@@ -858,9 +1179,10 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   lần, không lặp lại theo số `PurchId`).
 - **FR-007b**: Nếu một Sales ID chưa có bản ghi nào trong `eutr_purchase_attachments`, cột Template
   MUST hiển thị trạng thái trống rõ ràng (không lỗi, không hiển thị dữ liệu demo/giả).
-- **FR-008**: Bảng MUST hiển thị cột **Progress** với một giá trị demo cố định (dữ liệu mẫu, không
-  lấy từ nguồn dữ liệu thật) — hiển thị giống nhau ở mọi dòng, dành cho chức năng sẽ hoàn thiện ở
-  một tính năng sau.
+- **FR-008**: Bảng MUST hiển thị cột **Progress** với dữ liệu thật, tính riêng cho từng dòng theo
+  `salesId` của dòng đó (KHÔNG còn hiển thị giá trị demo cố định `DEMO_PROGRESS` — bỏ FR-008 phiên bản
+  cũ), theo đúng công thức tiến độ (`completed`/`total`/`pct`) mà màn hình Map File đang dùng cho biến
+  `progress` của nó (Update 12).
 - **FR-009**: Nguồn tham chiếu dùng chung (reference type = 11) MUST trả về đủ 4 trường Sales ID,
   Customer, Customer name, Delivery date cho mỗi sales order — hiện tại reference type = 11 chưa
   được đăng ký trong nguồn tham chiếu này (luôn trả về danh sách rỗng) nên đây là điều kiện bắt buộc
@@ -1125,6 +1447,103 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   trước khi cộng dồn qua toàn bộ template đã lưu — không thay đổi so với hiện tại; sau khi FR-079 được áp
   dụng cho Map File, số liệu tiến độ của hai màn hình Map File và View MUST khớp nhau cho cùng một Sales
   Order (SC-026).
+- **FR-082**: Với mỗi dòng ở Overview, `progress.total`/`progress.completed`/`progress.pct` MUST cộng
+  dồn qua toàn bộ template đã lưu trong `eutr_purchase_attachments` của `salesId` dòng đó (đúng tập
+  template hiển thị ở cột Template, FR-007/FR-007a), theo đúng công thức `computeProgress()` (chỉ đếm
+  step Required, loại trừ `AUTO_SOURCES`, một step "đã map" khi có tài liệu thỏa quy tắc cặp PO/Template
+  ở FR-055/FR-056) mà Map File áp dụng cho biến `progress` của nó (FR-077 đến FR-079) — không định nghĩa
+  công thức tính riêng cho Overview.
+- **FR-083**: Nếu `salesId` của một dòng chưa có bản ghi nào trong `eutr_purchase_attachments`, cột
+  Progress của dòng đó MUST hiển thị trạng thái trống rõ ràng (cùng điều kiện trống với cột Template ở
+  FR-007b) — KHÔNG hiển thị `0/0`, `0%`, hay giá trị demo.
+- **FR-084**: Nếu `salesId` của một dòng có template đã lưu nhưng tổng số step Required hợp lệ (sau khi
+  loại trừ `AUTO_SOURCES`) bằng 0 ở mọi template đó, cột Progress của dòng đó MUST hiển thị trạng thái
+  riêng biệt với trạng thái trống ở FR-083 (ví dụ chú thích "Không có step bắt buộc"), không suy diễn
+  thành 0% "chưa hoàn thành".
+- **FR-085**: Việc tải dữ liệu để tính Progress cho các dòng đang hiển thị trên trang hiện tại của bảng
+  MUST áp dụng theo cơ chế nạp theo lô (batch) đã áp dụng cho cột Template (FR-007, Update 1) — không
+  phát sinh gọi API tính Progress riêng lẻ theo từng dòng một (N+1); nếu việc tải dữ liệu Progress cho
+  một hoặc nhiều dòng bị lỗi, (các) dòng đó MUST hiển thị trạng thái lỗi/tải thất bại rõ ràng ngay tại ô
+  Progress của dòng đó, không chặn phần còn lại của bảng và không hiển thị lại giá trị demo.
+- **FR-086**: Số liệu Progress (`completed`/`total`) hiển thị cho một Sales ID ở Overview MUST khớp với
+  số liệu Required/`completed` hiển thị cho đúng Sales ID đó ở Map File và ở View tại cùng một thời điểm
+  dữ liệu (cùng nguồn dữ liệu thật, cùng công thức) — mở rộng đúng kỳ vọng khớp nhau giữa các màn hình đã
+  xác nhận ở FR-081/SC-026 sang cả Overview.
+- **FR-087**: Nút **Download** ở mỗi dòng Overview MUST tải xuống đúng 1 file zip cho Sales Order của
+  dòng đó khi nhấn, áp dụng nguyên vẹn quy tắc cấu trúc file zip đã có ở nút Download của View (Update
+  10, FR-069 đến FR-073, FR-075): tên file/thư mục gốc `{SalesId}-{CustomerCode}-{CustomerName}` (đã
+  sanitize), một thư mục con cho mỗi template đã lưu (tên = tên thật template), mỗi thư mục con chỉ
+  chứa tài liệu Map status = "Mapped" đúng cho template đó (FR-055/FR-056), thư mục con rỗng nếu chưa
+  có tài liệu Mapped, và tự động phân biệt tên file trùng trong cùng thư mục con.
+- **FR-088**: Dữ liệu để dựng danh sách thư mục/tài liệu Mapped cho nút Download ở một dòng Overview
+  MUST được tải on-demand tại thời điểm người dùng nhấn nút Download của đúng dòng đó — không bắt buộc
+  tải trước cho mọi dòng đang hiển thị trên trang giống cơ chế batch của cột Template/Progress (FR-007/
+  FR-085); việc tải này dùng lại đúng nguồn dữ liệu/thứ tự tải và công thức Map status theo cặp PO/
+  Template đã áp dụng ở View/Map File (FR-055/FR-056), không định nghĩa công thức mới cho Overview.
+- **FR-089**: Nếu Sales Order của dòng đó không có tài liệu "Mapped" nào ở mọi template (kể cả chưa có
+  template nào), nhấn Download MUST hiển thị thông báo rõ ràng cho biết không có tài liệu để tải (cùng
+  nội dung đã áp dụng ở View, FR-074) và KHÔNG tải xuống file zip rỗng; nút Download của mỗi dòng luôn ở
+  trạng thái có thể bấm được, không disable chủ động trước khi biết kết quả.
+- **FR-090**: Trong lúc tải dữ liệu/đóng gói file zip cho một dòng, đúng dòng đó MUST hiển thị trạng
+  thái đang xử lý riêng tại nút Download của dòng đó, không chặn tương tác (tìm kiếm/chuyển trang/nhấn
+  Download dòng khác) trên phần còn lại của bảng.
+- **FR-091**: Nếu việc tải dữ liệu hoặc tạo file zip cho một dòng thất bại, hệ thống MUST hiển thị
+  thông báo lỗi rõ ràng cho đúng dòng đó, không làm lỗi/crash toàn bảng và không ảnh hưởng các dòng khác.
+- **FR-092**: Thao tác Download ở Overview KHÔNG được ghi/sửa/xóa bất kỳ bản ghi tài liệu/tham chiếu/
+  purchase attachment nào — giữ đúng nguyên tắc chỉ đọc đã áp dụng cho nút Download ở View (Update 10)
+  và cho toàn bộ màn hình Overview (FR-013).
+- **FR-093**: Nút **Back** trên màn hình **View Sales Order** (đã có sẵn trên giao diện nhưng chưa
+  được đặc tả) MUST điều hướng người dùng quay lại màn hình **EUTR Sales Orders** (Overview) — cùng
+  đích đến với nút Back của Map File (FR-033).
+- **FR-094**: Khi người dùng nhấn nút Back trên màn hình Map File (FR-033) hoặc màn hình View (FR-093)
+  để quay lại Overview, hệ thống MUST khôi phục đúng từ khóa tìm kiếm đang có trên ô tìm kiếm của
+  Overview tại thời điểm người dùng điều hướng đi (trước khi mở Map File/View) — không bị xóa trắng.
+- **FR-095**: Cùng với từ khóa tìm kiếm ở FR-094, hệ thống MUST khôi phục đúng trang (page) đang xem
+  trên Overview tại thời điểm điều hướng đi — không tự động nhảy về trang đầu.
+- **FR-096**: Sau khi khôi phục từ khóa/trang theo FR-094/FR-095, bảng MUST hiển thị đúng danh sách
+  sales order khớp với từ khóa/trang đó dựa trên dữ liệu tải mới nhất từ nguồn dữ liệu thật tại thời
+  điểm quay lại — không phải một bản chụp/cache tĩnh giữ nguyên từ trước khi điều hướng đi.
+- **FR-097**: Hành vi khôi phục ở FR-094/FR-095/FR-096 MUST áp dụng giống nhau bất kể người dùng dùng
+  nút Back trong màn hình Map File/View hay dùng nút Back của trình duyệt/thiết bị để quay lại
+  Overview.
+- **FR-098**: Nếu người dùng vào Overview bằng một cách khác — chọn mục điều hướng "EUTR Sales
+  Orders" từ menu, hoặc theo liên kết breadcrumb "EUTR Sales Orders" từ một màn hình khác — không phải
+  bằng việc Back từ Map File/View của cùng một lượt xem, Overview KHÔNG bắt buộc phải khôi phục từ
+  khóa/trang của lần xem trước; màn hình MUST hiển thị danh sách mặc định (không lọc, trang đầu).
+- **FR-099**: Nếu từ khóa tìm kiếm đã khôi phục theo FR-094 không còn khớp bất kỳ sales order nào
+  (dữ liệu đã thay đổi trong lúc người dùng ở Map File/View), bảng MUST hiển thị đúng trạng thái trống
+  ("No data") theo quy tắc hiện có (FR-012) — không hiển thị lỗi hay dữ liệu sai.
+- **FR-100**: Màn hình View Sales Order MUST bổ sung một khu vực mới tên **"AVAILABLE FILES"** ở box
+  bên phải, đặt ngay bên dưới danh sách "Steps missing files" hiện có (không thay thế danh sách đó).
+  Mỗi dòng tài liệu trong khu vực mới này MUST hiển thị tên file cùng các chip Map status/File
+  type/PO value/Step name và nút **View**, theo đúng cách trình bày của khu vực AVAILABLE FILES ở
+  Step 2 màn hình Map File (Update 5/7) — nhưng KHÔNG có nút **Edit** và KHÔNG có nút/hành động
+  **Upload** nào (màn hình View tiếp tục ở chế độ chỉ đọc — FR-042).
+- **FR-101**: Mặc định khi mở màn hình View, hoặc bất cứ khi nào người dùng click chọn một chip
+  template ở toolbar `template-tree-toolbar` (kể cả click lại đúng chip đang được chọn), khu vực
+  AVAILABLE FILES MUST hiển thị **toàn bộ** tài liệu thuộc đúng template đang được chọn xem
+  (`selectedTemplateCode`) — cùng tập tài liệu mà Template Checklist đang dùng để xác định Map status
+  cho template đó (đúng quy tắc PO/Template ở FR-059/FR-061) — không lọc theo bất kỳ step nào.
+- **FR-102**: Khi người dùng click vào một step (node) bất kỳ trong cây Template Checklist bên trái,
+  khu vực AVAILABLE FILES bên phải MUST cập nhật lại ngay để chỉ còn hiển thị (các) tài liệu đã
+  "Mapped" cho đúng step đó; nếu step được click có step con (là một node cha), danh sách MUST gồm tài
+  liệu đã Mapped cho chính step đó và cho toàn bộ step con/cháu của nó trong cùng cây.
+- **FR-103**: Việc click chọn 1 step theo FR-102 chỉ thay đổi tài liệu nào đang liệt kê ở khu vực
+  AVAILABLE FILES trên giao diện — KHÔNG kích hoạt bất kỳ hành vi map/unmap/tick chọn/ghi dữ liệu nào
+  (giữ đúng nguyên tắc chỉ đọc của màn hình View, FR-042), và KHÔNG làm thay đổi trạng thái mở
+  rộng/thu gọn (expand/collapse) hiện tại của cây.
+- **FR-104**: Sau khi đã lọc theo 1 step (FR-102), khi người dùng click vào một chip template bất kỳ ở
+  toolbar `template-tree-toolbar` MUST xoá bộ lọc theo step đó, đưa khu vực AVAILABLE FILES quay lại
+  hiển thị toàn bộ tài liệu của template đang được chọn xem (đúng trạng thái mặc định ở FR-101) — áp
+  dụng bất kể người dùng click vào chip của cùng template đang xem hay chip của một template khác.
+- **FR-105**: Nút View trên mỗi dòng tài liệu ở khu vực AVAILABLE FILES mới này MUST mở đúng popup xem
+  trước nội dung file đã dùng cho nút View ở AVAILABLE FILES của Map File (Update 9, dùng lại popup
+  xem trước có sẵn của 004-eutr-documents) — popup chỉ đọc hoàn toàn, không có trường chỉnh sửa hay
+  nút Save nào; đóng popup KHÔNG ghi/sửa/xóa bất kỳ dữ liệu tài liệu nào.
+- **FR-106**: Nếu template đang được chọn xem không có bất kỳ tài liệu nào (trước khi lọc theo step),
+  hoặc step vừa được click chưa có tài liệu Mapped nào (sau khi lọc), khu vực AVAILABLE FILES MUST
+  hiển thị trạng thái trống rõ ràng (ví dụ "No files available"/"No files for this step"), không hiển
+  thị lỗi hay dữ liệu giả, và không lẫn tài liệu của step/template khác.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -1137,8 +1556,17 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   đọc dữ liệu từ bảng này để hiển thị cột Template, không tạo/sửa/xóa bản ghi.
 - **Template** (bảng `eutr_templates`, tra cứu theo `TemplateCode`): cung cấp tên hiển thị cho mỗi
   template được hiển thị ở cột Template.
-- **Progress** (thuộc tính demo hiển thị trên mỗi dòng): giá trị mẫu cố định, hiện chưa gắn với
-  entity hay logic nghiệp vụ thật nào — chỗ dành sẵn (placeholder) cho một tính năng sau.
+- **Progress** (thuộc tính hiển thị trên mỗi dòng Overview) — **cập nhật từ Update 12**: không còn là
+  giá trị demo cố định; là kết quả tính toán thật theo `salesId` của dòng đó, tổng hợp từ **Purchase
+  Attachment** (template nào đã lưu cho Sales ID này), **Template**/chi tiết template (step nào Required,
+  `takeFrom` gì), và tài liệu thật gắn với các PO thuộc Sales ID đó (bảng `eutr_references`) — đúng công
+  thức `completed`/`total`/`pct` mà Map File dùng cho biến `progress` của nó (FR-077 đến FR-079, FR-082).
+  Không tạo/sửa/xóa bản ghi nào — thuần đọc và tính toán để hiển thị.
+- **Download hồ sơ EUTR** (thuộc tính hành động trên mỗi dòng Overview) — **cập nhật từ Update 13**:
+  không còn là nút demo/no-op; khi nhấn, tổng hợp đúng các nguồn dữ liệu thật của Sales Order dòng đó
+  (Purchase Attachment, Template/chi tiết template, tài liệu thật qua `eutr_references`) thành cấu trúc
+  thư mục (mỗi template 1 thư mục con, chỉ chứa tài liệu "Mapped") và tải xuống 1 file zip — dùng đúng
+  quy tắc/nguồn dữ liệu đã áp dụng cho nút Download của View (Update 10). Không tạo/sửa/xóa bản ghi nào.
 - **Purchase Order** (dữ liệu tham chiếu từ D365, reference type = 16, chỉ đọc): PO thuộc về một
   Sales Order xác định qua trường `InterCompanyOriginalSalesId` = Sales ID; mỗi PO có sẵn (các)
   thông tin định danh và một template gắn kèm từ D365. Dữ liệu này KHÔNG được tạo/sửa/xóa từ hệ
@@ -1190,7 +1618,11 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   PO ↔ Template ở trên) để đóng gói thành một file zip có cấu trúc thư mục: thư mục gốc đặt tên theo
   `SalesId`-`CustomerCode`-`CustomerName`, thư mục con theo tên thật của từng template, chứa đúng các
   file tài liệu "Mapped" của template đó — không tạo/sửa/xóa bất kỳ bản ghi nào ở `eutr_documents`,
-  `eutr_references`, hay `eutr_purchase_attachments`.
+  `eutr_references`, hay `eutr_purchase_attachments`. **Cập nhật từ Update 15**: box bên phải của màn
+  hình này nay còn hiển thị thêm khu vực AVAILABLE FILES (đọc thêm, không ghi) liệt kê các `Document` đã
+  "Mapped" cho template/step đang xem — mặc định theo template đang chọn ở toolbar, thu hẹp theo step
+  khi người dùng click vào cây; nút View trên mỗi dòng chỉ đọc thêm nội dung file (giống Update 9 của
+  Map File), không tạo/sửa/xóa bản ghi nào.
 
 ## Success Criteria *(mandatory)*
 
@@ -1205,8 +1637,7 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   sách có hàng trăm bản ghi.
 - **SC-004**: 100% số dòng hiển thị đúng (các) template thật gắn với Sales ID đó (tra cứu từ
   `eutr_purchase_attachments`), bao gồm đúng các trường hợp có nhiều template trên cùng 1 dòng và
-  trường hợp chưa có template nào; cột Progress vẫn hiển thị nhất quán giá trị demo trên 100% số
-  dòng — không có dòng nào gây lỗi hiển thị hay crash màn hình.
+  trường hợp chưa có template nào — không có dòng nào gây lỗi hiển thị hay crash màn hình.
 - **SC-005**: 100% Sales ID hợp lệ mở màn hình Map File đều thấy đúng header thật (Sales ID/Customer/
   Customer name) khớp với dữ liệu đã thấy ở Overview — không có trường hợp hiển thị dữ liệu mock.
 - **SC-006**: 100% PO hiển thị ở Step 1 đến từ D365 (reference type = 16, lọc theo
@@ -1298,6 +1729,50 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   bar, chip Mapped, footer Step 2 của Map File) bằng đúng số của `missingRequired` trên cùng màn hình,
   và bằng đúng số liệu Required/completed/missing tương ứng ở header/Validation Summary của màn hình
   View cho cùng Sales Order — kiểm chứng bằng dữ liệu thử dựng step Required loại `AUTO_SOURCES`.
+- **SC-036**: 100% số dòng ở Overview có ít nhất 1 template đã lưu trong `eutr_purchase_attachments`
+  hiển thị đúng `progress.completed`/`progress.total`/`progress.pct` khớp với kết quả tính cùng công
+  thức cho đúng Sales ID đó khi mở màn hình Map File — không có dòng nào lệch số liệu.
+- **SC-037**: 100% dòng có Sales ID chưa có bản ghi nào trong `eutr_purchase_attachments` hiển thị
+  trạng thái trống rõ ràng ở cột Progress, không hiển thị `0/0`, `0%`, hay giá trị demo.
+- **SC-038**: 0% lượt tải trang Overview với danh sách nhiều dòng phát sinh gọi API tính Progress theo
+  kiểu từng dòng một (N+1) — việc tải dữ liệu Progress cho các dòng trên trang hiện tại áp dụng theo lô.
+- **SC-039**: 100% dòng bị lỗi khi tải dữ liệu tính Progress hiển thị trạng thái lỗi rõ ràng riêng ở ô
+  Progress của đúng dòng đó, không chặn hay làm lỗi phần còn lại của bảng, và không hiển thị giá trị
+  demo để che lỗi.
+- **SC-040**: 100% lượt nhấn Download trên một dòng có Sales Order với ít nhất 1 tài liệu "Mapped" ở
+  Overview tải xuống đúng 1 file zip có cấu trúc thư mục/tên file khớp với kết quả tải bằng nút Download
+  ở màn hình View cho đúng Sales Order đó.
+- **SC-041**: 100% lượt nhấn Download trên một dòng không có tài liệu "Mapped" nào (ở bất kỳ template,
+  kể cả chưa có template nào) hiển thị đúng thông báo không có tài liệu để tải, không tải file zip rỗng.
+- **SC-042**: 0% lượt Download đang xử lý ở một dòng chặn hoặc làm sai trạng thái tìm kiếm/chuyển trang/
+  Download của các dòng khác trên cùng bảng.
+- **SC-043**: 0% lượt Download (thành công hoặc thất bại) ở Overview làm thay đổi bất kỳ bản ghi nào ở
+  `eutr_documents`, `eutr_references`, hay `eutr_purchase_attachments`.
+- **SC-044**: 100% lượt nhấn Back từ Map File hoặc View sau khi đã tìm kiếm một từ khóa trên Overview
+  hiển thị lại đúng từ khóa đó trong ô tìm kiếm — 0% lượt hiển thị ô tìm kiếm trống trong trường hợp
+  này.
+- **SC-045**: 100% lượt nhấn Back như trên, khi trước đó người dùng đã chuyển sang một trang khác
+  trang đầu, hiển thị lại đúng trang đang xem trước khi điều hướng đi — không tự nhảy về trang đầu.
+- **SC-046**: 100% lượt Back về Overview theo FR-094/FR-095 vẫn hiển thị dữ liệu Template/Progress cho
+  các dòng đang hiển thị khớp với dữ liệu thật mới nhất tại thời điểm đó — không hiển thị lại dữ liệu
+  snapshot cũ từ trước khi điều hướng đi.
+- **SC-047**: 100% lượt người dùng chủ động vào Overview qua mục điều hướng/breadcrumb (không qua nút
+  Back của Map File/View) hiển thị danh sách mặc định (không lọc, trang đầu) — không giữ lại từ khóa
+  của một lượt xem trước đó.
+- **SC-048**: 0% khác biệt về từ khóa/trang được khôi phục giữa việc dùng nút Back trong màn hình Map
+  File/View và dùng nút Back của trình duyệt/thiết bị để quay lại Overview.
+- **SC-049**: 100% lượt mở màn hình View hoặc chọn lại một chip template ở toolbar hiển thị đầy đủ toàn
+  bộ tài liệu thuộc đúng template đang xem ở khu vực AVAILABLE FILES mới, khớp với tập tài liệu Map
+  status mà Template Checklist đang dùng cho template đó tại cùng thời điểm.
+- **SC-050**: 100% lượt click vào 1 step trong cây thu hẹp đúng danh sách AVAILABLE FILES chỉ còn tài
+  liệu Mapped cho step đó (và step con/cháu của nó, nếu có) — 0% lượt hiển thị lẫn tài liệu của step
+  khác.
+- **SC-051**: 100% lượt click vào chip template ở toolbar sau khi khu vực AVAILABLE FILES đang lọc theo
+  1 step xoá đúng bộ lọc đó, khôi phục hiển thị toàn bộ tài liệu của template đang xem.
+- **SC-052**: 100% lượt nhấn nút View ở khu vực AVAILABLE FILES mới mở đúng popup xem trước nội dung
+  file; 0% lượt làm thay đổi bất kỳ bản ghi `eutr_documents`/`eutr_references` nào.
+- **SC-053**: 0% khu vực AVAILABLE FILES mới ở màn hình View hiển thị nút Edit hoặc nút/hành động
+  Upload — giữ đúng nguyên tắc chỉ đọc của toàn màn hình View.
 
 ## Assumptions
 
@@ -1309,8 +1784,35 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   sales order.
 - "Customer" và "Customer name" là hai cột riêng biệt: Customer = mã/tài khoản khách hàng, Customer
   name = tên hiển thị của khách hàng — đúng theo cách người dùng liệt kê hai cột tách biệt.
-- Progress vẫn là cột hiển thị dữ liệu demo cố định theo đúng yêu cầu ban đầu, không kết nối tới bất
-  kỳ nguồn dữ liệu hay logic nghiệp vụ thật nào ở phạm vi tính năng này.
+- (Đã thay thế ở Update 12) Trước Update 12, Progress là cột hiển thị dữ liệu demo cố định theo đúng
+  yêu cầu ban đầu, không kết nối tới bất kỳ nguồn dữ liệu hay logic nghiệp vụ thật nào; từ Update 12,
+  giả định này không còn áp dụng.
+- (Update 12) Công thức tính Progress ở Overview lấy nguyên vẹn từ biến `progress` của Map File
+  (`computeProgress()` + vòng lặp cộng dồn qua `templateComputations`) — Update 12 không định nghĩa lại
+  hay rút gọn quy tắc Required/`AUTO_SOURCES`/cặp PO-Template riêng cho Overview; nếu công thức đó thay
+  đổi ở Map File trong một cập nhật sau, Overview cũng cần cập nhật theo để tiếp tục khớp nhau (FR-086).
+- (Update 12) Cách thức cụ thể để nạp theo lô (batch) dữ liệu cần thiết (template + tài liệu đã map)
+  cho nhiều Sales ID cùng lúc nhằm tính Progress cho toàn bộ dòng trên trang hiện tại — ví dụ mở rộng
+  một use case sẵn có hay bổ sung một nguồn dữ liệu tổng hợp mới — là quyết định kỹ thuật ở giai đoạn
+  plan, không thuộc phạm vi đặc tả nghiệp vụ ở đây; yêu cầu duy nhất là tránh N+1 API call theo dòng
+  (FR-085).
+- (Update 12) Trạng thái trống của Progress khi chưa có template (FR-083) và trạng thái "không có step
+  bắt buộc" khi có template nhưng tổng Required = 0 (FR-084) là hai trạng thái hiển thị khác nhau; cách
+  trình bày cụ thể (chữ/icon) cho từng trạng thái là quyết định thiết kế giao diện ở giai đoạn plan.
+- (Update 13) Nút Download ở Overview dùng lại **nguyên trạng** cơ chế tải file zip đã có ở View (Update
+  10) — cùng use case/luồng tạo zip, cùng quy tắc cấu trúc thư mục/tên file/thông báo khi rỗng — không
+  định nghĩa lại hay rút gọn quy tắc riêng cho Overview; nếu cơ chế đó thay đổi ở View trong một cập
+  nhật sau, Overview cũng cần cập nhật theo để tiếp tục nhất quán.
+- (Update 13) Vì dữ liệu để dựng file zip (template/tài liệu Mapped) chỉ cần tải cho đúng 1 Sales ID khi
+  người dùng nhấn Download (không phải cho mọi dòng khi mở trang), việc này là một lượt tải dữ liệu độc
+  lập, riêng biệt với lượt tải theo lô đã áp dụng cho cột Template (Update 1)/Progress (Update 12) — hai
+  cơ chế tải này không cần chia sẻ hay gộp chung lại với nhau ở phạm vi đặc tả này; cách triển khai cụ
+  thể (có tái sử dụng lại dữ liệu Template/Progress đã tải sẵn của dòng đó hay tải lại từ đầu) là quyết
+  định kỹ thuật ở giai đoạn plan.
+- (Update 13) Trạng thái đang xử lý/lỗi của nút Download hiển thị riêng theo từng dòng (không dùng một
+  trạng thái loading/lỗi chung cho toàn bảng) — vì người dùng có thể nhấn Download ở nhiều dòng khác
+  nhau gần như đồng thời; cách trình bày cụ thể (icon loading, vị trí thông báo lỗi) là quyết định thiết
+  kế giao diện ở giai đoạn plan.
 - Cột Template hiển thị **tên** template (tra cứu qua `eutr_templates.Name` theo `TemplateCode`),
   không hiển thị `TemplateCode` thô — theo đúng mẫu tra cứu tên hiển thị từ mã/id đã dùng ở các cột
   khác trong hệ thống (ví dụ cột Alert for của 003-eutr-templates).
@@ -1445,3 +1947,18 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   Update 11 chỉ thêm quy tắc loại trừ `AUTO_SOURCES` vào cách tính của `progress.total`/
   `progress.completed` để hai biến này nhất quán với nhau (`total - completed` = `missingRequired`),
   không gộp chung hay thay thế biến nào.
+- (Update 14) Cơ chế kỹ thuật cụ thể để khôi phục từ khóa/trang khi quay lại Overview (ví dụ đồng bộ
+  qua tham số trên URL, hay lưu tạm vào bộ nhớ phiên của trình duyệt) là quyết định kỹ thuật ở giai
+  đoạn plan, không thuộc phạm vi đặc tả nghiệp vụ ở đây — hệ thống đã có sẵn cả hai mẫu hình này ở các
+  màn hình khác trong ứng dụng (ví dụ đồng bộ trang qua tham số URL ở một số màn hình compliance, và
+  lưu tạm từ khóa tìm kiếm vào bộ nhớ phiên ở luồng tìm kiếm/dashboard) có thể tái sử dụng — không bắt
+  buộc phải xây dựng cơ chế lưu trạng thái mới cho riêng Overview.
+- (Update 14) Việc khôi phục từ khóa/trang chỉ áp dụng cho đúng luồng điều hướng đi-và-quay-lại giữa
+  Overview và Map File/View trong phạm vi tính năng này (qua nút Back hoặc nút Back của trình duyệt) —
+  không mở rộng sang việc nhớ từ khóa/trang giữa các lượt mở Overview hoàn toàn độc lập qua mục điều
+  hướng/breadcrumb, theo đúng phạm vi yêu cầu ban đầu của người dùng.
+- (Update 14) "Dữ liệu hiển thị như cũ" trong yêu cầu ban đầu được hiểu là danh sách hiển thị khớp lại
+  đúng theo từ khóa/trang đã có trước khi điều hướng đi (tính theo dữ liệu thật mới nhất tại thời điểm
+  quay lại) — không phải giữ nguyên một bản chụp/cache tĩnh của chính danh sách đó, để không mâu thuẫn
+  với nguyên tắc luôn hiển thị dữ liệu thật mới nhất đã áp dụng cho Template/Progress/Download ở các
+  Update trước.

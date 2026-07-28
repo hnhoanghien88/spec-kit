@@ -688,3 +688,233 @@ fallback shape `ExportEutrTemplatesUseCase.js` already uses if the header is som
 | `progress.total`/`progress.completed` (`computeProgress()`) | `MapFilePage.jsx` | Required steps only, no `AUTO_SOURCES` exclusion | Required steps only, **excludes** `AUTO_SOURCES` (matches the other 3 variables below) |
 | `missingRequired` | `MapFilePage.jsx` | Required steps only, excludes `AUTO_SOURCES` | Unchanged |
 | `requiredDetails`/`mappedRequired`/`missingRequired` | `ViewSalesOrderPage.jsx` | Required steps only, excludes `AUTO_SOURCES` | Unchanged |
+
+## Update 12 (2026-07-27): Real, batched Progress on Overview — 2 new batch read endpoints, 1 new shared frontend util
+
+> Covers spec FR-082..FR-086. No new table, no migration. Two new **additive** batch read endpoints
+> (both read-only, both cloning already-working SQL — see research.md Decisions 43-44); one new shared
+> frontend util module (`utils/progressUtils.js`, Decision 42) that `MapFilePage.jsx`/
+> `ViewSalesOrderPage.jsx` are refactored to consume instead of their own local copies, and that
+> `SalesOrderOverviewPage.jsx` newly consumes as its 3rd call site.
+
+### New endpoint 1 — raw purchase attachments for many Sales IDs
+
+`POST /api/eutr-purchase-attachments/by-sales-ids-raw` (policy `EutrPurchaseAttachments.Read`, reused)
+
+Request: `List<string>` (Sales IDs of every row on the current page — same shape as the existing
+`by-sales-ids` action's request).
+
+Response: `List<PurchaseAttachmentDto>` (existing class, unchanged — `{SalesId, PurchId, TemplateCode}`),
+one row per `eutr_purchase_attachments` record whose `SalesId` is in the request list — **not**
+deduplicated, **not** joined to `eutr_templates` (unlike the existing `by-sales-ids`, which is both).
+
+```sql
+SELECT SalesId, PurchId, TemplateCode
+FROM eutr_purchase_attachments
+WHERE SalesId IN @SalesIds;
+```
+
+### New endpoint 2 — full template details for many Template Codes in one round trip
+
+`POST /api/eutr-templates/by-codes` (policy `EutrTemplates.ReadAll`, reused)
+
+Request: `List<string>` (distinct `TemplateCode`s across every row's purchase attachments on the current
+page — deduplicated client-side before calling, since many Sales Orders typically share templates).
+
+Response: `List<EutrTemplatesResponseDto>` (existing class, unchanged — same shape `GetById`/`get-all`
+already return, `Details` populated per template).
+
+```sql
+-- 1) header rows for every requested code
+SELECT t.Id, t.Code, t.Name, t.IsDefault, t.VersionId, t.Status, t.AlertFor,
+       g.Name AS AlertForName, t.IsDeleted, t.IsHide,
+       t.CreatedBy, t.CreatedDate, t.UpdatedBy, t.UpdatedDate
+FROM eutr_templates t
+LEFT JOIN compl_group_email g ON g.Id = t.AlertFor
+WHERE t.Code IN @Codes AND t.IsDeleted = 0;
+
+-- 2) detail rows for every template found above, grouped back onto each header row by TemplateId
+SELECT d.Id, d.TemplateId, d.ParentId, d.StepId, d.RequirementType, d.TakeFrom, d.DisplayOrder,
+       d.CreatedBy, d.CreatedDate, d.UpdatedBy, d.UpdatedDate,
+       s.Name AS StepName
+FROM eutr_template_details d
+LEFT JOIN eutr_steps s ON s.Id = d.StepId
+WHERE d.TemplateId IN @Ids
+ORDER BY d.DisplayOrder;
+```
+
+### Reused unchanged — `list-po-references`
+
+`POST /api/eutr-documents/list-po-references` (policy `EutrDocuments.ReadAll`) — zero change. Called
+once per Overview page load with the **union** of every `PurchId` from endpoint 1's response across all
+visible rows (confirmed generic/SalesId-agnostic already — see research.md Decision 45).
+
+### Frontend: shared `progressUtils.js` (new file, colocated per the existing `utils/` convention)
+
+`compliance-client/src/presentation/pages/eutr-sales-orders/utils/progressUtils.js`
+
+```
+AUTO_SOURCES                                                   // moved verbatim from MapFilePage.jsx
+computeProgress(details, fileMappings)                          // moved verbatim from MapFilePage.jsx
+buildTemplateComputations(templatesData, filesByPurchId,
+                           purchIdToTemplateCode)                // generalized from MapFilePage.jsx's
+                                                                  //   (Update 7) / ViewSalesOrderPage.jsx's
+                                                                  //   (Update 8) own templateComputations
+```
+
+`MapFilePage.jsx` and `ViewSalesOrderPage.jsx` are refactored (behavior-preserving) to import these
+instead of keeping their own local copies — see research.md Decision 42.
+
+### Overview per-row Progress cell — data flow
+
+| Step | Data source | Notes |
+|---|---|---|
+| 1 | `by-sales-ids-raw` (new) | Raw `{salesId, purchId, templateCode}` for every visible row, in one call |
+| 2 | `by-codes` (new), given the distinct `templateCode`s from step 1 | Full step-detail tree per distinct template, in one call |
+| 3 | `list-po-references` (unchanged), given the union of `purchId`s from step 1 | Mapped documents per PO, in one call |
+| 4 | client-side, per row: `buildTemplateComputations` (shared util) + `computeProgress` (shared util), summed across that row's own templates | Same formula Map File uses for its own `progress` (FR-082) |
+
+### Overview Progress cell — 4 discriminated states (FR-083/FR-084)
+
+| State | Condition | Rendered as |
+|---|---|---|
+| `empty` | No `by-sales-ids-raw` rows for this `salesId` (never Save-PO-Mapping'd) | Same blank placeholder as the Template column's own empty state (FR-007b) |
+| `no-required` | Has purchase-attachment rows, but 0 Required/non-`AUTO_SOURCES` steps across all matched templates | Distinct caption (e.g. "Không có step bắt buộc") — never `0/0`/`0%` |
+| `ok` | Normal case | `{completed}/{total} steps`, `{pct}%`, progress bar — same rendering `DEMO_PROGRESS` used, now real values |
+| `error` | Any of the 3 batch calls failed | Distinct error indicator scoped to the Progress cell only (FR-085) — other columns/rows unaffected |
+
+### Non-goals confirmed (Update 12)
+
+- No server-side Progress computation — formula stays client-side, single source of truth
+  (`progressUtils.js`).
+- No change to the existing `by-sales-ids`/Template column behavior.
+- No per-row network call — all 3 calls are batched once per page load (FR-085).
+- No new table, no migration.
+
+## Update 13 (2026-07-27): Real, per-row, on-demand Download on Overview (zero backend change)
+
+> Covers spec FR-087..FR-092. No new entity, no new DTO, no new endpoint, no migration — reuses
+> `download-zip` byte-for-byte from Update 10 (see research.md Decision 49). The only new frontend
+> piece is an on-demand (click-time, not batched) data pipeline per row, reusing `by-codes` (Update 12,
+> Decision 44) as a single-row batch of that row's own distinct template codes.
+
+### Per-row Download click — data flow (on-demand, only for the clicked row)
+
+| Step | Data source | Notes |
+|---|---|---|
+| 1 | `GetPurchaseAttachmentsBySalesIdUseCase` (existing, unchanged — singular `by-sales-id/{salesId}`) | This row's own raw `{purchId, templateCode}` pairs |
+| 2 | `by-codes` (Update 12's new endpoint), given this row's own distinct `templateCode`s | Reused as a 1-row "batch of N templates", not a 3rd inline 2-call-per-template loop |
+| 3 | `GetEutrDocumentsPoReferencesUseCase` (existing, unchanged), given this row's own `purchId`s | Mapped documents for this row's own POs only |
+| 4 | client-side: `buildTemplateComputations` (shared util, Update 12) → `folders` payload (`{folderName: templateName, files: [{fileId, fileName}]}[]`), same shape as `ViewSalesOrderPage.jsx`'s `buildDownloadFolders` | |
+| 5 | `DownloadEutrSalesOrderZipUseCase` (existing, unchanged) → `POST /api/eutr-documents/download-zip` | Same request/response contract as Update 10 |
+
+### Overview Download button — per-row state (FR-089/FR-090/FR-091)
+
+| State | Trigger | Behavior |
+|---|---|---|
+| idle | default | `DownloadIcon`, clickable, never pre-disabled (FR-089) |
+| in-flight | row's `salesId` is in the new `downloadingSalesIds` `Set` state | That row's icon swaps to a small `CircularProgress`; all other rows/search/pagination remain fully interactive (FR-090) |
+| no-mapped-files | steps 1-4 complete but every folder's `files` is empty | Row-scoped message, same copy as View's FR-074; `download-zip` is never called (FR-089) |
+| error | any of steps 1-5 throws | Row-scoped error message (FR-091); other rows unaffected |
+
+### Non-goals confirmed (Update 13)
+
+- No new backend endpoint/DTO/migration/policy — `download-zip` reused exactly as Update 10 shipped it.
+- No batching of Download's own data fetch across rows (FR-088 — on-demand, single-row, opposite of
+  Update 12's Progress batching).
+- No write of any kind to `eutr_documents`/`eutr_references`/`eutr_purchase_attachments` (FR-092).
+- No change to `ViewSalesOrderPage.jsx`'s own Download behavior — only its internal implementation now
+  routes through the shared `buildTemplateComputations` util (Update 12) instead of its own inline copy.
+
+## Update 14 (2026-07-28): Preserve Overview's search/page across Back navigation (frontend-only, no new entity/DTO)
+
+> Covers spec FR-093..FR-099. No new table, no new entity, no new DTO, no new endpoint, no migration —
+> this update is 100% client-side routing/state, the same category as Update 11. The only "data model"
+> involved is client-side: the browser's own URL query-string on Overview's route, and a one-shot
+> `location.state` flag passed at navigation time. See research.md Decisions 53-56.
+
+### New client-side state: Overview's URL query parameters
+
+| Param | Type | Default when absent | Set by |
+|---|---|---|---|
+| `search` | string | `''` | `SalesOrderOverviewPage.jsx`'s debounced search callback |
+| `page` | number (0-based) | `0` | `SalesOrderOverviewPage.jsx`'s page-change handler |
+| `page-size` | number | `DEFAULT_PAGE_SIZE` (100) | `SalesOrderOverviewPage.jsx`'s page-size-change handler |
+
+`page`/`page-size` reuse the exact key names already established by `compliance-master/index.jsx`
+(Decision 53); `search` is new, specific to this screen. All three are written with
+`setSearchParams(next, { replace: true })` — updating the current history entry in place, not pushing
+a new one per change.
+
+### New client-side state: `location.state.fromOverview`
+
+| Field | Type | Set by | Read by |
+|---|---|---|---|
+| `fromOverview` | `true` (one-shot flag; absent otherwise) | `SalesOrderOverviewPage.jsx`'s two `navigate()` calls to Map File/View | `MapFilePage.jsx`/`ViewSalesOrderPage.jsx`'s `handleBack` |
+
+Not persisted anywhere — this is React Router's own `location.state`, scoped to the single navigation
+entry it was set on; it does not survive a hard page reload (by design — see research.md Decision 54's
+Rationale for why the fallback path is exactly right for that case).
+
+### Back-button behavior (FR-094..FR-099)
+
+| Condition | `handleBack` action | Result |
+|---|---|---|
+| `location.state?.fromOverview === true` | `navigate(-1)` | Pops to the exact prior Overview URL — `search`/`page`/`page-size` intact (FR-094/FR-095/FR-097) |
+| `location.state?.fromOverview` absent (deep link, hard reload, or the flag didn't survive) | `navigate('/eutr/sales-orders')` (unchanged from Update 3) | Default, unfiltered, page-one list — same as menu/breadcrumb entry (FR-098) |
+
+Every restore re-fetches live data through the exact same `fetchSalesOrders`/`fetchTemplatesForRows`/
+`fetchProgressForRows` chain already used today — no snapshot/cache of the previous fetch is
+introduced (FR-096, research.md Decision 55).
+
+### Non-goals confirmed (Update 14)
+
+- No new backend endpoint/DTO/migration/policy — 100% frontend.
+- No new shared util/hook file (research.md Decision 56) — the fix stays inline in the 3 files it
+  touches.
+- No caching of Overview's previous fetch results — every restore is a fresh, live fetch (FR-096).
+- No change to the menu/breadcrumb entry path — it keeps showing the default list (FR-098).
+
+## Update 15 (2026-07-28): AVAILABLE FILES panel on View, filtered by step (frontend-only, no new entity/DTO)
+
+> Covers spec FR-100..FR-106. No new table, no new entity, no new DTO, no new endpoint, no migration —
+> this update renders already-computed client-side data (`buildTemplateComputations`'s
+> `filesForTemplate`/`derivedFileMappings`, Update 12) as a new file-list panel, plus one additive
+> field (`typeName`) copied from an already-fetched response. See research.md Decisions 57-59.
+
+### New client-side state: `ViewSalesOrderPage.jsx`
+
+| State | Type | Default | Set by | Cleared by |
+|---|---|---|---|---|
+| `selectedStepId` | tree node `id` \| `null` | `null` (no filter) | Clicking a row in the `ViewNode` tree (new `onSelect` prop) | Clicking any chip in `template-tree-toolbar` (`setSelectedStepId(null)` added to the existing `onClick`) |
+| `viewerFile` | `{ open, fileId, fileName }` | `{ open: false, fileId: null, fileName: '' }` | Clicking a file row's new View `IconButton` | Closing `EutrFileViewerDialog` |
+
+### `realAvailableFiles` — one additive field
+
+| Field | Type | Source | Notes |
+|---|---|---|---|
+| `typeName` | string \| null | `list-po-references` response, `doc.typeName` (already returned since Update 5) | Same class of "already-fetched, never read" gap Update 8 fixed for `poCode` — no new query, no new endpoint. |
+
+### AVAILABLE FILES panel — content resolution (FR-101/FR-102/FR-104)
+
+| `selectedStepId` | Panel shows | Formula |
+|---|---|---|
+| `null` (default / just switched template) | Every document belonging to the active template's own PO(s) | `selectedTemplateComputation.filesForTemplate` (unfiltered) |
+| set to a leaf step's `id` | That step's own Mapped document(s) | `derivedFileMappings[selectedStepId]`, mapped to file objects |
+| set to a parent/category step's `id` | The union of Mapped documents across that step and all of its descendant steps | For every node id in `{selectedStepId} ∪ descendantIds(selectedStepId)`: union `derivedFileMappings[id]`, de-duplicated by file `id` |
+
+Each row renders the same shape `MapFilePage.jsx`'s AVAILABLE FILES already renders — file name, **Map
+status** (Mapped if the file's `id` appears in any `derivedFileMappings` value for the active template,
+else "No map"), **File type** (`typeName`, this update's new field), **PO value** (`poCode`, already
+present since Update 8), and **Step name** chip(s) (`stepNames`, already present since Update 4) — minus
+the Edit/Upload controls (View stays read-only, FR-042/FR-100).
+
+### Non-goals confirmed (Update 15)
+
+- No new backend endpoint/DTO/migration/policy — `get-file-by-idref` (via `EutrFileViewerDialog`) is
+  reused unmodified, exactly as already shipped for `MapFilePage.jsx` (Update 9).
+- No new shared util/hook file — `selectedStepId`/`viewerFile`/the panel's `useMemo` live inline in
+  `ViewSalesOrderPage.jsx` (research.md Decision 58's rationale, same restraint as Update 14/Decision 56).
+- No refetch of PO/document data on step click or template click — both only change what is rendered
+  from data already loaded when the screen opened (FR-063's existing no-refetch precedent, Update 8).
+- No change to `MapFilePage.jsx` — this update touches only `ViewSalesOrderPage.jsx`.

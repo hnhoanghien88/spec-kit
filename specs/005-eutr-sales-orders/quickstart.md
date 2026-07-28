@@ -601,3 +601,232 @@ Reuse (or construct) a Sales Order with one saved template containing at least:
   View's equivalent figures, for a Sales Order with an `AUTO_SOURCES` Required step) → frontend steps
   1-4.
 - SC-026 (Map File and View progress figures match 1-1 for the same Sales Order) → frontend step 3.
+
+## Update 12 (2026-07-27) — Real, batched Progress column on Overview
+
+This update introduces two new endpoints (`POST /api/eutr-purchase-attachments/by-sales-ids-raw`,
+`POST /api/eutr-templates/by-codes` — research.md Decisions 43-44) — verify each directly first, then
+verify the Overview grid's Progress column end to end.
+
+### Fixture setup
+
+Reuse the Update 7/8 two-template fixture (Template X/Template Y, PO-A→X/PO-B→Y, PO-B has a document on
+its shared "Invoice" step, PO-A does not) for one Sales Order (`SO-A`) — this gives a row with partial
+progress. In addition, prepare:
+- One Sales Order (`SO-B`) with **no** `eutr_purchase_attachments` rows at all (never Save PO Mapping'd).
+- One Sales Order (`SO-C`) with a saved template whose every step is Optional or has `takeFrom` in
+  `AUTO_SOURCES` (0 countable Required steps).
+
+### Backend verification
+
+1. Call the new raw batch endpoint with `["SO-A", "SO-B", "SO-C"]`.
+   **Expected**: `200 OK`; rows returned for `SO-A`/`SO-C` (their own `purchId`/`templateCode` pairs),
+   and **no** row at all for `SO-B` (FR-083's empty condition).
+2. Call the new template-by-codes endpoint with the distinct `templateCode`s from step 1's response.
+   **Expected**: `200 OK`; one entry per code, each with `details` fully populated (matching what
+   `GetById` would return for that same code individually) — confirm this in one call instead of one
+   `get-all`+`GetById` pair per code.
+3. Call `list-po-references` with the union of every `purchId` from step 1.
+   **Expected**: unchanged response shape (already generic per Decision 45) — documents grouped purely
+   by `PoCode`, including PO-B's Mapped "Invoice" document.
+
+### Frontend verification (manual)
+
+1. Open **EUTR Sales Orders** (Overview) with a page that includes `SO-A`, `SO-B`, and `SO-C`.
+   **Expected**: `DEMO_PROGRESS`'s fixed `3/5 steps, 60%` no longer appears on any row (FR-082).
+2. Check `SO-A`'s Progress cell.
+   **Expected**: shows the same `completed`/`total`/`pct` as Map File/View show for `SO-A` when opened
+   separately (FR-086/SC-036) — PO-A's own Required steps count as unmapped (its document belongs to a
+   different PO/template, per the same PO↔Template scoping already verified in Update 7/8), PO-B's
+   mapped "Invoice" step counts as completed.
+3. Check `SO-B`'s Progress cell.
+   **Expected**: a clear blank/empty placeholder (not `0/0`, not `0%`, not the old demo value) — FR-083/
+   SC-037.
+4. Check `SO-C`'s Progress cell.
+   **Expected**: a distinct "no Required steps" indicator (e.g. "Không có step bắt buộc") — visibly
+   different from `SO-B`'s empty state, and not `0%`/"chưa hoàn thành" — FR-084.
+5. Open the browser's network tab, reload the page.
+   **Expected**: exactly one call each to `by-sales-ids-raw`, `by-codes`, and `list-po-references` for
+   this page load — no per-row repetition of any of the three (FR-085/SC-038).
+6. Temporarily block/fail one of the three calls (e.g. via devtools request blocking) and reload.
+   **Expected**: every visible row's Progress cell shows a clear error state; Sales ID/Customer/
+   Customer name/Template columns and the Download button remain fully functional on every row
+   (FR-085/SC-039) — the failure does not crash or blank the rest of the table.
+7. Change page/search so a different set of Sales IDs is visible, then navigate back to the original
+   page.
+   **Expected**: Progress recomputes correctly for whichever rows are now visible — no stale values
+   from a previous page carried over.
+
+### Success criteria mapping (Update 12)
+
+- SC-036 (Overview Progress matches Map File's own computation for the same Sales Order) → frontend
+  step 2.
+- SC-037 (no purchase attachments → clear blank state, never `0/0`/`0%`/demo) → frontend step 3.
+- SC-038 (no N+1 — Progress data loads in a fixed, small number of batch calls per page) → frontend
+  step 5.
+- SC-039 (a failed Progress data load shows a per-row error, doesn't block the rest of the table) →
+  frontend step 6.
+
+## Update 13 (2026-07-27) — Real, per-row, on-demand Download on Overview
+
+This update introduces **no new endpoint** — it reuses `download-zip` (Update 10) and the new
+`by-codes` endpoint (Update 12) on demand, per row. Verify the Overview grid's Download button end to
+end; no new backend verification is needed beyond what Update 10/12 already covered directly.
+
+### Fixture setup
+
+Reuse Update 12's fixture (`SO-A` with partial Mapped/unmapped progress across Template X/Template Y,
+`SO-B` with no saved templates at all).
+
+### Frontend verification (manual)
+
+1. Open Overview, locate `SO-A`'s row, click its **Download** button.
+   **Expected**: a `.zip` downloads named `SO-A-<CustomerCode>-<CustomerName>.zip`; unzipping shows one
+   subfolder per saved template (a "Template X" folder, empty, and a "Template Y" folder containing
+   exactly PO-B's Mapped "Invoice" document) — byte-for-byte the same structure `ViewSalesOrderPage.jsx`
+   already produces for the same Sales Order (FR-087/SC-040).
+2. While `SO-A`'s Download is still in flight (simulate with a throttled network), click `SO-B`'s
+   Download button and use the search box.
+   **Expected**: `SO-B`'s Download proceeds independently (its own spinner, own result) and the search
+   box remains responsive — `SO-A`'s in-flight state does not block or freeze anything else on the page
+   (FR-090/SC-042).
+3. Click Download on `SO-B` (no saved templates at all).
+   **Expected**: the button is clickable (not pre-disabled); a clear "không có tài liệu nào để tải"
+   message appears scoped to that row; no zip downloads (FR-089/SC-041).
+4. Click Download on a Sales Order that has saved templates but zero Mapped documents in any of them.
+   **Expected**: same as step 3 — clear message, no download (FR-089/SC-041).
+5. Temporarily fail one of the on-demand fetch calls (e.g. block `by-codes` in devtools) for one row and
+   click that row's Download.
+   **Expected**: a clear error message scoped to that row only; other rows/search/pagination remain
+   unaffected (FR-091).
+6. Before and after step 1's download, check `eutr_documents`/`eutr_references`/
+   `eutr_purchase_attachments` for `SO-A` — confirm no row changed (FR-092/SC-043).
+7. Compare the zip downloaded in step 1 against the zip `ViewSalesOrderPage.jsx`'s own Download button
+   produces for `SO-A` (opened via the View screen).
+   **Expected**: identical folder names, identical files per folder (SC-040).
+
+### Success criteria mapping (Update 13)
+
+- SC-040 (Overview Download matches View's Download output for the same Sales Order) → frontend steps
+  1, 7.
+- SC-041 (no-Mapped-documents shows a clear message, no empty zip) → frontend steps 3-4.
+- SC-042 (one row's in-flight Download doesn't block search/pagination/other rows) → frontend step 2.
+
+## Update 14 (2026-07-28) — Preserve Overview's search/page when Back-navigating from Map File or View
+
+This update introduces **no new endpoint** — it is a pure frontend routing/state fix (Overview's own
+URL query params + a `location.state` flag). No new backend verification is needed; verify end to end
+in the browser.
+
+### Fixture setup
+
+Any Sales Order visible on Overview's first page works; for the page-restoration step, at least 2
+pages of results are needed (set page size to 10 via the pagination control, or use a dataset with
+more than `DEFAULT_PAGE_SIZE` rows).
+
+### Frontend verification (manual)
+
+1. Open Overview, type a Sales ID that matches exactly one row (e.g. `SO004957`) into the search box,
+   wait for the debounced fetch to settle.
+   **Expected**: the table shows only the matching row(s); the URL now includes `?search=SO004957`
+   (or similar) — check the address bar.
+2. Click that row's **Map File** button, then click **Back** on the Map File screen.
+   **Expected**: back on Overview, the search box still shows `SO004957` and the table still shows
+   only the matching row(s) — not the full unfiltered list (FR-094/SC-044).
+3. Repeat step 2, but click **View summary** instead of Map File, then click **Back** on the View
+   screen.
+   **Expected**: same result as step 2 (FR-093/FR-094).
+4. Clear the search box, change the page size so there are multiple pages, navigate to page 2, then
+   click Map File or View on a row on page 2, then click Back.
+   **Expected**: Overview shows page 2 again, not page 1 (FR-095/SC-045).
+5. Repeat step 2, but instead of clicking the in-app **Back** button, use the browser/device's own
+   Back button (or Alt+Left / swipe-back).
+   **Expected**: identical result to step 2 — search and page restored the same way (FR-097/SC-048).
+6. From Overview's default (unfiltered) view, open Map File for any row, then in a new tab (or after
+   closing and reopening the tab) paste the Map File URL directly and click its Back button.
+   **Expected**: Overview shows the default, unfiltered, page-one list — not an error, not a blank
+   search box that "should have" restored something (FR-098).
+7. From any other screen (not Map File/View for this feature), navigate to Overview via the left-nav
+   menu item "EUTR Sales Orders" while Overview previously had a search term active in the same tab.
+   **Expected**: Overview shows the default, unfiltered, page-one list — the previous search term is
+   not carried over into this fresh visit (FR-098/SC-047).
+8. While on Map File for a Sales Order matching a restored search term, use Save PO Mapping to change
+   that Sales Order's saved templates, then click Back.
+   **Expected**: Overview shows the restored search/page and this row's Template/Progress cells reflect
+   the just-saved change — not stale data from before the visit (FR-096/SC-046).
+9. Search for a term, then (in another tab or via direct DB edit) make that term match zero rows before
+   clicking Back from Map File/View.
+   **Expected**: Overview shows the "No data" empty state with the search box still showing the
+   restored term — not an error (FR-099).
+
+### Success criteria mapping (Update 14)
+
+- SC-044 (search restored after Back from Map File/View) → frontend steps 2, 3.
+- SC-045 (page restored after Back) → frontend step 4.
+- SC-046 (restored view shows live, not stale, Template/Progress data) → frontend step 8.
+- SC-047 (menu/breadcrumb entry shows the default list, not a stale search) → frontend step 7.
+- SC-048 (in-app Back and the browser's own Back behave identically) → frontend step 5.
+- SC-043 (Download never writes any document/reference/attachment data) → frontend step 6.
+
+## Update 15 (2026-07-28) — AVAILABLE FILES panel on View, filtered by the selected step
+
+This update introduces **no new endpoint** — it renders already-fetched, already-computed data
+(`selectedTemplateComputation.filesForTemplate`/`derivedFileMappings`) as a new panel and reuses
+`EutrFileViewerDialog` (already shipped for Map File, Update 9). No new backend verification is needed;
+verify end to end in the browser.
+
+### Fixture setup
+
+Open View (`/eutr/sales-orders/:salesId/view`) for a Sales Order with:
+- At least 2 saved templates (so the toolbar has more than one chip to switch between).
+- At least one template whose tree has a **parent** step with 2+ children, where at least one child has
+  a Mapped document and at least one child (or the parent itself) has none — this exercises the
+  subtree-aggregation behavior (FR-102) as well as the "no files for this step" empty state (FR-106).
+- At least one document whose `RefType` differs from another document's, so the File type chip has
+  more than one distinct value to visually confirm against `MapFilePage.jsx`'s own AVAILABLE FILES for
+  the same Sales Order.
+
+### Frontend verification (manual)
+
+1. Open View for the fixture Sales Order. **Expected**: below the existing "Steps missing files" list
+   in the right-hand box, a new **"AVAILABLE FILES (N)"** section appears, listing every document that
+   belongs to the currently-active template (same set `MapFilePage.jsx`'s own AVAILABLE FILES shows for
+   that template) — each row showing file name plus Map status/File type/PO value/Step name chips and a
+   View button, with no Edit button and no Upload button anywhere in this section (FR-100/FR-101).
+2. Click a **leaf** step in the Template Checklist tree that has a Mapped document.
+   **Expected**: AVAILABLE FILES narrows to show only that step's own document(s) — the count in the
+   section header drops accordingly (FR-102).
+3. Click a **parent** step in the tree whose children include at least one Mapped document.
+   **Expected**: AVAILABLE FILES shows the union of all of that parent's descendant steps' Mapped
+   documents — not empty, and not limited to only a document mapped directly to the parent node itself
+   (FR-102).
+4. Click a leaf step that has no Mapped document at all.
+   **Expected**: AVAILABLE FILES shows a clear empty state (e.g. "No files for this step") — not a blank
+   panel with no explanation, and not a leftover list from the previously-selected step (FR-106).
+5. After step 2 or 3 (a step filter is active), click the currently-active template's own chip in
+   `template-tree-toolbar` (the same chip already selected, not a different one).
+   **Expected**: AVAILABLE FILES clears the step filter and returns to showing the full file set of that
+   template, same as step 1 (FR-104).
+6. After a step filter is active, click a **different** template's chip in the toolbar.
+   **Expected**: the step filter clears (same as step 5) and AVAILABLE FILES shows the full file set of
+   the newly-selected template, not the previous template's filtered or unfiltered set (FR-104).
+7. Click the View button on any row in the new AVAILABLE FILES section.
+   **Expected**: the same read-only file-content preview popup already shipped for Map File's own View
+   button (Update 9) opens, showing the file's content — no Save button, no editable field anywhere in
+   the popup (FR-105).
+8. Confirm no network request fires for the AVAILABLE FILES panel itself when performing steps 2-6 (only
+   step 7's View click should trigger one new request, the file-content fetch) — check the browser's
+   Network tab.
+   **Expected**: zero new requests from step-click/template-click; exactly one new request (file
+   content by id) when View is clicked in step 7.
+
+### Success criteria mapping (Update 15)
+
+- SC-049 (default view shows the full file set of the active template) → frontend step 1.
+- SC-050 (step click narrows to that step's — and its descendants' — Mapped files only) → frontend
+  steps 2, 3, 4.
+- SC-051 (template-chip click clears the step filter, including re-clicking the active template) →
+  frontend steps 5, 6.
+- SC-052 (View button opens the read-only preview popup; no document data is modified) → frontend
+  step 7.
+- SC-053 (no Edit/Upload control appears in the new panel) → frontend step 1.

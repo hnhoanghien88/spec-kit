@@ -36,6 +36,28 @@ No request/response shape changes, no new endpoint, no policy change. See `data-
 section and `research.md` Decisions 31-34 for how these two already-available fields are used
 client-side.
 
+## Update 15 (2026-07-28) — AVAILABLE FILES panel: two already-returned pieces of data, no contract change
+
+Spec Update 15 (FR-100..FR-106, new AVAILABLE FILES panel + step filtering) introduces **no new and no
+changed endpoint**:
+
+- `GET /api/eutr-documents/get-file-by-idref?idRef={fileId}` (owned by `004-eutr-documents`) is now
+  also reached from this screen — indirectly, through the reused `EutrFileViewerDialog` component (no
+  direct call from `ViewSalesOrderPage.jsx`'s own code), the same as `MapFilePage.jsx` already does
+  since Update 9 (see `contracts/map-file-reused-endpoints.md`'s own Update 9 entry). `fileId` (already
+  present on every `realAvailableFiles` entry since Update 4) is the only value this screen needs to
+  supply.
+- `POST /api/eutr-documents/list-po-references` — unchanged; its response already carries `typeName`
+  per document (additive field from this feature's own Update 5, owned by `004-eutr-documents`, already
+  consumed by `MapFilePage.jsx`). This screen's own `realAvailableFiles` builder previously omitted
+  `typeName` from its file objects; Update 15 starts reading it (research.md Decision 59) — no
+  request/response shape change, the same class of fix Update 8 already made for `poCode`.
+
+No request/response shape changes, no new endpoint, no policy change. The panel's step-scoped filtering
+(FR-102) is computed entirely client-side from `filesForTemplate`/`derivedFileMappings` — data this
+screen already receives from the two rows above, both already listed in this document. See
+`data-model.md`'s "Update 15" section and `research.md` Decisions 57-59.
+
 ## Update 10 (2026-07-27) — Download button: one new endpoint, not a reused one
 
 Unlike every prior update in this table, spec Update 10 (FR-069..FR-076, real zip Download) introduces

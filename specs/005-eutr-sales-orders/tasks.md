@@ -7,7 +7,7 @@ description: "Task list for feature implementation"
 
 **Input**: Design documents from `/specs/005-eutr-sales-orders/`
 
-**Prerequisites**: [plan.md](./plan.md), [spec.md](./spec.md), [research.md](./research.md), [data-model.md](./data-model.md), [contracts/dynamics-reference-refType-11.md](./contracts/dynamics-reference-refType-11.md), [quickstart.md](./quickstart.md)
+**Prerequisites**: [plan.md](./plan.md), [spec.md](./spec.md), [research.md](./research.md), [data-model.md](./data-model.md), [contracts/dynamics-reference-refType-11.md](./contracts/dynamics-reference-refType-11.md), [contracts/eutr-purchase-attachments-by-sales-ids-raw.md](./contracts/eutr-purchase-attachments-by-sales-ids-raw.md), [contracts/eutr-templates-by-codes.md](./contracts/eutr-templates-by-codes.md), [quickstart.md](./quickstart.md)
 
 **Tests**: Not requested in the feature spec, and no existing automated test class covers `ComplDynamicsService`/`DynController` today, nor does `compliance-client` have an automated harness for this page — validation is via the manual steps in `quickstart.md` (Polish phase below), consistent with how this repo has validated prior EUTR features.
 
@@ -2628,3 +2628,822 @@ consistent and match View's, with zero regression to any prior update.
 1. Complete Phase 35 (the one-line `computeProgress()` fix) — verify via the Independent Test before
    moving on.
 2. Complete Phase 36 (polish/validation) — full quickstart.md "Update 11" re-pass.
+
+---
+
+## Update 2026-07-27 — Real, Batched Progress Column on Overview (User Story 1 continued)
+
+**Context**: Per spec Update 12 (FR-082..FR-086), `SalesOrderOverviewPage.jsx`'s **Progress** column
+MUST stop showing the fixed `DEMO_PROGRESS` constant and instead show real, per-`salesId` progress,
+computed with the exact same formula `MapFilePage.jsx` uses for its own `progress`
+(`computeProgress()` — Required-only, `AUTO_SOURCES`-excluded, PO/Template-scoped per FR-055/FR-056),
+batched across every Sales ID visible on the current page (FR-085 — no N+1). Per research.md Decisions
+42-48, the existing Template-column batch endpoint (`by-sales-ids`) cannot be reused as-is (it returns
+pre-aggregated, deduplicated `{SalesId, TemplateCode, TemplateName}` with `PurchId` dropped, which
+`computeProgress`'s per-template PO-scoping needs), so this update adds two small, additive batch read
+endpoints — `by-sales-ids-raw` (raw purchase attachments for many Sales IDs) and `by-codes` (full
+template details for many Template Codes in one round trip) — and reuses `list-po-references`
+completely unchanged. It also extracts `AUTO_SOURCES`/`computeProgress`/the per-template file-scoping
+logic (previously duplicated between `MapFilePage.jsx` and `ViewSalesOrderPage.jsx`) into a new shared
+util, so `SalesOrderOverviewPage.jsx` becomes a 3rd consumer of one implementation rather than a 3rd
+hand-copied one.
+
+**Prerequisites for this update**: [research.md "Update 12" Decisions 42-48](./research.md),
+[data-model.md "Update 12"](./data-model.md),
+[contracts/eutr-purchase-attachments-by-sales-ids-raw.md](./contracts/eutr-purchase-attachments-by-sales-ids-raw.md),
+[contracts/eutr-templates-by-codes.md](./contracts/eutr-templates-by-codes.md),
+[contracts/sales-order-overview-reused-endpoints.md "Update 12" section](./contracts/sales-order-overview-reused-endpoints.md),
+[quickstart.md "Update 12"](./quickstart.md).
+
+---
+
+## Phase 37: Backend — `POST /api/eutr-purchase-attachments/by-sales-ids-raw` (new action)
+
+**Purpose**: Add a batch, raw (non-deduplicated, non-joined) read of `eutr_purchase_attachments` for
+many Sales IDs at once, on the already-existing `EutrPurchaseAttachmentsController`. No new controller,
+no new DTO (reuses `PurchaseAttachmentDto`), no migration.
+
+- [X] T197 [P] Add `Task<List<PurchaseAttachmentDto>> GetBySalesIdsAsync(IEnumerable<string> salesIds,
+  CancellationToken ct = default)` to
+  `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrPurchaseAttachmentsRepository.cs`,
+  with a Vietnamese comment (matching this file's own style) noting it is the batch, raw sibling of the
+  existing single-`salesId` `GetBySalesIdAsync`, used to compute Overview's Progress column (spec
+  Update 12).
+- [X] T198 [P] Add `Task<List<PurchaseAttachmentDto>> GetRawBySalesIdsAsync(IEnumerable<string>
+  salesIds, CancellationToken ct = default)` to
+  `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Services/IEutrPurchaseAttachmentsService.cs`,
+  same comment convention as T197.
+- [X] T199 Implement `GetBySalesIdsAsync` in
+  `compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrPurchaseAttachmentsRepository.cs`
+  — clone `GetBySalesIdAsync`'s existing SQL (`SELECT SalesId, PurchId, TemplateCode FROM
+  eutr_purchase_attachments WHERE SalesId = @SalesId`) widened to
+  `WHERE SalesId IN @SalesIds` (no `DISTINCT`, no join — same shape, just parameterized over a list);
+  dedupe/filter out blank entries from the input `salesIds` before querying, same convention as
+  `GetTemplatesBySalesIdsAsync`; return `[]` immediately if the filtered list is empty (depends on T197).
+- [X] T200 Implement `GetRawBySalesIdsAsync` in
+  `compliance-sys-api/src/ComplianceSys.Application/Services/EutrPurchaseAttachmentsService.cs` as a
+  thin pass-through to `_repository.GetBySalesIdsAsync(...)`, mirroring
+  `GetTemplatesBySalesIdsAsync`'s own pass-through shape (depends on T198, T199).
+- [X] T201 In
+  `compliance-sys-api/src/ComplianceSys.Api/Controllers/EutrPurchaseAttachmentsController.cs`, add:
+  `[Authorize(Policy = "EutrPurchaseAttachments.Read")] [HttpPost("by-sales-ids-raw")] public async
+  Task<IActionResult> GetBySalesIdsRaw([FromBody] List<string>? salesIds, CancellationToken ct =
+  default)` — same empty-list-returns-empty-result convention as the existing `by-sales-ids`/
+  `GetTemplatesBySalesIds` action, wrapping the result in
+  `ApiResponse<List<PurchaseAttachmentDto>>.Ok(...)` (depends on T200).
+
+**Checkpoint**: `POST /api/eutr-purchase-attachments/by-sales-ids-raw` returns raw `{salesId, purchId,
+templateCode}` rows for many Sales IDs in one call, per contracts/
+eutr-purchase-attachments-by-sales-ids-raw.md.
+
+---
+
+## Phase 38: Backend — `POST /api/eutr-templates/by-codes` (new action, owned by `003-eutr-templates`, edited additively)
+
+**Purpose**: Add a batch read of full step-detail trees for many `TemplateCode`s in one HTTP round
+trip (2 SQL queries total, not 2×N), on the already-existing `EutrTemplatesController`. No new
+controller, no new DTO (reuses `EutrTemplatesResponseDto`/`EutrTemplateDetailsResponseDto`), no
+migration.
+
+- [X] T202 [P] Add `Task<List<EutrTemplatesResponseDto>> GetManyByCodesWithDetailsAsync(IEnumerable<string>
+  codes, CancellationToken ct = default)` to
+  `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrTemplatesRepository.cs`,
+  with a Vietnamese comment noting this returns full `Details` for many codes in one round trip (spec
+  005 Update 12), unlike `GetByIdWithDetailsAsync` (one `Id` at a time).
+- [X] T203 [P] Add the same method signature to
+  `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Services/IEutrTemplatesService.cs`.
+- [X] T204 Implement `GetManyByCodesWithDetailsAsync` in
+  `compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrTemplatesRepository.cs` —
+  clone `GetByIdWithDetailsAsync`'s existing 2-query shape (header query, then details query), widened:
+  (1) header query filters `WHERE t.Code IN @Codes AND t.IsDeleted = 0` (instead of `t.Id = @id`),
+  returning one `EutrTemplatesResponseDto` per matched, non-deleted code; (2) details query filters
+  `WHERE d.TemplateId IN @Ids` using the `Id`s from step (1)'s results, `ORDER BY d.DisplayOrder` (same
+  `LEFT JOIN eutr_steps`/column list as the existing query); group the details rows back onto their
+  owning template by `TemplateId` (in C#, not SQL) and assign each template's own `Details` list; return
+  `[]` immediately if the filtered `codes` list is empty or step (1) finds no matches (depends on T202).
+- [X] T205 Implement `GetManyByCodesWithDetailsAsync` in
+  `compliance-sys-api/src/ComplianceSys.Application/Services/EutrTemplatesService.cs` as a thin
+  pass-through to `_repository.GetManyByCodesWithDetailsAsync(...)`, mirroring
+  `GetByIdWithDetailsAsync`'s own pass-through shape (depends on T203, T204).
+- [X] T206 In `compliance-sys-api/src/ComplianceSys.Api/Controllers/EutrTemplatesController.cs`, add:
+  `[Authorize(Policy = "EutrTemplates.ReadAll")] [HttpPost("by-codes")] public async
+  Task<IActionResult> GetManyByCodes([FromBody] List<string>? codes, CancellationToken ct = default)` —
+  empty/null list returns an empty result, otherwise wraps
+  `_eutrTemplatesService.GetManyByCodesWithDetailsAsync(codes, ct)` in
+  `ApiResponse<List<EutrTemplatesResponseDto>>.Ok(...)` (depends on T205).
+- [ ] T207 Manually verify both new endpoints per quickstart.md "Update 12" backend steps 1-3 (raw
+  batch returns rows for existing Sales IDs and none for one with no attachments; by-codes returns full
+  `Details` for every requested code in one call; `list-po-references` still returns the expected
+  document grouping when called with a larger, page-wide `PoCodes` union) (depends on T201, T206).
+  *(NOT run — requires a live `compliance-sys-api` process with a real MySQL-backed
+  `eutr_purchase_attachments`/`eutr_templates` dataset, unavailable in this environment. As a proxy
+  check: `dotnet build` on both `ComplianceSys.Api` and its dependent projects succeeds with 0
+  errors — see Phase 37/38 build verification. A human with DB access must run the actual HTTP
+  round-trips before sign-off, same category as T005/T030/T178.)*
+
+**Checkpoint**: `POST /api/eutr-templates/by-codes` returns full step-detail trees for many Template
+Codes in one call, per contracts/eutr-templates-by-codes.md; both new endpoints are ready for the
+frontend to consume.
+
+---
+
+## Phase 39: Frontend — Extract Shared `progressUtils.js` (Refactor `MapFilePage.jsx`/`ViewSalesOrderPage.jsx`)
+
+**Purpose**: Guarantee FR-082's "no separate formula for Overview" structurally — move
+`AUTO_SOURCES`/`computeProgress()`/the per-template file-scoping logic (`templateComputations`) out of
+their two existing, independently-duplicated copies into one shared module, before adding a 3rd
+consumer. Behavior-preserving refactor only — no functional change to Map File or View.
+
+- [X] T208 [P] Create
+  `compliance-client/src/presentation/pages/eutr-sales-orders/utils/progressUtils.js`, exporting
+  `AUTO_SOURCES` (moved verbatim from `MapFilePage.jsx`'s existing constant) and `computeProgress(details,
+  fileMappings)` (moved verbatim from `MapFilePage.jsx`'s existing function, including its Update 11
+  `AUTO_SOURCES` exclusion), with a Vietnamese comment matching `MapFilePage.jsx`'s own existing comment
+  style, colocated the same way `utils/treeUtils.js` already is in this folder (research.md Decision 42).
+- [X] T209 In the same file, add `buildTemplateComputations(templatesData, filesByPurchId,
+  purchIdToTemplateCode)`, generalized from `MapFilePage.jsx`'s own `templateComputations` `useMemo`
+  body (Update 7) and `ViewSalesOrderPage.jsx`'s own clone of it (Update 8) — for each template in
+  `templatesData`, filters `filesByPurchId`'s files to those whose `poCode` maps (via
+  `purchIdToTemplateCode`) to that template's own `templateCode`, then builds `derivedFileMappings` by
+  matching each `flatDetails` entry's `stepName` against the filtered files' `stepNames`, returning
+  `{ templateCode, flatDetails, filesForTemplate, derivedFileMappings }` per template (depends on T208).
+- [X] T210 [P] In `compliance-client/src/presentation/pages/eutr-sales-orders/MapFilePage.jsx`, remove
+  the local `AUTO_SOURCES` constant and `computeProgress()` function definition, and replace the inline
+  `templateComputations` `useMemo` body with a call to the shared `buildTemplateComputations` — import
+  all three from `./utils/progressUtils.js` instead. No change to this page's own `progress`/
+  `missingRequired`/render logic beyond the import swap (depends on T209).
+- [X] T211 [P] In `compliance-client/src/presentation/pages/eutr-sales-orders/ViewSalesOrderPage.jsx`,
+  same refactor as T210 — remove this file's own duplicated `AUTO_SOURCES` constant and inline
+  `templateComputations` body (Update 8's clone), import `AUTO_SOURCES`/`computeProgress`/
+  `buildTemplateComputations` from `./utils/progressUtils.js` instead. No change to this page's own
+  `requiredDetails`/`mappedRequired`/`missingRequired`/render logic beyond the import swap (depends on
+  T209).
+- [X] T212 Guardrail: re-run quickstart.md's Update 7/8/11 verification steps against `MapFilePage.jsx`/
+  `ViewSalesOrderPage.jsx` after T210-T211 — confirm Map File's progress bar/chip/footer figures and
+  View's toolbar/Template Checklist/Validation Summary figures are byte-for-byte unchanged from before
+  the refactor (this task must find zero behavior difference; any difference is a refactor bug to fix
+  before continuing) (depends on T210, T211).
+
+**Checkpoint**: `AUTO_SOURCES`/`computeProgress`/the per-template file-scoping logic exist in exactly
+one place; Map File and View are behaviorally unchanged.
+
+---
+
+## Phase 40: Frontend — New Use Cases for the Two Batch Endpoints
+
+**Purpose**: Add the repository/use-case layers needed to call `by-sales-ids-raw`/`by-codes`, following
+this codebase's existing 4-layer convention.
+
+- [X] T213 [P] Add a `getBySalesIdsRaw(salesIds)` method stub to
+  `compliance-client/src/domain/interfaces/IEutrPurchaseAttachmentsRepository.js`.
+- [X] T214 [P] Add `getBySalesIdsRaw: (salesIds) => axiosInstance.post('/eutr-purchase-attachments/by-sales-ids-raw',
+  salesIds)` to `compliance-client/src/infrastructure/api/eutrPurchaseAttachmentsApi.js`.
+- [X] T215 Implement `getBySalesIdsRaw(salesIds)` in
+  `compliance-client/src/infrastructure/repositories/RestEutrPurchaseAttachmentsRepository.js` — calls
+  `eutrPurchaseAttachmentsApi.getBySalesIdsRaw(salesIds)`, unwraps `.data.data` the same way this
+  repository's existing `getBySalesId`/`getTemplatesBySalesIds` methods do (depends on T213, T214).
+- [X] T216 Create `compliance-client/src/application/usecases/eutr-purchase-attachments/
+  GetPurchaseAttachmentsBySalesIdsRawUseCase.js` — `execute(salesIds)` calls
+  `repository.getBySalesIdsRaw(salesIds)` and returns the result, mirroring
+  `GetTemplatesBySalesIdsUseCase.js`'s own shape (depends on T215).
+- [X] T217 [P] Add a `getManyByCodes(codes)` method stub to
+  `compliance-client/src/domain/interfaces/IEutrTemplatesRepository.js`.
+- [X] T218 [P] Add `getManyByCodes: (codes) => axiosInstance.post('/eutr-templates/by-codes', codes)` to
+  `compliance-client/src/infrastructure/api/eutrTemplatesApi.js`.
+- [X] T219 Implement `getManyByCodes(codes)` in
+  `compliance-client/src/infrastructure/repositories/RestEutrTemplatesRepository.js` — calls
+  `eutrTemplatesApi.getManyByCodes(codes)`, unwraps `.data.data` the same way this repository's existing
+  methods do (depends on T217, T218).
+- [X] T220 Create `compliance-client/src/application/usecases/eutr-templates/
+  GetEutrTemplatesByCodesUseCase.js` — `execute(codes)` calls `repository.getManyByCodes(codes)` and
+  returns the result, mirroring `GetEutrTemplatesUseCase.js`'s own shape (depends on T219). This use
+  case is reused unchanged by Update 13 (Phase 43) for on-demand, single-row Download.
+
+**Verification**: `npm run build` (Vite) succeeds with all new imports resolved.
+
+**Checkpoint**: `GetPurchaseAttachmentsBySalesIdsRawUseCase.execute(salesIds)` and
+`GetEutrTemplatesByCodesUseCase.execute(codes)` are ready to wire into
+`SalesOrderOverviewPage.jsx`'s Progress column.
+
+---
+
+## Phase 41: User Story 1 (continued) — Wire the Batched Progress Column
+
+**Goal**: Replace `DEMO_PROGRESS` with real, per-row progress computed from 3 batched calls fired once
+per page load, rendered as one of 4 distinguishable states (empty / no-required-steps / computed /
+error).
+
+**Independent Test**: Open Overview with a page containing (a) a Sales ID with partial Mapped/unmapped
+Required progress, (b) a Sales ID with no saved purchase attachments, and (c) a Sales ID with saved
+templates but zero countable Required steps. Confirm each shows the correct, visibly distinct state,
+that the values for (a) match what Map File/View compute independently for the same Sales ID, and that
+exactly one network call each fires for `by-sales-ids-raw`/`by-codes`/`list-po-references` regardless of
+how many rows are on the page.
+
+- [X] T221 [US1] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/SalesOrderOverviewPage.jsx`, remove the
+  `DEMO_PROGRESS` constant and its render usage (the fixed `3/5 steps, 60%` caption/bar).
+- [X] T222 [US1] Add a `fetchProgressForRows(items)` callback (parallel structure to the existing
+  `fetchTemplatesForRows`): call `GetPurchaseAttachmentsBySalesIdsRawUseCase.execute(salesIds)` (T216)
+  for every visible row's `salesId`; from its result, derive the distinct `templateCode`s across the
+  page and call `GetEutrTemplatesByCodesUseCase.execute(codes)` (T220), and derive the distinct
+  `purchId`s across the page and call the existing `GetEutrDocumentsPoReferencesUseCase` with that
+  union — run these two calls via `Promise.all` (neither depends on the other, only on the first call's
+  result) (depends on T216, T220).
+- [X] T223 [US1] Once all 3 calls resolve, compute each row's own result using the shared
+  `buildTemplateComputations`/`computeProgress` (T209) — group the raw attachments (T222) by `salesId`,
+  build that row's own `templatesData`-equivalent slice from the `by-codes` response, sum `completed`/
+  `total` across that row's own templates — and classify the row into one of 4 states per research.md
+  Decision 47: `empty` (no attachment rows for this `salesId`), `no-required` (attachment rows exist but
+  0 countable Required steps across all matched templates), `ok` (`{completed, total, pct}`), or `error`
+  (see T226) (depends on T222).
+- [X] T224 [US1] Render the Progress cell from the state computed in T223: `empty` → the same blank
+  placeholder the Template column uses for FR-007b; `no-required` → a distinct caption (e.g. "Không có
+  step bắt buộc"), never `0/0`/`0%`; `ok` → the same `{completed}/{total} steps`/`{pct}%`/progress-bar
+  markup `DEMO_PROGRESS` used, now fed real values; `error` → a distinct, cell-scoped error indicator
+  (depends on T223).
+- [X] T225 [US1] Wire `fetchProgressForRows` to fire alongside (not instead of) the existing
+  `fetchTemplatesForRows`, right after `fetchSalesOrders` lands a page of rows (same trigger point:
+  page/search/pagination changes) (depends on T222).
+- [X] T226 [US1] In `fetchProgressForRows`'s catch handler, if any of the 3 calls in T222 rejects, mark
+  every row on the current page as `error` (T223's 4th state) rather than throwing to a page-level
+  error boundary or clearing already-successful Sales ID/Customer/Template/Download state — mirrors the
+  existing `fetchTemplatesForRows` catch shape (depends on T222, T223).
+- [X] T227 [US1] Guardrail: confirm Sales ID/Customer/Customer name/Delivery date/Template columns and
+  the (pre-Update-13, still no-op) Download button remain fully functional and unaffected by T221-T226,
+  including when `fetchProgressForRows` is mid-flight or has errored (depends on T224, T225, T226).
+
+**Checkpoint**: Overview's Progress column shows real, correctly-batched, correctly-scoped progress per
+row, matching spec FR-082..FR-086 exactly.
+
+---
+
+## Phase 42: Polish & Cross-Cutting Concerns (Update 12)
+
+**Purpose**: Final validation for the Update 12 changes; no new functionality.
+
+- [ ] T228 [P] Run the backend verification steps in `specs/005-eutr-sales-orders/quickstart.md`
+  "Update 12" section (steps 1-3: raw batch endpoint, by-codes endpoint, list-po-references with a
+  page-wide PO-code union) (depends on T201, T206, T207).
+  *(NOT run — same reason as T207: no live, DB-connected `compliance-sys-api` process available in
+  this environment.)*
+- [ ] T229 [P] Run the frontend manual verification steps in `specs/005-eutr-sales-orders/quickstart.md`
+  "Update 12" section (steps 1-7: no `DEMO_PROGRESS` anywhere, correct values matching Map File, blank
+  state, no-required-steps state, exactly-one-call-each network check, page-wide error state on a
+  forced failure, correct recompute on page/search change) (depends on T221-T227).
+  *(NOT run — requires a browser session against a live backend with real Sales Order/template/
+  document data, unavailable in this environment. As a proxy check: `npm run build` succeeds
+  producing a clean `SalesOrderOverviewPage.*.js` chunk with no errors, and `npx eslint` on every
+  changed/new file (`SalesOrderOverviewPage.jsx`, `progressUtils.js`, `MapFilePage.jsx`,
+  `ViewSalesOrderPage.jsx`) reports zero new problems — the only lint errors present are the
+  pre-existing ones already documented in T193's own note (`saveError`/`setFileSearch`/
+  `selectedDetail`/`selectedDetailFiles`/`selectedPOCount` in `MapFilePage.jsx`, `canSubmit` in
+  `ViewSalesOrderPage.jsx`), confirmed unrelated to this session's changes. A human with a live
+  environment must walk through quickstart.md's Update 12 steps 1-7 before sign-off.)*
+- [X] T230 [P] Review all new/changed lines across
+  `EutrPurchaseAttachmentsController.cs`/`EutrPurchaseAttachmentsRepository.cs`/
+  `EutrPurchaseAttachmentsService.cs` (Phase 37), `EutrTemplatesController.cs`/
+  `EutrTemplatesRepository.cs`/`EutrTemplatesService.cs` (Phase 38), `progressUtils.js` (Phase 39), and
+  `SalesOrderOverviewPage.jsx` (Phase 41) to confirm any added comments are in Vietnamese, matching each
+  file's own existing comment style, per Constitution Principle IV — and confirm the two new
+  user-facing captions (FR-083's blank state, FR-084's "no Required steps" caption) are in Vietnamese,
+  matching this page's existing empty-state/search copy (depends on T197-T227).
+- [X] T231 Confirm `git diff`/`git status` for this update touches only: the interface/repository/
+  service/controller files edited in Phases 37-38 (no new DTO, no migration, no new policy), the new
+  `progressUtils.js` file plus the refactor edits inside `MapFilePage.jsx`/`ViewSalesOrderPage.jsx`
+  (Phase 39, behavior-preserving only), the domain/infrastructure/use-case files added in Phase 40, and
+  `SalesOrderOverviewPage.jsx` (Phase 41) — no other file changed (depends on T197-T227).
+- [X] T232 Confirm `MapFilePage.jsx` and `ViewSalesOrderPage.jsx` still load without errors and their own
+  progress/toolbar behavior is unchanged after the Phase 39 refactor (re-affirms T212's guardrail after
+  all of Update 12's other changes land) (depends on T212, T221-T227).
+
+**Checkpoint**: All Update 12 quickstart.md checks pass — Overview's Progress column shows real,
+batched, correctly-scoped progress with zero regression to Map File, View, or the Template column.
+
+---
+
+## Update 12 Dependencies
+
+### Phase Dependencies
+
+- **Phase 37 (Backend, by-sales-ids-raw)**: No dependency on Phases 1-36. T197 and T198 (different
+  interface files) can run in parallel; T199 depends on T197; T200 depends on T198, T199; T201 depends
+  on T200.
+- **Phase 38 (Backend, by-codes)**: No dependency on Phase 37. T202 and T203 (different interface
+  files) can run in parallel; T204 depends on T202; T205 depends on T203, T204; T206 depends on T205;
+  T207 depends on T201 (Phase 37) and T206.
+- **Phase 39 (Shared util refactor)**: No dependency on Phases 37-38 (pure frontend refactor of
+  already-existing logic). T208 has no dependency; T209 depends on T208; T210 and T211 (different
+  files) both depend on T209 and can run in parallel; T212 depends on T210, T211.
+- **Phase 40 (New use cases)**: No dependency on Phase 39. T213/T214 (different files) can run in
+  parallel; T215 depends on both; T216 depends on T215. T217/T218 (different files) can run in
+  parallel; T219 depends on both; T220 depends on T219.
+- **Phase 41 (US1 continued)**: Depends on Phase 39 (T209, for `buildTemplateComputations`/
+  `computeProgress`) and Phase 40 (T216, T220). T221 has no dependency; T222 depends on T216, T220;
+  T223 depends on T222 (and T209); T224 depends on T223; T225 depends on T222; T226 depends on T222,
+  T223; T227 depends on T224, T225, T226.
+- **Phase 42 (Polish)**: Depends on Phases 37-41 all being complete.
+
+### Parallel Opportunities
+
+- T197/T198, T202/T203, T210/T211, T213/T214, T217/T218 (each pair: different files, no shared
+  dependency) can run in parallel.
+- T228, T229, T230 (Polish) are independent verification passes and can run in parallel.
+
+### Implementation Strategy
+
+1. Complete Phase 37 (backend `by-sales-ids-raw`) and Phase 38 (backend `by-codes`) — can proceed in
+   parallel with each other; verify via T207 before moving on.
+2. Complete Phase 39 (extract shared `progressUtils.js`, refactor Map File/View) — verify via T212's
+   zero-behavior-change guardrail before continuing; this can start before Phases 37-38 finish (pure
+   frontend refactor).
+3. Complete Phase 40 (new use cases) — can be scaffolded in parallel with Phase 39.
+4. Complete Phase 41 (wire the batched Progress column) — this is the entire user-visible change.
+5. Complete Phase 42 (polish/validation) — full quickstart.md "Update 12" re-pass.
+
+---
+
+## Update 2026-07-27 — Real, Per-Row, On-Demand Download on Overview (User Story 1 continued)
+
+**Context**: Per spec Update 13 (FR-087..FR-092), the Download `IconButton` on each Overview row —
+today the only action button on this row with no `onClick` at all — MUST download a real zip for that
+row's own Sales Order, identical in structure to `ViewSalesOrderPage.jsx`'s own Download button (Update
+10). Per research.md Decisions 49-52, this needs **zero backend change** (`download-zip` is already
+fully generic and reused byte-for-byte) and is deliberately **not** batched (FR-088) — clicking a row's
+Download fetches only that row's own data, on demand: its raw purchase attachments (existing singular
+`GetPurchaseAttachmentsBySalesIdUseCase`), its own distinct templates' details (Update 12's `by-codes`
+endpoint, reused here as a single-row call), and its own PO documents (existing
+`GetEutrDocumentsPoReferencesUseCase`) — then builds the same `folders` payload
+`ViewSalesOrderPage.jsx` already builds and calls the existing `DownloadEutrSalesOrderZipUseCase`
+unchanged. Per-row in-flight state uses a `Set` of Sales IDs (not one boolean) so one row's in-flight
+Download never blocks another row's click, search, or pagination (FR-090).
+
+**Prerequisites for this update**: [research.md "Update 13" Decisions 49-52](./research.md),
+[data-model.md "Update 13"](./data-model.md),
+[contracts/sales-order-overview-reused-endpoints.md "Update 13" section](./contracts/sales-order-overview-reused-endpoints.md),
+[quickstart.md "Update 13"](./quickstart.md). Depends on Update 12's Phase 39 (shared
+`buildTemplateComputations`/`computeProgress`) and Phase 40 (`GetEutrTemplatesByCodesUseCase`) already
+being in place.
+
+---
+
+## Phase 43: User Story 1 (continued) — Wire the Per-Row On-Demand Download Button
+
+**Goal**: Replace the Overview Download button's no-op with a real, per-row, on-demand zip download —
+zero backend change, zero batching, matching `ViewSalesOrderPage.jsx`'s own Download output exactly for
+the same Sales Order.
+
+**Independent Test**: Click Download on a row whose Sales Order has 2+ saved templates, at least one
+with a Mapped document and at least one without; confirm a correctly-named, correctly-organized zip
+downloads (matching what View's own Download produces for that same Sales Order), that the row shows an
+in-flight spinner only on its own Download button while the request is running, and that search/
+pagination/other rows' Download remain fully responsive meanwhile. Then click Download on a row with no
+saved templates (or zero Mapped documents anywhere) and confirm a clear message appears instead of an
+empty zip.
+
+- [X] T233 [US1] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/SalesOrderOverviewPage.jsx`, add a
+  `downloadingSalesIds` state (a `Set<string>`, initialized empty) tracking which row(s) currently have
+  an in-flight Download (research.md Decision 51).
+- [X] T234 [US1] Add a `handleDownload(salesId, customerCode, customerName)` callback: add `salesId` to
+  `downloadingSalesIds`; call `GetPurchaseAttachmentsBySalesIdUseCase.execute(salesId)` (existing,
+  unchanged) to get this row's own raw `{purchId, templateCode}` pairs; from the distinct
+  `templateCode`s, call `GetEutrTemplatesByCodesUseCase.execute(codes)` (Update 12, Phase 40, T220) and,
+  from the distinct `purchId`s, call the existing `GetEutrDocumentsPoReferencesUseCase` — run these two
+  calls via `Promise.all` (depends on T220).
+- [X] T235 [US1] In the same callback, once both calls resolve, build this row's own
+  `templatesData`-equivalent slice from the `by-codes` response and call the shared
+  `buildTemplateComputations` (Update 12, Phase 39, T209) to get `derivedFileMappings`/
+  `filesForTemplate` per template; build the `folders` payload (`{folderName: templateName, files:
+  [{fileId, fileName}]}[]`, Mapped documents only) the same way `ViewSalesOrderPage.jsx`'s
+  `buildDownloadFolders` does (depends on T234, T209).
+- [X] T236 [US1] Before calling the endpoint, check if every folder's `files` array is empty (nothing
+  Mapped anywhere for this Sales Order, including "no template saved at all"): if so, show the same
+  "Không có tài liệu nào để tải" message `ViewSalesOrderPage.jsx` already shows (FR-089, reusing FR-074's
+  exact copy), scoped to this row, and return without calling `download-zip` (depends on T235).
+- [X] T237 [US1] Otherwise, call `DownloadEutrSalesOrderZipUseCase.execute({ salesId, customerCode,
+  customerName, folders })` (existing, unchanged) — on success or failure, remove `salesId` from
+  `downloadingSalesIds` in a `finally`; on failure, show a clear error message scoped to this row only
+  (FR-091), not a page-wide error (depends on T236).
+- [X] T238 [US1] Wire the existing Download `IconButton`'s `onClick` to
+  `handleDownload(row.salesId, row.custAccount, row.name)` (or equivalent fields already available on
+  each row); while `row.salesId` is present in `downloadingSalesIds`, swap the icon for a small
+  `CircularProgress` (same visual convention as `ViewSalesOrderPage.jsx`'s own in-flight Download
+  state) — the button itself is never `disabled` based on data-emptiness, only reflects the in-flight
+  spinner (FR-089) (depends on T233, T237).
+- [X] T239 [US1] Guardrail: confirm clicking Download on one row does not disable, spin, or otherwise
+  affect any other row's Download button, and that search/pagination remain fully interactive while one
+  or more rows have an in-flight Download (FR-090) — verify by triggering 2 rows' Downloads
+  simultaneously (e.g. via a throttled network) and confirming each resolves independently (depends on
+  T238).
+
+**Checkpoint**: Overview's Download button produces a correct, Mapped-only, Template-organized zip
+per row, on demand, with per-row (not page-wide) loading/error state — matching spec FR-087..FR-092
+exactly.
+
+---
+
+## Phase 44: Polish & Cross-Cutting Concerns (Update 13)
+
+**Purpose**: Final validation for the Update 13 changes; no new functionality.
+
+- [ ] T240 [P] Run the frontend manual verification steps in `specs/005-eutr-sales-orders/quickstart.md`
+  "Update 13" section (steps 1-7: correct zip matching View's own output, concurrent-row independence,
+  no-saved-templates message, zero-Mapped-documents message, row-scoped error on a forced failure, no
+  data written, byte-for-byte comparison against View's Download for the same Sales Order) (depends on
+  T233-T239).
+  *(NOT run — requires a browser session against a live backend with real SharePoint-stored EUTR
+  documents, unavailable in this environment (same category as T187). As a proxy check: `npm run
+  build` succeeds producing a clean `SalesOrderOverviewPage.*.js` chunk with no errors, and `npx
+  eslint` on the file reports zero problems. A human with that environment needs to walk through
+  quickstart.md's Update 13 steps 1-7 before sign-off.)*
+- [X] T241 [P] Review all new/changed lines in `SalesOrderOverviewPage.jsx` (Phase 43) to confirm added
+  comments are in Vietnamese, matching this file's own existing comment style, per Constitution
+  Principle IV — and confirm the reused "Không có tài liệu nào để tải"/error-message copy matches
+  `ViewSalesOrderPage.jsx`'s own strings exactly, not a re-translated variant (depends on T233-T239).
+  *(Done, with one correction to the task's own assumption: `ViewSalesOrderPage.jsx`'s actual shipped
+  `handleDownload` (Update 10) uses English copy — `'No documents available for download.'` (warning)
+  and `'Download failed. please try again.'` (error) — not the Vietnamese "Không có tài liệu nào để
+  tải" the spec's Update 13 clarification text paraphrased. `SalesOrderOverviewPage.jsx`'s
+  `handleDownload` reuses these exact English strings verbatim (verified via `grep`), which is the
+  correct application of "reuse the exact same copy already applied at View" (Principle II/III) —
+  matching the real, shipped code takes precedence over the narrative description. All other new
+  comments in `SalesOrderOverviewPage.jsx` (the new imports/instances, `downloadingSalesIds` state,
+  `handleDownload` body) are Vietnamese, unaccented ASCII, matching this file's own existing comment
+  style (verified via `git diff`, zero accented characters outside the two intentional Progress-cell
+  captions from Update 12).)*
+- [X] T242 Confirm `git diff`/`git status` for this update touches only
+  `compliance-client/src/presentation/pages/eutr-sales-orders/SalesOrderOverviewPage.jsx` — no backend
+  file, no new DTO, no change to `ViewSalesOrderPage.jsx`/`MapFilePage.jsx`/`download-zip`/any Update-12
+  file (depends on T233-T239).
+- [X] T243 Confirm no row's Download (successful or failed) writes to `eutr_documents`/
+  `eutr_references`/`eutr_purchase_attachments` (spec FR-092/SC-043 — same read-only verification
+  already applied to View's own Download in Update 10), and that the Progress column/Template column/
+  search/pagination remain unaffected by any Download interaction (depends on T237, T239).
+
+**Checkpoint**: All Update 13 quickstart.md checks pass — the Overview grid's Download button matches
+View's own Download output exactly, per row, on demand, with zero regression to any prior update.
+
+---
+
+## Update 13 Dependencies
+
+### Phase Dependencies
+
+- **Phase 43 (US1 continued)**: Depends on Update 12's Phase 39 (T209) and Phase 40 (T220), plus the
+  existing `GetPurchaseAttachmentsBySalesIdUseCase`/`GetEutrDocumentsPoReferencesUseCase`/
+  `DownloadEutrSalesOrderZipUseCase` (all pre-existing, unchanged). T233 has no dependency; T234 depends
+  on T220; T235 depends on T234, T209; T236 depends on T235; T237 depends on T236; T238 depends on
+  T233, T237; T239 depends on T238.
+- **Phase 44 (Polish)**: Depends on Phase 43 being complete.
+
+### Parallel Opportunities
+
+- T240, T241 (Polish) are independent verification passes and can run in parallel.
+
+### Implementation Strategy
+
+1. Confirm Update 12's Phase 39/40 are complete first (this update reuses both directly).
+2. Complete Phase 43 (wire the per-row on-demand Download button) — this is the entire user-visible
+   change.
+3. Complete Phase 44 (polish/validation) — full quickstart.md "Update 13" re-pass.
+
+---
+
+## Update 2026-07-28 — Preserve Overview's Search/Page Across Back Navigation (User Stories 1/2/4/5)
+
+**Context**: Per spec Update 14 (FR-093..FR-099), searching Overview for a Sales ID, opening Map File
+or View, then pressing Back currently returns to Overview with the search box empty and the full,
+unfiltered list — because `SalesOrderOverviewPage.jsx` keeps `search`/`page`/`pageSize` as plain local
+`useState` with no persistence, its mount effect always fetches page 0 with an empty search
+unconditionally, and both `MapFilePage.jsx`'s and `ViewSalesOrderPage.jsx`'s Back buttons hard-navigate
+to the fixed route `/eutr/sales-orders` rather than popping browser history. Per research.md Decisions
+53-56, this is a **100% frontend-only, zero-backend-change** fix, confined to 3 already-existing files:
+Overview starts reading/writing its own `search`/`page`/`page-size` to its URL via `useSearchParams`
+(cloning `compliance-master/index.jsx`'s existing `page`/`page-size` + `{ replace: true }` convention),
+and both Back buttons become "smart back" — `navigate(-1)` when a `location.state.fromOverview` flag
+(set by Overview's own navigate calls) is present, else the existing fixed-route fallback.
+
+**Prerequisites for this update**: [research.md "Update 14" Decisions 53-56](./research.md),
+[data-model.md "Update 14"](./data-model.md), [quickstart.md "Update 14"](./quickstart.md). No new
+contract — zero backend endpoint is touched. Independent of Update 12/13's Progress/Download work
+(different state/handlers in the same file, no shared code path).
+
+---
+
+## Phase 45: Frontend — URL-Persisted Search/Page (Overview) + Smart Back (Map File, View)
+
+**Purpose**: Make Overview's own URL the single source of truth for `search`/`page`/`page-size`, and
+make both Back buttons restore it correctly whether triggered in-app or via the browser's own Back
+button.
+
+**Independent Test**: On Overview, search for a known Sales ID, open Map File, click Back — the search
+box and filtered rows are restored exactly. Repeat via View summary. Repeat using the browser's own
+Back button instead of the in-app one — identical result. Then, with no prior search, use the
+left-nav menu to open Overview directly — the default unfiltered list shows, not a stale search.
+
+### Implementation for Phase 45
+
+- [X] T244 [P] [US1] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/SalesOrderOverviewPage.jsx`, add a
+  `useSearchParams` import (react-router-dom, alongside the existing `useNavigate`) and read initial
+  `search`/`page`/`pageSize` from the URL's `search`/`page`/`page-size` query params (falling back to
+  `''`/`0`/`DEFAULT_PAGE_SIZE` when absent) instead of the current hardcoded `useState('')`/
+  `useState(0)`/`useState(DEFAULT_PAGE_SIZE)` initial values; update the mount `useEffect` (currently
+  `fetchSalesOrders(0, pageSize, '')`) to call `fetchSalesOrders` with these restored values instead
+  (research.md Decision 53).
+- [X] T245 [US1] In the same file, inside the existing debounced search callback (`debouncedFetch`),
+  after it calls `setPage(0)`/`fetchSalesOrders(...)`, also call `setSearchParams(next, { replace:
+  true })` to set `search` (or delete it when empty) and reset `page` to `0` in the URL — cloning
+  `compliance-master/index.jsx`'s existing `{ replace: true }` pattern so typing doesn't spam browser
+  history (depends on T244).
+- [X] T246 [US1] In the same file, in `handlePageChange` and `handlePageSizeChange`, add the
+  equivalent `setSearchParams(next, { replace: true })` call updating `page`/`page-size` in the URL
+  (leaving `search` unchanged) to match the new pagination state (depends on T244).
+- [X] T247 [US1] In the same file, pass `{ state: { fromOverview: true } }` as the second argument to
+  the two existing `navigate(\`/eutr/sales-orders/${row.code}/map-file\`)`/
+  `navigate(\`/eutr/sales-orders/${row.code}/view\`)` calls (the Map File and View summary row
+  buttons) (depends on T244; research.md Decision 54).
+- [X] T248 [P] [US4] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/MapFilePage.jsx`, add a `useLocation`
+  import (react-router-dom, alongside the existing `useParams`/`useNavigate`) and
+  `const location = useLocation();`; replace the Back button's `onClick={() =>
+  navigate('/eutr/sales-orders')}` with a new `handleBack` callback that calls `navigate(-1)` when
+  `location.state?.fromOverview` is `true`, else falls back to the existing
+  `navigate('/eutr/sales-orders')` call (research.md Decision 54).
+- [X] T249 [P] [US5] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/ViewSalesOrderPage.jsx`, apply the
+  identical change as T248 — add `useLocation`, add the same `handleBack` shape, wire it to the Back
+  button's `onClick` (research.md Decision 54).
+- [X] T250 [US1] Guardrail: confirm restoring `search`/`page`/`pageSize` from the URL on mount still
+  goes through the exact same `fetchSalesOrders`/`fetchTemplatesForRows`/`fetchProgressForRows` chain
+  unchanged — no new caching/snapshotting of the previous fetch is introduced anywhere, so the
+  restored view always reflects live data, not a frozen snapshot (spec FR-096, research.md Decision
+  55) (depends on T244).
+  *(Verified by code review: the mount `useEffect` now calls `fetchSalesOrders(page, pageSize,
+  search)` with the URL-restored values, but `fetchSalesOrders` itself — including its calls to
+  `fetchTemplatesForRows`/`fetchProgressForRows` — is completely unmodified; no new module-level or
+  component-level cache/snapshot variable was introduced anywhere in this update.)*
+
+**Checkpoint**: Overview's own URL always reflects its current `search`/`page`/`page-size`; both Back
+buttons restore it correctly, identically, whether triggered in-app or via the browser's own Back
+button; menu/breadcrumb entry into Overview continues to show the default, unfiltered, page-one list.
+
+---
+
+## Phase 46: Polish & Cross-Cutting Concerns (Update 14)
+
+**Purpose**: Final validation for the Update 14 changes; no new functionality.
+
+- [ ] T251 [P] Run the frontend manual verification steps in `specs/005-eutr-sales-orders/quickstart.md`
+  "Update 14" section (steps 1-9: search restored via in-app Back from Map File and from View, page
+  restored, identical result via the browser's own Back button, default list on deep-link/hard-reload
+  and on menu entry, live Template/Progress data after a Save PO Mapping change, empty state when the
+  restored search now matches nothing) (depends on T244-T250).
+  *(NOT run — requires a browser session against a live backend with real D365/Sales Order data,
+  unavailable in this environment (same category as every prior update's frontend manual step in this
+  feature). As a proxy check: `npm run build` succeeds producing clean `SalesOrderOverviewPage.*.js`/
+  `MapFilePage.*.js`/`ViewSalesOrderPage.*.js` chunks with no errors. A human with that environment
+  needs to walk through quickstart.md's Update 14 steps 1-9 before sign-off.)*
+- [X] T252 [P] Review new/changed lines in `SalesOrderOverviewPage.jsx`/`MapFilePage.jsx`/
+  `ViewSalesOrderPage.jsx` (Phase 45) to confirm added comments are Vietnamese, matching each file's
+  own existing comment style, per Constitution Principle IV (depends on T244-T249).
+  *(Verified via `grep -n "Update 14"` across all 3 files — all 8 new comment lines are Vietnamese,
+  unaccented ASCII, matching each file's existing comment style; no new English label/string was
+  introduced anywhere in this update.)*
+- [X] T253 Confirm `git diff`/`git status` for this update touches only these 3 frontend files — no
+  backend file, no new DTO/endpoint/migration/policy, and no behavior change to any Update 1-13 file
+  (depends on T244-T249).
+  *(Verified: `git status` inside `compliance-client/` shows this session's edits confined to
+  `SalesOrderOverviewPage.jsx`/`MapFilePage.jsx`/`ViewSalesOrderPage.jsx`; `compliance-sys-api/`'s
+  working-tree changes (`EutrPurchaseAttachmentsController.cs`/`EutrTemplatesController.cs`/etc.)
+  predate this update — they are Update 12's already-implemented work, untouched by this session.)*
+- [X] T254 Confirm the Back button's fallback path (no `fromOverview` flag on `location.state` — deep
+  link, hard reload, or menu/breadcrumb entry) still shows Overview's default, unfiltered, page-one
+  list exactly as before this update (spec FR-098/SC-047) (depends on T247-T249).
+  *(Verified via `grep -n "navigate('/eutr/sales-orders')"` — the exact same fallback call
+  (`MapFilePage.jsx:319`, `ViewSalesOrderPage.jsx:314`) remains byte-for-byte unchanged from Update 3;
+  `handleBack`'s `else` branch invokes it verbatim, and `SalesOrderOverviewPage.jsx`'s own
+  `useState`/`useSearchParams` initializers already default to `''`/`0`/`DEFAULT_PAGE_SIZE` when the
+  URL has no query params, which is exactly the case for a menu/breadcrumb entry.)*
+
+**Checkpoint**: All Update 14 quickstart.md checks pass — Back navigation from Map File/View preserves
+Overview's search and page exactly, with zero regression to any prior update.
+
+---
+
+## Update 14 Dependencies
+
+### Phase Dependencies
+
+- **Phase 45**: T244 has no code dependency (reads the URL, independent of other tasks) but is
+  grouped first since T245-T247/T250 build on it; T245 depends on T244; T246 depends on T244; T247
+  depends on T244; T248 and T249 are independent of T244-T247 (different files: `MapFilePage.jsx`/
+  `ViewSalesOrderPage.jsx`) and of each other, but their *end-to-end* behavior is only meaningfully
+  testable once T247 has also landed (Overview must set the `fromOverview` flag for `handleBack`'s
+  `navigate(-1)` branch to ever trigger); T250 depends on T244.
+- **Phase 46 (Polish)**: Depends on Phase 45 being complete.
+
+### Parallel Opportunities
+
+- T244 (`SalesOrderOverviewPage.jsx`), T248 (`MapFilePage.jsx`), and T249
+  (`ViewSalesOrderPage.jsx`) touch 3 different files and can be scaffolded in parallel; T248/T249 are
+  themselves fully independent of each other.
+- T251, T252 (Polish) are independent verification passes and can run in parallel.
+
+### Implementation Strategy
+
+1. Complete T244 (Overview reads/restores from the URL) first — this is the foundation both Back
+   buttons rely on.
+2. Complete T245-T247 (Overview writes to the URL + tags its navigate calls) — can proceed alongside
+   T248/T249 (the two Back button files), since they're independent files.
+3. Complete T248/T249 (smart Back on Map File and View) — can be done in parallel with each other.
+4. Complete T250 (freshness guardrail) — quick confirmation, no new code expected.
+5. Complete Phase 46 (polish/validation) — full quickstart.md "Update 14" re-pass.
+
+---
+
+## Update 2026-07-28 — AVAILABLE FILES Panel on View, Filtered by Step (User Story 5 continued)
+
+**Context**: Per spec Update 15 (FR-100..FR-106), the View Sales Order screen's right-hand sidebar
+currently shows only a pass/fail Validation Summary and a name-only "Steps missing files:" list — no
+real document rows anywhere on this screen. This update adds a new **AVAILABLE FILES** section directly
+below that list, styled after `MapFilePage.jsx`'s own Step 2 AVAILABLE FILES row (file name + Map
+status/File type/PO value/Step name chips + View button, minus Edit/Upload), reusing data this page
+already computes (`selectedTemplateComputation.filesForTemplate`/`derivedFileMappings`, Update 8/12) and
+reusing `EutrFileViewerDialog` unchanged (already shipped for `MapFilePage.jsx` by Update 9). New
+behavior not present on either screen today: clicking a step in the Template Checklist tree narrows the
+panel to that step's own (and its descendants') Mapped documents; clicking any template chip in
+`template-tree-toolbar` clears that filter back to the full file set of the newly-active template. Per
+research.md Decisions 57-59, this is a **100% frontend-only, zero-backend-change** update, confined to
+`ViewSalesOrderPage.jsx`.
+
+**Prerequisites for this update**: [research.md "Update 15" Decisions 57-59](./research.md),
+[data-model.md "Update 15"](./data-model.md), [quickstart.md "Update 15"](./quickstart.md),
+[contracts/view-sales-order-reused-endpoints.md "Update 15"](./contracts/view-sales-order-reused-endpoints.md).
+No new contract — zero backend endpoint is touched. Independent of Update 14's Phase 45 work (different
+state/handlers in the same file, no shared code path); depends only on `MapFilePage.jsx`'s existing
+Update 9 `EutrFileViewerDialog` usage as the pattern to clone.
+
+---
+
+## Phase 47: User Story 5 (continued) — AVAILABLE FILES Panel + Step Filtering
+
+**Purpose**: Give View Sales Order the same AVAILABLE FILES visibility Map File already has, scoped to
+the active template and (optionally) a single clicked step, with a read-only file preview.
+
+**Independent Test**: Open View for a Sales Order with 2+ templates and a tree containing a parent step
+with mixed Mapped/missing children. Confirm the new AVAILABLE FILES panel shows the full file set of
+the active template by default; confirm clicking a leaf step narrows it to that step's own Mapped
+file(s); confirm clicking a parent step narrows it to the union of its descendants' Mapped files;
+confirm clicking any template chip (including the currently-active one) clears the filter back to the
+full set; confirm the View button on any row opens the same read-only preview popup already shipped for
+Map File.
+
+### Implementation for Phase 47
+
+- [X] T255 [US5] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/ViewSalesOrderPage.jsx`, add `IconButton`
+  and `Tooltip` to the existing `@mui/material` import, add `AttachFile as FileIcon` and
+  `Visibility as ViewIcon` to the existing `@mui/icons-material` import, and add
+  `import EutrFileViewerDialog from '@presentation/pages/eutr-documents/components/EutrFileViewerDialog';`
+  (same alias path `MapFilePage.jsx` already uses); add a new `viewerFile` state
+  (`{ open: false, fileId: null, fileName: '' }`, cloned from `MapFilePage.jsx`'s own Update 9 state)
+  (research.md Decision 57).
+  *(Done: imports added; `viewerFile` state declared alongside the new `selectedStepId` state.)*
+- [X] T256 [US5] In the same file's `realAvailableFiles` `useMemo` (the builder that shapes
+  `list-po-references`'s response into file objects), add `typeName: doc.typeName` alongside the
+  existing `stepNames`/`poCode`/`fileId` fields it already copies — the field is already returned by
+  `list-po-references` since this feature's own Update 5, simply not yet read here, the same class of
+  gap Update 8 fixed for `poCode` (research.md Decision 59).
+  *(Done.)*
+- [X] T257 [US5] In the same file, add a new `selectedStepId` state (default `null`, meaning "no step
+  filter active").
+  *(Done.)*
+- [X] T258 [US5] In the same file's `ViewNode` component, add `selectedId`/`onSelect` props (threaded
+  through the recursive `node.children.map(...)` render call, alongside the existing
+  `collapsedIds`/`onToggle` props) and wire a click handler on the row's main clickable area — separate
+  from the existing collapse/expand arrow's own `onClick={() => hasChildren && onToggle(node.id)}` — that
+  calls `onSelect(node.id)`; at the call site (`t.tree.map(root => <ViewNode ... />)`), pass
+  `selectedId={selectedStepId}` and `onSelect={setSelectedStepId}` (depends on T257).
+  *(Done: the row `Box` now carries `onClick={() => onSelect?.(node.id)}` plus selected-state styling
+  (`primary.50` background, left border accent); the collapse arrow's own `onClick` now calls
+  `e.stopPropagation()` before `onToggle`, cloned from `MapFilePage.jsx`'s `TreeNode`.)*
+- [X] T259 [US5] In the same file's `template-tree-toolbar` `Chip` `onClick` handler (currently
+  `onClick={() => setSelectedTemplateCode(t.templateCode)}`), add `setSelectedStepId(null)` so
+  switching — or re-clicking — a template chip always clears any active step filter (spec FR-104)
+  (depends on T257).
+  *(Done.)*
+- [X] T260 [US5] In the same file, add a new `availableFilesForPanel` `useMemo`: when `selectedStepId`
+  is `null`, resolve to `selectedTemplateComputation?.filesForTemplate ?? []` unfiltered (spec FR-101);
+  otherwise, locate the clicked node in the currently-selected template's tree, collect its own `id`
+  plus every descendant `id` (walking `node.children`, already built by `flatToTree`), union
+  `selectedTemplateComputation.derivedFileMappings[id]` for every id in that set, de-duplicate by file
+  `id`, and map the result back to file objects from `filesForTemplate` (spec FR-102, research.md
+  Decision 58) (depends on T256, T257, T258).
+  *(Done: implemented as a `findNode`/`collectSubtreeIds` pair over the currently-selected template's
+  `tree`, unioning `derivedFileMappings` and filtering `filesForTemplate` by the resulting id set.)*
+- [X] T261 [US5] In the same file's right sidebar `Card` (`CardContent`), directly below the existing
+  "Steps missing files" `Box` (after its trailing `Divider`), render a new **AVAILABLE FILES** `Box` —
+  header showing `AVAILABLE FILES ({availableFilesForPanel.length})`; one row per file in
+  `availableFilesForPanel` with file name plus Map status (Mapped if the file's `id` appears in any
+  `selectedTemplateComputation.derivedFileMappings` value, else "No map"), File type (`typeName`, T256),
+  PO value (`poCode`), and Step name (`stepNames`) `Chip`s — cloned visually from `MapFilePage.jsx`'s own
+  AVAILABLE FILES row (Update 5/7), **without** an Edit `IconButton` or Upload `Button` of any kind (spec
+  FR-100/FR-042); each row's View `IconButton` (using `ViewIcon`, wrapped in a `Tooltip`) sets
+  `viewerFile` to `{ open: true, fileId: file.fileId, fileName: file.name }`; render a clear empty-state
+  message ("No files available" when the active template has none at all, "No files for this step" when
+  a step filter yields none) when `availableFilesForPanel.length === 0` (spec FR-106) (depends on T255,
+  T260).
+  *(Done: also widened the right sidebar from `width: 280` to `width: 320` so the chip row has enough
+  room, matching `MapFilePage.jsx`'s roomier AVAILABLE FILES column proportionally.)*
+- [X] T262 [US5] In the same file, render `<EutrFileViewerDialog open={viewerFile.open}
+  fileId={viewerFile.fileId} fileName={viewerFile.fileName} onClose={() => setViewerFile(prev => ({
+  ...prev, open: false }))} />` near the bottom of the component, alongside the existing
+  `<CustomSnackbar />` render call (cloned from `MapFilePage.jsx`'s own Update 9 render call) (depends on
+  T255).
+  *(Done.)*
+
+**Checkpoint**: View's right sidebar shows a real AVAILABLE FILES panel matching Map File's own row
+shape (minus Edit/Upload); clicking a step (leaf or parent) narrows it correctly; clicking any template
+chip clears the filter; the View button opens the shared read-only preview popup; no write/refetch
+behavior is triggered by any of these interactions.
+
+---
+
+## Phase 48: Polish & Cross-Cutting Concerns (Update 15)
+
+**Purpose**: Final validation for the Update 15 changes; no new functionality.
+
+- [ ] T263 [P] Run the frontend manual verification steps in `specs/005-eutr-sales-orders/quickstart.md`
+  "Update 15" section (steps 1-8: default full-file-set view, leaf-step narrowing, parent-step subtree
+  aggregation, empty-state for a step with no Mapped files, filter-clearing on same-chip and
+  different-chip clicks, View button opens the read-only preview popup, no extra network calls besides
+  the View click's own file-content fetch) (depends on T255-T262).
+  *(NOT run — requires a browser session against a live backend with real D365/Sales Order data,
+  unavailable in this environment (same category as every prior update's frontend manual step in this
+  feature). As a proxy check: `npx vite build --mode production` succeeds producing a clean
+  `ViewSalesOrderPage.*.js` chunk with no errors, and `EutrFileViewerDialog.*.js` is bundled as a
+  reused shared chunk (not duplicated). A human with that environment needs to walk through
+  quickstart.md's Update 15 steps 1-8 before sign-off.)*
+- [X] T264 [P] Review new/changed lines in `ViewSalesOrderPage.jsx` (Phase 47) to confirm added
+  comments are Vietnamese, matching this file's own existing comment style (e.g. its Update 8 comments
+  on `purchIdToTemplateCode`/`templateComputations`), per Constitution Principle IV; confirm the new
+  **"AVAILABLE FILES"** header label and its two empty-state strings stay in English, matching
+  `MapFilePage.jsx`'s own precedent for this same section (depends on T255-T262).
+  *(Verified: every new comment block added in Phase 47 is Vietnamese, unaccented ASCII, matching the
+  file's existing style and citing the relevant FR/Decision; the "AVAILABLE FILES" header label and the
+  "No files available"/"No files for this step" empty-state strings are in English, matching
+  `MapFilePage.jsx`'s own AVAILABLE FILES section and its "No files found" empty state.)*
+- [X] T265 Confirm `git diff`/`git status` for this update touches only `ViewSalesOrderPage.jsx` — no
+  backend file, no new DTO/endpoint/migration/policy, and no behavior change to `MapFilePage.jsx` or any
+  Update 1-14 file (depends on T255-T262).
+  *(Note: `compliance-client/` is entirely `.gitignore`d in this repo (confirmed via `git check-ignore
+  -v`), so `git diff`/`git status` cannot show this file's history directly. Verified by direct review
+  instead: this session's edits touched exactly one file,
+  `compliance-client/src/presentation/pages/eutr-sales-orders/ViewSalesOrderPage.jsx` — no
+  `compliance-sys-api/` file, no other `compliance-client/` file (`MapFilePage.jsx` included) was
+  opened for editing in this session.)*
+- [X] T266 Confirm the new panel contains no Edit `IconButton`, no Upload `Button`, and no other write
+  affordance of any kind (spec FR-100/FR-042), and that neither clicking a tree step nor clicking a
+  template chip triggers any network refetch of PO/document/template data (spec FR-063's existing
+  no-refetch precedent, still holding after this update) (depends on T258, T259, T260).
+  *(Verified by code review: the new AVAILABLE FILES `Box` renders only a `Typography` (name), `Chip`s
+  (Map status/File type/PO value/Step name), and one View `IconButton` per row — no Edit control, no
+  Upload `Button`, no form field. `onSelect`/`setSelectedStepId` and the toolbar `Chip`'s `onClick` only
+  call `useState` setters (`setSelectedStepId`/`setSelectedTemplateCode`) — no use case/API call is
+  invoked by either handler, so no refetch is triggered.)*
+
+**Checkpoint**: All Update 15 quickstart.md checks pass — View's new AVAILABLE FILES panel behaves
+exactly per FR-100..FR-106, with zero regression to any prior update.
+
+---
+
+## Update 15 Dependencies
+
+### Phase Dependencies
+
+- **Phase 47**: T255 has no code dependency (pure additive imports/state) but is grouped first since
+  T256/T258/T260/T262 build on it; T256 is independent of T255/T257/T258 (different part of the same
+  file — the `realAvailableFiles` builder) but is listed after T255 for reading order; T257 has no code
+  dependency; T258 depends on T257 (needs `selectedStepId`/`setSelectedStepId` to wire `onSelect`); T259
+  depends on T257; T260 depends on T256 (needs `typeName` present for the panel to render real chips),
+  T257, and T258 (needs the tree's node/children shape `onSelect` already touches); T261 depends on T255
+  (icons/`IconButton`/`viewerFile`) and T260 (the file list itself); T262 depends on T255.
+- **Phase 48 (Polish)**: Depends on Phase 47 being complete.
+
+### Parallel Opportunities
+
+- None of T255-T262 can run in parallel with each other — all edits land in the same single file
+  (`ViewSalesOrderPage.jsx`) and several build directly on prior tasks' state/props.
+- T263, T264 (Polish) are independent verification passes and can run in parallel.
+
+### Implementation Strategy
+
+1. Complete T255 (imports + `viewerFile` state) and T256 (`typeName` data-mapping fix) first — pure
+   additive groundwork, no behavior change yet.
+2. Complete T257 (new `selectedStepId` state), then T258 (wire tree row clicks) and T259 (clear on
+   template-chip click) — the step-selection mechanism.
+3. Complete T260 (the `availableFilesForPanel` `useMemo`) — the core filtering logic.
+4. Complete T261 (render the panel) and T262 (render the reused preview dialog) — the visible surface.
+5. Complete Phase 48 (polish/validation) — full quickstart.md "Update 15" pass.

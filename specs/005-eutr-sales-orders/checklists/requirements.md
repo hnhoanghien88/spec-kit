@@ -188,3 +188,72 @@
   (`eutr_template_details.takeFrom` is only ever "PO"/"Upload manual") — resolved as an explicit FR
   (FR-079) plus a documented Assumption explaining it's a forward-consistency fix, not a behavior change
   with current data, rather than left as an open question.
+- **2026-07-27 (Update 12)**: Re-validated after replacing FR-008 (previously the fixed `DEMO_PROGRESS`
+  demo value) and adding FR-082..FR-086 — the Overview screen's (`SalesOrderOverviewPage.jsx`) Progress
+  column now computes real per-row progress by `salesId`, reusing byte-for-byte the same formula Map
+  File already uses for its own `progress` variable (`computeProgress()` + the `templateComputations`
+  summation confirmed in Update 7/11: Required-only, `AUTO_SOURCES`-excluded, PO/Template-paired
+  "mapped" rule from FR-055/FR-056, aggregated across every saved template of that Sales ID) — not a new
+  or independently-defined formula for Overview. Confirmed by reading both `SalesOrderOverviewPage.jsx`
+  (currently the `DEMO_PROGRESS` constant, identical on every row) and `MapFilePage.jsx`'s `progress`
+  useMemo before drafting. No new [NEEDS CLARIFICATION] markers introduced: the two points with more
+  than one reasonable reading — what to show for a Sales ID with no saved template at all vs. one with
+  saved templates but zero Required steps after excluding `AUTO_SOURCES`, and how to avoid N+1 calls when
+  computing this for every visible row — are resolved as explicit FR/Assumption text (FR-083/FR-084 for
+  the two distinct empty states; FR-085 plus an Assumption for batching the same way the Template column
+  already does, exact API shape deferred to the plan phase) rather than left as open questions.
+- **2026-07-27 (Update 13)**: Re-validated after adding FR-087..FR-092 and related acceptance
+  scenarios/edge cases/success criteria — wires up the Overview screen's per-row Download button
+  (`DownloadIcon`, currently no `onClick` at all — confirmed by reading `SalesOrderOverviewPage.jsx`)
+  to trigger the exact same zip-download behavior already specified for View's Download button in
+  Update 10 (FR-069..FR-076): same dynamic root name, same one-subfolder-per-template/Mapped-only-files
+  structure, same "nothing to download" message instead of an empty zip. This is a pure reuse of an
+  already-specified mechanism (Constitution Principle III), not a new download format. No new
+  [NEEDS CLARIFICATION] markers introduced: the one point with more than one reasonable reading —
+  whether the data needed to build the zip (per-template Mapped documents) should be preloaded in a
+  batch for every visible row (like the Template/Progress columns) or loaded on-demand only for the row
+  actually clicked — is resolved as an explicit FR (FR-088) plus a documented Assumption (on-demand per
+  clicked row, since preloading it for every row on every page load would be wasted work whenever the
+  user never clicks Download for most rows), rather than left open. Per-row loading/error state
+  (independent per row, not a single table-wide state) is likewise resolved as explicit FR/Assumption
+  text (FR-090/FR-091 and a matching Assumption) rather than left ambiguous.
+- **2026-07-28 (Update 14)**: Re-validated after adding FR-093..FR-099 and related acceptance
+  scenarios/edge cases/success criteria — fixes a reported bug: filtering Overview to "SO004957", then
+  opening Map File or View and pressing Back, returns to Overview with the search box empty and the
+  full unfiltered list. Confirmed by reading the actual source: `SalesOrderOverviewPage.jsx` keeps
+  `search`/`page`/`pageSize` as plain local `useState` with no URL/sessionStorage sync, and its initial
+  `useEffect` always fetches page 0 with an empty search string on every mount; `MapFilePage.jsx` and
+  `ViewSalesOrderPage.jsx` both navigate their Back button to the fixed route `/eutr/sales-orders`
+  (not browser-history back), so Overview always remounts from scratch and loses whatever
+  search/page state it had. This update requires restoring the search keyword and page on
+  Back-navigation from either screen (FR-094/FR-095), re-fetching live data rather than replaying a
+  stale snapshot (FR-096), treating the in-app Back button and the browser/device Back button
+  identically (FR-097), and explicitly documents View's previously-unspecified Back button (FR-093,
+  confirmed present at `ViewSalesOrderPage.jsx:812-819`, mirroring Map File's FR-033). No new
+  [NEEDS CLARIFICATION] markers introduced: the one point with more than one reasonable reading —
+  whether navigating to Overview directly via the nav menu/breadcrumb (not via Back) should also keep
+  a previous search — is resolved as an explicit FR/Assumption (FR-098: menu/breadcrumb entry always
+  shows the default unfiltered, page-one list; restoration is scoped to the Back-navigation round trip
+  only), matching the user's literal request (preserve search across Map File/View → Back, not across
+  unrelated visits). The exact persistence mechanism (URL query params vs. sessionStorage) is left to
+  the plan phase as a documented Assumption, noting this codebase already has both patterns available
+  to reuse (`useSearchParams` in `compliance-master/index.jsx` and others; `sessionStorage` in
+  `dashboard/index.jsx`/`search-result/index.jsx`) — consistent with how this spec has always deferred
+  implementation-mechanism choices.
+- **2026-07-28 (Update 15)**: Re-validated after adding FR-100..FR-106 and related acceptance
+  scenarios/edge cases/success criteria — adds a new **AVAILABLE FILES** section to the View Sales
+  Order screen's right-hand box (below the existing "Steps missing files" list), styled after Map
+  File's AVAILABLE FILES list (Update 5/7: file name + Map status/File type/PO value/Step name chips)
+  but without the Edit/Upload controls (View stays read-only per FR-042). Confirmed by reading
+  `ViewSalesOrderPage.jsx`: the right sidebar's Validation Summary card currently only renders a
+  "Steps missing files:" name-only list (no real document rows), while `MapFilePage.jsx`'s AVAILABLE
+  FILES list and per-document View button (Update 9's `EutrFileViewerDialog` reuse) already exist and
+  are reused here rather than re-specified. New interaction not previously present on either screen:
+  clicking a step node in the Template Checklist tree narrows the new list to that step's (and its
+  descendants') Mapped documents, and clicking any template chip in `template-tree-toolbar` clears
+  that filter back to the full file set of the newly-active template — resolved as explicit FR-102/
+  FR-104 rather than left ambiguous, since the requester described this exact toggle behavior. No new
+  [NEEDS CLARIFICATION] markers introduced: whether a parent-node click should aggregate its
+  descendant steps' files (vs. show nothing, since only leaf steps get documents mapped directly) is
+  resolved as an explicit FR (FR-102) plus a matching edge case, since leaving parent nodes
+  non-interactive/empty would make large trees harder to use than the source is worth.

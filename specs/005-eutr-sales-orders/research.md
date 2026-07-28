@@ -1381,3 +1381,583 @@ them consistent across both screens.
   edit inside an already-existing function.
 - No shared helper/utility extraction for the `AUTO_SOURCES` condition — out of scope for this fix
   (see Decision 41's rejected alternatives).
+
+## Update 12 (2026-07-27) — Progress column on Overview: real per-row progress, batched across the page
+
+Spec Update 12 (FR-082..FR-086) replaces `SalesOrderOverviewPage.jsx`'s fixed `DEMO_PROGRESS` constant
+with real, per-`salesId` progress, computed with the **exact same formula** `MapFilePage.jsx` uses for
+its own `progress` (`computeProgress()`, Required-only, `AUTO_SOURCES`-excluded, PO/Template-scoped per
+FR-055/FR-056) — FR-082 explicitly forbids "defining a separate formula for Overview". The hard
+constraint is FR-085: this must be computed for every row on the current page (`pageSize`, default 100)
+via a **batch** load, not one API round-trip per row (N+1), mirroring the batching precedent already
+established for the Template column (`GetTemplatesBySalesIdsUseCase`, Update 1).
+
+Investigation (see plan.md Summary/Technical Context) found the existing Template-column batch endpoint
+(`POST /api/eutr-purchase-attachments/by-sales-ids`) is unsuitable to reuse as-is for this: it returns an
+already-`DISTINCT`, aggregated `{SalesId, TemplateCode, TemplateName}` (no `PurchId`), while
+`computeProgress`'s per-template scoping (via `templateComputations`, Update 7) needs the raw
+`PurchId → TemplateCode` link to know which PO's documents belong to which template. Likewise, there is
+today no way to fetch more than one template's full step-detail tree in a single HTTP round trip — both
+`MapFilePage.jsx` and `ViewSalesOrderPage.jsx` resolve each distinct `TemplateCode` with 2 sequential
+calls per code (`get-all` filtered by `Code`, then `GetById`). Doing this per Overview row, for up to 100
+rows, would be the exact N+1 shape FR-085 prohibits.
+
+### Decision 42 — Extract `AUTO_SOURCES`/`computeProgress`/per-template file-scoping into a shared util; `SalesOrderOverviewPage.jsx` becomes a 3rd consumer, not a 3rd copy
+
+- **Decision**: Create `compliance-client/src/presentation/pages/eutr-sales-orders/utils/
+  progressUtils.js` (colocated the same way `utils/treeUtils.js` already is, per the existing
+  page-local `utils/` convention), exporting `AUTO_SOURCES`, `computeProgress(details, fileMappings)`
+  (moved verbatim from `MapFilePage.jsx`), and a new `buildTemplateComputations(templatesData,
+  filesByPurchId, purchIdToTemplateCode)` helper that generalizes the per-template `derivedFileMappings`/
+  `filesForTemplate` grouping already duplicated between `MapFilePage.jsx` (Update 7) and
+  `ViewSalesOrderPage.jsx` (Update 8, its own clone). `MapFilePage.jsx` and `ViewSalesOrderPage.jsx` are
+  refactored (behavior-preserving) to import from this shared module instead of keeping their own local
+  `AUTO_SOURCES` constant/`computeProgress` function/inline `templateComputations` body;
+  `SalesOrderOverviewPage.jsx` imports the same module as its 3rd consumer, for both Update 12 (progress)
+  and Update 13 (its `buildDownloadFolders`-equivalent needs the same `derivedFileMappings`/
+  `filesForTemplate` shape).
+- **Rationale**: FR-082's "không định nghĩa công thức tính riêng cho Overview" (do not define a separate
+  formula for Overview) is best guaranteed structurally, not just by convention — a 3rd hand-copied
+  version of `AUTO_SOURCES`/`computeProgress` is exactly the kind of silent divergence Update 11 already
+  had to fix once (one of 4 near-identical filter predicates had drifted). Decision 41 (Update 11)
+  explicitly flagged extracting a shared `isCountableRequired`-style helper as "reasonable for a future
+  cleanup, but out of scope for this one-line fix... YAGNI" — Update 12 is that future cleanup moment,
+  since it adds a 3rd (and, via Update 13, a 4th call site) consumer of the same logic. This also matches
+  Decision 40's own reasoning about the zip-naming helpers ("reasonable future cleanup if a third
+  consumer appears") — the same threshold is now crossed here.
+- **Alternatives considered**:
+  - *Copy `computeProgress`/`AUTO_SOURCES` into `SalesOrderOverviewPage.jsx` a third time, leave
+    `MapFilePage.jsx`/`ViewSalesOrderPage.jsx` untouched*: rejected — recreates the exact 3-copies
+    drift risk Update 11 fixed once already; a future formula change (e.g. a new exclusion rule) would
+    again require finding and editing 3 (soon 4, with Update 13) separate inline copies instead of one.
+  - *Leave the extraction for a later update, ship Overview's progress with its own inline copy for
+    now*: rejected — Update 12's own FR-082 explicitly calls out reusing "đúng công thức" (the exact
+    formula), and this feature's own track record (Update 11) shows inline duplication of this exact
+    logic silently drifts; doing the extraction now while all 3 call sites are being touched in the same
+    session is lower-risk than doing it later against 3 already-independently-evolved copies.
+
+### Decision 43 — New batch endpoint: raw purchase attachments for many Sales IDs at once
+
+- **Decision**: Add `POST /api/eutr-purchase-attachments/by-sales-ids-raw` to the already-existing
+  `EutrPurchaseAttachmentsController` (policy `EutrPurchaseAttachments.Read`, reused — same policy as
+  the existing `by-sales-ids`/`by-sales-id/{salesId}` actions), accepting `List<string> salesIds` and
+  returning `List<PurchaseAttachmentDto>` — reusing the existing `PurchaseAttachmentDto` class
+  (`{SalesId, PurchId, TemplateCode}`) as-is, since it already carries `SalesId` per row (added in
+  Update 2 for the single-`salesId` `GetBySalesIdAsync`/`by-sales-id/{salesId}` action). New repository
+  method `GetBySalesIdsAsync(IEnumerable<string> salesIds)` clones `GetBySalesIdAsync`'s existing SQL
+  (`SELECT SalesId, PurchId, TemplateCode FROM eutr_purchase_attachments WHERE SalesId = @SalesId`)
+  widened to `WHERE SalesId IN @SalesIds` — no `DISTINCT`, no join, same shape as the existing
+  single-id query, just parameterized over a list. New service method
+  `GetRawBySalesIdsAsync(IEnumerable<string> salesIds, CancellationToken ct)` is a thin pass-through,
+  mirroring `GetTemplatesBySalesIdsAsync`'s own pass-through shape.
+- **Rationale**: the existing `by-sales-ids` action's `DISTINCT ... INNER JOIN eutr_templates`
+  aggregation (built for the Template column, Update 1) throws away `PurchId`, which is exactly the
+  field `computeProgress`'s per-template PO-scoping (`purchIdToTemplateCode`, Update 7) needs; widening
+  that existing action in place would break its current consumer (Template column expects
+  aggregated `{SalesId, TemplateCode, TemplateName}`, not raw per-PO rows) — Principle III's "additive,
+  don't break an existing consumer of a shared endpoint" rule (already applied identically in Update 5
+  to `list-po-references`) argues for a new, small, additive action instead of changing the existing
+  one's response shape. Reusing the existing `PurchaseAttachmentDto` class (rather than inventing a new
+  one) follows Principle II — it's already exactly the right shape.
+- **Alternatives considered**:
+  - *Widen `by-sales-ids` to also return `PurchId`, drop the `DISTINCT`*: rejected — this is a breaking
+    change to `SalesOrderOverviewPage.jsx`'s own existing Template-column consumer (`fetchTemplatesForRows`
+    expects one deduped row per `{SalesId, TemplateCode}`, keyed by `templateName`); would force
+    `SalesOrderOverviewPage.jsx` to re-dedupe client-side for the exact behavior it already gets for free
+    from the server today, for no benefit over adding one new action.
+  - *Call the existing singular `by-sales-id/{salesId}` once per row*: rejected outright — this is the
+    literal N+1 shape FR-085 prohibits (up to 100 sequential/parallel calls for one page load).
+
+### Decision 44 — New batch endpoint: full template details for many Template Codes in one round trip
+
+- **Decision**: Add `POST /api/eutr-templates/by-codes` to the already-existing `EutrTemplatesController`
+  (policy `EutrTemplates.ReadAll`, reused — the same "read many" policy already guarding `get-all`),
+  accepting `List<string> codes` and returning `List<EutrTemplatesResponseDto>` (the same response class
+  `GetById`/`get-all` already use, `Details` populated). New repository method
+  `GetManyByCodesWithDetailsAsync(IEnumerable<string> codes)` clones `GetByIdWithDetailsAsync`'s existing
+  2-query shape (header query, then details query) but widened from a single `Id` to a `Code IN @Codes`
+  header query, then a single details query scoped to `WHERE d.TemplateId IN @Ids` (the header query's
+  resulting `Id`s) — **2 SQL round trips total for however many distinct codes are requested**, not 2 per
+  code. Details rows are grouped back onto their owning template client-side in the repository (by
+  `TemplateId`), mirroring the existing single-template method's `template.Details = details.ToList()`
+  assignment, generalized to a dictionary keyed by `Id`.
+- **Rationale**: this is the single biggest N+1 risk in the feature — today, resolving one template's
+  full tree costs 2 sequential calls (Code→Id via `get-all`, then `GetById`), and both `MapFilePage.jsx`
+  and `ViewSalesOrderPage.jsx` already do this once per distinct `TemplateCode` for a single Sales Order.
+  An Overview page of up to 100 Sales Orders could reference many distinct `TemplateCode`s (though
+  typically far fewer distinct codes than rows, since templates are reused across Sales Orders) — without
+  a batch endpoint, computing Progress for a full page would multiply an already-2-call-per-template cost
+  across every distinct code needed by any visible row, all sequentially. A single new action, doing the
+  Code→Id resolution and detail-hydration server-side for the whole requested set in one round trip each,
+  collapses this to exactly 2 database queries regardless of how many codes are requested — the same
+  reasoning already applied by this feature to `by-sales-ids-raw` (Decision 43) and by Update 1 to the
+  original Template-column batch endpoint.
+- **Alternatives considered**:
+  - *Client calls the existing `get-all` (filtered by `Code`) + `GetById` loop, just with `Promise.all`
+    across all distinct codes instead of per-row*: rejected — still 2×N HTTP round trips (N = distinct
+    codes on the page), and still no server-side batching of the underlying SQL; a single new action is
+    not meaningfully harder to add (it clones existing, already-working SQL almost verbatim) and removes
+    both the round-trip multiplication and the awkward Code→Id indirection the client currently has to do
+    per code.
+  - *Extend `get-all`'s paged response to include `Details` when a `Code IN (...)` filter is used*:
+    rejected — `get-all` is also used by other 003-eutr-templates screens expecting `Details` to stay
+    `null` in the paged/list view (confirmed: `GetPagedAsync` never populates `Details`, only
+    `GetByIdWithDetailsAsync` does) — conditionally changing that shape based on filter content would be
+    a surprising, filter-dependent contract change to a shared, already-consumed endpoint (Principle III).
+
+### Decision 45 — Reuse `list-po-references` unchanged; send the page-wide union of PO codes
+
+- **Decision**: No backend change to `POST /api/eutr-documents/list-po-references` at all. Its request
+  DTO already takes a flat `List<string> PoCodes` with no `SalesId` field, and its repository query
+  (`GetDocumentsByPoCodesAsync`, `WHERE r.RefValue IN @PoCodes`) already groups its response purely by
+  `PoCode`, with zero cross-sales-order coupling. `SalesOrderOverviewPage.jsx` calls it once per page
+  load with the **union of every `PurchId`** returned by the new `by-sales-ids-raw` call (Decision 43)
+  across all rows on the current page, then re-groups the flat response back to each row's own Sales ID
+  client-side using the same `by-sales-ids-raw` data (`PurchId → SalesId`, and `PurchId → TemplateCode`
+  for per-template scoping via `buildTemplateComputations`, Decision 42).
+- **Rationale**: verified in research (see plan.md Technical Context) that this endpoint is already
+  fully SalesId-agnostic — it was never scoped to "one Sales Order's POs" in its contract, only in how
+  `MapFilePage.jsx`/`ViewSalesOrderPage.jsx` happened to call it (each with one Sales Order's own PO
+  codes). Principle III requires reusing this as-is; there is no gap to fill here, only a new caller
+  supplying a larger `PoCodes` array than before.
+- **Alternatives considered**:
+  - *Call it once per row (per Sales Order), like Map File/View do*: rejected — reintroduces N+1 for
+    this specific call, defeating the entire purpose of Decision 43/44's batching.
+  - *Add a `salesIds` variant of this endpoint that internally resolves POs and returns results grouped
+    by SalesId*: rejected — unnecessary; the client already has (or will have, via Decision 43) the
+    `PurchId → SalesId` link needed to do this grouping itself, and reusing the existing flat-by-PoCode
+    contract avoids touching a `004-eutr-documents`-owned endpoint that three other features/screens
+    already depend on unchanged.
+
+### Decision 46 — Frontend orchestration: `fetchProgressForRows`, parallel to the existing `fetchTemplatesForRows`
+
+- **Decision**: `SalesOrderOverviewPage.jsx` adds a second batch loader, `fetchProgressForRows(items)`,
+  fired alongside (not instead of) the existing `fetchTemplatesForRows(items)` right after
+  `fetchSalesOrders` lands a page of rows. It runs, per page load: (1) `by-sales-ids-raw` for all visible
+  `salesId`s (Decision 43); (2) from that result, the distinct `TemplateCode`s across the whole page →
+  `by-codes` (Decision 44); (3) from (1), the distinct `PurchId`s across the whole page →
+  `list-po-references` (Decision 45, unchanged endpoint). All three run as soon as (1) resolves — (2)
+  and (3) do not depend on each other, only on (1) — via `Promise.all`. Once all three land, a `useMemo`
+  (or a plain reduce right after the 3 responses are set into state) computes, per `salesId`, its own
+  `templatesData`-equivalent slice + `buildTemplateComputations` (Decision 42) + `computeProgress` summed
+  across that Sales ID's own templates — the exact same per-template-then-sum shape `MapFilePage.jsx`'s
+  page-level `progress` `useMemo` already uses (Update 7), just repeated once per row instead of once per
+  page.
+- **Rationale**: mirrors the already-established `fetchTemplatesForRows` pattern (one batch call,
+  keyed by `salesId` into state, fired once per page/search/pagination change) — Principle II favors
+  extending an already-working in-file precedent over inventing a new data-loading shape. Running (2)
+  and (3) off of (1)'s result via `Promise.all` (not sequentially) keeps the added latency to "1 round
+  trip, then 2 round trips in parallel" regardless of page size, matching SC-001's existing 3-second
+  budget expectation for the whole screen.
+- **Alternatives considered**:
+  - *One combined backend endpoint that takes `salesIds` and returns fully-computed progress per Sales
+    ID, doing all the joins/aggregation server-side*: considered, but rejected for this update — it
+    would require re-implementing `computeProgress`/`AUTO_SOURCES`/PO-Template scoping as a second,
+    server-side copy of logic that Principle II says should stay a single client-side source of truth
+    (already relied upon identically by Map File/View); it would also be a much larger, EUTR-specific
+    aggregation endpoint where the spec's own Update 12 clarification explicitly left "the exact number/
+    kind of data calls" as a plan-time decision, not a mandate for a single monolithic endpoint. The
+    3-call batch (raw attachments → templates-by-codes + po-references in parallel) is the smaller,
+    additive, most reuse-favoring shape available given what already exists.
+
+### Decision 47 — Three-way Progress cell state: empty vs. no-required-steps vs. computed vs. error
+
+- **Decision**: The per-row computed result is one of 4 discriminated states, mirroring FR-083/FR-084's
+  explicit requirement that "no template yet" and "template(s) exist but 0 Required steps after
+  `AUTO_SOURCES` exclusion" render as two visibly different placeholders (neither is `0/0`/`0%`):
+  `{status:'empty'}` (no `by-sales-ids-raw` rows at all for this `salesId` — same empty condition as the
+  Template column's own FR-007b), `{status:'no-required'}` (has purchase-attachment rows, but every
+  matched template's `flatDetails` yields zero Required-non-`AUTO_SOURCES` steps),
+  `{status:'ok', completed, total, pct}` (the normal case), and `{status:'error'}` (this row's data
+  could not be computed because one of the 3 batch calls failed — see Decision 48).
+- **Rationale**: FR-083/FR-084 are explicit about needing 2 distinguishable empty-ish states, not one;
+  encoding this as a small discriminated result (rather than overloading `total === 0` to mean two
+  different things) keeps the render logic in `SalesOrderOverviewPage.jsx` a simple `switch`/lookup,
+  the same shape already used for the Template column's own empty-state handling.
+- **Alternatives considered**:
+  - *Reuse `computeProgress`'s existing `{completed:0, total:0, pct:0}` return for both empty cases*:
+    rejected — this is exactly what FR-084 says NOT to do ("không suy diễn thành 0% chưa hoàn thành");
+    the two cases need to render distinguishably, so the data shape passed to the cell must already
+    distinguish them, not be reverse-engineered from a single ambiguous zero.
+
+### Decision 48 — Batch-failure granularity: a failed batch call errors every row on the current page's Progress cell, not the whole table
+
+- **Decision**: If any of the 3 batched calls (Decision 43/44/45) rejects, `fetchProgressForRows` catches
+  it once (same try/catch shape as the existing `fetchTemplatesForRows`) and marks every currently
+  visible row's Progress cell as `{status:'error'}` — it does **not** throw up to a page-level error
+  boundary, and it does **not** clear/replace the already-successfully-loaded Sales ID rows, Template
+  cells, or Download buttons (FR-085's "không chặn phần còn lại của bảng" — other columns/rows keep
+  working).
+- **Rationale**: because Progress is computed by combining all 3 batched responses together, a genuine
+  network/data-source failure in any one of them makes it impossible to compute Progress for **any** row
+  on the current page (there is no partial-row fallback once the calls are batched) — so "every row
+  affected" is the correct, honest scope for this failure mode, not an inconsistency with FR-085's intent.
+  FR-085 requires errors to stay localized to the Progress cell/column, which this satisfies: Sales ID/
+  Customer/Template/Download all remain fully functional even if this specific batch fails.
+- **Alternatives considered**:
+  - *Retry each of the 3 calls independently with per-call partial-success handling (e.g. show Progress
+    only for rows whose `PurchId`s happened to be in a `list-po-references` response that partially
+    succeeded)*: rejected as over-engineered for this update — `list-po-references`/`by-codes`/
+    `by-sales-ids-raw` are single atomic HTTP calls with no partial-success response shape today; adding
+    one would require backend changes out of scope for what is otherwise a zero-new-failure-mode batch
+    reuse of existing/newly-additive endpoints.
+
+## Updated non-goals (Update 12)
+
+- No change to the Template column's existing `by-sales-ids`/`GetTemplatesBySalesIdsUseCase` behavior —
+  `by-sales-ids-raw` (Decision 43) is a new, additive action, not a replacement.
+- No server-side computation of Progress — the formula stays a single client-side source of truth
+  (`progressUtils.js`, Decision 42), consistent with how `MapFilePage.jsx`/`ViewSalesOrderPage.jsx`
+  already compute it.
+- No new migration, no new table — every new/widened query reads `eutr_purchase_attachments`,
+  `eutr_templates`, `eutr_template_details`, `eutr_steps`, `eutr_references`, `eutr_documents`,
+  `eutr_reference_types`, all already read by this feature's prior updates.
+- No per-row network call for Progress — everything is batched per page load (FR-085), consistent with
+  the Template column's own existing batching.
+
+## Update 13 (2026-07-27) — Download button on Overview: real per-row, on-demand zip download
+
+Spec Update 13 (FR-087..FR-092) replaces the Overview grid's Download `IconButton` — which today has no
+`onClick` at all (verified: the only action button on this row without a handler) — with the exact same
+zip-download behavior already shipped for `ViewSalesOrderPage.jsx`'s Download button (Update 10), scoped
+to the Sales Order of the clicked row. Unlike Update 12's Progress column, this is explicitly **not**
+batched per page (FR-088) — the data needed to build one row's zip is fetched only when that row's
+Download button is clicked.
+
+### Decision 49 — Zero backend change; reuse `download-zip` exactly as Update 10 shipped it
+
+- **Decision**: No change of any kind to `EutrDocumentsController.DownloadZip`/`EutrDownloadZipRequestDto`/
+  `EutrDownloadZipFolderDto`/`EutrDownloadZipFileDto` (`compliance-sys-api`) or to
+  `DownloadEutrSalesOrderZipUseCase.js`/`eutrDocumentsApi.js`'s `downloadZip` method
+  (`compliance-client`) — all reused verbatim from Update 10.
+- **Rationale**: verified this endpoint is already fully generic — it takes a client-supplied
+  `{salesId, customerCode, customerName, folders[]}` payload and does not care which screen built it;
+  `ViewSalesOrderPage.jsx`'s own `handleDownload`/`buildDownloadFolders` (Update 10) already prove the
+  exact request shape works end to end. Principle III leaves nothing to change here.
+- **Alternatives considered**: none seriously considered — this is the same reasoning already applied to
+  every other "reuse an already-generic endpoint from a new caller" decision in this feature (e.g.
+  Decision 45 above, or Update 9's reuse of `get-file-by-idref`).
+
+### Decision 50 — Per-row, on-demand data pipeline (not the page-wide Progress batch)
+
+- **Decision**: Clicking a row's Download button runs, only for that row's `salesId`: (1)
+  `GetPurchaseAttachmentsBySalesIdUseCase` (the existing **singular** `by-sales-id/{salesId}` use case,
+  Update 2 — already exists, unchanged) to get that row's raw `{purchId, templateCode}` pairs; (2) the
+  new `by-codes` batch template-detail endpoint (Decision 44), called with just this row's own distinct
+  `TemplateCode`s (typically a handful) — reused here as a single-row "batch of N codes" rather than
+  introducing a third copy of the 2-call-per-template loop `MapFilePage.jsx`/`ViewSalesOrderPage.jsx`
+  each already have; (3) `GetEutrDocumentsPoReferencesUseCase` (existing, unchanged) for this row's own
+  `PurchId`s. The 3 results feed the same shared `buildTemplateComputations` (Decision 42) used by
+  Update 12, producing this one Sales Order's `derivedFileMappings`/`filesForTemplate` per template, from
+  which the `folders` payload (template name → Mapped files) is built exactly like
+  `ViewSalesOrderPage.jsx`'s `buildDownloadFolders` (Update 10).
+- **Rationale**: FR-088 explicitly requires on-demand, single-Sales-ID loading for Download — reusing
+  Update 12's page-wide batched Progress data is not equivalent even when it happens to already be
+  in-memory for the clicked row, because FR-088 additionally requires this data to reflect the state "at
+  the moment the user clicks Download" (freshness), and because a user may click Download on a row whose
+  Progress batch failed (Decision 48) or is still loading — Download must work independently of Progress
+  succeeding. Reusing `by-codes` (Decision 44) here — rather than re-deriving a 3rd inline
+  2-call-per-template loop — keeps template-detail fetching to exactly 2 implementations in the whole
+  feature (the new batch endpoint, called either page-wide-batched or single-row-on-demand), not 3.
+- **Alternatives considered**:
+  - *Reuse whatever `templatesData`/`templateComputations` Update 12's Progress batch already computed
+    for this row, if available*: rejected — couples Download's correctness to Progress having
+    succeeded and being fresh, which FR-088/FR-091 don't want; Download must independently succeed or
+    fail per row regardless of Progress's own state for that row.
+  - *Clone `MapFilePage.jsx`/`ViewSalesOrderPage.jsx`'s existing 2-call-per-template-code loop a third
+    time instead of reusing the new `by-codes` batch endpoint*: rejected — `by-codes` already exists
+    (built for Decision 44) and is strictly fewer round trips even for a single row's handful of
+    templates; reusing it here is pure Principle II/III reuse, not scope creep.
+
+### Decision 51 — Per-row loading/disabled state as a `Set` of in-flight `salesId`s, not a single page-wide boolean
+
+- **Decision**: A new `downloadingSalesIds` state (a `Set<string>`, not a single boolean) tracks which
+  row(s) currently have an in-flight Download; the clicked row's `IconButton` shows a small
+  `CircularProgress` in place of `DownloadIcon` while its own `salesId` is in the set (mirroring
+  `ViewSalesOrderPage.jsx`'s own single-boolean `downloading` state, generalized to per-row), and the
+  button itself is never `disabled` based on data-emptiness (FR-089 — always clickable up front, same
+  as View).
+- **Rationale**: FR-090 explicitly requires that one row's in-flight Download must not block search,
+  pagination, or another row's Download click — a single shared boolean (as `ViewSalesOrderPage.jsx`
+  uses, correct there since it only ever has one Sales Order/one Download button on screen) would
+  incorrectly show every row as "downloading" the moment any one row starts, or would need to disable
+  all other Download buttons meanwhile; a per-`salesId` `Set` isolates each row's own in-flight state.
+- **Alternatives considered**:
+  - *A single page-wide `downloading` boolean, disabling all Download buttons while any one is
+    in-flight*: rejected outright — directly violates FR-090's explicit "không chặn... Download ở một
+    dòng khác" requirement.
+
+### Decision 52 — Empty-Mapped-files and failure handling mirror View's `handleDownload` exactly, per row
+
+- **Decision**: Before calling `download-zip`, the same client-side pre-check `ViewSalesOrderPage.jsx`
+  already does (Decision 39/Update 10 — `folders.length === 0 || !folders.some(f => f.files.length > 0)`)
+  runs against the clicked row's own freshly-fetched `templateComputations`; if it trips, the same
+  "không có tài liệu nào để tải" message (FR-089, reusing FR-074's exact copy) shows scoped to that row
+  (e.g. a row-level `Snackbar`/inline alert, not a page-wide one), and `download-zip` is never called. A
+  thrown error from any of the 3 fetch calls (Decision 50) or from `download-zip` itself is caught the
+  same way `ViewSalesOrderPage.jsx`'s `handleDownload` catches it, surfaced against that row only
+  (FR-091) — other rows' state, search, and pagination are unaffected.
+- **Rationale**: FR-089/FR-091/FR-092 ask for byte-for-byte the same behavior already verified correct
+  for View's Download (Update 10) — Principle II says clone the already-working, already-spec-verified
+  pattern rather than inventing new empty/error copy or a new failure-handling shape for Overview.
+- **Alternatives considered**: none — this is a direct, intentional clone of an already-shipped, already
+  spec-required behavior; no alternative shape was considered worth evaluating.
+
+## Updated non-goals (Update 13)
+
+- No new backend endpoint, DTO, migration, or policy — `download-zip` is reused byte-for-byte from
+  Update 10.
+- No batching of Download's data fetch across rows — FR-088 explicitly requires on-demand, single-row
+  loading, the opposite of Update 12's Progress batching.
+- No change to `ViewSalesOrderPage.jsx`'s own Download wiring — it keeps its already-shipped
+  `buildDownloadFolders`/`handleDownload`, now calling into the same shared `buildTemplateComputations`
+  util (Decision 42) rather than its own inline copy, but with identical behavior/output.
+- No write of any kind to `eutr_documents`/`eutr_references`/`eutr_purchase_attachments` from this
+  interaction (FR-092), consistent with every other read-only Download path already shipped.
+
+## Update 14 (2026-07-28) — Preserve Overview's search/page when Back-navigating from Map File or View
+
+Spec Update 14 (FR-093..FR-099) fixes a reported bug: filtering Overview to "SO004957", opening Map
+File or View, then pressing Back returns to Overview with the search box empty and the full,
+unfiltered list. Root cause, confirmed by reading the actual source: `SalesOrderOverviewPage.jsx`
+keeps `search`/`page`/`pageSize` as plain local `useState` (lines 86/89-90) with no persistence
+anywhere, and its mount effect (lines 386-390) unconditionally calls `fetchSalesOrders(0, pageSize,
+'')` — page 0, empty search — every time the component mounts. `MapFilePage.jsx:900` and
+`ViewSalesOrderPage.jsx:816`'s Back buttons both hard-navigate to the fixed route
+`navigate('/eutr/sales-orders')`, which is a fresh push, not a history pop — so Overview always
+remounts from that same blank slate, regardless of which Back button (in-app, or the browser's own)
+sent the user there.
+
+### Decision 53 — Persist `search`/`page`/`page-size` on Overview's own URL via `useSearchParams`, cloning the existing `page`/`page-size` convention
+
+- **Decision**: `SalesOrderOverviewPage.jsx` adds `useSearchParams` (react-router-dom) and reads its
+  initial `search`/`page`/`pageSize` state from the URL's `search`/`page`/`page-size` query params on
+  first render (falling back to `''`/`0`/`DEFAULT_PAGE_SIZE` when absent) instead of the current
+  hardcoded literals. Whenever the user changes search (inside the existing 500ms-debounced callback,
+  so the URL updates once per settled keystroke burst, not per keystroke), page, or page size, the new
+  values are written back with `setSearchParams(next, { replace: true })` — `replace: true` so typing
+  or paginating updates the current history entry in place rather than pushing a new one per change.
+- **Rationale**: this codebase already has exactly this pattern for pagination —
+  `compliance-master/index.jsx` (lines 66-68, 309-346) reads `page`/`page-size` from
+  `useSearchParams()` on mount and keeps them in sync with `{ replace: true }` on every pagination
+  model change; the same pattern is also used by `compliance-management/index.jsx` and
+  `compliance-detail/index.jsx`. Cloning it (Principle II) rather than inventing a new persistence
+  shape keeps `SalesOrderOverviewPage.jsx` consistent with every other paginated list screen in this
+  app, and — critically — makes the URL the single source of truth for "what was Overview showing",
+  which is exactly what both the browser's native Back button and an in-app "smart back" (Decision 54)
+  need to restore correctly (FR-094/FR-095/FR-097).
+- **Alternatives considered**:
+  - *`sessionStorage`, mirroring `dashboard/index.jsx`/`search-result/index.jsx`'s existing pattern
+    (save on navigate-away, read on mount)*: rejected as the primary mechanism — it requires explicit
+    save/read wiring on both ends and does not, by itself, make the browser's own Back button behave
+    identically to an in-app Back button (FR-097), since the browser's Back button only ever restores
+    the URL, not arbitrary `sessionStorage` keys a screen chose to write. The URL-based approach
+    satisfies FR-097 automatically, with no separate code path for "the user pressed the physical
+    Back button."
+  - *Component-local state only, with no persistence at all (today's behavior)*: this is precisely
+    the bug being fixed — rejected.
+  - *Push a new history entry per keystroke instead of `{ replace: true }`*: rejected — would let a
+    user land on 20 near-identical history entries after typing a 20-character search term, breaking
+    the browser's Back button for unrelated navigation (each Back press would just retype one fewer
+    character rather than leaving the page); `compliance-master/index.jsx`'s own precedent already
+    established `{ replace: true }` as the fix for this exact class of problem.
+
+### Decision 54 — "Smart back" on Map File/View: `navigate(-1)` when the visit came from Overview, else the existing fixed-route fallback
+
+- **Decision**: `SalesOrderOverviewPage.jsx`'s two existing `navigate(`/eutr/sales-orders/${row.code}/
+  map-file`)`/`navigate(`/eutr/sales-orders/${row.code}/view`)` calls (lines 569/591) additionally pass
+  `{ state: { fromOverview: true } }` as the second argument. `MapFilePage.jsx` and
+  `ViewSalesOrderPage.jsx` each add `useLocation` and replace their Back button's inline `onClick` with
+  a small `handleBack`: if `location.state?.fromOverview` is `true`, call `navigate(-1)` (pops the
+  browser history stack back to the exact prior Overview URL — search/page query params intact, per
+  Decision 53); otherwise, fall back to the exact same `navigate('/eutr/sales-orders')` call already
+  shipped since Update 3 (FR-033) — a fresh, default-list navigation.
+- **Rationale**: `navigate(-1)` alone (unconditionally) would be unsafe — if a user deep-links or
+  hard-reloads directly into Map File/View (no Overview entry in this tab's history to pop back to),
+  popping history could leave the app entirely or land on an unrelated prior page. Gating it on a
+  `location.state` flag set only by Overview's own navigation calls means `navigate(-1)` only ever
+  fires when we know, for certain, that the immediately-prior history entry is Overview's own URL with
+  the correct query params already on it — exactly the case FR-094/FR-095/FR-096 need, and exactly the
+  case where `navigate(-1)` is safe. Falling back to the pre-existing fixed-route call for every other
+  case (menu/breadcrumb entry, deep link, hard reload) is also precisely what FR-098 asks for: those
+  entries show the default, unfiltered list, since there genuinely is nothing to restore.
+- **Why this also satisfies FR-097 (in-app Back and the browser's own Back behave identically)**: the
+  browser's native Back button does not run any of this code — it simply pops browser history itself,
+  landing on Overview's URL with its query params intact (Decision 53 alone already guarantees this).
+  The in-app Back button, once wired per this Decision, performs the exact same history-pop for the
+  one case where it's safe to (`fromOverview: true`) — so both paths converge on identical behavior by
+  construction, not by writing matching logic twice.
+- **Alternatives considered**:
+  - *Unconditional `navigate(-1)` with no fallback*: rejected — unsafe for deep-link/hard-reload
+    entry, per Rationale above.
+  - *Reconstruct Overview's URL explicitly (e.g. pass `returnTo=/eutr/sales-orders?search=...&page=...`
+    as a query param on the Map File/View URL itself, and have Back navigate there with `replace:
+    true`)*: considered as a more "explicit," non-history-dependent alternative. Rejected in favor of
+    `navigate(-1)` because Decision 53 already keeps Overview's own URL correct at all times, making a
+    second, parallel encoding of the same information (a `returnTo` param carried through a second
+    screen's URL) redundant — it would need to stay in sync with Decision 53's query params by hand,
+    a second source of truth for the exact same 3 values, with no benefit `navigate(-1)` doesn't
+    already provide once gated by the `fromOverview` flag.
+  - *Track "came from Overview" via `document.referrer` or `window.history.length` instead of an
+    explicit `location.state` flag*: rejected — both are unreliable/browser-dependent signals for
+    same-SPA in-app navigation depth, whereas `location.state` set by the exact `navigate()` call that
+    sent the user here is precise and requires no heuristics.
+
+### Decision 55 — Restored search/page always re-fetch live data, never replay a stale snapshot
+
+- **Decision**: no caching of the previous fetch's `rows`/`templatesBySalesId`/`progressBySalesId` is
+  introduced. On every mount — restored-from-URL or fresh-default alike — `SalesOrderOverviewPage.jsx`
+  calls the exact same `fetchSalesOrders`/`fetchTemplatesForRows`/`fetchProgressForRows` chain it
+  already calls today (Update 1/12), just seeded with the URL-restored `search`/`page`/`pageSize`
+  instead of hardcoded defaults.
+- **Rationale**: spec FR-096 explicitly requires the restored view to reflect the freshest real data,
+  not a snapshot frozen at the moment the user navigated away to Map File/View — this matters
+  concretely because a Save PO Mapping in Map File can change that very row's own Template/Progress
+  cells (Update 1/12's own real-data requirements). Introducing any client-side cache here would
+  reintroduce exactly the kind of "stale demo-like data" problem every prior Update in this feature
+  (1/12/13) has deliberately avoided.
+- **Alternatives considered**:
+  - *Cache the previous page's rows/derived data (e.g. in a module-level variable or React Router's
+    own loader cache) and skip refetching on restore*: rejected — directly conflicts with FR-096 and
+    with this feature's established "always real, always fresh" precedent.
+
+### Decision 56 — No new shared util or shared hook; the fix stays inline in the 3 files it touches
+
+- **Decision**: no new `utils/` file (unlike Update 12's `progressUtils.js`) and no new custom hook is
+  introduced for this fix — `useSearchParams`/`useLocation` usage and the small `handleBack` function
+  are written directly inside each of the 3 already-existing files.
+- **Rationale**: the amount of new logic per file is small (a handful of lines each), there are only 2
+  Back buttons involved (not 3+ call sites of an identical formula, unlike Update 12's
+  `computeProgress`/`buildTemplateComputations`, which had 3 independently-drifting copies before
+  extraction) — extracting a shared `useSmartBack()` hook for exactly 2 near-identical call sites would
+  add an abstraction layer without a proven 3rd consumer to justify it, the same "don't extract for a
+  hypothetical future 3rd copy" restraint already applied by Update 10 (Decision 40, declining to
+  extract shared zip-naming helpers) and reused here for the same reason.
+- **Alternatives considered**:
+  - *Extract a `useSmartBack()` hook shared by `MapFilePage.jsx`/`ViewSalesOrderPage.jsx`*: considered
+    and rejected for now, per Rationale — revisit if a 3rd screen ever needs the same "back to
+    Overview, preserving filters" behavior.
+
+## Updated non-goals (Update 14)
+
+- No new backend endpoint, DTO, migration, or policy of any kind — this update is 100% frontend
+  routing/state, the same category as Update 11's pure frontend fix.
+- No new shared util/hook file — the fix stays inline in the 3 files it touches (Decision 56).
+- No caching/snapshotting of Overview's previous fetch results — every restore re-fetches live data
+  (Decision 55, FR-096).
+- No change to the menu/breadcrumb entry path into Overview — it continues to show the default,
+  unfiltered, page-one list, exactly as it does today (FR-098).
+- No change to `compliance-master/index.jsx` or any other screen outside this feature's own 3 files —
+  their existing `useSearchParams` pattern is read as a design reference only (Decision 53), not
+  imported or modified.
+
+## Update 15 (2026-07-28) — AVAILABLE FILES panel on View, filtered by the selected step, reusing the Map File popup
+
+Spec Update 15 (FR-100..FR-106) adds a new file-list panel to `ViewSalesOrderPage.jsx`'s right-hand
+sidebar, styled after `MapFilePage.jsx`'s own Step 2 AVAILABLE FILES list, with one new interaction not
+present on either screen today: clicking a step in the Template Checklist tree narrows the panel to
+that step's own (and its descendants') Mapped documents, and clicking any template chip in
+`template-tree-toolbar` clears that filter back to the full file set of the newly-active template.
+Confirmed by re-reading the shipped `ViewSalesOrderPage.jsx`: its right sidebar (`Validation Summary`
+card) currently renders only two pass/fail rows and a name-only "Steps missing files:" list (lines
+~1036-1072 as of Update 14) — no file rows, no chips, no View button anywhere on this screen.
+`MapFilePage.jsx`'s AVAILABLE FILES list (Update 5/7/9) already has the exact row shape this update
+needs to copy visually (name + Map status/File type/PO value/Step name chips + View icon button), and
+this feature's own shared `buildTemplateComputations` (Update 12, `utils/progressUtils.js`) already
+computes, per template, both `filesForTemplate` (every document belonging to that template's own PO(s))
+and `derivedFileMappings` (a step/detail-id → matched-file-ids map) — both already sitting in
+`ViewSalesOrderPage.jsx`'s `selectedTemplateComputation` (Update 8/12), just never rendered as a file
+list on this screen.
+
+### Decision 57 — Reuse `EutrFileViewerDialog` a second time, not a new/forked preview component
+
+- **Decision**: `ViewSalesOrderPage.jsx` imports `EutrFileViewerDialog` from
+  `@presentation/pages/eutr-documents/components/EutrFileViewerDialog` (the exact alias path
+  `MapFilePage.jsx` already uses) and adds one new `viewerFile` state
+  (`{ open: false, fileId: null, fileName: '' }`, cloned verbatim from `MapFilePage.jsx`'s own Update 9
+  state), rendering `<EutrFileViewerDialog open={viewerFile.open} fileId={viewerFile.fileId}
+  fileName={viewerFile.fileName} onClose={...} />` once, near the bottom of the component (same
+  placement pattern as `MapFilePage.jsx`).
+- **Rationale**: Principle II/III — this is the same component, same props contract, already reused
+  once (Update 9, for `MapFilePage.jsx`); reusing it a second time for a sibling read-only screen is a
+  strictly smaller ask than Update 9's original reuse (View has no write paths to accidentally expose
+  through it at all, unlike Map File which also has Upload/Edit on the same screen). No new file, no
+  new component, no new backend call — `EutrFileViewerDialog` already performs its own
+  `GetEutrDocumentsFileByIdRefUseCase` call internally.
+- **Alternatives considered**:
+  - *Build a second, `View`-only preview dialog*: rejected — would duplicate an already-correct,
+    already-reused component for no behavioral difference; directly against Principle II/III.
+
+### Decision 58 — Step-scoped filtering walks the already-built tree + `derivedFileMappings`; no new matching algorithm
+
+- **Decision**: `ViewSalesOrderPage.jsx` adds one new state, `selectedStepId` (default `null`), set by a
+  new `onSelect` prop threaded through the existing `ViewNode` tree (today `ViewNode` only wires a click
+  handler to its collapse/expand arrow — `onSelect` is a second, independent click target on the row
+  itself, added without touching the existing collapse/expand `onToggle` wiring). A new
+  `availableFilesForPanel` `useMemo` resolves the panel's contents:
+  - When `selectedStepId` is `null` → `selectedTemplateComputation.filesForTemplate` unfiltered
+    (FR-101) — the exact same array `MapFilePage.jsx`'s own AVAILABLE FILES list source already is for
+    its currently-viewed template.
+  - When `selectedStepId` is set → walk the clicked node's own subtree (self + every descendant,
+    already present as `node.children` on the tree `flatToTree` already builds, Update 2/4) collecting
+    every node id in it, then union `selectedTemplateComputation.derivedFileMappings[id]` for each id in
+    that set, de-duplicate by file `id`, and map the resulting id set back to file objects from
+    `filesForTemplate` (FR-102).
+  - Clicking any chip in `template-tree-toolbar` (the existing `onClick={() =>
+    setSelectedTemplateCode(t.templateCode)}`, Update 8) additionally calls `setSelectedStepId(null)` —
+    the same handler already re-fires on every click, including a click on the already-selected chip, so
+    "click the same template again clears the filter" (FR-104) falls out of this for free, with no
+    special-casing for "was it actually a different template."
+- **Rationale**: Principle II/III — this is the exact same "build a lookup once, filter-before-match"
+  shape this feature's own Update 7/8 already established for per-template scoping (`purchIdToTemplateCode`
+  + `buildTemplateComputations`), applied one level deeper (per-step instead of per-template) over data
+  that is already fully computed and already in memory; no new fetch, no new matching predicate invented
+  from scratch. Walking `node.children` (already present on every tree node since `flatToTree` was
+  introduced, Update 2) rather than re-flattening `flatDetails` and re-filtering by `parentId` chains
+  avoids introducing a second tree representation just for this feature.
+- **Alternatives considered**:
+  - *Only show the clicked node's own directly-mapped files, not its descendants' too*: rejected — the
+    requester's own description ("khi user click vào step ở tree, sẽ chỉ hiển thị file của step đó")
+    reads naturally for leaf steps, but a parent/category node in this tree (e.g. a top-level template
+    section with no document mapped directly to it, only to its children) would then always show an
+    empty panel on click, which is a worse experience than aggregating its subtree — resolved as an
+    explicit FR (FR-102) rather than left ambiguous, consistent with the spec's own "no reasonable
+    default exists → resolve directly" limit-of-3-clarifications rule.
+  - *Recompute `derivedFileMappings` scoped to the clicked step, from scratch, instead of reusing the
+    already-built map*: rejected — `derivedFileMappings` already contains a complete, correct per-step
+    entry for every detail id in the current template (Update 7/8's own scoping rules already applied);
+    recomputing it would just re-derive the same values through a second code path, a divergence risk
+    for no benefit.
+
+### Decision 59 — `typeName` data-mapping fix, mirroring Update 8's `poCode` fix
+
+- **Decision**: `ViewSalesOrderPage.jsx`'s `realAvailableFiles` builder (the `useMemo` that shapes
+  `list-po-references`'s response into the objects `ViewNode`/the new panel consume) adds
+  `typeName: doc.typeName` alongside the existing `stepNames`/`poCode`/`fileId` fields it already
+  copies.
+- **Rationale**: `list-po-references`'s response has carried `typeName` since this feature's own
+  Update 5 (`EutrDocumentsPoReferenceItemDto.TypeName`, already consumed by `MapFilePage.jsx`'s own
+  AVAILABLE FILES row for its "File type" chip) — `ViewSalesOrderPage.jsx`'s builder simply never copied
+  it onto its own file objects, the exact same category of "already-returned, already-fetched field this
+  screen doesn't yet read" gap Update 8 found and fixed for `poCode`. Without this one-line addition, the
+  new panel's File type chip would have nothing real to render even though the data is already sitting
+  in the already-fetched response.
+- **Alternatives considered**:
+  - *Add a second fetch just for File type*: rejected — the field is already present in a response this
+    screen already calls; no new fetch is needed or justified.
+
+## Updated non-goals (Update 15)
+
+- No new backend endpoint, DTO, migration, or policy of any kind — `get-file-by-idref` (via
+  `EutrFileViewerDialog`) is reused unmodified, exactly as Update 9 already shipped it for `MapFilePage.jsx`.
+- No new shared util/hook file — the new `availableFilesForPanel` `useMemo`/`selectedStepId`/`viewerFile`
+  state live directly inside `ViewSalesOrderPage.jsx`, the same "don't extract for a single consumer"
+  restraint Update 14 (Decision 56) already applied.
+- No change to `MapFilePage.jsx` of any kind — this update touches only `ViewSalesOrderPage.jsx`; Map
+  File's own AVAILABLE FILES list, Edit/Upload actions, and existing View button (Update 6/9) are
+  unaffected.
+- No refetch of PO/document data on step click or template click — both interactions only change what
+  is rendered from data already loaded when the screen opened (same read-only, no-refetch-on-click
+  precedent Update 8 established for this screen's template-tree toolbar, FR-063).
+- No Edit button, Upload button, or any write action of any kind on the new panel — the screen stays
+  strictly read-only (FR-042).
