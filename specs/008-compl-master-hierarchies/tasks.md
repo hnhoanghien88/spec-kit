@@ -11,7 +11,7 @@ description: "Task list for Compliance Master Hierarchies"
 
 **Tests**: Not requested in the spec (repo has no automated test framework for similar CRUD screens — see plan.md Technical Context "Testing"). Verification is manual, via `quickstart.md`.
 
-**Organization**: Tasks are grouped by user story (US1-US5 — priorities P1, P2, P3, P4, P3 respectively, from spec.md) so each can be implemented and demoed independently. US5 (drag-and-drop) was added in a spec update after US1-US4 were already implemented (see Phase 7 below); it reuses the cycle-check graph logic from US2 (T037) and the duplicate-root check from US1 (T026), so build it after those two even though nothing structurally forces the order. **T080-T081 (Code/Name search textbox, FR-025-027) were added in a later spec update, after US1-US5 were already fully implemented** — they extend `MasterPickerDialog.jsx` (originally built in US1/T032) and are appended to the end of Phase 3 (US1) since that is where FR-025-027 live in spec.md; the search is shared by both Add root and Add child, but the component itself is owned by US1.
+**Organization**: Tasks are grouped by user story (US1-US6 — priorities P1, P2, P3, P4, P3, P4 respectively, from spec.md) so each can be implemented and demoed independently. US5 (drag-and-drop) was added in a spec update after US1-US4 were already implemented (see Phase 7 below); it reuses the cycle-check graph logic from US2 (T037) and the duplicate-root check from US1 (T026), so build it after those two even though nothing structurally forces the order. **T080-T081 (Code/Name search textbox, FR-025-027) were added in a later spec update, after US1-US5 were already fully implemented** — they extend `MasterPickerDialog.jsx` (originally built in US1/T032) and are appended to the end of Phase 3 (US1) since that is where FR-025-027 live in spec.md; the search is shared by both Add root and Add child, but the component itself is owned by US1. **US6 (T082-T083, View condition on each tree row, FR-028-030) was added in a later spec update (2026-08-10), after US1-US5 and the search textbox were already fully implemented** — it is frontend-only, touching only `ComplMasterHierarchiesPage.jsx`, and reuses the same `GetConditionsByMasterIdUseCase`/`ConditionsView` pair already wired into `MasterPickerDialog.jsx` for US4 (see Phase 9 below, plan.md, research.md §11).
 
 ## Path Conventions
 
@@ -192,6 +192,22 @@ description: "Task list for Compliance Master Hierarchies"
 
 ---
 
+## Phase 9: User Story 6 - Review a master's conditions directly from the tree (Priority: P4)
+
+**Goal**: Let a user click "View condition" directly on any node's row in the built hierarchy tree on the index screen (not the Add root/Add child picker), showing that node's Compliance Master conditions read-only, without changing the tree's expand/collapse state or the currently selected node.
+
+**Independent Test**: Per spec.md — open the Compliance Master Hierarchies screen with at least one existing node, click "View condition" on that node's row, confirm conditions display in a read-only view; close it and confirm the tree's expand/collapse state and currently selected node are unchanged.
+
+### Implementation for User Story 6
+
+- [x] T082 [US6] In `ComplMasterHierarchiesPage.jsx` (`SortableMasterLabel` sub-component, `compliance-client/src/presentation/pages/compl-master-hierarchies/ComplMasterHierarchiesPage.jsx`), add a "View condition" `IconButton` (`Visibility` icon wrapped in `Tooltip`, matching the row-action affordance already used in `MasterPickerDialog.jsx`) next to the existing Code - Name text; add an `onViewCondition` prop and call `event.stopPropagation()` before invoking it, so clicking it never triggers the existing `onClick`/`onSelect(node.id)` on the row (FR-028, FR-029)
+- [x] T083 [US6] In `ComplMasterHierarchiesPage.jsx`, add `conditionsOpen`/`conditions`/`loadingConditions` state and a `handleViewCondition(node)` function that calls the existing `GetConditionsByMasterIdUseCase.execute(node.id)` (same use case already imported by `MasterPickerDialog.jsx` from `@application/usecases/compliance-master`, per research.md §11 — no new use case/API), thread it down through `renderTree` to each `SortableMasterLabel` as `onViewCondition`, and render the existing `<ConditionsView>` component (`@presentation/components/common/ConditionsView`) bound to this state — kept fully independent of `selectedId` and the tree's expand/collapse state (FR-028, FR-030) (depends on T082) — **implemented**: also wired the pre-existing dead `navigate`/`ArrowBackIcon` imports (from T020, FR-019) into an actual "Back" toolbar button, since `eslint`'s `no-unused-vars` failed on this file once it was touched again; `npx eslint` and `npm run build` both ran clean afterward (`ComplMasterHierarchiesPage` chunk: 11.95 kB, up from 11.64 kB)
+- [x] **Bug fix (2026-08-10, found during manual testing right after T082-T083)**: "View condition" on tree rows always showed "No conditions defined" — `handleViewCondition` was calling `GetConditionsByMasterIdUseCase.execute(node.id)`, but `node.id` is the `compl_master_hierarchies` row's own key (used for move/delete/reorder), not the Compliance Master's real `Id` that `GET /compliance-master/{id}/conditions` expects. Fixed by adding `m.Id AS MasterId` to `ComplMasterHierarchyRepository.SelectWithMasterInfoSql` (`compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/ComplMasterHierarchyRepository.cs`) and a matching `MasterId` field on `ComplMasterHierarchyResponseDto.cs` — flows through automatically to all endpoints (GetTree/AddRoots/AddChildren/Move/Reorder) since they share this one SQL source. Frontend `handleViewCondition` now uses `node.masterId`, with a null-guard (shows empty state instead of calling the API) for the edge case where the underlying Compliance Master was deleted. No DB migration needed (join-only field, not a new column). `dotnet build` (Application + Infrastructure) and `npx eslint`/`npm run build` (frontend) all ran clean.
+
+**Checkpoint**: All user stories (US1-US6) independently functional (quickstart.md scenario 6).
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -204,6 +220,7 @@ description: "Task list for Compliance Master Hierarchies"
 - **User Story 4 (Phase 6)**: Depends on `MasterPickerDialog` existing (T032, from US1) — purely additive UI wiring inside it, no backend work.
 - **User Story 5 (Phase 7)**: Depends on Foundational only (T006 repository, T018 tree utils) — reorder-within-siblings does not touch `ParentCode`, so it needs no validation reuse from US1/US2. Independent of US1-US4 otherwise (just needs at least one node with siblings to be demoed).
 - **Polish (Phase 8)**: After all desired user stories are complete.
+- **User Story 6 (Phase 9)**: Depends on `ComplMasterHierarchiesPage.jsx` existing (T020, Foundational) — purely additive UI wiring inside it (frontend-only, no backend/API work, per plan.md/research.md §11). Independent of US1-US5 and of Polish; only needs at least one node in the tree to be demoed. Added after Polish (Phase 8) in task numbering only because it was specified later (2026-08-10) — it has no actual dependency on Phase 8 completing.
 
 ### Parallel Opportunities
 
@@ -213,6 +230,7 @@ description: "Task list for Compliance Master Hierarchies"
 - Within US2: T035/T036 in parallel; T040/T041/T042 in parallel.
 - Within US3: T045/T046 in parallel; T052/T053/T054/T055 in parallel.
 - Within US5: T064/T066 in parallel; T073/T074/T075 in parallel.
+- Within US6: none — T082/T083 both touch `ComplMasterHierarchiesPage.jsx` and T083 depends on the `onViewCondition` prop T082 adds, so they run sequentially.
 - Backend halves of US2 (T035-T039) and US3 (T045-T051) touch different DTOs/methods than US1 and each other (aside from the shared `ComplMasterHierarchyService.cs`/`ComplMasterHierarchyController.cs` files) — two developers can work US2-backend and US3-backend concurrently once Foundational is done, coordinating only on those two shared files.
 
 ---
@@ -266,6 +284,7 @@ Task: "Create ReorderComplMasterHierarchyUseCase.js"
 5. + US4 → view conditions inline from the picker.
 6. + US5 → drag-and-drop reorder within the same level (no reparent).
 7. Polish → build/lint clean, full quickstart pass.
+8. + US6 → view a node's conditions directly from its row in the tree, without opening the picker.
 
 ## Notes
 
@@ -275,3 +294,4 @@ Task: "Create ReorderComplMasterHierarchyUseCase.js"
 - Commit after each task or logical group; stop at any checkpoint to validate a story independently.
 - US1-US5 (T001-T079) are now all implemented, with US5 trimmed down to same-level reorder only per user feedback (2026-07-30 follow-up) — the reparent-via-drag tasks (T065/T067/T069/T071/T076/T077) are struck through with reasons rather than deleted, so the history of what was tried and rolled back stays visible. Remaining open item: T062 (full manual `quickstart.md` walkthrough against a real dev DB/API) was not run in this session — no dev environment was available — and T060's solution-level `dotnet build` is blocked by a locally-running `ComplianceSys.Api.exe` holding its own `bin/` output; per-project builds confirm 0 compile errors in the new code. Stop that process and re-run `dotnet build` + `quickstart.md` scenarios 1-5 before merging.
 - **T080-T081 (Code/Name search textbox, FR-025-027) are now implemented** — frontend-only (no backend/API/DTO changes — see research.md §10), touching only `MasterPickerDialog.jsx`. Deviated from plan.md/research.md's originally-sketched debounce-on-type in favor of the repo's existing explicit Search/Clear + Enter-key convention (`ComplianceFilterBar.jsx`), for consistency with Nguyên tắc II. `eslint`/`npm run build` both ran clean after the change. `quickstart.md` scenario 1b still needs a manual run against a live dev environment (not available this session).
+- **T082-T083 (User Story 6 — "View condition" on each tree row, FR-028-030) are now implemented** — frontend-only, touching only `ComplMasterHierarchiesPage.jsx` (its `SortableMasterLabel` sub-component), per plan.md's 2026-08-10 update and research.md §11. No backend/API/DTO/table changes: reuses the exact `GetConditionsByMasterIdUseCase` + `ConditionsView` pair already implemented for US4/T059 in `MasterPickerDialog.jsx`. Also fixed a pre-existing gap found while touching this file: the "Back" button promised by T020/FR-019 was never actually wired (imports for `useNavigate`/`ArrowBackIcon` existed but were unused) — added a working "Back" toolbar button using those same imports. `npx eslint` and `npm run build` both ran clean. `quickstart.md` scenario 6 still needs a manual run against a live dev environment (not available this session).

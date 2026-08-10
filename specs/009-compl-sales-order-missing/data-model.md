@@ -65,3 +65,16 @@ public class ComplSoMissingResponseDto : ComplSoMissing   // or a standalone cla
 ## Assumptions carried from spec.md into the data model
 
 - `MasterValidFrom`/`MasterValidTo`/`MasterNumDayAlert` exist as columns in `compl_so_missing` (per the pre-existing DDL) but have no corresponding source field on `ViewCompliancesResponseDto`. This plan leaves them `NULL` on insert unless `/speckit-tasks` identifies a low-cost enrichment (e.g. an additional lookup by `MasterId` against `compl_masters`) that the spec's FR-007 ("carrying over all other compliance detail fields returned by the lookup") would otherwise not satisfy for these three columns. Flagged here rather than silently guessed, since it affects what the alert email can show for a master's own validity window.
+
+## Display-only computed values (2026-08-10, not persisted)
+
+Per spec.md FR-012–FR-014, the alert email shows two values that are **not** entity/DTO columns and are never written to `compl_so_missing`:
+
+- **Status (display)**: computed per row at alert-generation time from that row's `Code`/`ValidTo` — `"Missing"` / `"Expired"` / `"Valid"` (research.md R8). Distinct from the entity's own `Status` column above, which is always the literal `"MISSING"` (FR-005 pre-filter) and is left untouched.
+- **Days remaining (display)**: computed per row at alert-generation time from `ValidTo` — blank when `ValidTo` is null, otherwise `"N days left"` (positive) or `"-N days left"` (negative, already expired). No `DaysRemaining` column exists on `ComplSoMissing`/`ComplSoMissingResponseDto`; unlike the general alert's `ViewCompliancesResponseDto.DaysRemaining` (populated by a SQL stored procedure at query time, see research.md R8 alternatives), this value is computed in C# at send time.
+
+Both are computed inline in `ComplNotificationService.SendMailAndNotificationForSalesOrderMissing`'s anonymous email-row projection (research.md R8) — no entity or DTO change.
+
+## Excel attachment (2026-08-10, transient, not persisted)
+
+Per spec.md FR-015–FR-017, every sent alert email carries one additional Excel attachment. It is **not** a new entity, table, or file stored anywhere — it is a `byte[]` generated in memory from the same `complianceList`/`customHeaders` used for the HTML email body (research.md R9/R10), wrapped in a `MemoryStream` and attached to the outgoing email, then disposed once the email is sent. Its file name (`compl-sales-order-missing-<yyyyMMddHHmmss>.xlsx`) is derived from the send-time timestamp, not stored as a column anywhere.

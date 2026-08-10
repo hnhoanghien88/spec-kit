@@ -71,6 +71,18 @@
 - Bắt đầu kéo 1 node rồi thả ra ngoài mọi vùng thả hợp lệ (ví dụ ra ngoài khung cây) → **Kỳ vọng**:
   thao tác kéo bị huỷ, cây không đổi gì.
 
+### 6. View condition trực tiếp trên dòng cây (User Story 6)
+
+- Trên cây (không mở popup Add root/Add child), bấm **View condition** ngay trên 1 dòng bất kỳ đã có
+  sẵn trong cây → **Kỳ vọng**: dialog `ConditionsView` hiện điều kiện (đọc-only) của đúng master đó,
+  không cần chọn (select) node trước, không mở popup nào khác (FR-028/FR-029/SC-009).
+- Đóng dialog vừa mở → **Kỳ vọng**: trạng thái expand/collapse của cây và node đang được chọn
+  (`selectedId`, nếu có) giữ nguyên như trước khi mở (FR-029).
+- Bấm **View condition** trên 1 dòng khác trong khi dialog đang mở cho dòng trước → **Kỳ vọng**: nội
+  dung dialog cập nhật sang điều kiện của dòng mới bấm, vẫn chỉ 1 dialog hiển thị tại một thời điểm.
+- Bấm **View condition** trên 1 node đang là node được chọn (highlight) sẵn → **Kỳ vọng**: node vẫn
+  giữ trạng thái được chọn sau khi đóng dialog (click vào icon không đổi/xoá lựa chọn hiện tại).
+
 ## Kiểm thử thủ công tối thiểu (không có test tự động cho các trang CRUD tương tự trong repo)
 
 - `dotnet build` (backend) không lỗi.

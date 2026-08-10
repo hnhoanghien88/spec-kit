@@ -207,3 +207,50 @@ o cac trang chua tai (vi pham FR-025 "search phai la truy van trang-dau moi, kho
 tai"). Them 2 tham so `p_search_code`/`p_search_name` rieng vao stored procedure - bi loai vi khong
 can thiet (tham so gop da du dung yeu cau spec) va se phai sua file dung chung voi man hinh
 `compliance-master` hien co, ngoai pham vi toi thieu can cho feature nay.
+
+## 11. "View condition" tren tung dong cua cay (User Story 6 / FR-028-030) - chi frontend, khong API moi
+
+**Boi canh**: US4 (da xong) chi dua "View condition" vao popup chon master (`MasterPickerDialog.jsx`).
+Yeu cau moi (2026-08-10) la them cung hanh dong do vao MOI DONG cua chinh cay hierarchy tren man hinh
+index (`ComplMasterHierarchiesPage.jsx`), doc lap voi viec dong/mo popup hay chon node.
+
+**Xac nhan hien trang** (code hien tai, truoc update nay): moi node tren cay chi render qua
+`SortableMasterLabel` (component rieng trong `ComplMasterHierarchiesPage.jsx`) - gom drag-handle
+(`DragIndicatorIcon`) + text "Code - Name", `onClick` goi `onSelect(node.id)`. KHONG co icon/action
+nao khac tren dong. Component nay khac hoan toan voi row cua `MasterPickerDialog.jsx` (bang MUI
+`Table`/`TableRow`), nhung ca hai deu co the goi chung 1 cap use case + component da dung o US4.
+
+**Quyet dinh**: Them 1 `IconButton` "View condition" (`ViewIcon`, `Tooltip`) vao trong
+`SortableMasterLabel`, canh ben text "Code - Name", `onClick` phai goi `event.stopPropagation()`
+truoc khi goi `GetConditionsByMasterIdUseCase.execute(node.id)` (dung LAI NGUYEN VEN use case da co,
+KHONG viet lai) roi mo `ConditionsView` (dung LAI NGUYEN VEN component da co, cung 1 dialog nhu
+`MasterPickerDialog.jsx` dang dung) - de tranh vo tinh trigger `onSelect(node.id)` cua the cha khi
+bam vao icon (2 hanh vi phai doc lap theo FR-029). State `conditionsOpen`/`conditions`/
+`loadingConditions` duoc quan ly ngay trong `ComplMasterHierarchiesPage.jsx` (hoac hook
+`useComplMasterHierarchyTree.js` neu can chia se), KHONG anh huong `selectedId`/`expanded` state hien
+co cua trang.
+
+**Vi sao KHONG can API/DTO/backend moi**: `GetConditionsByMasterIdUseCase` da goi
+`GET /compliance-master/{id}/conditions` - endpoint nay thuoc `ComplMasterController` (da co san,
+dung boi US4), khong thuoc `ComplMasterHierarchyController`
+(`api/compl-master-hierarchies`) cua feature nay. Moi node tren cay da co san `id` (tra ve tu
+`GetAllWithMasterInfoAsync`, dung de move/delete) - dung truc tiep `node.id` de goi use case nay,
+giong het cach `MasterPickerDialog.jsx` dung `row.id`. Khong co thay doi nao o
+`ComplMasterHierarchyController`/Service/Repository/DTO/bang du lieu cho update nay.
+
+**Alternatives considered**: Tach rieng 1 component `TreeNodeLabel` moi thay vi sua
+`SortableMasterLabel` hien co - bi loai vi khong can thiet, `SortableMasterLabel` da la noi dung
+render moi node roi, them 1 icon vao trong cung component nay don gian hon va giu nguyen cau truc
+drag-handle+text da co (Nguyen tac II - khong tao component song song lam cung 1 viec).
+
+**Sua loi (2026-08-10, sau khi implement)**: Ban dau da dung nham `node.id` (khoa cua chinh dong
+`compl_master_hierarchies`) lam tham so cho `GET /compliance-master/{id}/conditions` - endpoint nay
+can `compl_masters.Id`, khong phai khoa hierarchy. Hau qua: "View condition" tren cay luon hien
+"No conditions defined" (rong hoac sai du lieu) du master do co dieu kien. **Sua**: them cot
+`MasterId` (join `m.Id`) vao `ComplMasterHierarchyResponseDto`/SQL cua
+`GetAllWithMasterInfoAsync`/`GetByIdsWithMasterInfoAsync` (dung 1 nguon SQL chung
+`SelectWithMasterInfoSql` nen tat ca luong - GetTree/AddRoots/AddChildren/Move/Reorder - deu tu
+dong co field nay), doi frontend (`handleViewCondition` trong `ComplMasterHierarchiesPage.jsx`)
+sang dung `node.masterId` thay vi `node.id`; neu `masterId` null (Compliance Master goc da bi xoa)
+thi bo qua goi API va hien empty state ngay (khong goi API voi id rong) - xem data-model.md muc
+"Sua loi".

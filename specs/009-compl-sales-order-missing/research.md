@@ -76,3 +76,91 @@ var missing = results.Where(r => r.Status == "MISSING");
 **Rationale**: `Sqls/Tables/*.sql` files (including the already-existing `compl_so_missing.sql`) only run automatically via `DatabaseInitializer.InitTables()` when a brand-new database is being created; environments with a pre-existing database never see that file execute. `Sqls/Migration/*.sql` is this repo's established, purely-manual convention for backfilling schema onto already-existing databases, confirmed by reading `DatabaseInitializer.cs` and the header comment of `16_create_compl_master_hierarchies.sql`. Since `compl_so_missing` already has a `Sqls/Tables/` definition but no corresponding `Sqls/Migration/` file, this feature is the first to actually need the table populated on an existing DB, so the migration file must be added now.
 
 **Alternatives considered**: Skipping the migration file and relying on `Sqls/Tables/compl_so_missing.sql` alone — rejected, would silently no-op on every already-provisioned environment (which is virtually all real deployments of this system).
+
+## R8. Email column layout, and where `Status`/`DaysRemaining` get computed (2026-08-10)
+
+**Decision**: Change only the `complianceList` anonymous projection and `customHeaders` dictionary inside the already-implemented `ComplNotificationService.SendMailAndNotificationForSalesOrderMissing` (`ComplianceSys.Application/Services/ComplNotificationService.cs:767-793`) to the 14-column layout from spec.md FR-012: `SalesId, MasterCode, MasterName, Status, Code, Name, ValidFrom, ValidTo, DaysRemaining, ResponsibleEmails, Description, MappedRefTypeCode, MappedInputValue, MappedRefTypeName`, labeled per FR-012 ("Sales order", "Master code", "Master name", "Status", "Code", "Name", "Valid from", "Valid to", "Days remaining", "Responsible emails", "Description", "Type", "Product", "Product name"). Compute `Status` and `DaysRemaining` per row, inline in that projection, via two small new private static helpers on `ComplNotificationService` (following the existing `SplitEmails`/`BuildEmailTitle` private-helper convention):
+```csharp
+private static string ComputeSalesOrderMissingStatus(string code, DateTime? validTo)
+{
+    if (string.IsNullOrWhiteSpace(code)) return "Missing";
+    return validTo.HasValue && validTo.Value.Date < DateTime.Today ? "Expired" : "Valid";
+}
+
+private static string? FormatDaysRemaining(DateTime? validTo)
+{
+    if (!validTo.HasValue) return null;
+    int n = (validTo.Value.Date - DateTime.Today).Days; // e.g. +10 (10 days left) or -5 (5 days overdue)
+    return $"{n} days left";
+}
+```
+`ResponsibleEmails` becomes a fourth per-row derived value: `string.Join("<br/>", (c.RespGroups ?? []).SelectMany(g => g.Emails ?? []).Distinct())`, mirroring the `<br/>`-joined pattern `SendMailAndNotification` already uses for its own `ResponsibleEmails` column (line 415) and `Helper.GenerateHtmlTableValidTo`'s existing `htmlAllowedFields` allow-list (which already includes `"ResponsibleEmails"`, so no renderer change is needed to let the `<br/>` tags through unescaped).
+
+**Rationale**: `compl_so_missing`/`ComplSoMissingResponseDto` has no `DaysRemaining` column at all (data-model.md), and its `Status` column is always the literal `"MISSING"` (FR-005's pre-filter) — neither can be read back as-is and satisfy spec.md FR-013/FR-014, which require values current as of the moment the alert is generated, not as of the last refresh. Computing them inline in the existing projection is the smallest change consistent with Constitution Principle III: it reuses the same renderer (`Helper.GenerateHtmlTableValidTo`), the same header-dictionary-driven column-ordering mechanism already used by every other alert projection in this file (`SendMailAndNotification` at line 419, `SendMailAndNotificationForMaster`), and the same JSON group-parsing already established in R4 — it does not add a new rendering path, a new entity column, or a new repository method.
+
+**Alternatives considered**:
+- Adding a computed `DaysRemaining`/richer `Status` column to the `compl_so_missing` table (schema change) and populating it during `RefreshSalesOrderMissingComplianceAsync` — rejected: FR-013/FR-014 require these values to reflect "the moment the alert is generated," which can be later than the refresh (e.g. a slow per-sales-order loop, or if send is ever decoupled from refresh in the future); computing at send time is simpler and always correct, and avoids a schema change for two display-only fields.
+- Reusing the SQL `DATEDIFF(...)`/`CONCAT(..., ' days left')` pattern from `compl_sp_get_alert_compliances.sql` (used by the *other*, non-SO alert) by adding an equivalent stored procedure for `compl_so_missing` — rejected: there is no existing `compl_sp_*` procedure for this table (R5 already rejected introducing one for the delete-all step, for the same reason), and the two-line C# computation above is simpler than adding a stored procedure for a per-row projection that already happens in C#.
+- Naming the computed field something other than `Status` to avoid colliding with the entity's existing `Status` property — unnecessary: the anonymous projection type used for the HTML table is independent of `ComplSoMissingResponseDto`; assigning `Status = ComputeSalesOrderMissingStatus(c.Code, c.ValidTo)` inside the anonymous object shadows nothing on the underlying DTO/entity, which keeps its own `Status` ("MISSING") unchanged for FR-005/data-model.md purposes.
+
+## R9. Generating the Excel attachment (2026-08-10)
+
+**Decision**: Add a new private helper, `BuildSalesOrderMissingExcelAttachment(List<dynamic> complianceList, Dictionary<string, string> customHeaders)`, to `ComplNotificationService.cs`, using **ClosedXML** (already a `PackageReference` in `ComplianceSys.Application.csproj` — version 0.102.3) to build a brand-new workbook (no template), following the exact pattern already established by `EutrMastersExportService.ExportToExcelAsync` (`EutrMastersExportService.cs:19-51`):
+```csharp
+using var workbook = new XLWorkbook();
+var sheet = workbook.Worksheets.Add("Sales orders missing compliance");
+var headers = customHeaders.Values.ToList();
+for (int i = 0; i < headers.Count; i++)
+{
+    sheet.Cell(1, i + 1).Value = headers[i];
+}
+
+var propsByKey = complianceList.Count > 0
+    ? customHeaders.Keys.ToDictionary(k => k, k => ((object)complianceList[0]).GetType().GetProperty(k))
+    : new Dictionary<string, System.Reflection.PropertyInfo?>();
+
+int row = 2;
+foreach (var item in complianceList)
+{
+    int col = 1;
+    foreach (var key in customHeaders.Keys)
+    {
+        var raw = propsByKey[key]?.GetValue(item)?.ToString() ?? string.Empty;
+        sheet.Cell(row, col).Value = key == "ResponsibleEmails" ? raw.Replace("<br/>", "\n") : raw;
+        col++;
+    }
+    row++;
+}
+
+using var outputStream = new MemoryStream();
+workbook.SaveAs(outputStream);
+return outputStream.ToArray();
+```
+The caller passes it the *same* `complianceList`/`customHeaders` already built for the HTML email table in `SendMailAndNotificationForSalesOrderMissing` (research.md R8), so the Excel file's columns, order, and values are derived from one source, not a second hand-maintained mapping. The one deliberate difference: the `ResponsibleEmails` cell's `<br/>` HTML line-break markers (meaningful in an email body) are replaced with a literal `\n` for a spreadsheet cell — same underlying multi-email data, just re-rendered for the target medium, not re-derived from a different source.
+
+**Rationale**: ClosedXML is already the established, repo-wide choice for from-scratch Excel export (`EutrMastersExportService`, `ComplMasterTemplateExportService`, `EutrTemplatesExportService`, etc.) — introducing a second Excel library (EPPlus, NPOI, OpenXML SDK) for one more export would violate Constitution Principle III (reuse existing backend) for no benefit. Reading columns via `customHeaders.Keys`/reflection (the same technique `Helper.GenerateHtmlTableValidTo` already uses internally, R8) guarantees FR-015 ("same columns... as the email body") by construction — the Excel export cannot drift out of sync with the email table because it reads the identical projection and header dictionary, not a duplicated list of property names.
+
+**Alternatives considered**:
+- A separate, purpose-built `ComplSoMissingResponseDto`-typed export method (iterating the DTO's own properties directly rather than the anonymous `complianceList`) — rejected: it would require the Status/DaysRemaining/ResponsibleEmails computations (research.md R8) to be duplicated a second time (once for the email projection, once for the Excel export), directly risking the two outputs disagreeing — exactly what FR-015 requires not to happen.
+- Keeping the `<br/>` markers verbatim in the Excel cell — rejected: they would render as literal text (`user1@x.com<br/>user2@x.com`) in a spreadsheet, which is not "the same data" in any user-meaningful sense; replacing with `\n` (optionally with `sheet.Cell(...).Style.Alignment.WrapText = true` for readability) preserves the same list of emails in a spreadsheet-appropriate form.
+- Using EPPlus or the OpenXML SDK directly — rejected: no existing usage anywhere in this repo (confirmed by search), so either would be a brand-new dependency where ClosedXML already satisfies the need and is already proven in this exact "no-template export" shape.
+
+## R10. Attaching the generated workbook and naming the file (2026-08-10)
+
+**Decision**: In `SendMailAndNotificationForSalesOrderMissing`, after building `complianceList`/`customHeaders` (research.md R8) and before the existing `Mail.SendAttachment`-gated per-row SharePoint attachment loop (`ComplNotificationService.cs:884-908`), unconditionally add one attachment:
+```csharp
+var excelBytes = BuildSalesOrderMissingExcelAttachment(complianceList, customHeaders);
+attachments.Add(new AttachmentInfo
+{
+    Type = AttachmentType.Stream,
+    FileStream = new MemoryStream(excelBytes),
+    FileName = $"compl-sales-order-missing-{DateTime.Now:yyyyMMddHHmmss}.xlsx"
+});
+```
+This reuses the exact `AttachmentInfo`/`AttachmentType.Stream` shape and `mailAlert.SendMailV2(...)` consumption already exercised by the per-row SharePoint attachments in the same method (and in `SendMailAndNotification`), and the same post-send `attachments.Where(a => a.FileStream != null)` disposal loop already present (`ComplNotificationService.cs:913-916`) already disposes this new stream too — no new disposal logic needed.
+
+**Rationale**: `AttachmentInfo.Type = AttachmentType.Stream` reads only `FileStream`/`FileName` (confirmed against `MailAlert.SendMailV2`'s implementation), which is exactly what an in-memory-generated (not downloaded) file needs — no `FilePath` variant, no temp file on disk. Placing this unconditionally (not behind the `Mail.SendAttachment` config flag) matches spec.md FR-015 ("whenever the alert email is sent... MUST attach"), which is unconditional, unlike the existing per-row SharePoint attachment feature that is explicitly config-gated for a different reason (large per-document files, opt-in). `DateTime.Now` (local server time) is used for the file-name timestamp, matching this file's existing convention of using local-time comparisons for user-facing values (`DateTime.Today` in `ComputeSalesOrderMissingStatus`/`FormatDaysRemaining`, R8) rather than `DateTime.UtcNow`.
+
+**Alternatives considered**:
+- Gating the new Excel attachment behind the same `Mail.SendAttachment` config flag as the per-row SharePoint attachments — rejected: spec.md FR-015 states the attachment happens "whenever the alert email is sent," with no mention of a toggle; conflating it with the existing flag would make the two attachment behaviors (existing per-document downloads vs. this new always-on summary) toggle together for no reason the spec gives.
+- Writing the workbook to a temp file on disk and using `AttachmentType.FilePath` — rejected: adds filesystem cleanup responsibility (temp file deletion, path collisions under concurrent runs) for no benefit over an in-memory `MemoryStream`, which `SendMailV2`'s `Stream` branch already supports directly.

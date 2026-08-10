@@ -14,6 +14,8 @@
 
 **Update input (2026-07-30, follow-up 2)**: User description: "cập nhật 008-compl-master-hierarchies, màn hình Add root hoặc Add child. Thêm 1 textbox cho search theo Code, Name" (add a single search textbox to the Add root / Add child picker popup, letting the user filter the Compliance Master list by Code or Name)
 
+**Update input (2026-08-10)**: User description: "cập nhật 008-compl-master-hierarchies, thêm nút View condition ở mỗi dòng master tree trong màn hình index" (add a "View condition" button to each row of the master hierarchy tree on the index screen itself — not just the Add root/Add child picker popup — so an admin can inspect a node's conditions directly from the built tree)
+
 ## Clarifications
 
 ### Session 2026-07-30
@@ -111,6 +113,23 @@ A Compliance Admin wants a faster, more visual way to reorder nodes: instead of 
 
 ---
 
+### User Story 6 - Review a master's conditions directly from the tree (Priority: P4)
+
+While browsing the built Compliance Master Hierarchies tree on the index screen (not the Add root/Add child picker popup), a Compliance Admin wants to check what conditions a node already has without removing it, re-adding it through the picker, or otherwise leaving the tree.
+
+**Why this priority**: Like User Story 4, this is a convenience lookup that supports better decisions when maintaining an existing tree, but the tree remains fully usable (browse, add, reorder, delete) without it.
+
+**Independent Test**: Can be fully tested by opening the Compliance Master Hierarchies screen with at least one existing node, clicking "View condition" on that node's row in the tree, and confirming that master's conditions are shown in a read-only view without changing the tree's expand/collapse state or the currently selected node.
+
+**Acceptance Scenarios**:
+
+1. **Given** the tree has at least one node, **When** the user clicks "View condition" on that node's row, **Then** that node's underlying Compliance Master's existing compliance conditions are shown in a read-only view.
+2. **Given** the "View condition" read-only view is open, **When** the user closes it, **Then** the tree's expand/collapse state and currently selected node remain exactly as they were before it was opened.
+3. **Given** a node whose underlying Compliance Master has no conditions defined, **When** the user clicks "View condition" on that row, **Then** the read-only view shows an empty state rather than an empty list.
+4. **Given** the tree has multiple nodes at different depths, **When** the user clicks "View condition" on any one of them, **Then** only that node's conditions are shown, regardless of the node's depth or whether it is currently selected.
+
+---
+
 ### Edge Cases
 
 - What happens if the user selects masters on page 1, navigates to page 2, and selects more before clicking "Add"? Selections made across pages must be preserved and all of them added together.
@@ -125,6 +144,9 @@ A Compliance Admin wants a faster, more visual way to reorder nodes: instead of 
 - What happens if the user searches while some masters are already checked on the current or another page? Checked masters stay checked and are still included when "Add" is clicked, even if they are filtered out of view by the current search text.
 - What happens if the user searches, selects some masters, then closes the popup without clicking "Add"? Same as the general close-without-Add case — no changes are saved and the search text is discarded along with the selections when the popup is reopened.
 - What happens if the search text matches a Code on one master and a Name on a different master? Both masters are included in the filtered results — the search checks Code and Name independently, not as a combined field.
+- What happens if the user clicks "View condition" on a tree row while that same row is currently selected (highlighted for Add child/move/delete)? The selection is unaffected; viewing conditions is a read-only lookup and never changes which node is selected.
+- What happens if the user clicks "View condition" on one tree row while another row's condition view is already open? The newly clicked row's conditions replace the previously shown ones in the same read-only view; only one condition view is open at a time.
+- What happens if the underlying Compliance Master for a tree node was deleted or deactivated since it was added to the hierarchy? "View condition" still attempts to load that master's conditions; if none can be found, the read-only view shows an empty state rather than an error that blocks the tree.
 
 ## Requirements *(mandatory)*
 
@@ -157,6 +179,9 @@ A Compliance Admin wants a faster, more visual way to reorder nodes: instead of 
 - **FR-025**: The picker popup (opened from both "Add root" and "Add child") MUST provide a single search textbox that filters the Compliance Master list by Code or Name, matching either field, and MUST re-run the search as a new, paginated first-page query rather than filtering only the currently loaded page.
 - **FR-026**: Searching in the picker popup MUST NOT clear or discard masters already checked on any page; previously checked masters remain checked, and remain part of the eventual "Add" action, even while filtered out of the current search results.
 - **FR-027**: Clearing the search textbox MUST restore the full, unfiltered, paginated Compliance Master list starting from the first page.
+- **FR-028**: Each node row in the Compliance Master Hierarchies tree (the index screen, distinct from the Add root/Add child picker) MUST include a "View condition" action, alongside the node's Code and Name (per FR-018), that shows that node's underlying Compliance Master's existing compliance conditions in a read-only view.
+- **FR-029**: Opening "View condition" from a tree row MUST NOT change the tree's expand/collapse state or the currently selected node, and MUST NOT require a node to be selected first (it acts on the row that was clicked, independent of the selection used by Add child/move/delete).
+- **FR-030**: Opening "View condition" from a tree row MUST show the same kind of read-only condition view already used by the Add root/Add child picker's "View condition" action (FR-008), for a consistent experience across both places it appears.
 
 ### Key Entities
 
@@ -175,6 +200,7 @@ A Compliance Admin wants a faster, more visual way to reorder nodes: instead of 
 - **SC-006**: A Compliance Admin can find and select any Compliance Master out of 50+ existing records using the popup's pagination, without needing to already know its Code.
 - **SC-007**: A Compliance Admin can move a node to a new position among its current siblings via drag and drop, from starting the drag to seeing the updated tree, in under 10 seconds and without opening any popup.
 - **SC-008**: A Compliance Admin can locate a specific Compliance Master in the picker popup by typing part of its Code or Name, without paging through results manually, in under 10 seconds.
+- **SC-009**: A Compliance Admin can check any existing tree node's compliance conditions directly from the Compliance Master Hierarchies index screen, without opening the Add root/Add child picker, in under 10 seconds.
 
 ## Assumptions
 
@@ -189,3 +215,5 @@ A Compliance Admin wants a faster, more visual way to reorder nodes: instead of 
 - Drag and drop is an additional interaction for the same same-level reorder job already described in User Story 3 (move up/down); it does not introduce a new kind of relationship and does not re-parent nodes. Moving a node to a different parent, or promoting it to root, remains exclusively a delete + Add child / Add root operation — there is no drag-based path to change a node's Parent Code.
 - The picker popup's search textbox is a single input that matches against both Code and Name (an "OR" match on either field), not two separate search fields; this mirrors how similar master-data list searches behave elsewhere in the system.
 - Searching re-queries the Compliance Master list server-side (same source as the existing paginated load) rather than filtering only the masters already fetched into the current page, so search results are accurate even when a match exists on a page the user has not yet visited.
+- "View condition" on a tree row and "View condition" in the picker popup both read the same underlying Compliance Master conditions and present them the same way; the tree row action is an additional entry point to the same read-only lookup already specified for the picker (User Story 4 / FR-008), not a new kind of condition data or editing capability.
+- Clicking "View condition" on a tree row is independent of node selection: it does not select the node, and it works the same whether or not that row (or any row) is currently selected for Add child/move/delete.

@@ -15,11 +15,11 @@ Trả toàn bộ hierarchy (không phân trang).
   "success": true,
   "data": [
     { "id": 1, "masterCode": "MAS-00034", "parentCode": "", "displayOrder": 0,
-      "name": "Name 1", "description": "..." },
+      "masterId": 1034, "name": "Name 1", "description": "..." },
     { "id": 2, "masterCode": "MAS-00003", "parentCode": "", "displayOrder": 1,
-      "name": "Name 2", "description": "..." },
+      "masterId": 1003, "name": "Name 2", "description": "..." },
     { "id": 3, "masterCode": "MAS-0003",  "parentCode": "MAS-00003", "displayOrder": 0,
-      "name": "Name 3", "description": "..." }
+      "masterId": 1005, "name": "Name 3", "description": "..." }
   ],
   "message": "Get compliance master hierarchies successfully"
 }
@@ -130,3 +130,15 @@ Xoá node + toàn bộ descendants (xem data-model.md mục "Quy tắc nghiệp 
   `ApiResponse<AddHierarchyResultDto>.Fail(...)` với `data.rejected` đầy đủ lý do (để frontend hiện
   từng lỗi mà không cần gọi lại API).
 - `id` không tồn tại (move/delete) → `404 Not Found`.
+
+## Không có endpoint mới cho "View condition" trên dòng cây (User Story 6 / FR-028-030)
+
+"View condition" trên mỗi dòng của cây gọi lại nguyên vẹn `GET /compliance-master/{id}/conditions`
+(thuộc `ComplMasterController`, đã tồn tại và đã được `MasterPickerDialog.jsx`/User Story 4 sử dụng)
+— KHÔNG thêm route nào vào `api/compl-master-hierarchies` cho việc này (xem research.md mục 11).
+
+**Lưu ý quan trọng**: `{id}` trong route trên PHẢI là giá trị field `masterId` của mỗi dòng hierarchy
+(xem field mới ở ví dụ response phía trên) — KHÔNG phải field `id` (khoá của chính dòng
+`compl_master_hierarchies`, dùng cho `/move`/`/reorder`/`DELETE`). Nhầm lẫn 2 field này ở lần
+implement đầu tiên gây ra lỗi "No conditions defined" hiển thị sai cho mọi node (đã sửa — xem
+data-model.md mục "Sửa lỗi").

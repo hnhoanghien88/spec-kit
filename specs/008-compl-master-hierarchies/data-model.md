@@ -57,16 +57,33 @@ public class ComplMasterHierarchy : BaseEntity
 ```csharp
 public class ComplMasterHierarchyResponseDto : ComplMasterHierarchy
 {
+    public long? MasterId { get; set; }      // JOIN compl_masters.Id (bản mới nhất theo Code) —
+                                              // KHÁC với Id kế thừa (khoá của chính dòng hierarchy);
+                                              // dùng để gọi GET /compliance-master/{id}/conditions
+                                              // (xem "Sửa lỗi" bên dưới)
     public string? Name { get; set; }        // JOIN compl_masters (bản mới nhất theo Code)
     public string? Description { get; set; } // JOIN compl_masters (bản mới nhất theo Code)
 }
 ```
 
+**Sửa lỗi (2026-08-10, sau khi implement User Story 6)**: Bản đầu tiên của "View condition" trên
+dòng cây (`ComplMasterHierarchiesPage.jsx`) dùng nhầm `node.id` (khoá của dòng
+`compl_master_hierarchies`, dùng cho move/delete/reorder) làm tham số cho
+`GET /compliance-master/{id}/conditions` — endpoint này cần `compl_masters.Id`, không phải khoá
+hierarchy hay `MasterCode`. Hậu quả: luôn trả về rỗng/"No conditions defined" vì id truyền lên
+không khớp Compliance Master nào (hoặc khớp nhầm 1 master khác). Đã sửa bằng cách thêm cột
+`MasterId` (join `m.Id`) vào `ComplMasterHierarchyResponseDto`/SQL nguồn, và đổi frontend
+(`handleViewCondition`) sang dùng `node.masterId` thay vì `node.id`. `MasterId` có thể `null` nếu
+`MasterCode` không còn khớp bản ghi nào trong `compl_masters` (đã bị xoá) — trường hợp này UI hiện
+empty state thay vì gọi API với id rỗng (đúng Edge Case đã ghi trong spec.md).
+
 Truy vấn nguồn (`ComplMasterHierarchyRepository.GetAllWithMasterInfoAsync`, Dapper inline SQL, không
 cần stored procedure — xem research.md mục 7):
 
 ```sql
-SELECT h.*, m.Name, m.Description
+SELECT h.Id, h.MasterCode, h.ParentCode, h.DisplayOrder,
+       h.CreatedBy, h.CreatedDate, h.UpdatedBy, h.UpdatedDate,
+       m.Id AS MasterId, m.Name, m.Description
 FROM compl_master_hierarchies h
 LEFT JOIN compl_masters m
     ON m.Code = h.MasterCode

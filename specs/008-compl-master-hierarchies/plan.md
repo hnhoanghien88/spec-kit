@@ -35,6 +35,14 @@ procedure mới** — tái sử dụng nguyên vẹn tham số `payload` (mảng
 `[{ column: "searchText", operator: "like", value: <text> }]` (đúng pattern đã dùng ở
 `compliance-master/index.jsx`) — xem research.md mục 10.
 
+**Update (2026-08-10 — User Story 6 / FR-028–030)**: Thêm nút "View condition" vào **mỗi dòng của
+chính cây hierarchy** trên màn hình index (`ComplMasterHierarchiesPage.jsx`), không chỉ trong popup
+Add root/Add child như User Story 4. **Chỉ sửa frontend, KHÔNG có API/DTO/backend mới**: tái sử dụng
+nguyên vẹn `GetConditionsByMasterIdUseCase` + component `ConditionsView` đã dùng ở
+`MasterPickerDialog.jsx` (US4), gắn thêm 1 `IconButton` vào `SortableMasterLabel` (component render
+mỗi dòng cây), `onClick` gọi `event.stopPropagation()` trước khi mở dialog để không vô tình
+select/deselect node (FR-029) — xem research.md mục 11.
+
 ## Technical Context
 
 **Language/Version**: C# 12 / .NET 8 (`compliance-sys-api`); JavaScript (ES modules), React 18 + Vite
@@ -99,6 +107,11 @@ mới cho kéo-thả: `ReorderHierarchyRequestDto`) + 2-3 file sửa (mapping pr
 `ReorderComplMasterHierarchyUseCase.js`) + 2 file sửa (`di/repositories.js`, `MainRoutes.jsx`, và 1
 nút mới trong `compliance-master/index.jsx`).
 
+**Update (2026-08-10 — User Story 6)**: KHÔNG thêm file mới ở backend lẫn frontend cho phần domain
+mới; chỉ **sửa 1 file đã có** — `ComplMasterHierarchiesPage.jsx` (cụ thể là `SortableMasterLabel`
+bên trong, thêm 1 `IconButton` + import `GetConditionsByMasterIdUseCase`/`ConditionsView` đã có sẵn
+từ `compliance-master`, tương tự cách `MasterPickerDialog.jsx` đã dùng cho US4).
+
 ## Constitution Check
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
@@ -107,7 +120,7 @@ nút mới trong `compliance-master/index.jsx`).
 |---|---|---|
 | I. Layered Clean Architecture | ✅ PASS | Backend: `ComplMasterHierarchy` (Domain) → DTOs/Service (Application) → Controller (Api); Infrastructure = `ComplMasterHierarchyRepository : DapperRepository<,>` (generic, không cần stored procedure — xem research.md mục 7). Frontend đủ 4 lớp: `domain/` (entity + interface) → `infrastructure/` (api client + repository) → `application/usecases/` (1 file/thao tác) → `presentation/` (page + hooks + components). |
 | II. Reference-Pattern Reuse | ✅ PASS | Backend clone `EutrReferenceTypeDetails` (`006`, bảng nhỏ + generic repo + vài method tuỳ biến) thay vì `ComplMaster` (proc phức tạp, không cùng hình dạng). Frontend UI clone `TemplateBuilderPage.jsx`; popup clone `BulkAddStepsDialog.jsx` nhưng nối vào API/use case/component đã có của `compliance-master` (xem research.md mục 1, 6). Ô search trong popup (FR-025-027) clone y nguyên pattern search đã có ở `compliance-master/index.jsx` (`handleSearch` → filter `{column:"searchText",operator:"like",value}`, xem research.md mục 10). Kéo-thả (User Story 5) clone gần như NGUYÊN VẸN hạ tầng `@dnd-kit` của `TemplateBuilderPage.jsx` (sensors, `SortableContext` theo từng nhóm anh em, VÀ giữ nguyên guard clause bỏ qua thả khác cha) — điểm khác biệt có chủ đích duy nhất là đổi từ "sửa state rồi Save" sang "persist ngay mỗi lần thả" cho khớp FR-017/024 (xem research.md mục 9). |
-| III. Reuse Existing Backend | ⚠️ N/A (có ghi chú), một phần PASS | `compl_master_hierarchies` chưa tồn tại → bắt buộc tạo mới backend (greenfield, không vi phạm — nguyên tắc chỉ áp dụng khi backend đã tồn tại). Ngược lại, phần "chọn master"/"xem condition"/"search Code-Name" ĐÃ tồn tại và được tái sử dụng nguyên trạng 100% — không sửa `ComplMasterController`, không thêm API/tham số stored-procedure mới cho việc này (đúng tinh thần Nguyên tắc III, xem research.md mục 10). |
+| III. Reuse Existing Backend | ⚠️ N/A (có ghi chú), một phần PASS | `compl_master_hierarchies` chưa tồn tại → bắt buộc tạo mới backend (greenfield, không vi phạm — nguyên tắc chỉ áp dụng khi backend đã tồn tại). Ngược lại, phần "chọn master"/"xem condition"/"search Code-Name" ĐÃ tồn tại và được tái sử dụng nguyên trạng 100% — không sửa `ComplMasterController`, không thêm API/tham số stored-procedure mới cho việc này (đúng tinh thần Nguyên tắc III, xem research.md mục 10). User Story 6 (2026-08-10) tiếp tục đúng tinh thần này: "View condition" trên dòng cây gọi lại y nguyên `GET /compliance-master/{id}/conditions` đã có — không thêm endpoint nào vào `ComplMasterHierarchyController` (xem research.md mục 11). |
 | IV. Vietnamese Comments; Localizable UI Labels | ✅ PASS (có ngoại lệ UI) | Comment code tiếng Việt như thường lệ. UI riêng màn hình này bằng tiếng Anh, được cho phép vì spec đặt tên nhãn cụ thể theo hình tham khảo (xem Constraints ở trên). |
 | V. Routing & Menu Registration | ✅ PASS (thiết kế thay thế, có ghi chú) | KHÔNG thêm menu top-level/route mới cần seed `userMenu` (ADR 0002) — vì đây là 1 forest toàn hệ thống, không phải danh sách nhiều bản ghi cha cần liệt kê ở menu. Thay bằng route con tĩnh `/compliance-master/hierarchies` trong `MainRoutes.jsx`, vào từ 1 nút trên `compliance-master/index.jsx`, tái sử dụng quyền `ComplianceMaster.ReadAll` của màn hình cha — đúng tiền lệ `ApplyCustomerPage.jsx`/`AssignStepsPage.jsx` (xem research.md mục 5). |
 
@@ -183,7 +196,7 @@ compliance-client/src/
 │   ├── ReorderComplMasterHierarchyUseCase.js                             # NEW — kéo-thả trong cùng cha (User Story 5 / FR-022)
 │   └── DeleteComplMasterHierarchyUseCase.js                              # NEW
 ├── presentation/pages/compl-master-hierarchies/
-│   ├── ComplMasterHierarchiesPage.jsx                                    # NEW — mẫu TemplateBuilderPage.jsx: toolbar (Add root/Add child/↑/↓/Delete/Expand all/Collapse all/Back) + @mui/x-tree-view + kéo-thả (@dnd-kit, clone gần như nguyên vẹn TemplateBuilderPage.jsx kể cả guard-clause bỏ qua thả khác cha; chỉ khác ở persist ngay mỗi lần thả — xem research.md mục 9)
+│   ├── ComplMasterHierarchiesPage.jsx                                    # NEW, rồi MODIFY (2026-08-10, User Story 6) — mẫu TemplateBuilderPage.jsx: toolbar (Add root/Add child/↑/↓/Delete/Expand all/Collapse all/Back) + @mui/x-tree-view + kéo-thả (@dnd-kit, clone gần như nguyên vẹn TemplateBuilderPage.jsx kể cả guard-clause bỏ qua thả khác cha; chỉ khác ở persist ngay mỗi lần thả — xem research.md mục 9). US6: thêm IconButton "View condition" vào `SortableMasterLabel` (mỗi dòng cây), `onClick` gọi `event.stopPropagation()` rồi mở lại `GetConditionsByMasterIdUseCase` + `ConditionsView` đã dùng ở `MasterPickerDialog.jsx` (KHÔNG file mới, KHÔNG API mới — xem research.md mục 11)
 │   ├── hooks/useComplMasterHierarchyTree.js                              # NEW — mẫu useStepTree.js: loadFromServer/addRoots/addChildren/moveNode/reorderNode/removeNode, dựng cây theo masterCode (xem data-model.md "Frontend — cấu trúc cây"); reorderNode gọi use case tương ứng NGAY khi thả (không có state "dirty chờ Save")
 │   ├── components/MasterPickerDialog.jsx                                 # NEW — mẫu BulkAddStepsDialog.jsx: bảng checkbox Code/Name/Description/View condition, phân trang, ô search Code/Name (nút Search/Clear + Enter-key, giống hệt `ComplianceFilterBar.jsx`/`compliance-master/index.jsx` thay vì debounce-khi-gõ — xem research.md mục 10, cập nhật khi implement), luôn reset về trang 1 khi search (FR-025-027), giữ lựa chọn qua nhiều trang/nhiều lần search (state riêng, `Map<code, master>` đã có sẵn từ US1); gọi lại NGUYÊN VẸN GetPagingComplianceMasterUseCase (với payload filter searchText)/GetConditionsByMasterIdUseCase + component ConditionsView đã có (KHÔNG tạo API/use case mới cho phần này, kể cả cho search)
 │   └── utils/masterHierarchyTreeUtils.js                                 # NEW — buildTree/getDescendantIds theo khoá tự nhiên (masterCode), mẫu utils/treeUtils.js nhưng thay parentId số bằng parentCode chuỗi
@@ -221,3 +234,8 @@ research.md mục 6). Route con tĩnh, không menu top-level mới.
 > restriction — any user who can view the Compliance Master list can also edit the hierarchy").
 > `/speckit-tasks`/`/speckit-implement` KHÔNG cần thêm policy `.Create`/`.Update`/`.Delete` cho
 > feature này trừ khi có yêu cầu thay đổi spec sau này.
+>
+> **Ghi chú thứ ba (2026-08-10, User Story 6)**: Không có vi phạm hiến pháp nào phát sinh — đây là
+> thay đổi UI thuần tuý (thêm 1 icon action vào component render dòng cây đã có), tái sử dụng 100%
+> use case/component đọc-condition đã tồn tại từ US4, không thêm file/endpoint/bảng mới (xem
+> research.md mục 11).

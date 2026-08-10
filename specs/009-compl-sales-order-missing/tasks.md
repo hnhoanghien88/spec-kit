@@ -99,13 +99,45 @@ Single existing backend project (`compliance-sys-api/`), Clean Architecture laye
 
 ---
 
-## Phase 6: Polish & Cross-Cutting Concerns
+## Phase 6: Update - Alert email column layout, computed Status/Days remaining (2026-08-10)
+
+**Purpose**: The feature spec was revised to finalize the alert email's exact 14-column layout and to require that the `Status` and `Days remaining` columns be computed at send time from each record's own `Code`/`ValidTo`, rather than shown as-is from storage (spec.md FR-012–FR-014, plan.md 2026-08-10 update, research.md R8). This phase updates the already-implemented `SendMailAndNotificationForSalesOrderMissing` (T012) to match; it does not touch `ComplSoMissing`, `ComplSoMissingResponseDto`, the repository, `RefreshSalesOrderMissingComplianceAsync`, or the controller endpoint, none of which are affected by this change.
+
+**⚠️ CRITICAL**: This phase only touches the email-rendering method — do not change the entity, DTO, repository, or refresh logic while completing it.
+
+- [X] T023 [US2] Add two new private static helper methods to `compliance-sys-api/src/ComplianceSys.Application/Services/ComplNotificationService.cs`, next to the existing `SplitEmails`/`BuildEmailTitle` private helpers, per research.md R8:
+  - `ComputeSalesOrderMissingStatus(string code, DateTime? validTo)` → returns `"Missing"` when `code` is null/empty; `"Expired"` when `code` is present and `validTo.HasValue && validTo.Value.Date < DateTime.Today`; otherwise `"Valid"` (spec.md FR-013).
+  - `FormatDaysRemaining(DateTime? validTo)` → returns `null` when `validTo` is null; otherwise `$"{(validTo.Value.Date - DateTime.Today).Days} days left"` (positive N when still valid, negative N with a leading minus when already expired) (spec.md FR-014).
+- [X] T024 [US2] Modify the `complianceList` anonymous projection and `customHeaders` dictionary inside `SendMailAndNotificationForSalesOrderMissing` (`ComplNotificationService.cs`, currently lines ~767-793) to the 14-column layout from spec.md FR-012, in this exact order: `SalesId, MasterCode, MasterName, Status, Code, Name, ValidFrom, ValidTo, DaysRemaining, ResponsibleEmails, Description, MappedRefTypeCode, MappedInputValue, MappedRefTypeName`, with `customHeaders` labels `"Sales order", "Master code", "Master name", "Status", "Code", "Name", "Valid from", "Valid to", "Days remaining", "Responsible emails", "Description", "Type", "Product", "Product name"` respectively. Set `Status = ComputeSalesOrderMissingStatus(c.Code, c.ValidTo)` and `DaysRemaining = FormatDaysRemaining(c.ValidTo)` using T023's helpers; add `ResponsibleEmails = string.Join("<br/>", (c.RespGroups ?? []).SelectMany(g => g.Emails ?? []).Distinct())` as a new per-row value (distinct from the existing aggregate `responsibleEmails`/`allRecipientEmails` used for the mail's To/Cc header further down in the same method, which is unchanged) (depends on T023).
+- [X] T025 [US2] Update the Vietnamese comment immediately above `SendMailAndNotificationForSalesOrderMissing` in `ComplNotificationService.cs` to describe the new 14-column layout and that `Status`/`Days remaining` are computed at send time from each row's own `Code`/`ValidTo` (not copied from the stored `Status` column), per Constitution Principle IV (depends on T024).
+
+**Checkpoint**: The alert email shows exactly the 14 columns from spec.md FR-012, with `Status`/`Days remaining` correctly reflecting each row's current `Code`/`ValidTo` as of send time.
+
+---
+
+## Phase 7: Update - Excel attachment on the alert email (2026-08-10)
+
+**Purpose**: The feature spec was further revised to require an Excel (`.xlsx`) attachment on every sent alert email, mirroring the same columns/data as the email body, named `compl-sales-order-missing-<yyyyMMddHHmmss>` (spec.md FR-015–FR-017, plan.md 2026-08-10 Excel-attachment update, research.md R9/R10). This phase adds that attachment to the already-implemented `SendMailAndNotificationForSalesOrderMissing` (T012, revised by T023-T025); it does not touch `ComplSoMissing`, `ComplSoMissingResponseDto`, the repository, `RefreshSalesOrderMissingComplianceAsync`, or the controller endpoint.
+
+**⚠️ CRITICAL**: This phase only touches the email-sending method — do not change the entity, DTO, repository, or refresh logic while completing it. `ClosedXML` is already a `PackageReference` in `ComplianceSys.Application.csproj` (v0.102.3) — do not add a new Excel library.
+
+- [X] T027 [US2] Add a new private static helper method `BuildSalesOrderMissingExcelAttachment(List<dynamic> complianceList, Dictionary<string, string> customHeaders)` returning `byte[]` to `compliance-sys-api/src/ComplianceSys.Application/Services/ComplNotificationService.cs`, following the exact from-scratch-workbook pattern already used by `EutrMastersExportService.ExportToExcelAsync` (`new XLWorkbook()` → `workbook.Worksheets.Add(...)` → header row from `customHeaders.Values` → data rows read via reflection over `customHeaders.Keys` against the first item's type → `SaveAs(MemoryStream)` → `outputStream.ToArray()`), per research.md R9. When the column key is `"ResponsibleEmails"`, replace `"<br/>"` in the cell value with `"\n"` (same underlying email list as the HTML table, re-rendered for a spreadsheet cell instead of HTML).
+- [X] T028 [US2] In `SendMailAndNotificationForSalesOrderMissing` (`ComplNotificationService.cs`), after `complianceList`/`customHeaders` are built (T024) and before the existing `Mail.SendAttachment`-gated per-row SharePoint attachment loop (currently ~lines 884-908), call T027's helper and unconditionally add its result to the `attachments` list: `attachments.Add(new AttachmentInfo { Type = AttachmentType.Stream, FileStream = new MemoryStream(excelBytes), FileName = $"compl-sales-order-missing-{DateTime.Now:yyyyMMddHHmmss}.xlsx" });` — do not gate this behind the `Mail.SendAttachment` config flag (spec.md FR-015 is unconditional, unlike the existing per-row attachment feature) (depends on T027).
+- [X] T029 [US2] Update the Vietnamese comment immediately above `SendMailAndNotificationForSalesOrderMissing` in `ComplNotificationService.cs` (already updated by T025) to also mention the new unconditional Excel attachment and its file-naming convention, per Constitution Principle IV (depends on T028).
+
+**Checkpoint**: Every alert email sent by `SendSalesOrderAlertAsync` carries exactly one `.xlsx` attachment whose columns/data match the email body and whose file name follows `compl-sales-order-missing-<yyyyMMddHHmmss>`.
+
+---
+
+## Phase 8: Polish & Cross-Cutting Concerns
 
 **Purpose**: Final checks that span both user stories.
 
 - [X] T016 [P] Review all new/changed C# files (T002–T015) and confirm code comments are written in Vietnamese where a comment is warranted, per Constitution Principle IV (identifiers stay in English).
-- [ ] T017 Run `specs/009-compl-sales-order-missing/quickstart.md` end-to-end against a local environment (fix the `compl_so_missing` migration if not yet applied, call `test-sales-order-alert`, verify the table and the sent alert) to validate spec.md's SC-001 through SC-004, including the revised idempotency check in quickstart.md step 4 (depends on Phase 5). **Not run this session** — requires a live MySQL + Dynamics-connected environment; needs manual verification.
+- [ ] T017 Run `specs/009-compl-sales-order-missing/quickstart.md` end-to-end against a local environment (fix the `compl_so_missing` migration if not yet applied, call `test-sales-order-alert`, verify the table and the sent alert) to validate spec.md's SC-001 through SC-006, including the revised idempotency check in quickstart.md step 4, the per-row column/Status/Days-remaining checks in step 5, and the Excel-attachment check in step 5 (depends on Phase 5, Phase 6, and Phase 7). **Not run this session** — requires a live MySQL + Dynamics-connected environment; needs manual verification.
 - [X] T018 Confirm `dotnet build` succeeds for the whole `compliance-sys-api` solution after all changes (no regressions to `test-alert` / `SendAlertAsync`, which must remain unchanged; no remaining reference to `DeleteBySalesIdAsync`) (depends on Phase 5). Verified `ComplianceSys.Infrastructure` and `ComplianceSys.Application` build with 0 errors; `ComplianceSys.Api`'s own build was blocked only by file locks from a running `ComplianceSys.Api` process (PID 12136) on this machine, not a compile error — restart that process to pick up the change and re-verify the full solution build.
+- [X] T026 Re-run `dotnet build` for the whole `compliance-sys-api` solution after Phase 6's changes to `ComplNotificationService.cs` (T023–T025), confirming no regressions to `test-alert`/`SendAlertAsync` or to `RefreshSalesOrderMissingComplianceAsync` (depends on Phase 6). Verified `ComplianceSys.Application` (the only project touched) builds standalone with 0 errors. The full-solution build reported 2 errors, both file-lock `MSB3491`/`CS0016` write-access failures against `ComplianceSys.Api`'s and the test project's `obj`/`bin` output — caused by a currently-running `ComplianceSys.Api.exe` process (PID 25052) holding those files open, not a compile error in this feature's code (same pre-existing environmental issue already noted under T018). Restart that process and re-build to confirm a fully clean solution build.
+- [X] T030 Re-run `dotnet build` for the whole `compliance-sys-api` solution after Phase 7's changes to `ComplNotificationService.cs` (T027–T029), confirming ClosedXML usage compiles cleanly (it is already referenced by `ComplianceSys.Application.csproj`, so no restore/package-reference change is expected) and no regressions to `test-alert`/`SendAlertAsync` or the email-column layout from Phase 6 (depends on Phase 7). Verified `ComplianceSys.Application` builds standalone with 0 errors (`using ClosedXML.Excel;` resolved without a package-reference change, confirming the existing 0.102.3 reference is sufficient). The full-solution build hit the same pre-existing environmental file-lock error (`CS2012`, `ComplianceSys.Infrastructure.dll` access denied) caused by the still-running `ComplianceSys.Api.exe` process — not a compile error in this feature's code (same class of issue as T018/T026).
 
 ---
 
@@ -118,7 +150,9 @@ Single existing backend project (`compliance-sys-api/`), Clean Architecture laye
 - **User Story 1 (Phase 3)**: Depends on Foundational only. No dependency on User Story 2.
 - **User Story 2 (Phase 4)**: Depends on Foundational; also calls User Story 1's `RefreshSalesOrderMissingComplianceAsync` (T009) from within `SendSalesOrderAlertAsync` (T014) — so Phase 4 cannot be *fully* exercised end-to-end until Phase 3 is done, even though T010–T013 (DTO, interface additions, mail method) can be authored in parallel with Phase 3.
 - **Update (Phase 5)**: Depends on Phases 3 and 4 both being complete (it modifies code those phases already wrote) — T019/T020 (repository layer) before T021 (call site in the US1 refresh method) before T022 (comments).
-- **Polish (Phase 6)**: Depends on Phase 5 being complete (T017/T018 must validate the post-update behavior, not the superseded per-`SalesId` behavior).
+- **Update (Phase 6)**: Depends on Phase 4 being complete (it modifies `SendMailAndNotificationForSalesOrderMissing`, written in T012); independent of Phase 5 (different method in the same file — Phase 5 touches `RefreshSalesOrderMissingComplianceAsync`, Phase 6 touches the mail method) but sequenced after it here since both update the same file — T023 (helpers) before T024 (projection/headers) before T025 (comment).
+- **Update (Phase 7)**: Depends on Phase 6 being complete — it builds on the `complianceList`/`customHeaders` shape T024 produced and re-touches the comment T025 wrote — T027 (Excel-build helper) before T028 (call site/attach) before T029 (comment).
+- **Polish (Phase 8)**: Depends on Phases 5, 6, and 7 all being complete (T017 must validate the post-update behavior for the delete-all change, the new email columns, and the Excel attachment; T026 validates the build after Phase 6; T030 validates the build after Phase 7).
 
 ### Within Each User Story
 
@@ -133,6 +167,8 @@ Single existing backend project (`compliance-sys-api/`), Clean Architecture laye
 - T010 (`ComplSoMissingResponseDto.cs`) can be authored in parallel with Phase 3 (US1) — different file, no shared dependency beyond the already-complete Foundational phase.
 - T019 and T020 (interface vs. implementation) can be drafted together, though T020's body depends on T019's final signature.
 - T016 (comment review) can run in parallel with T017/T018 once both stories are code-complete.
+- Phase 6 (T023–T025) can be drafted in parallel with Phase 5 (T019–T022) — different methods in the same file, no shared logic — though both should land before Phase 8's T017/T026 validate the combined result.
+- Phase 7's T027 (the new `BuildSalesOrderMissingExcelAttachment` helper) has no dependency on Phase 5 and could be drafted alongside it, but T028 (wiring it into `SendMailAndNotificationForSalesOrderMissing`) needs Phase 6's `complianceList`/`customHeaders` shape (T024) to exist first, so in practice Phase 7 is sequenced after Phase 6.
 
 ---
 
@@ -166,7 +202,9 @@ Task: "Create ComplSoMissingResponseDto in compliance-sys-api/src/ComplianceSys.
 2. Add User Story 1 → validate the refresh logic directly → internal checkpoint
 3. Add User Story 2 → validate end-to-end via `GET /api/notification/test-sales-order-alert` → deployable/demoable increment
 4. Apply Phase 5 update (delete-all-before-run) → repository and refresh method now match the revised spec.md
-5. Polish → confirm no regression to the existing `test-alert` flow, and no remaining `DeleteBySalesIdAsync` reference
+5. Apply Phase 6 update (email column layout + computed Status/Days remaining) → alert email now matches the revised spec.md
+6. Apply Phase 7 update (Excel attachment) → every sent alert now carries a matching `.xlsx` attachment per the revised spec.md
+7. Polish → confirm no regression to the existing `test-alert` flow, no remaining `DeleteBySalesIdAsync` reference, the alert email's 14 columns render correctly, and the Excel attachment is present and matches the email body
 
 ---
 
@@ -178,3 +216,5 @@ Task: "Create ComplSoMissingResponseDto in compliance-sys-api/src/ComplianceSys.
 - Commit after each task or logical group
 - Verify `test-alert` / `SendAlertAsync` still work unchanged after every task that touches `ComplNotificationService.cs` or `ComplNotificationController.cs`
 - T019–T022 (Phase 5) are the only open tasks needed to bring the already-implemented code in line with the 2026-08-04 spec revision; T001–T016 remain checked off as still valid (unaffected by the revision) rather than being re-done.
+- T023–T026 (Phase 6) are the only open tasks needed to bring the already-implemented `SendMailAndNotificationForSalesOrderMissing` in line with the 2026-08-10 spec revision (FR-012–FR-014); no other checked-off task is affected.
+- T027–T030 (Phase 7) are the only open tasks needed to add the Excel attachment per the 2026-08-10 spec revision (FR-015–FR-017); they build directly on Phase 6's `complianceList`/`customHeaders` shape and reuse the `ClosedXML` package already referenced by `ComplianceSys.Application.csproj` — no new package, no other checked-off task affected.
