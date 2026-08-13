@@ -893,3 +893,285 @@ Prepare (or reuse existing data for) at least:
 - SC-055 (non-empty search matches every Sales ID regardless of Template) → frontend step 3.
 - SC-056 (clearing search restores the Template-only default + page one) → frontend step 4.
 - SC-057 (pagination total reflects the filtered set, not the full D365 count) → frontend step 2.
+
+## Update 17 (2026-08-11) — Variants/Materials columns on Map File's Step 1 PO table
+
+This update fixes one backend registration gap (`ComplDynamicsService.EntityMappings[20]`, research.md
+Decision 63) and adds one new frontend batched fetch. Verify the backend fix directly first (it makes
+`refType=20` return data for the first time), then verify Step 1's new columns end to end.
+
+### Fixture setup
+
+Prepare (or reuse existing data for) a Sales Order in Step 1 ("Chọn Purchase Order") with:
+- At least 2 POs, each with `RSVNRefPurchId` matching a real PO already shown in Step 1's table.
+- In D365, at least one PO with 2+ `RSVNEutrSalesOrderPurchLines` rows sharing the same
+  `RSVNRefPurchId` but different `ItemId`/`ProductVariant` values (e.g. `M01`/`V01` and `M02`/`V02`) —
+  to confirm combining/deduping.
+- At least one other PO in Step 1 with **no** matching `RSVNEutrSalesOrderPurchLines` rows at all — to
+  confirm the empty state.
+
+### Backend verification
+
+1. Before applying the fix, call `POST /api/dynamics/reference?refType=20` with
+   `[{ "column": "InterCompanyOriginalSalesId", "operator": "eq", "value": "<salesId>" }]`.
+   **Expected (pre-fix)**: `200 OK`, `items: []`, `totalCount: 0` — confirms the verified gap
+   (`EntityMappings` has no entry for key `20` yet, so the query never reaches D365).
+2. Apply the one-line `EntityMappings` fix (research.md Decision 63) and repeat the same call.
+   **Expected (post-fix)**: `200 OK`; `items` now contains one row per D365 purchase line for that Sales
+   Order, each with a populated `code` (`ItemId`), `productVariant`, and `rsvnRefPurchId` field.
+3. Confirm the response field casing assumption (research.md Decision 65): inspect one raw response item
+   and verify the PO-link field is present as `rsvnRefPurchId` (not `RSVNRefPurchId`/`rSVNRefPurchId`) —
+   adjust the frontend's field access if this differs from expectation before proceeding.
+
+### Frontend verification (manual)
+
+1. Open Map File for the fixture Sales Order.
+   **Expected**: Step 1's PO table still shows PO/Template/Order account/Vendor name/Percentage used
+   exactly as before — unaffected by this update.
+2. Find the PO with 2+ purchase lines (`M01`/`V01`, `M02`/`V02`).
+   **Expected**: its **Materials** cell shows `M01, M02` and its **Variants** cell shows `V01, V02` (no
+   duplicates, comma-and-space separated, first-seen order).
+3. Find the PO with no matching `refType=20` rows.
+   **Expected**: its Materials and Variants cells both show a clear empty placeholder (e.g. "—") — not
+   blank/`undefined`, not an error.
+4. Open the browser's network tab and reload Map File for this Sales Order.
+   **Expected**: exactly **one** call to `POST /api/dynamics/reference?refType=20`, filtered only by
+   `InterCompanyOriginalSalesId` (no `RSVNRefPurchId` filter) — not one call per PO row (FR-117).
+5. Tick/untick PO checkboxes and click **Save PO Mapping**.
+   **Expected**: Save behaves exactly as before this update (FR-020/FR-021 unchanged) — Variants/Materials
+   values are unaffected by, and do not affect, which POs can be selected or saved (FR-120).
+6. Temporarily simulate the `refType=20` call failing (e.g. block the request in devtools) and reload.
+   **Expected**: Variants/Materials cells show a clear loading-failed indicator; the PO/Name/Order
+   account/Qty columns still render normally from the unaffected `refType=16` data.
+
+### Success criteria mapping (Update 17)
+
+- SC-058 (Materials shows all distinct `ItemId` values per PO, no gaps/dupes) → frontend step 2.
+- SC-059 (Variants shows all distinct `ProductVariant` values per PO, no gaps/dupes) → frontend step 2.
+- SC-060 (no matching rows → clear empty state, no error) → frontend step 3.
+- SC-061 (exactly one `refType=20` call per Sales Order, not one per PO) → frontend step 4.
+
+## Update 18 (2026-08-12) — Variants/Materials columns on View's Selected Purchase Orders table
+
+This update needs **no backend change** — `refType=20` is already fixed and returning real data since
+Update 17. It clones that update's frontend fetch/grouping/rendering logic into
+`ViewSalesOrderPage.jsx`, replacing that screen's hardcoded literal `"Variants"`/`"Materials"` cell
+text. Reuse the same Sales Order fixture from Update 17's section above.
+
+### Frontend verification (manual)
+
+1. Open Map File for the fixture Sales Order and note the **Materials**/**Variants** values shown for
+   each PO in Step 1's table (from Update 17).
+2. Open **View** for the same Sales Order.
+   **Expected**: before this update's fix, the Selected Purchase Orders table
+   (`data-marker="selected-po-table"`) shows the literal text `Variants` and `Materials` for **every**
+   row, regardless of which PO it is.
+3. After applying this update's fix, reload View for the same Sales Order.
+   **Expected**: the PO with 2+ purchase lines (`M01`/`V01`, `M02`/`V02`) now shows **Materials** =
+   `M01, M02` and **Variants** = `V01, V02` — matching Map File's own values for the identical PO
+   exactly (SC-065).
+4. Find the PO with no matching `refType=20` rows.
+   **Expected**: its Materials and Variants cells both show a clear empty placeholder (e.g. "—") — not
+   the literal word `"Materials"`/`"Variants"`, not blank/`undefined`, not an error.
+5. Open the browser's network tab and reload View for this Sales Order.
+   **Expected**: exactly **one** call to `POST /api/dynamics/reference?refType=20`, filtered only by
+   `InterCompanyOriginalSalesId` — not one call per PO row (FR-125).
+6. Confirm the rest of the screen is unaffected: PO/Template/Order account/Vendor Name/Percentage used
+   columns render as before, Edit/Map File, Download, Back, Template Checklist, Validation Summary, and
+   AVAILABLE FILES all behave exactly as before this update (FR-128) — no tick/map/unmap/upload control
+   appears anywhere on this read-only screen.
+7. Temporarily simulate the `refType=20` call failing (e.g. block the request in devtools) and reload
+   View.
+   **Expected**: Variants/Materials cells show a clear loading-failed indicator, distinct from the "—"
+   empty state; the PO/Template/Order account/Vendor Name/Percentage used columns still render normally.
+
+### Success criteria mapping (Update 18)
+
+- SC-062 (Variants/Materials show real per-PO data, no literal placeholder text remains) → frontend
+  steps 3-4.
+- SC-063 (no matching rows → clear empty state, no error, no literal placeholder) → frontend step 4.
+- SC-064 (exactly one `refType=20` call per Sales Order, not one per PO) → frontend step 5.
+- SC-065 (Variants/Materials values match Map File's own values for the same PO) → frontend step 3.
+
+## Update 19 (2026-08-12) — Real logic for the View toolbar's All chip
+
+This update needs **no backend change** — the default-template lookup reuses the same
+`eutr-templates`/`get-all` endpoint every real template chip already calls, just filtered by
+`IsDefault` instead of `Code` (already a whitelisted filter column, and `IsHide = 0`/`IsDeleted = 0`
+are already unconditional server-side). All the new logic (tree filter/reparent, cross-template file
+union, cross-template "has document" lookup) is frontend-only.
+
+### Fixture setup
+
+1. In `003-eutr-templates`, ensure exactly one template is currently marked default (`IsDefault = 1`,
+   not hidden/deleted) — call it **Template D** — with at least 3 steps, including one parent step
+   ("Category A") with two children ("Step A1", "Step A2"), plus one more top-level step ("Step B").
+2. For a Sales Order fixture, save PO Mapping with 2 templates that only **partially** overlap
+   Template D's steps:
+   - **Template X** (attached to PO-A): includes "Step A2" and "Step B", but not "Category A"/"Step A1".
+   - **Template Y** (attached to PO-B): includes "Step A1", but not "Category A"/"Step A2"/"Step B".
+3. Upload/attach a document mapped to PO-A's "Step B" (so Template X's "Step B" shows as Mapped), and
+   leave "Step A1"/"Step A2" without any document (both show as missing under their own template).
+
+This fixture deliberately mirrors FR-132 (only overlapping steps survive), FR-133 (Template D's
+"Category A" parent doesn't exist in either saved template, but its children "Step A1"/"Step A2" each
+exist in exactly one saved template and must still show up, re-parented), and FR-135/FR-136 (mapped
+status and files must come from across both templates, not just one).
+
+### Frontend verification (manual)
+
+1. Open **View** for the fixture Sales Order (`/eutr/sales-orders/<SalesId>/view`).
+   **Expected**: Template Checklist defaults to Template X's own tree (FR-060, unchanged) — All is not
+   auto-selected.
+2. Click the **All** chip in the toolbar (`data-marker="template-tree-toolbar"`).
+   **Expected**: the Template Checklist now shows a tree containing exactly "Step A1", "Step A2", and
+   "Step B" — "Category A" itself does **not** appear as a node, but "Step A1"/"Step A2" are still
+   visible (re-parented to the tree's root or nearest surviving ancestor per FR-133), not hidden.
+3. Still on All, check "Step B"'s status.
+   **Expected**: shows **đã có tài liệu** (Mapped) — it has a document via Template X/PO-A (FR-135).
+4. Check "Step A1" and "Step A2"'s status on All.
+   **Expected**: both show **còn thiếu** (missing) — neither has any document in either template
+   (FR-135).
+5. Open the browser's Network tab, click a different template chip, then click **All** again.
+   **Expected**: exactly one new `get-all`/`{id}` pair of calls fires on each All click (filtered by
+   `IsDefault = 1` on the first) — not zero (it's not cached from a previous All click), not more than
+   one pair.
+6. Check the **AVAILABLE FILES** panel while All is active.
+   **Expected**: it lists documents from **both** Template X (PO-A) and Template Y (PO-B) — not just
+   one template's documents (FR-136).
+7. Click a step node in the All tree, then click the **All** chip again (re-click while already active).
+   **Expected**: the step filter clears, AVAILABLE FILES returns to showing the full union of both
+   templates' documents (FR-137).
+8. In `003-eutr-templates`, temporarily clear the default flag from Template D (set `IsDefault = 0`,
+   or hide/delete it) without setting a new default, then reload View and click All.
+   **Expected**: Template Checklist shows a distinct "no default template configured" state — it does
+   **not** fall back to showing Template X's tree again (FR-131).
+9. Restore Template D as default (or pick a different template with zero steps overlapping either
+   Template X or Template Y) and click All again.
+   **Expected**: if the restored default template has zero steps in common with the SO's saved
+   templates, Template Checklist shows a distinct "no steps match" empty state — different from step
+   8's "no default configured" state, and not an unexplained blank tree (FR-134).
+10. Confirm the rest of the screen is unaffected: header/Validation Summary aggregate Required/completed
+    figures do not change based on whether All or a specific template chip is selected (FR-139); Edit/
+    Map File, Download, Back all behave exactly as before this update.
+
+### Success criteria mapping (Update 19)
+
+- SC-066 (All shows exactly the default template's steps that also exist in the SO's saved templates) →
+  frontend steps 2-4.
+- SC-067 (no default template configured → distinct state, no fallback to the first template) →
+  frontend step 8.
+- SC-068 (AVAILABLE FILES shows every saved template's Mapped documents while All is active) →
+  frontend step 6.
+- SC-069 (a surviving child step is not hidden just because its parent was removed) → frontend step 2.
+
+## Update 20 (2026-08-12) — All is the default selection when the View screen opens
+
+This update needs **no backend change** and reuses Update 19's fetch mechanism unchanged — it only
+changes when the default-template fetch fires (automatically on open, not only on click) and which
+selection the toolbar defaults to.
+
+### Frontend verification (manual)
+
+1. Reuse Update 19's fixture (a default template with a parent+2-children step group; 2 saved SO
+   templates each covering only one of those 2 children).
+2. Open **View** for that Sales Order (`/eutr/sales-orders/<SalesId>/view`) fresh (first load, not
+   navigating from another chip's already-selected state).
+   **Expected**: the **All** chip in the toolbar is already shown as selected — no other chip is
+   selected — and the Template Checklist/AVAILABLE FILES already show All's content (the filtered
+   default-template tree and the union of both saved templates' files) without any click (FR-060/
+   FR-141).
+3. Reload the page again.
+   **Expected**: the same result as step 2 — All is selected again, not whichever chip (if any) was
+   selected right before the reload.
+4. Click a specific template chip, then reload the page.
+   **Expected**: after reload, the selection resets to All (not the template chip clicked in step 4) —
+   there is no persistence of a specific-template selection across page loads.
+5. Open View for a Sales Order that has never had a PO mapping saved (no rows in
+   `eutr_purchase_attachments`).
+   **Expected**: unchanged from Update 4 — the toolbar shows no chips at all, Template Checklist shows
+   "chưa có cây template"; no default-template fetch occurs for this Sales Order (open the Network tab
+   and confirm no `get-all`/`{id}` pair fires for the `IsDefault` filter).
+
+### Success criteria mapping (Update 20)
+
+- SC-070 (View opens directly into All with no click required, whenever the Sales Order has at least
+  one saved template) → frontend steps 2-3.
+
+## Update 21 (2026-08-12) — Download zip gains a nested All folder
+
+This update needs **no new backend endpoint** — it reshapes one existing request DTO field
+(`FolderName` → `FolderPath`) on the already-existing `download-zip` action, and reuses Update 19/20's
+already-computed All-tree state on the frontend. Both Download entry points (View's button, each
+Overview row's button) are covered by the same zip-building code.
+
+### Fixture setup
+
+Reuse Update 19's fixture exactly:
+
+1. One default template (`IsDefault = 1`, not hidden/deleted) — **Template D** — with a parent step
+   "Forest" containing one child step "Plantation forest location map", plus a separate top-level step
+   "Sawmill".
+2. A Sales Order with 2 saved templates that only partially overlap Template D's steps:
+   - **Template X** (PO-A): includes "Plantation forest location map" and "Sawmill", not "Forest" itself.
+   - **Template Y** (PO-B): no overlap with Template D at all.
+3. Upload/attach one document mapped to PO-A's "Plantation forest location map" step (so it shows as
+   Mapped); leave "Sawmill" without any document (missing).
+
+This mirrors the example the requester gave verbatim (`All > Forest > Plantation forest location map >
+File A`, `All > Sawmill`) and exercises the same filter/reparent rule Update 19 already established (
+"Forest" itself is dropped since it doesn't exist in either saved template, but its child "Plantation
+forest location map" survives, re-parented to the All folder's root).
+
+### Frontend verification (manual)
+
+1. Open **View** for the fixture Sales Order and click Download.
+   **Expected**: the downloaded zip's root folder contains the existing per-template folders ("Template
+   X", "Template Y") **plus** a new folder named **All**.
+2. Expand the **All** folder.
+   **Expected**: it contains a folder **Plantation forest location map** directly (no separate "Forest"
+   folder — the dropped parent's surviving child is re-parented to All's root, mirroring the On-screen
+   All tree, FR-133/FR-143) and a folder **Sawmill**, matching the requester's example structure.
+3. Open the **Plantation forest location map** folder.
+   **Expected**: it contains exactly the one Mapped document uploaded in fixture step 3 — named the
+   same as it appears in AVAILABLE FILES.
+4. Open the **Sawmill** folder.
+   **Expected**: it exists but is empty (no document was mapped to it) — it is not missing from the zip
+   (FR-146).
+5. Confirm the existing "Template X"/"Template Y" folders are unaffected: same files, same names, same
+   empty-folder behavior as before this update (FR-139).
+6. Click a specific template chip (not All) in the toolbar, then click Download without clicking All
+   again.
+   **Expected**: the zip still contains the All folder with the same content as step 2-4 — the All
+   folder does not depend on which chip is currently selected on screen (FR-149).
+7. Click the Download button on the corresponding row in **Overview** for the same Sales Order.
+   **Expected**: the zip downloaded from Overview has the exact same All folder content as the zip
+   downloaded from View (step 1-4) — Overview independently fetches the default template on-demand
+   (it has no Template Checklist of its own) and builds the same structure.
+8. In `003-eutr-templates`, temporarily clear the default flag from Template D (or hide/delete it)
+   without setting a new default, then click Download again (View or Overview).
+   **Expected**: the zip still downloads successfully, still contains every per-template folder as
+   before, and still contains an **All** folder — but it is empty (no step sub-folders inside) rather
+   than missing (FR-147).
+9. Restore Template D as default, then attach 0 documents to any step shared with either saved template
+   (or use a Sales Order where every saved template's Mapped-file set is empty), and click Download.
+   **Expected**: unchanged from Update 10/13 — a clear "no documents to download" message appears and no
+   zip is downloaded at all, even though the All tree itself would otherwise contain valid (but
+   file-less) steps (FR-150).
+10. Rename a document (or otherwise create 2 Mapped documents with the same original file name) so both
+    end up in the same step folder inside All.
+    **Expected**: both files appear in the zip's All step folder, one with a `_1` (or similar) suffix
+    added to disambiguate — neither file is silently overwritten (FR-148).
+
+### Success criteria mapping (Update 21)
+
+- SC-071 (Download includes exactly 1 All folder alongside the template folders) → frontend steps 1, 7.
+- SC-072 (All folder's step hierarchy matches the on-screen All tree) → frontend step 2.
+- SC-073 (each step folder contains only that step's own Mapped documents, merged across templates) →
+  frontend step 3.
+- SC-074 (a step with zero Mapped documents still gets an empty folder) → frontend step 4.
+- SC-075 (no default template configured → zip still downloads, All folder present but empty) →
+  frontend step 8.
+- SC-076 (the All folder addition writes nothing to `eutr_documents`/`eutr_references`/
+  `eutr_purchase_attachments`/`eutr_templates`) → verify no row in any of these tables changes across
+  steps 1-10 (same read-only check pattern as Update 10's SC-033).

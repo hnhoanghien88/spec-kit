@@ -39,3 +39,28 @@ không còn NEEDS CLARIFICATION nào tồn đọng.
 - **Decision**: Dùng `DataGrid` server mode + hook `useEutrStepData` gọi `GetPagingEutrStepsUseCase`,
   payload lọc qua `useFilterPayload`, giống `useDocumentTypeData`.
 - **Rationale**: Endpoint `get-all` đã nhận `page/pageSize/sortColumn/sortOrder` + filters.
+
+## Quyết định 6 — Chống trùng tên bước (FR-005a, 2026-08-11)
+
+- **Decision**: Thêm `IEutrStepRepository.ExistsNameAsync(name, excludeId, ct)` (Dapper, so khớp
+  `LOWER(TRIM(Name)) = LOWER(TRIM(@name))`, có `AND Id <> @excludeId` khi sửa) và override
+  `EutrStepService.AddAsync`/`UpdateAsync` để gọi kiểm tra này trước khi lưu, `throw new
+  InvalidOperationException("A step with this name already exists.")` khi trùng.
+- **Rationale**: Đây là **verified gap** — backend hiện tại (`EutrStepRequestDtoValidator` chỉ có
+  `NotEmpty`, `EutrStepService` dùng `IRepository<EutrStep, long>` generic) chưa có kiểm tra trùng
+  tên. Mẫu chống trùng y hệt đã tồn tại ở `EutrMastersService.AddAsync/UpdateAsync` +
+  `IEutrMastersRepository.ExistsStepPrefixAsync` (Nguyên tắc II — dùng lại mẫu thay vì phát minh
+  cách mới) và ở `ComplMasterHierarchyService`/`ExistsAsync`. `InvalidOperationException` đã được
+  `ValidationExceptionMiddleware` map sẵn sang HTTP 409 + `ApiResponse<string>.Fail(...)` — không
+  cần thêm middleware/exception type mới.
+- **Alternatives considered**:
+  (a) Thêm rule `MustAsync` trong FluentValidation với repository inject qua constructor — bị loại
+  vì không có validator nào trong codebase hiện làm async DB-backed validation; sẽ tạo tiền lệ mới
+  không cần thiết trong khi mẫu Service-override đã có sẵn và đã được review.
+  (b) Kiểm tra trùng chỉ ở client (so với danh sách đã tải) — bị loại vì danh sách hiển thị có
+  phân trang/lọc, không đảm bảo có đủ toàn bộ tên hiện có để so khớp chính xác; server luôn phải là
+  nguồn sự thật cuối cùng.
+- **Frontend surfacing**: `presentation/pages/eutr-steps/index.jsx` bắt lỗi ở catch block của
+  Create/Update, lấy `err?.response?.data?.message || err?.message`, hiển thị qua
+  `CustomSnackbar` (severity "error") — đúng cách `eutr-masters/index.jsx` đang xử lý lỗi trùng
+  (StepId, Prefix); không thêm lỗi inline theo field vì không có tiền lệ trong codebase.

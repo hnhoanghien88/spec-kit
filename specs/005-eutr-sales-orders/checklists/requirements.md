@@ -273,3 +273,92 @@
   rule. The exact mechanism to apply this filter server-side (extending the reference type = 11 query
   vs. an additional join step before pagination) is left to the plan phase as a documented Assumption,
   consistent with how this spec has always deferred implementation-mechanism choices.
+- **2026-08-11 (Update 17)**: Re-validated after adding FR-113..FR-120 and related acceptance
+  scenarios/edge cases/success criteria — adds two new dynamic columns, **Variants** and **Materials**,
+  to Map File's Step 1 PO table (`TableContainer` under "Chọn Purchase Order"), sourced from a second
+  shared reference lookup (reference type = 20) filtered by both `InterCompanyOriginalSalesId` = the
+  current Sales ID and `RSVNRefPurchId` = each row's PO, with `ProductVariant` feeding Variants and
+  `ItemId` feeding Materials (per the requester's explicit field mapping), combined into one
+  comma-separated cell per PO (e.g. "M01, M02"). Naming this second reference type/its filter columns
+  follows the same established precedent as Updates 1-16 (business-facing data-source fact, not
+  implementation detail). No new [NEEDS CLARIFICATION] markers introduced: the two points with more
+  than one reasonable reading — exact column placement relative to the existing PO/Name/Order
+  account/Qty columns, and whether to batch-load this data once per Sales ID (grouping client-side by
+  PO) vs. call it once per PO row — are resolved as explicit FR/Assumption text (placed right after
+  Qty, a documented Assumption since the requester didn't specify an exact order; FR-117 mandates the
+  single-call-per-Sales-ID/group-by-PO batching, consistent with the no-N+1 rule already established
+  for the Overview Progress column in FR-085) rather than left as open questions. The exact mechanism
+  to register/expose reference type = 20 in the shared reference lookup is left to the plan phase as a
+  documented Assumption, consistent with how this spec has always deferred implementation-mechanism
+  choices.
+- **2026-08-12 (Update 18)**: Re-validated after adding FR-121..FR-128 and related acceptance
+  scenarios/success criteria — fixes a real gap confirmed by reading `ViewSalesOrderPage.jsx`: the
+  Selected Purchase Orders table (`data-marker="selected-po-table"`) already has **Variants**/
+  **Materials** column headers, but the table body hardcodes the literal strings `"Variants"`/
+  `"Materials"` for every row instead of reading real data — unlike Map File's own
+  `data-marker="selected-po-table"` (`MapFilePage.jsx`), which already computes real per-PO values from
+  reference type = 20 as of Update 17. This update requires View's table to reuse Update 17's logic
+  byte-for-byte (same reference type = 20 query filtered by `InterCompanyOriginalSalesId` +
+  `RSVNRefPurchId`, same `ProductVariant`→Variants/`ItemId`→Materials mapping, same dedup-and-join
+  formatting, same single-batched-call-per-Sales-ID loading, same "—" empty state and distinct error
+  state) rather than defining any new formula for View — a pure reuse of an already-specified mechanism
+  (Constitution Principle III), consistent with how Update 8/13 reused Map File mechanisms for
+  View/Overview. No new [NEEDS CLARIFICATION] markers introduced: the request itself was unambiguous
+  (apply the existing Map File logic to View's identically-named `data-marker`), and there was no
+  competing reasonable interpretation to resolve as an Assumption.
+- **2026-08-12 (Update 19)**: Re-validated after adding FR-129..FR-140 and related acceptance
+  scenarios/edge cases/success criteria — gives the View screen's existing but non-functional **All**
+  chip (`data-marker="template-tree-toolbar"`) real behavior. Confirmed by reading
+  `ViewSalesOrderPage.jsx`: the toolbar already unconditionally renders an `All` chip
+  (`templateCode: null`) ahead of the real template chips, but every downstream computation
+  (`selectedTemplateComputation`, the tree actually rendered) falls back to
+  `templateComputations[0]`/`templatesData[0]` whenever `selectedTemplateCode` is `null` — so clicking
+  All today is indistinguishable from re-selecting the first template. This update replaces that
+  fallback with real logic: load the one `eutr_templates` record matching `IsDefault = 1`/`IsHide = 0`/
+  `IsDeleted = 0` (confirmed in `EutrTemplatesRepository.cs` that the system already enforces at most
+  one global default via `ClearGlobalDefaultAsync`, so this query returns 0 or 1 row), keep only that
+  template's steps whose `StepId` also exists in at least one of the Sales Order's own saved templates,
+  and show the union of every saved template's Mapped documents in AVAILABLE FILES while All is active.
+  Naming `eutr_templates.IsDefault`/`IsHide`/`IsDeleted` and the existing single-global-default
+  constraint follows the same established precedent as prior updates (business-facing data-source
+  fact/existing constraint, not implementation detail). No new [NEEDS CLARIFICATION] markers
+  introduced: the three points with more than one reasonable reading — what happens to a default-
+  template step's children when the step itself doesn't exist in the SO's templates but a child does,
+  what to show when no default template is configured, and whether All should become the new default
+  selection on first page load — are resolved as explicit FR/Assumption text (FR-133 promotes surviving
+  descendants to the nearest surviving ancestor rather than hiding them; FR-131 shows a distinct
+  "no default template configured" state rather than the old first-template fallback; FR-138 keeps
+  FR-060's existing first-template default unchanged, since the request only describes what happens
+  when a user selects All, not a change to the page's initial state) rather than left as open questions.
+- **2026-08-12 (Update 20)**: Re-validated after revising FR-060/FR-138 and adding FR-141. The requester
+  corrected Update 19's own explicit Assumption ("All only activates on click; the page-load default
+  stays the first real template") immediately after that update shipped: All MUST now be the default
+  selection whenever the View screen opens (or its prior selection is no longer valid) and the Sales
+  Order has at least one saved template, with the default-template fetch (FR-130) firing automatically
+  at that point instead of waiting for a click. This is a scope correction to when All becomes active,
+  not a change to how All itself works — FR-131..FR-137/FR-140 are explicitly unchanged. No new
+  [NEEDS CLARIFICATION] markers introduced: the one point with more than one reasonable reading —
+  whether a Sales Order with zero saved templates should now show some inferred "All" state — is
+  resolved as an explicit Assumption (no; the existing "chưa có cây template" empty state from FR-040
+  is unchanged, since All requires at least one saved template to mean anything).
+- **2026-08-12 (Update 21)**: Re-validated after adding FR-142..FR-151 and related acceptance
+  scenarios/edge cases/success criteria/assumptions — extends the Download zip (View: FR-069, Update 10;
+  Overview: FR-087, Update 13) with an additional **All** folder, sitting alongside the existing
+  per-template folders, that mirrors the same default-template step tree already specified for the
+  View screen's All chip (FR-130..FR-133): load the one `eutr_templates` record matching
+  `IsDefault = 1`/`IsHide = 0`/`IsDeleted = 0`, keep only its steps whose `StepId` also exists in the
+  Sales Order's saved templates, promote orphaned children to the nearest surviving ancestor, name each
+  folder after the step's real name (`eutr_steps`), and fill each step folder with that step's Mapped
+  documents merged across every saved template. This is a pure reuse of the FR-130..FR-137 mechanism for
+  a new output (a zip subtree instead of a rendered tree/file list) rather than a new formula — consistent
+  with how Update 13 reused Update 10's zip mechanism for Overview. Two genuinely ambiguous points (not
+  resolvable from existing spec precedent, since neither the All-tree spec nor the Download spec had
+  addressed what happens when the two combine in an empty/error state) were confirmed with the requester
+  via clarifying questions before writing this update, rather than guessed: (1) when no default template
+  is configured/resolves to an empty tree, the All folder is still created but empty — the zip does not
+  omit it or fail the whole Download; (2) a step folder with zero Mapped documents is still created empty,
+  consistent with the existing template-folder rule (FR-073). No new [NEEDS CLARIFICATION] markers
+  introduced: both ambiguous points above were resolved through direct user confirmation (recorded in the
+  Update 21 Clarifications session and as Assumptions), and the remaining scope (nested nesting depth,
+  same StepId across templates folding into one step folder, per-step filename dedup) follows directly
+  from the already-specified All-tree and template-folder mechanisms (FR-130..FR-135, FR-073/FR-075).

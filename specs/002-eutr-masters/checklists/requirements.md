@@ -40,3 +40,8 @@
   người dùng về trường hợp rỗng bị viết ngược; đã diễn giải hợp lý: **file luôn có dòng tiêu đề
   (Step name, Prefix)**, có dữ liệu thì kèm dòng dữ liệu, rỗng thì chỉ có tiêu đề. Định dạng export
   khớp import để round-trip. Nếu ý định khác, xác nhận lại ở `/speckit-clarify`.
+- ➕ Cập nhật (2026-08-11): thay quy tắc chống trùng lặp từ **cặp (bước, Prefix)** sang **Prefix duy
+  nhất trên toàn hệ thống**, không phân biệt bước liên kết. Ảnh hưởng: US2/US3/US5 (acceptance
+  scenarios), FR-007, FR-013, Key Entities constraint, SC-003, Assumptions. Downstream artifacts
+  (plan.md, data-model.md, contracts, tasks.md) cần được rà soát lại ở `/speckit-plan` /
+  `/speckit-tasks` vì rule cũ dựa trên composite unique key (StepId, Prefix).

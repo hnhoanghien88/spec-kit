@@ -80,3 +80,21 @@ Spec Update 11 (FR-077..FR-081) introduces **no new and no changed endpoint at a
 `missingRequired` and by `ViewSalesOrderPage.jsx`'s own equivalent variables) is a single filter-
 predicate edit over data already delivered by endpoints already listed in this document — no request or
 response shape changes anywhere. See `research.md` Decision 41.
+
+## Update 17 (2026-08-11) — Variants/Materials columns on Step 1, via a second call to the existing generic reference endpoint
+
+| Endpoint | Owning feature | Used for | Request shape used |
+|---|---|---|---|
+| `POST /api/dynamics/reference?refType=20` | `005-eutr-sales-orders` (this feature, Update 17) — first working caller | Step 1 Variants/Materials columns (FR-113..FR-116) | `filters: [{ column: "InterCompanyOriginalSalesId", operator: "eq", value: salesId }]`, `page=1, pageSize=500` |
+
+This is the same generic `POST /api/dynamics/reference` action already listed above for `refType=16` and
+`refType=11` — no new controller action, no new DTO. **`refType=20` itself needed one backend fix**: its
+D365 entity (`RSVNEutrSalesOrderPurchLines`), `MapDynamicsResponse` case, and `ComplDynReferenceResponseDto`
+fields already existed and already compiled, but `ComplDynamicsService.EntityMappings` had no dictionary
+entry for key `20` — so the endpoint silently returned an empty list for this `refType` regardless of the
+filter sent, the same class of "entity/case shipped, registration missing" bug this file's owning
+`ComplDynamicsService.cs` already documents having been found and fixed twice before, for `refType=18`
+(`009-compl-sales-order-missing`) and `refType=19` (`011-eutr-synchronize-data`). This feature's fix is the
+third instance of that same one-line pattern: `{ 20, ("RSVNEutrSalesOrderPurchLines",
+"InterCompanyOriginalSalesId", "ProductVariant") },`. See `research.md` Decision 63 and `data-model.md`'s
+"Update 17" section.

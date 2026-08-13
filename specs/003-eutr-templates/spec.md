@@ -546,7 +546,34 @@
 - Change: Sort theo cột và ẩn/hiện cột (column visibility) TIẾP TỤC hoãn lại đúng theo FR-021b —
   Update 20 CHỈ bật filter, không bật thêm 2 tính năng còn lại này.
 
-## User Scenarios & Testing *(mandatory)*
+### Session 2026-08-11 (Update 21) — Chặn trùng StepId/tên step khi Add Root Group/Add Child Step
+
+- Input: "dialog add root và child step. trong đó có bước add new step, the logic cảnh báo không
+  thể add new step trùng tên đã có. đồng thời cập nhật logic kiểm tra add root, add child trong 1
+  template chỉ tồn tại 1 stepid, không cho add trùng."
+- Q: Ràng buộc "1 template chỉ tồn tại 1 StepId" (đảo ngược FR-029 hiện tại, vốn chỉ chặn trùng ở
+  CÙNG cấp cha) áp dụng cho những thao tác nào? → A: CHỈ áp dụng cho dialog bulk-select **Add Root
+  Group** / **Add Child Step** (FR-029). Thao tác **Edit step** trên một node đã có trong cây
+  (FR-008b) KHÔNG đổi — vẫn cho phép đổi một step đã có sang một StepId khác đang được dùng ở nơi
+  khác trong cùng cây (edge case dòng ~1108-1109 giữ nguyên).
+- Q: Khu vực **"Add new step"** (nhập tự do tên step mới) trong dialog bulk-select xử lý thế nào khi
+  tên nhập trùng với một step đã có (trong danh sách EUTR steps hoặc đã có trong cây bước hiện tại
+  của template)? → A: Chặn hoàn toàn — hiển thị lỗi ngay tại ô nhập, không cho gộp vào danh sách
+  "đang chờ thêm" (không tính vào M ở FR-027) cho đến khi người dùng đổi sang một tên chưa tồn tại,
+  hoặc tick chọn thẳng step đã có từ bảng master thay vì gõ lại tên đó. Đây là đảo ngược một phần cơ
+  chế gộp-theo-tên hiện có của FR-007a/FR-030 — chỉ áp dụng cho trường hợp trùng tên khi thêm STEP
+  MỚI qua khu vực này, KHÔNG ảnh hưởng đến FR-007a nói chung (case Edit step/form Add step đơn lẻ cũ
+  vẫn gộp theo tên như trước).
+- Change: **FR-029** đổi phạm vi lọc "step available" trong dialog bulk-select từ "loại trừ step đã
+  là con trực tiếp (cùng ParentId) của node đích" sang "loại trừ MỌI step đã tồn tại ở BẤT KỲ vị trí
+  nào trong cây bước hiện tại của template đang sửa" — một StepId chỉ được phép xuất hiện tối đa 1
+  lần trong toàn bộ cây của một template, bất kể mở dialog Add Root Group hay Add Child Step, bất kể
+  node cha nào đang được chọn. Xem FR-076.
+- Change: Khu vực **"Add new step"** (FR-030) bổ sung validate trùng tên — MUST so khớp tên vừa
+  nhập (không phân biệt hoa/thường, đã trim khoảng trắng) với (a) toàn bộ danh sách EUTR steps hiện
+  có và (b) mọi step đã có trong cây bước hiện tại của template (bao gồm cả step đang chờ thêm trong
+  cùng lượt mở dialog này); nếu trùng, hiển thị lỗi và KHÔNG cho thêm tên đó vào danh sách đang chờ.
+  Xem FR-077.
 
 ### User Story 1 - Xem danh sách EUTR Templates (Priority: P1)
 
@@ -761,9 +788,27 @@ hiển thị ở chế độ read-only. Cây bước đúng với thay đổi, P
 14. **Given** dialog bulk-select đang mở với một số step đã tick và một step đã nhập ở khu vực
     "Add new step", **When** người dùng nhấn Cancel/đóng dialog mà KHÔNG nhấn Add, **Then** không
     có step nào được thêm vào cây bước, toàn bộ lựa chọn/nhập tạm trong dialog bị hủy.
-15. **Given** một step master đã là con trực tiếp của step cha đang chọn, **When** mở dialog Add
-    Child Step cho đúng step cha đó, **Then** step đã có mặt đó KHÔNG xuất hiện trong danh sách
-    "step available" của bảng bulk-select (tránh thêm trùng lặp vào cùng cấp cha).
+15. **(Superseded by Update 21 — xem 15a)** ~~Given một step master đã là con trực tiếp của step
+    cha đang chọn, When mở dialog Add Child Step cho đúng step cha đó, Then step đã có mặt đó KHÔNG
+    xuất hiện trong danh sách "step available" của bảng bulk-select (tránh thêm trùng lặp vào cùng
+    cấp cha).~~
+15a. **(Update 21)** **Given** một step master đã có mặt ở BẤT KỲ vị trí nào trong cây bước hiện tại
+    của template (ví dụ đang là con của một step cha khác, hoặc đang là step gốc), **When** mở dialog
+    **Add Root Group** hoặc **Add Child Step** cho một node đích bất kỳ (kể cả node cha khác với vị
+    trí hiện tại của step đó), **Then** step đã có mặt đó KHÔNG xuất hiện trong danh sách "step
+    available" của bảng bulk-select — một StepId chỉ được phép tồn tại tối đa 1 lần trong toàn bộ
+    cây của một template.
+15b. **(Update 21)** **Given** dialog bulk-select (Root Group hoặc Child Step) đang mở, cây bước
+    hiện tại của template đã có một step tên "Forest", **When** người dùng gõ tên "forest" (khác
+    hoa/thường) hoặc " Forest " (thừa khoảng trắng) vào khu vực "Add new step", **Then** hệ thống
+    hiển thị lỗi trùng tên ngay tại ô nhập, KHÔNG cộng tên đó vào bộ đếm "đã chọn" (M), và nút Add
+    ("Thêm") của dialog không tính step trùng tên này cho đến khi người dùng đổi sang một tên khác
+    chưa tồn tại hoặc xóa nội dung đã nhập.
+15c. **(Update 21)** **Given** dialog bulk-select đang mở, danh sách "step available" đã loại trừ
+    step "Water" vì đang có mặt ở nơi khác trong cây (theo 15a), **When** người dùng gõ đúng tên
+    "Water" vào khu vực "Add new step", **Then** hệ thống vẫn hiển thị lỗi trùng tên (so khớp với
+    toàn bộ danh sách EUTR steps hiện có, không chỉ với step đang hiển thị trong bảng "step
+    available"), hướng dẫn người dùng chọn step khác hoặc đổi tên.
 16. **(Update 17)** **Given** đang edit template (Draft) có 3 step cùng cấp A, B, C theo thứ tự
     DisplayOrder 0/1/2, **When** người dùng kéo step C thả vào giữa A và B, **Then** thứ tự hiển thị
     ngay trên giao diện đổi thành C, A, B với DisplayOrder được cập nhật tương ứng (0/1/2), giống hệt
@@ -1106,7 +1151,9 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
 - Khi đang chỉnh sửa step (chế độ edit inline) và nhấn Edit trên step khác, step đang edit MUST
   tự động hủy chỉnh sửa (cancel) trước khi mở edit cho step mới.
 - Khi đang chỉnh sửa step và đổi sang step trùng với step khác đã có cùng cấp, hệ thống vẫn cho
-  phép (không ràng buộc unique StepId trong cùng template).
+  phép (không ràng buộc unique StepId trong cùng template). **(Xác nhận lại ở Update 21)** Hành vi
+  này giữ nguyên KHÔNG đổi — ràng buộc unique StepId mới của Update 21 (FR-076) chỉ áp dụng cho
+  dialog Add Root Group/Add Child Step, không áp dụng cho Edit step.
 - Khi một template có nhiều phiên bản (version 1, 2, 3...), grid chỉ hiển thị phiên bản mới nhất
   (IsHide=0, IsDeleted=0). Các phiên bản cũ (IsHide=1) vẫn tồn tại trong database.
 - Khi soft delete một template đã có nhiều version, chỉ version đang hiển thị (IsHide=0) bị cập
@@ -1126,10 +1173,13 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
 - Khi danh sách "step available" của dialog bulk-select rỗng (toàn bộ step master đã là con trực
   tiếp của node đích), bảng MUST hiển thị trạng thái rỗng nhưng khu vực "Add new step" vẫn khả dụng
   để nhập step hoàn toàn mới.
-- Khi tên step nhập tự do ở khu vực "Add new step" trùng (không phân biệt hoa/thường, đã trim
-  khoảng trắng) với một step đã tick chọn từ bảng master hoặc một step tự do khác đã nhập trong
-  cùng lượt mở dialog, hệ thống MUST áp dụng quy tắc gộp step trùng tên hiện hành (FR-007a) khi
-  Save template — chỉ tạo 1 bản ghi step mới nếu tên chưa tồn tại, dùng chung StepId.
+- **(Superseded by Update 21 — xem FR-077)** ~~Khi tên step nhập tự do ở khu vực "Add new step"
+  trùng (không phân biệt hoa/thường, đã trim khoảng trắng) với một step đã tick chọn từ bảng master
+  hoặc một step tự do khác đã nhập trong cùng lượt mở dialog, hệ thống MUST áp dụng quy tắc gộp step
+  trùng tên hiện hành (FR-007a) khi Save template — chỉ tạo 1 bản ghi step mới nếu tên chưa tồn tại,
+  dùng chung StepId.~~ Từ Update 21, trùng tên ở khu vực "Add new step" (với danh sách EUTR steps
+  hiện có HOẶC với step khác đã có/đang chờ thêm trong cây) bị CHẶN ngay tại ô nhập (xem FR-077),
+  không còn âm thầm gộp theo tên cho riêng khu vực này.
 - Khi đóng dialog bulk-select bằng Cancel (hoặc đóng dialog) mà đã tick chọn một số step hoặc đã
   nhập step mới ở khu vực Add new step nhưng CHƯA nhấn Add, toàn bộ lựa chọn/nhập tạm bị hủy —
   không có step nào được thêm vào cây bước.
@@ -1463,11 +1513,11 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   Step** (theo FR-008 hiện hành), với RequirementType/TakeFrom lấy đúng theo cấu hình của từng dòng
   tại thời điểm nhấn Add. DisplayOrder của các step mới MUST nối tiếp sau các step con hiện có cùng
   cấp, theo đúng thứ tự xuất hiện của các dòng trong bảng bulk-select.
-- **FR-029**: Danh sách "step available" trong dialog bulk-select (dùng chung cho cả Add Root Group
-  và Add Child Step) MUST loại trừ các step đã tồn tại như step con trực tiếp (cùng ParentId) của
-  node đích (gốc hoặc step cha đang chọn) trong cây bước hiện tại của template đang sửa, để tránh
-  thêm trùng lặp một step vào cùng một cấp cha. Một step MUST vẫn xuất hiện lại trong danh sách khả
-  dụng khi mở dialog cho một node cha khác (không ràng buộc unique StepId trong toàn bộ template).
+- **FR-029 (Đổi phạm vi ở Update 21 — xem FR-076)**: Danh sách "step available" trong dialog
+  bulk-select (dùng chung cho cả Add Root Group và Add Child Step) MUST loại trừ mọi step đã tồn tại
+  ở BẤT KỲ vị trí nào trong cây bước hiện tại của template đang sửa (không còn chỉ giới hạn ở step
+  con trực tiếp cùng ParentId của node đích như trước Update 21), để tránh một StepId xuất hiện
+  nhiều hơn 1 lần trong toàn bộ cây.
 - **FR-030**: Dialog bulk-select (Add Root Group / Add Child Step) MUST có một khu vực/hàng riêng
   biệt **"Add new step"** cho phép người dùng gõ tự do (free-solo) một tên step hoàn toàn mới chưa
   có trong danh sách EUTR steps, kèm cấu hình Requirement Type/Take From cho step đó. Sau khi nhập,
@@ -1749,6 +1799,25 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   (`EutrTemplatesRepository.FilterMap`) MUST mở rộng whitelist lọc để chấp nhận `Status`,
   `VersionId`, `IsDefault` bên cạnh `Code`/`Name`/`AlertFor`/`CreatedBy` đã có — không đổi API
   contract, không thêm endpoint mới.
+- **FR-076 (Update 21 — thay thế phạm vi của FR-029)**: Trong dialog **Add Root Group** và **Add
+  Child Step**, một StepId MUST chỉ được phép tồn tại tối đa 1 lần trong toàn bộ cây bước
+  (`eutr_template_details`, tính trên cả state client-side chưa Save) của template đang sửa. Bảng
+  "step available" (FR-027, FR-029) MUST loại trừ mọi step đã có mặt ở bất kỳ node nào trong cây
+  hiện tại — không phân biệt đang là step gốc hay step con của node cha nào — bất kể dialog đang mở
+  là Add Root Group hay Add Child Step, và bất kể node cha nào đang được chọn khi mở dialog. Ràng
+  buộc này CHỈ áp dụng cho thao tác thêm mới qua 2 dialog này; KHÔNG áp dụng cho **Edit step**
+  (FR-008b) — Edit step vẫn giữ nguyên hành vi cho phép đổi một step đã có sang một StepId đang được
+  dùng ở nơi khác trong cùng cây (không đổi so với trước Update 21).
+- **FR-077 (Update 21)**: Khu vực **"Add new step"** trong dialog bulk-select (FR-030) MUST validate
+  tên vừa nhập trước khi cho gộp vào danh sách "đang chờ thêm" (tính vào M ở FR-027): so khớp tên
+  (không phân biệt hoa/thường, đã trim khoảng trắng đầu/cuối) với (a) toàn bộ danh sách EUTR steps
+  hiện có (`eutr_steps`, bất kể step đó có đang hiển thị trong bảng "step available" hay đã bị loại
+  trừ theo FR-076 hay không) và (b) mọi step đã có trong cây bước hiện tại của template (bao gồm cả
+  các step khác đang chờ thêm trong cùng lượt mở dialog này). Nếu trùng với bất kỳ nguồn nào ở trên,
+  hệ thống MUST hiển thị lỗi ngay tại ô nhập và KHÔNG cho thêm tên đó vào danh sách "đang chờ thêm"
+  cho đến khi người dùng đổi sang một tên khác chưa tồn tại hoặc xóa nội dung đã nhập. Ràng buộc này
+  chỉ áp dụng cho khu vực "Add new step" của dialog bulk-select — KHÔNG thay đổi hành vi gộp-theo-tên
+  chung của FR-007a ở các nơi khác (ví dụ combobox free-solo của form Edit step FR-008b).
 
 ### Key Entities *(include if feature involves data)*
 
@@ -1799,7 +1868,13 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   nguồn dữ liệu cho combobox khi Add step/Edit step (free-solo). Khi người dùng nhập một tên step
   mới chưa tồn tại trong danh sách này và Save template, hệ thống MUST tự động tạo bản ghi mới
   trong bảng eutr_steps (người tạo/ngày tạo ghi nhận tự động như luồng tạo step thông thường của
-  feature 001-eutr-steps), rồi dùng StepId mới cho eutr_template_details.
+  feature 001-eutr-steps), rồi dùng StepId mới cho eutr_template_details. **(Update 21)** Trong
+  phạm vi một template, một StepId MUST chỉ xuất hiện tối đa 1 lần trong toàn bộ cây bước — ràng
+  buộc này được thực thi ở tầng UI khi thêm mới qua dialog Add Root Group/Add Child Step (lọc danh
+  sách "step available" và chặn trùng tên ở khu vực "Add new step", xem FR-076/FR-077), không phải
+  là một ràng buộc UNIQUE ở tầng database của bảng `eutr_template_details` (Edit step, FR-008b, vẫn
+  có thể tạo ra một StepId lặp lại trong cây nếu người dùng chủ động đổi sang step đã có ở nơi
+  khác).
 - **D365 Vendor (VendorsV3)**: Dữ liệu vendor từ hệ thống D365, sử dụng các cột dataAreaId,
   VendorAccountNumber và VendorOrganizationName. Truy cập qua API reference chung
   `POST /api/dynamics/reference` với `refType = 13` (ánh xạ tới D365 VendorsV3 trong cấu hình
@@ -2011,6 +2086,14 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   TemplateListPage cho kết quả đúng trên toàn bộ dữ liệu (server-side), không chỉ trang đang tải.
 - **SC-056 (Update 20)**: Dùng đồng thời ô tìm kiếm nhanh Code/Name và filter theo cột không làm
   mất filter của cơ chế còn lại — 100% lượt kết hợp giữ đúng cả hai điều kiện lọc cùng lúc.
+- **SC-057 (Update 21)**: Sau khi một step đã có mặt ở bất kỳ vị trí nào trong cây bước của một
+  template, 100% lượt mở lại dialog Add Root Group hoặc Add Child Step cho template đó (bất kỳ node
+  đích nào) KHÔNG còn hiển thị step đó trong danh sách "step available" — không có template nào
+  chứa 2 step con trở lên cùng StepId sau khi Save.
+- **SC-058 (Update 21)**: 100% lượt gõ tên trùng (không phân biệt hoa/thường, đã trim khoảng trắng)
+  với một step đã tồn tại (trong danh sách EUTR steps hoặc trong cây bước hiện tại) vào khu vực
+  "Add new step" của dialog bulk-select bị chặn ngay với thông báo lỗi rõ ràng, không có step trùng
+  tên nào được thêm vào danh sách "đang chờ thêm" hay vào cây bước.
 
 ## Assumptions
 
@@ -2028,7 +2111,15 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
 - Quy tắc khớp tên step khi kiểm tra tồn tại: so khớp không phân biệt hoa/thường, đã trim khoảng
   trắng đầu/cuối. Nếu khớp với step đã có, dùng lại StepId đó; nếu không khớp, tạo step mới. Trong
   cùng một lần Save, các step trùng tên mới (chưa tồn tại) chỉ tạo 1 bản ghi step và dùng chung
-  StepId để tránh trùng lặp dữ liệu trong eutr_steps.
+  StepId để tránh trùng lặp dữ liệu trong eutr_steps. **(Ngoại lệ từ Update 21)** Quy tắc "dùng lại
+  StepId, không báo lỗi" ở trên KHÔNG áp dụng cho khu vực "Add new step" của dialog bulk-select
+  (Add Root Group/Add Child Step) — tại đây, trùng tên với step đã có bị CHẶN với thông báo lỗi
+  thay vì tự động dùng lại StepId (xem FR-077). Ngoài khu vực này, quy tắc gộp-theo-tên gốc vẫn giữ
+  nguyên không đổi (ví dụ combobox free-solo của Edit step, FR-008b).
+- **(Update 21)** Ràng buộc "1 StepId chỉ tồn tại tối đa 1 lần trong toàn bộ cây bước của một
+  template" CHỈ áp dụng khi thêm mới qua dialog Add Root Group/Add Child Step (FR-076); KHÔNG áp
+  dụng khi Edit một step đã có trong cây (FR-008b vẫn cho phép đổi sang một StepId đang dùng ở nơi
+  khác trong cùng cây, giữ đúng hành vi trước Update 21).
 - Người tạo/ngày tạo do hệ thống ghi tự động dựa trên người dùng đăng nhập.
 - **(Superseded by Update 16)** ~~Edit template sử dụng cơ chế versioning có điều kiện theo tuổi
   bản ghi: nếu bản ghi được tạo cách đây TRÊN 24 giờ (so với CreatedDate), không sửa trực tiếp dòng

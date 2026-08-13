@@ -352,6 +352,14 @@ HTTP 400, same `ValidationException` → 400 mapping this controller already use
   Save click; the request body shape, per-detail fields (`stepId`/`stepName`/`parentId`/
   `requirementType`/`takeFrom`/`displayOrder`), and free-solo step auto-create resolution (Update 6)
   are all unchanged. No contract change.
+- **Update 21 (2026-08-11)**: `TemplateBuilderPage.jsx`'s Add Root Group / Add Child Step bulk-select
+  dialog now excludes a master step from selection if it exists ANYWHERE in the current tree
+  (whole-template scope, was direct-children-of-target-node-only), and blocks a duplicate typed name
+  in its "Add new step" area with a client-side inline error instead of silently reusing the existing
+  `StepId`. Both changes only affect which `details[]` entries the frontend is able to construct
+  *before* the existing Save click — the request body shape, per-detail fields, and free-solo step
+  auto-create resolution (Update 6) are all unchanged, and Edit step's free-solo combobox keeps
+  allowing a repeated `StepId` as before. No contract change.
 - **(Superseded by Update 16)** ~~Update 15 (2026-07-15, bug fix — FR-049): in the ≥24h branch, the
   backend now ALSO copies every `eutr_template_references` row of the old `TemplateId` to the new
   `TemplateId`.~~ This copy behavior still exists, but it moved with the version-bump trigger to

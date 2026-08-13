@@ -18,6 +18,11 @@ Nguồn sự thật: `compliance-sys-api/src/ComplianceSys.Domain/Entities/EutrS
 
 - `name` bắt buộc, không được rỗng/chỉ khoảng trắng → chặn ở modal trước khi submit (khớp validator
   backend). Thông báo lỗi hiển thị bằng **tiếng Anh** (FR-011).
+- **`name` MUST là duy nhất trong toàn bộ `eutr_steps`** (FR-005a): so khớp không phân biệt
+  hoa/thường và đã trim khoảng trắng đầu/cuối (`LOWER(TRIM(Name))`); khi Update, bản ghi đang sửa
+  bị loại khỏi so khớp (`AND Id <> @excludeId`). Vi phạm → backend trả HTTP 409 với message "A
+  step with this name already exists."; frontend hiển thị message này qua snackbar, không tạo bản
+  ghi/không lưu thay đổi.
 - `id` không sửa được; khi Edit, gửi kèm `id` trong payload `update`.
 
 ## Đối tượng truyền (frontend ↔ backend)

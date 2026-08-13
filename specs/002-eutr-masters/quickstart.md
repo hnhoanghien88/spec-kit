@@ -36,16 +36,18 @@ Mở SPA, đăng nhập, vào menu **EUTR masters** (đường dẫn `/eutr/mast
 3. **Thêm (US2)**: Nhấn Add → mở modal → **Select "Step name"** liệt kê các bước (nạp từ
    `GET /eutr-steps`) → chọn 1 bước → nhập Prefix → Save → dòng mới xuất hiện với đúng tên bước +
    prefix, Created by/date có giá trị. Bỏ trống step hoặc prefix → bị chặn, hiện lỗi.
-4. **Chống trùng (US2/US3)**: Tạo (hoặc sửa thành) một bản ghi trùng cả **step + prefix** với bản
-   ghi đã có → hệ thống **cảnh báo trùng và không lưu**.
+4. **Chống trùng (US2/US3, cập nhật 2026-08-11)**: Tạo (hoặc sửa thành) một bản ghi có **Prefix
+   trùng** với bản ghi đã có — **kể cả khi chọn step khác** — → hệ thống **cảnh báo trùng và không
+   lưu**. (Trước đây chỉ chặn khi trùng cả step lẫn prefix; nay Prefix một mình đã đủ để chặn.)
 5. **Sửa (US3)**: Chọn 1 dòng → Edit → đổi step hoặc prefix → Save → giá trị cập nhật trong bảng.
 6. **Xóa (US4)**: Delete trên 1 dòng → xác nhận → dòng biến mất. Chọn nhiều dòng → xóa nhiều → tất
    cả biến mất. Hủy ở hộp xác nhận → không xóa.
 7. **Import (US5)**: Chuẩn bị file `.xlsx` 2 cột (A=Step name, B=Prefix), **dòng 1 là tiêu đề**, dữ
    liệu từ dòng 2. Nhấn **Import** → chọn file → hệ thống tạo các dòng hợp lệ và mở
    **ImportResultDialog** báo cáo successCount/failCount/duplicateCount + danh sách dòng bỏ qua kèm
-   lý do. Kiểm: dòng step name không khớp → "Step not found"; dòng trùng step+prefix (với DB hoặc
-   trong file) → "Duplicate"; file sai định dạng → báo lỗi định dạng, không import.
+   lý do. Kiểm: dòng step name không khớp → "Step not found"; dòng có **Prefix trùng** (với DB hoặc
+   với dòng khác trong file), kể cả khi step khác nhau → "Duplicate prefix"; file sai định dạng →
+   báo lỗi định dạng, không import.
 8. **Export (US6)**: Nhấn **Export** → tải về file `.xlsx`; mở file, xác nhận **dòng 1 là tiêu đề
    "Step name", "Prefix"** và mỗi master một dòng dữ liệu đúng tên bước + prefix. Khi danh sách
    rỗng → file chỉ có dòng tiêu đề. Dùng chính file này để Import lại → định dạng khớp, xử lý được.
@@ -56,7 +58,8 @@ Mở SPA, đăng nhập, vào menu **EUTR masters** (đường dẫn `/eutr/mast
 - Tất cả 9 kịch bản trên hoạt động đúng.
 - Không có lỗi console; gọi đúng các endpoint trong
   [contracts/eutr-masters-api.md](./contracts/eutr-masters-api.md).
-- Ràng buộc **(StepId, Prefix) duy nhất** được thực thi ở Add/Update/Import (chặn lưu).
+- Ràng buộc **Prefix duy nhất trên toàn hệ thống** (không phân biệt step, cập nhật 2026-08-11) được
+  thực thi ở Add/Update/Import (chặn lưu).
 - Import là **import một phần** (giữ dòng hợp lệ, bỏ + báo cáo dòng lỗi).
 - Toàn bộ văn bản hiển thị (label cột, nút Import/Add/Edit/Delete/Save/Cancel, breadcrumb, thông
   báo, cảnh báo trùng, báo cáo import, trạng thái rỗng, hộp thoại xác nhận) đều bằng **tiếng Anh**

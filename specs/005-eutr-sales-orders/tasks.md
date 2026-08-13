@@ -3729,3 +3729,953 @@ backend/frontend-build verification sub-steps still hold, but its Overview-behav
 resuming Phase 51, diagnose the `500`'s root cause (e.g. reproduce against the actual `refType=11`
 request, check D365 filter-length limits against the real `eutr_purchase_attachments` row count) —
 resuming with the exact same approach without understanding the failure would likely reproduce it.
+
+---
+
+## Update 17 (2026-08-11) — Variants/Materials columns on Map File's Step 1 PO table
+
+**Context**: Per spec Update 17 (FR-113..FR-120), `MapFilePage.jsx`'s Step 1 PO table gains two dynamic
+columns, **Variants** and **Materials** — sourced from a second D365 reference type (`refType = 20`),
+filtered by `InterCompanyOriginalSalesId` = the current Sales ID and grouped client-side by each row's
+`RSVNRefPurchId`, with `ProductVariant` feeding Variants and `ItemId` feeding Materials, combined per PO
+into one comma-separated cell (e.g. "M01, M02"). Per research.md Decisions 63-65, investigation of
+`ComplDynamicsService.cs` found the D365 entity (`RSVNEutrSalesOrderPurchLines`), its full
+`MapDynamicsResponse` case, its `MapSortColumn` entry, and every `ComplDynReferenceResponseDto` field it
+needs **already exist and already compile** — the only backend gap is one missing `EntityMappings`
+dictionary entry for key `20`, the same "entity/case shipped, registration missing" bug this same
+dictionary's own comments already document being found and fixed twice before (`refType=18`,
+`refType=19`). The Step 1 table's JSX already has two static "Variants"/"Materials" `Typography`
+placeholders (hardcoded literal text, not data-bound) — this update makes their cell content dynamic.
+
+**Prerequisites for this update**: [research.md "Update 17" Decisions 63-65](./research.md),
+[data-model.md "Update 17"](./data-model.md), [quickstart.md "Update 17"](./quickstart.md),
+[contracts/map-file-reused-endpoints.md "Update 17"](./contracts/map-file-reused-endpoints.md).
+Independent of Update 14/15/16's Overview/View work (different files, no shared code path); does not
+depend on any prior Update's Map File Phase being re-opened.
+
+---
+
+## Phase 53: Backend — Fix the `EntityMappings[20]` registration gap
+
+**Purpose**: Make the already-fully-implemented `refType = 20` path reachable for the first time. No new
+entity, DTO, controller action, or migration — a single dictionary entry.
+
+- [X] T287 In
+  `compliance-sys-api/src/ComplianceSys.Application/Services/ComplDynamicsService.cs`, add one entry to
+  the `EntityMappings` dictionary: `{ 20, ("RSVNEutrSalesOrderPurchLines", "InterCompanyOriginalSalesId",
+  "ProductVariant") },` — placed alongside the existing entries (e.g. next to the `refType=19` entry it
+  sits closest to in the dictionary), with a Vietnamese comment matching this same dictionary's own
+  existing comments for the `refType=18`/`refType=19` fixes (e.g. lines 45-51) explaining that the entity
+  class/response-mapping case/DTO fields already existed and only this registration was missing.
+  *(Done.)*
+- [X] T288 Confirm (by reading, not editing) that `MapDynamicsResponse`'s `case 20:`, `MapSortColumn`'s
+  `RSVNEutrSalesOrderPurchLines` entries, and `ComplDynReferenceResponseDto`'s `Code`/`ProductVariant`/
+  `RSVNRefPurchId`/`InterCompanyOriginalSalesId` fields remain byte-for-byte unchanged — this task is a
+  verification-only checkpoint, no file is edited (depends on T287).
+  *(Verified: only the `EntityMappings` dictionary was edited; `case 20:`/`MapSortColumn`/
+  `ComplDynReferenceResponseDto` were opened for reading only, never edited.)*
+- [ ] T289 Manually verify per quickstart.md "Update 17" backend steps 1-3: `POST /api/dynamics/
+  reference?refType=20` returns `items: []`/`totalCount: 0` before the fix and real, populated rows after
+  it; confirm the response's PO-link field name matches the `rsvnRefPurchId` casing assumption
+  (research.md Decision 65) — adjust Phase 54's frontend field access if it differs (depends on T287).
+  *(NOT run — requires a live HTTP round-trip against a running `compliance-sys-api` process with real
+  D365 connectivity. A `ComplianceSys.Api.exe` process (PID 44856) is running locally on
+  `https://localhost:7141`/`http://localhost:5103`, but it was started before this change and rebuilding
+  `ComplianceSys.Api` to pick up the new DLL fails on the same DLL-copy lock this feature's Update 16
+  already hit (`error MSB3027`, file locked by PID 44856) — restarting that live process was not
+  attempted, since it may be in active use outside this session. As a proxy check:
+  `dotnet build src/ComplianceSys.Application/ComplianceSys.Application.csproj` succeeds with 0 `error
+  CS` (including the new `EntityMappings[20]` entry), confirming the fix compiles correctly. A human with
+  the ability to restart the API process and D365/MySQL access must run the actual HTTP round-trip
+  before sign-off, same category as T207/T228/T272.)*
+
+**Checkpoint**: PARTIAL — the `EntityMappings[20]` fix is in place and confirmed to compile (T287/T288),
+but the live HTTP round-trip proving `POST /api/dynamics/reference?refType=20` now returns real
+`RSVNEutrSalesOrderPurchLines` rows (T289) has not been run in this environment (no live-DLL-reloadable
+backend access — see T289's note). Per contracts/map-file-reused-endpoints.md "Update 17".
+
+---
+
+## Phase 54: Frontend — Variants/Materials Columns on Step 1 (`MapFilePage.jsx`)
+
+**Purpose**: Fetch `refType=20` once per Sales Order (batched, no N+1 per PO), group client-side by PO,
+and render the combined Material/Variant lists in Step 1's existing table.
+
+- [X] T290 [US4] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/MapFilePage.jsx`, add a new constant
+  `EUTR_SALES_ORDER_PURCH_LINE_REF_TYPE = 20` alongside the existing `EUTR_SALES_ORDER_PURCHASE_REF_TYPE
+  = 16`, with a Vietnamese comment matching this file's own existing comment style for that sibling
+  constant, referencing spec Update 17/FR-113..FR-117.
+  *(Done.)*
+- [X] T291 [US4] In the same file, add `poLinesByPurchId` (`Map<string, {materials: string[], variants:
+  string[]}> `, initial `new Map()`), `poLinesLoading` (`boolean`), and `poLinesError` (`boolean`) state,
+  mirroring the existing `poList`/`poListLoading` state shapes for the `refType=16` effect (depends on
+  T290).
+  *(Done.)*
+- [X] T292 [US4] In the same file, add a new `useEffect` (same `[salesId]` dependency as the existing
+  `refType=16` PO-list effect) calling `getReferenceDataUseCase.execute(1, 500, 'Code', 'asc',
+  EUTR_SALES_ORDER_PURCH_LINE_REF_TYPE, [{ column: 'InterCompanyOriginalSalesId', operator: 'eq', value:
+  salesId }])` — filtered only by Sales ID, never by PO — setting `poLinesLoading`/`poLinesError`
+  following this file's existing `.then()`/`.catch()`/`.finally()` pattern for the sibling PO-list effect
+  (depends on T290, T291).
+  *(Done.)*
+- [X] T293 [US4] In the same effect's `.then()`, group the response's `items` into `poLinesByPurchId`: for
+  each item, key by `item.rsvnRefPurchId` (verify exact casing per T289) and append `item.code` (Material/
+  `ItemId`) to that key's `materials` array and `item.productVariant` to its `variants` array **only if
+  not already present** for that key (dedupe, preserve first-seen order) (depends on T292).
+  *(Done — implemented inline in the same effect's `.then()`, using a local `grouped` Map built with
+  `.forEach`, guarding on `item.rsvnRefPurchId` being truthy before keying, and `Array.includes` before
+  each push for the dedupe. T289's live field-casing check is still outstanding — see its note — so this
+  field name is implemented per research.md Decision 65's assumption but not yet confirmed against a live
+  response.)*
+- [X] T294 [US4] In the same file's Step 1 `TableContainer`, replace the two static `<Typography
+  variant="body2">Variants</Typography>` / `<Typography variant="body2">Materials</Typography>`
+  placeholders with computed cell content: `(poLinesByPurchId.get(po.purchId)?.variants ??
+  []).join(', ') || '—'` for Variants, the `materials` equivalent for Materials — falling back to "—"
+  when the map has no entry for that `po.purchId` (FR-118) (depends on T293).
+  *(Done — implemented as `poLines = poLinesByPurchId.get(po.purchId)` plus `variantsText`/
+  `materialsText` locals computed just above each row's JSX, matching the task's fallback logic.)*
+- [X] T295 [US4] In the same two cells, render a loading/failed-to-load indicator sourced from
+  `poLinesLoading`/`poLinesError`, independent of the PO/Name/Order account/Qty cells in the same row
+  (which continue to render from the unaffected `refType=16` data even if this fetch fails) (depends on
+  T293, T294).
+  *(Done — each cell renders "Đang tải..." while `poLinesLoading`, "Lỗi tải dữ liệu" (in `error.main`) if
+  `poLinesError`, else the computed text; the PO/Template/Order account/Vendor name/Percentage used cells
+  in the same row are untouched and keep rendering from `po.*` regardless of this fetch's state.)*
+- [X] T296 [US4] Guardrail: confirm `handleTogglePO`, the `disabled = !po.eutrTemplate` checkbox
+  condition, and `savePoMappingUseCase`'s call are byte-for-byte unchanged — Variants/Materials are
+  display-only additions, not a new selection condition (spec FR-120) (depends on T294).
+  *(Verified: `handleTogglePO`, the `disabled = !po.eutrTemplate` line, and every `savePoMappingUseCase`
+  call site were not touched by any edit in this update.)*
+
+**Verification**: `npm run build` (Vite) succeeds with the new state/effect/render logic; `npx eslint` on
+the changed file reports zero new problems.
+*(Confirmed: `npx vite build --mode production` completed with 0 errors, producing a `MapFilePage.*.js`
+chunk (30.40 kB, up from the pre-update size) that bundles the new effect/state/render logic. `npx eslint`
+on the file reports the same 5 pre-existing, unrelated `no-unused-vars` errors this file already had
+before this update (`saveError`, `setFileSearch`, `selectedDetail`, `selectedDetailFiles`,
+`selectedPOCount` — none introduced by this update, none touching `poLinesByPurchId`/`poLinesLoading`/
+`poLinesError`) — zero new problems.)*
+
+**Checkpoint**: Code complete and build/lint-clean (T290-T296, all `[X]`) — Step 1's PO table is wired to
+show real, combined Material/Variant lists per PO, fetched once per Sales Order (not once per PO), with a
+clear empty state for POs with no matching lines. Not yet exercised against live data (blocked on Phase
+53's T289, same environment constraint).
+
+---
+
+## Phase 55: Polish & Cross-Cutting Concerns (Update 17)
+
+**Purpose**: Final validation for the Update 17 changes; no new functionality.
+
+- [ ] T297 [P] Run the backend verification steps in `specs/005-eutr-sales-orders/quickstart.md`
+  "Update 17" section (steps 1-3: pre-fix empty response, post-fix populated response, field-casing
+  confirmation) (depends on T287-T289).
+  *(NOT run — same live-backend unavailability as T289 (DLL lock on the running `ComplianceSys.Api.exe`
+  process, PID 44856; restart not attempted). Proxy check only: `ComplDynamicsService.cs` compiles
+  cleanly with the new entry.)*
+- [ ] T298 [P] Run the frontend manual verification steps in `specs/005-eutr-sales-orders/quickstart.md`
+  "Update 17" section (steps 1-6: unaffected existing columns, combine/dedupe for a multi-line PO, empty
+  state for a no-line PO, exactly one `refType=20` network call per Sales Order, Save PO Mapping
+  unaffected, loading-failed indicator on fetch failure) (depends on T290-T296).
+  *(NOT run — requires a browser session against a live, D365-connected backend with real Sales
+  Order/purchase-line data, unavailable in this environment (same reason as T297/T284/T272/T228/T207). As
+  a proxy check: `npx vite build --mode production` succeeded producing a clean `MapFilePage.*.js` chunk
+  with no errors, and `npx eslint` on the changed file reported only the 5 pre-existing, unrelated
+  problems already present before this update (see Phase 54's Verification note) — zero new problems. A
+  human with backend/D365 access must complete quickstart.md's Update 17 frontend steps before sign-off.)*
+- [X] T299 [P] Review new/changed lines in `ComplDynamicsService.cs` and `MapFilePage.jsx` to confirm
+  added comments are Vietnamese, matching each file's own existing comment style, per Constitution
+  Principle IV; confirm no new English UI label was introduced — "Variants"/"Materials" are pre-existing
+  column headers, only their cell content becomes dynamic (depends on T287-T296).
+  *(Verified: the new `EntityMappings[20]` comment in `ComplDynamicsService.cs` and the new
+  constant/state/effect comments in `MapFilePage.jsx` are all Vietnamese, unaccented ASCII, matching each
+  file's existing comment style. No new English UI label was introduced — "Variants"/"Materials" headers
+  are unchanged; the two new render-time strings are Vietnamese ("Đang tải...", "Lỗi tải dữ liệu"),
+  matching this same file's existing Vietnamese error/status copy conventions; the new empty-state value
+  ("—") is a symbol, not a language-specific string.)*
+- [X] T300 Confirm `DynController.cs`, `ODataOperatorConverter.cs`, `MapDynamicsResponse`'s `case 20:`,
+  `MapSortColumn`, and `ComplDynReferenceResponseDto` are byte-for-byte unchanged (Principle III — this
+  update relies entirely on their already-existing, unmodified behavior), and that
+  `SalesOrderOverviewPage.jsx`/`ViewSalesOrderPage.jsx` show zero behavior change (this update touches
+  only `ComplDynamicsService.cs`'s `EntityMappings` dictionary and `MapFilePage.jsx`'s Step 1 table)
+  (depends on T287-T296).
+  *(Verified by direct review: `DynController.cs`, `ODataOperatorConverter.cs`, `MapDynamicsResponse`'s
+  `case 20:`, `MapSortColumn`, and `ComplDynReferenceResponseDto` were opened only for research, never
+  edited; `SalesOrderOverviewPage.jsx`/`ViewSalesOrderPage.jsx` were not opened at all in this session.
+  The only two files edited this update are `ComplDynamicsService.cs` (one new dictionary entry) and
+  `MapFilePage.jsx` (Step 1 Variants/Materials wiring).)*
+
+**Checkpoint**: PARTIAL — code for both the backend fix and the frontend wiring is complete, compiles,
+and is build/lint-clean (T287, T288, T290-T296, T299, T300 all `[X]`); the live-data quickstart.md
+verification steps (T289, T297, T298) could not be run in this environment (no reloadable live backend —
+see T289's note) and remain outstanding for a human with backend/D365 access.
+
+---
+
+## Update 17 Dependencies
+
+### Phase Dependencies
+
+- **Phase 53** (Backend): T287 has no code dependency (the dictionary entry is additive); T288 depends on
+  T287 (verification-only, confirms nothing else needed to change); T289 depends on T287.
+- **Phase 54** (Frontend): depends on Phase 53 (T287) so the endpoint returns real data to verify against,
+  though the frontend code itself can be written in parallel with Phase 53 since both target
+  already-known contracts. T290 has no code dependency; T291 depends on T290; T292 depends on T290, T291;
+  T293 depends on T292; T294 depends on T293; T295 depends on T293, T294; T296 depends on T294.
+- **Phase 55** (Polish): depends on Phases 53-54 being complete.
+
+### Parallel Opportunities
+
+- T287 (Phase 53) and T290-T291 (Phase 54) can start in parallel — different files, no shared state; the
+  frontend fetch/group/render logic (T292-T296) can be written and code-reviewed before T287 lands, but
+  cannot be *verified end-to-end* until T287 is in place.
+- T297, T298, T299 (Polish) are independent verification passes and can run in parallel once T287-T296
+  are complete; T300 is a quick review best done last.
+
+### Implementation Strategy
+
+1. Complete Phase 53 (T287-T289) — the one backend dictionary-entry fix, small and additive, no new
+   controller/service/repository/entity/DTO/migration/policy.
+2. Complete Phase 54 (T290-T296) — the frontend batched fetch, client-side grouping, and Step 1 render
+   change in `MapFilePage.jsx`.
+3. Complete Phase 55 (polish/validation) — full quickstart.md "Update 17" pass.
+
+### Status (2026-08-11)
+
+Phases 53-54 done in code and verified by build/lint (T287, T288, T290-T296 all `[X]`); Phase 55's
+comment/scope-review tasks are also done (T299, T300 `[X]`). The three live-data verification tasks
+(T289, T297, T298) are **NOT run**: this environment has an already-running `ComplianceSys.Api.exe`
+process (PID 44856, listening on `localhost:7141`/`localhost:5103`, connected to MySQL) whose loaded
+assemblies predate this session's `ComplDynamicsService.cs` edit; rebuilding `ComplianceSys.Api` to embed
+the fix hit the exact same DLL-copy lock (`error MSB3027`) this feature's Update 16 already documented
+hitting against a different PID, and restarting that live process was not attempted since it may be in
+active use outside this session. `ComplianceSys.Application` alone (which contains the actual fix) builds
+with 0 `error CS`, confirming the fix compiles correctly; `compliance-client`'s production build and
+`eslint` both pass cleanly. Before sign-off, a human with the ability to restart the API process (or
+deploy the built DLLs) and real D365/MySQL access should: (1) confirm `refType=20` now returns real rows
+(T289), specifically verifying the response's PO-link field arrives as `rsvnRefPurchId` (research.md
+Decision 65's camelCase assumption — if it differs, `MapFilePage.jsx`'s grouping key in the new effect
+must be updated to match); (2) open Map File for a Sales Order with a multi-line PO and confirm the
+combine/dedupe/empty-state/single-network-call behavior end to end (T298).
+
+---
+
+## Phase 56: Frontend — Variants/Materials Columns on Selected Purchase Orders (`ViewSalesOrderPage.jsx`) (Update 18)
+
+**Purpose**: Clone Update 17's `MapFilePage.jsx` fetch/grouping/render logic into `ViewSalesOrderPage.jsx`,
+replacing its hardcoded literal `"Variants"`/`"Materials"` cell text with real per-PO data. No backend
+phase this update — `EntityMappings[20]` (Update 17, T287) already serves this new caller unchanged.
+
+- [X] T301 [US5] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/ViewSalesOrderPage.jsx`, add a new constant
+  `EUTR_SALES_ORDER_PURCH_LINE_REF_TYPE = 20` alongside the existing `EUTR_SALES_ORDER_PURCHASE_REF_TYPE
+  = 16`, cloning `MapFilePage.jsx`'s own comment style for that sibling constant (T290), referencing spec
+  Update 18/FR-121..FR-125.
+  *(Done.)*
+- [X] T302 [US5] In the same file, add `poLinesByPurchId` (`Map<string, {materials: string[], variants:
+  string[]}>`, initial `new Map()`), `poLinesLoading` (`boolean`), and `poLinesError` (`boolean`) state,
+  cloned from `MapFilePage.jsx`'s own Update 17 state shape (T291) (depends on T301).
+  *(Done.)*
+- [X] T303 [US5] In the same file, add a new `useEffect` (same `[salesId]` dependency as this screen's
+  existing `refType=16` PO-list effect) calling `getReferenceDataUseCase.execute(1, 500, 'Code', 'asc',
+  EUTR_SALES_ORDER_PURCH_LINE_REF_TYPE, [{ column: 'InterCompanyOriginalSalesId', operator: 'eq', value:
+  salesId }])` — filtered only by Sales ID, never by PO — setting `poLinesLoading`/`poLinesError`
+  following the same `.then()`/`.catch()`/`.finally()` pattern `MapFilePage.jsx`'s sibling effect uses
+  (depends on T301, T302).
+  *(Done.)*
+- [X] T304 [US5] In the same effect's `.then()`, group the response's `items` into `poLinesByPurchId`: for
+  each item, key by `item.rsvnRefPurchId` and append `item.code` (Material/`ItemId`) to that key's
+  `materials` array and `item.productVariant` to its `variants` array **only if not already present** for
+  that key (dedupe, preserve first-seen order) — byte-for-byte the same grouping logic as
+  `MapFilePage.jsx`'s T293 (depends on T303).
+  *(Done — implemented inline in the same effect's `.then()`, identical shape to `MapFilePage.jsx`'s own
+  `grouped` Map/`.forEach`/`Array.includes`-guarded dedupe.)*
+- [X] T305 [US5] In the same file's Selected Purchase Orders `TableContainer`
+  (`data-marker="selected-po-table"`), replace the two hardcoded `<Typography
+  variant="body2">Variants</Typography>` / `<Typography variant="body2">Materials</Typography>` cells
+  with computed cell content: `(poLinesByPurchId.get(po.purchId)?.variants ?? []).join(', ') || '—'` for
+  Variants, the `materials` equivalent for Materials — falling back to "—" when the map has no entry for
+  that `po.purchId` (FR-126) (depends on T304).
+  *(Done — implemented as `poLines = poLinesByPurchId.get(po.purchId)` plus `variantsText`/
+  `materialsText` locals computed just above each row's JSX, matching `MapFilePage.jsx`'s own pattern.)*
+- [X] T306 [US5] In the same two cells, render a loading/failed-to-load indicator sourced from
+  `poLinesLoading`/`poLinesError`, independent of the PO/Template/Order account/Vendor Name/Percentage
+  used cells in the same row (which continue to render from `po.*`/`poList` regardless of this fetch's
+  state) (depends on T304, T305).
+  *(Done — each cell renders "Đang tải..." while `poLinesLoading`, "Lỗi tải dữ liệu" (in `error.main`) if
+  `poLinesError`, else the computed text; the PO/Template/Order account/Vendor Name/Percentage used cells
+  in the same row are untouched and keep rendering from `po.*` regardless of this fetch's state.)*
+- [X] T307 [US5] Guardrail: confirm this screen's read-only guarantee (FR-042) and every other existing
+  behavior — Edit/Map File navigation, Download, Back, Template Checklist, Validation Summary, AVAILABLE
+  FILES — are byte-for-byte unchanged; Variants/Materials are display-only additions, not a new
+  interaction (spec FR-128) (depends on T305).
+  *(Verified: no edit in this update touched `handleBack`, the Edit/Map File `navigate()` call, Download
+  wiring, Template Checklist/toolbar state, Validation Summary computations, or the AVAILABLE FILES panel
+  — the diff is confined to the new constant/state/effect and the two Selected Purchase Orders cells.)*
+
+**Verification**: `npm run build` (Vite) succeeds with the new state/effect/render logic; `npx eslint` on
+the changed file reports zero new problems.
+*(Confirmed: `npx vite build --mode production` completed with 0 errors, producing a
+`ViewSalesOrderPage.*.js` chunk (19.64 kB) that bundles the new effect/state/render logic. `npx eslint` on
+the file reports 2 pre-existing, unrelated `no-unused-vars` errors (`canSubmit` line 735, `isMapped` line
+1184 in the pre-change file — confirmed present in the last commit via `git show HEAD:...`, untouched by
+this update's diff) — zero new problems introduced.)*
+
+**Checkpoint**: Selected Purchase Orders table on View shows real, combined Material/Variant lists per
+PO, fetched once per Sales Order (not once per PO), matching Map File's own values for the same PO, with
+a clear empty state for POs with no matching lines.
+
+---
+
+## Phase 57: Polish & Cross-Cutting Concerns (Update 18)
+
+**Purpose**: Final validation for the Update 18 changes; no new functionality.
+
+- [ ] T308 [P] Run the frontend manual verification steps in `specs/005-eutr-sales-orders/quickstart.md`
+  "Update 18" section (steps 1-7: literal-text-before/real-data-after comparison, combine/dedupe for a
+  multi-line PO matching Map File's own values, empty state for a no-line PO, exactly one `refType=20`
+  network call per Sales Order, rest-of-screen unaffected, loading-failed indicator on fetch failure)
+  (depends on T301-T307).
+  *(NOT run — requires a browser session against a live, D365-connected backend with real Sales
+  Order/purchase-line data, unavailable in this environment (same reason as T298/T297/T284/T272/T228/
+  T207). As a proxy check: `npx vite build --mode production` succeeded producing a clean
+  `ViewSalesOrderPage.*.js` chunk with no errors, and `npx eslint` on the changed file reported only the 2
+  pre-existing, unrelated problems already present before this update (see Phase 56's Verification note)
+  — zero new problems. A human with backend/D365 access must complete quickstart.md's Update 18 steps
+  before sign-off.)*
+- [X] T309 [P] Review new/changed lines in `ViewSalesOrderPage.jsx` to confirm added comments are
+  Vietnamese, matching this file's own existing comment style, per Constitution Principle IV; confirm no
+  new English UI label was introduced — "Variants"/"Materials" are pre-existing column headers, only
+  their cell content becomes dynamic (depends on T301-T307).
+  *(Verified: the new constant/state/effect comments are Vietnamese, matching this file's existing
+  comment style. No new English UI label was introduced — "Variants"/"Materials" headers are unchanged;
+  the two new render-time strings are Vietnamese ("Đang tải...", "Lỗi tải dữ liệu"), matching this same
+  file's existing Vietnamese error/status copy conventions (identical strings `MapFilePage.jsx` already
+  uses); the new empty-state value ("—") is a symbol, not a language-specific string.)*
+- [X] T310 Confirm `ComplDynamicsService.cs`, `DynController.cs`, `ODataOperatorConverter.cs`,
+  `MapDynamicsResponse`'s `case 20:`, `MapSortColumn`, `ComplDynReferenceResponseDto`, and
+  `MapFilePage.jsx` are byte-for-byte unchanged (Principle III — this update relies entirely on their
+  already-existing, unmodified behavior), and that `SalesOrderOverviewPage.jsx` shows zero behavior
+  change (this update touches only `ViewSalesOrderPage.jsx`'s Selected Purchase Orders table) (depends on
+  T301-T307).
+  *(Verified: no backend file was opened for editing this update (only read, during research); no edit
+  was made this session to `MapFilePage.jsx` or `SalesOrderOverviewPage.jsx`. The only file edited this
+  update is `ViewSalesOrderPage.jsx` (new constant, new state group, new effect, and the Selected
+  Purchase Orders row-render change).)*
+
+**Checkpoint**: PARTIAL — code for the frontend change is complete, compiles, and is build/lint-clean
+(T301-T307, T309, T310 all `[X]`); the live-data quickstart.md verification (T308) could not be run in
+this environment (no live D365-connected backend/browser session available — see T308's note) and
+remains outstanding for a human with backend/D365 access.
+
+---
+
+## Update 18 Dependencies
+
+### Phase Dependencies
+
+- **Phase 56** (Frontend): has no dependency on any new backend work (`EntityMappings[20]` already
+  registered by Update 17/T287) — can start immediately. T301 has no code dependency; T302 depends on
+  T301; T303 depends on T301, T302; T304 depends on T303; T305 depends on T304; T306 depends on T304,
+  T305; T307 depends on T305.
+- **Phase 57** (Polish): depends on Phase 56 being complete.
+
+### Parallel Opportunities
+
+- T301-T307 (Phase 56) touch a single file (`ViewSalesOrderPage.jsx`) sequentially — no cross-file
+  parallelism within this phase, unlike Phase 53/54's cross-file split.
+- T308, T309 (Polish) are independent verification passes and can run in parallel once T301-T307 are
+  complete; T310 is a quick review best done last.
+
+### Implementation Strategy
+
+1. Complete Phase 56 (T301-T307) — clone Update 17's `MapFilePage.jsx` fetch/grouping/render logic into
+   `ViewSalesOrderPage.jsx`, no new backend work needed.
+2. Complete Phase 57 (polish/validation) — full quickstart.md "Update 18" pass, specifically confirming
+   Variants/Materials values match `MapFilePage.jsx`'s own values for the same PO (SC-065).
+
+### Status (2026-08-12)
+
+Phase 56 done in code and verified by build/lint (T301-T307 all `[X]`); Phase 57's comment/scope-review
+tasks are also done (T309, T310 `[X]`). The one live-data verification task (T308) is **NOT run**: this
+environment has no live, D365-connected `compliance-sys-api`/browser session available to exercise the
+real Sales Order/purchase-line fixtures quickstart.md's Update 18 steps call for (same category of
+environment constraint as T298/T297/T289/T284/T272/T228/T207 in prior updates of this feature).
+`compliance-client`'s production build (`npx vite build --mode production`) and `eslint` on the changed
+file both pass cleanly (2 pre-existing, unrelated `no-unused-vars` errors confirmed present in the file's
+last-committed version, untouched by this update). Before sign-off, a human with backend/D365 access
+should: (1) open View for a Sales Order with a multi-line PO already verified against Map File (Update
+17's own fixture) and confirm the Selected Purchase Orders table's Variants/Materials cells now show real
+data instead of the literal words `"Variants"`/`"Materials"`; (2) confirm those values match Map File's
+own Variants/Materials cells for the same PO exactly (SC-065); (3) confirm exactly one `refType=20`
+network call fires per page load (FR-125), not one per PO row.
+
+---
+
+## Phase 58: Frontend — Real Logic for the All Toolbar Chip (Update 19)
+
+**Purpose**: Give `ViewSalesOrderPage.jsx`'s existing-but-inert **All** toolbar chip
+(`data-marker="template-tree-toolbar"`) real behavior — spec FR-129..FR-140. No backend phase this
+update — `EutrTemplatesRepository.GetPagedAsync` already whitelists `IsDefault` as a filter column and
+already applies `IsHide = 0`/`IsDeleted = 0` unconditionally, so the default-template lookup is the
+exact same `GetPagingEutrTemplatesUseCase` → `GetEutrTemplatesUseCase` chain already used per real
+template chip since Update 4, just with a different filter value.
+
+- [X] T311 [P] [US5] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/utils/treeUtils.js`, add a new exported
+  pure function `filterFlatListByStepIds(flatList, keepStepIds)`: keeps only items whose `stepId` is in
+  `keepStepIds`; for a kept item whose `parentId` referenced a *removed* item, rewrites `parentId` to
+  that removed item's nearest surviving ancestor (or `'0'` if none survives), returning a flat list in
+  the same shape `flatToTree` already expects — colocated with, and following the same Vietnamese
+  comment style as, `flatToTree`/`treeToFlat`/`removeNodeAndDescendants` in this file (spec FR-132/
+  FR-133, research.md Decision 68).
+  *(Done — implemented as specified: builds `keptIds` (ids whose `stepId ∈ keepStepIds`) and a
+  `parentOf` map, then for each kept item walks its original `parentId` chain via
+  `resolveSurvivingParent` until it finds an ancestor that is also in `keptIds`, or falls back to
+  `'0'`.)*
+- [X] T312 [US5] In `ViewSalesOrderPage.jsx`, add a new `defaultTemplate`
+  (`{ templateCode, templateName, flatDetails } | null`, initial `null`), `defaultTemplateLoading`
+  (`boolean`), and `defaultTemplateError` (`boolean`) state group, cloned in shape from this screen's
+  existing `templatesData`/`templatesLoading` state (depends on none — pure state addition).
+  *(Done.)*
+- [X] T313 [US5] In the same file, extend the All chip's existing `onClick` (`templateCode === null`
+  branch) to additionally call `getPagingEutrTemplatesUseCase.execute(1, 1, 'Code', 'asc', [{ column:
+  'IsDefault', operator: 'eq', value: 1 }])`, then — if a result is returned —
+  `getEutrTemplatesUseCase.execute(templateSummary.id)` to hydrate `flatDetails` via the same
+  `normalizeTemplateDetail` mapping every other template already uses, setting `defaultTemplate`/
+  `defaultTemplateLoading`/`defaultTemplateError` accordingly; re-fetches fresh on every click, no
+  caching (spec FR-130, research.md Decision 67) (depends on T312).
+  *(Done — implemented as a new `loadDefaultTemplate` `useCallback`, called from the All chip's
+  `onClick` via `if (isAll) { loadDefaultTemplate(); }`, alongside the existing
+  `setSelectedTemplateCode`/`setSelectedStepId(null)` calls.)*
+- [X] T314 [US5] In the same file, when the fetch in T313 resolves with zero rows (no template matches
+  `IsDefault = 1`/`IsHide = 0`/`IsDeleted = 0`), set `defaultTemplate` to `null` and ensure the Template
+  Checklist renders a distinct "no default template configured" empty state for the All-active case —
+  MUST NOT fall back to displaying the first real template's tree (spec FR-131) (depends on T313).
+  *(Done — `loadDefaultTemplate` sets `defaultTemplate` to `null` when `pageResult?.data?.items?.[0]`
+  is missing; the Template Checklist's All-active branch renders a distinct "No default template is
+  configured..." message when `!defaultTemplate` (after the loading/error checks).)*
+- [X] T315 [US5] In the same file, add a new `useMemo` computing `soStepIds = new Set(templatesData
+  .flatMap(t => t.flatDetails).map(d => d.stepId))`, then `allFlatDetails =
+  filterFlatListByStepIds(defaultTemplate.flatDetails, soStepIds)` (T311) and `allTree =
+  flatToTree(allFlatDetails)` (existing util, unchanged) — only steps of the default template whose
+  `stepId` exists in at least one saved template of this Sales Order survive, with surviving descendants
+  of a removed step re-parented rather than dropped (spec FR-132/FR-133) (depends on T311, T313).
+  *(Done — implemented as `soStepIds`/`allChipFlatDetails`/`allChipTree` (renamed from the task's
+  `allFlatDetails`/`allTree` to avoid colliding with the existing `allTrees` variable); `allChipFlatDetails`
+  is `[]` when `defaultTemplate` is `null`, so `allChipTree` is correctly `[]` too in that case.)*
+- [X] T316 [US5] In the same file, when `allFlatDetails` (T315) is empty but `defaultTemplate` is
+  non-null, render a distinct "no steps match" empty state for the Template Checklist — visibly
+  different from T314's "no default template configured" state (spec FR-134) (depends on T315).
+  *(Done — the All-active render branch checks `!defaultTemplate` first (T314's state), then
+  `allChipTree.length === 0` (this state) as a separate, visibly distinct message.)*
+- [X] T317 [US5] In the same file, add a new `useMemo` computing `allMappedStepIds = new
+  Set(templateComputations.flatMap(c => c.flatDetails.filter(d => (c.derivedFileMappings[d.id] ||
+  []).length > 0).map(d => d.stepId)))` — the OR, across every saved template's own already-correctly-
+  scoped mapping (FR-055/FR-061), of which `stepId`s have at least one Mapped document anywhere in the
+  Sales Order (spec FR-135) (depends on none beyond the already-existing `templateComputations`).
+  *(Done — implemented as `stepIdToFileIds` (`Map<stepId, Set<fileId>>` instead of a plain boolean
+  `Set<stepId>`) so the actual matched file ids are available too, not just a yes/no flag; this map
+  feeds `allChipDerivedFileMappings` (T319/T320) so `ViewNode` can resolve both "has document" status
+  and the underlying file objects for AVAILABLE FILES' step-filter, from one source instead of two.)*
+- [X] T318 [US5] In the same file, add a new `useMemo` computing `allTemplatesFiles` — the union of
+  `templateComputations.flatMap(c => c.filesForTemplate)`, deduplicated by file `id` — the file set
+  AVAILABLE FILES MUST show while All is active (spec FR-136) (depends on none beyond the already-
+  existing `templateComputations`).
+  *(Done — implemented as `allChipFiles` (renamed to match the `allChip*` naming used for T315/T317).)*
+- [X] T319 [US5] In the same file's Template Checklist render branch, add an All-active case
+  (`selectedTemplateCode === null`): render `allTree` (T315) via the existing `ViewNode` component,
+  passing a `fileMappings`-equivalent derived from `allMappedStepIds` (T317) so each node's Mapped/
+  missing status reflects cross-template status, falling back to T314's or T316's empty state as
+  appropriate — replacing the current fallback-to-first-template behavior (spec FR-132/FR-135) (depends
+  on T314, T315, T316, T317).
+  *(Done — added a new `selectedTemplateCode === null` branch between the existing "no template tree
+  yet" check and the single-template branch; renders `defaultTemplateLoading` spinner →
+  `defaultTemplateError` `Alert` → T314's "no default configured" message → T316's "no steps match"
+  message → the `allChipTree.map(root => <ViewNode ... fileMappings={allChipDerivedFileMappings}
+  files={allChipFiles} .../>)` tree, in that order.)*
+- [X] T320 [US5] In the same file's AVAILABLE FILES render branch, use `allTemplatesFiles` (T318)
+  instead of `selectedTemplateComputation.filesForTemplate` when All is active; preserve the existing
+  step-filter-by-subtree behavior (Update 15, FR-102) by resolving the clicked node's subtree against
+  `allTree` (T315) instead of a single template's tree when All is active (spec FR-136) (depends on
+  T315, T318, T319).
+  *(Done — `availableFilesForPanel`'s `useMemo` now branches on a new local `isAllActive =
+  selectedTemplateCode === null`: `filesForTemplate`/`currentTree`/`derivedFileMappings` each resolve
+  to `allChipFiles`/`allChipTree`/`allChipDerivedFileMappings` when `isAllActive`, else the existing
+  per-template values — the subtree-collection logic itself (`findNode`/`collectSubtreeIds`) is
+  unchanged, just fed a different tree/mapping source.)*
+- [X] T321 [US5] Guardrail: confirm clicking All (including re-clicking it while already active) clears
+  `selectedStepId` the same way clicking any other template chip already does (this screen's existing
+  click handler already calls `setSelectedStepId(null)` unconditionally) — verify no code path bypasses
+  this for the All branch introduced by T313 (spec FR-137) (depends on T313, T320).
+  *(Verified — the toolbar's single `onClick` handler calls `setSelectedTemplateCode(t.templateCode)`
+  then unconditionally `setSelectedStepId(null)` for every chip including All (`t.templateCode ===
+  null`); the new `if (isAll) { loadDefaultTemplate(); }` call was added after these two, so it does
+  not skip or short-circuit either.)*
+- [X] T322 [US5] Guardrail: confirm the page-load default selection (`selectedTemplateCode` seeded from
+  `templatesData[0].templateCode`, spec FR-060) is untouched by T311-T321 — All MUST remain reachable
+  only via explicit click on the chip, never auto-selected on mount (spec FR-138) (depends on T313-T320).
+  *(Verified — the default-first-template `useEffect` (`setSelectedTemplateCode(prev => ...)`, depends
+  on `[templatesData]`) was not edited by this update; it still resolves to `templatesData[0]
+  .templateCode` whenever `prev` is falsy (including `null`), so `selectedTemplateCode` can only become
+  `null` via the All chip's own `onClick`, never automatically.)*
+- [X] T323 [US5] Guardrail: confirm header/Validation Summary aggregate Required/completed figures
+  (spec FR-062) and the Download button's zip-building logic (Update 10) are unaffected by whether All
+  or a specific template chip is selected — both continue reading `templateComputations`/`templatesData`
+  directly, not `allTree`/`allTemplatesFiles` (spec FR-139) (depends on T319, T320).
+  *(Verified — `requiredDetails`/`mappedRequired`/`missingRequired`/`pct` and `buildDownloadFolders`
+  were not edited by this update; all still derive directly from `templateComputations`/`templatesData`,
+  never from `allChipTree`/`allChipFiles`/`allChipDerivedFileMappings`.)*
+
+**Verification**: `npm run build` (Vite) succeeds with the new state/effect/`useMemo`/render logic; `npx
+eslint` on both changed files (`ViewSalesOrderPage.jsx`, `utils/treeUtils.js`) reports zero new problems.
+*(Confirmed: `npx vite build --mode production` completed with 0 errors, producing an updated
+`ViewSalesOrderPage.*.js` chunk (22.16 kB, up from 19.64 kB before this update) and an updated
+`treeUtils.*.js` chunk (2.46 kB). `npx eslint` on both changed files reports the same 2 pre-existing,
+unrelated `no-unused-vars` errors already noted in Phase 56/57 (`canSubmit` line ~912, `isMapped` line
+~1496 — confirmed absent from this update's diff via `git diff`) — zero new problems introduced.)*
+
+**Checkpoint**: Clicking All on View shows a tree of the default template's steps filtered down to only
+those also present in the Sales Order's own saved templates (with surviving descendants of a removed
+step still visible), correct cross-template Mapped/missing status per step, and an AVAILABLE FILES panel
+listing every saved template's own Mapped documents — with distinct empty states when no default
+template is configured or when no steps match.
+
+---
+
+## Phase 59: Polish & Cross-Cutting Concerns (Update 19)
+
+**Purpose**: Final validation for the Update 19 changes; no new functionality.
+
+- [ ] T324 [P] Run the frontend manual verification steps in `specs/005-eutr-sales-orders/quickstart.md`
+  "Update 19" section (steps 1-10: fixture with a partially-overlapping default template + 2 saved
+  templates, All-tree filter/reparent correctness, cross-template Mapped status, exactly one new
+  fetch-pair per All click, AVAILABLE FILES union across templates, step-filter clear on re-click,
+  distinct "no default configured"/"no steps match" empty states, header/Validation Summary/Download
+  unaffected) (depends on T311-T323).
+  *(NOT run — requires a browser session against a live, D365-connected backend with a real fixture
+  Sales Order/default-template/saved-templates setup, unavailable in this environment (same reason as
+  T308/T298/T297/T289/T284/T272/T228/T207 in prior updates). As a proxy check: `npx vite build --mode
+  production` succeeded producing a clean, larger `ViewSalesOrderPage.*.js` chunk, and `npx eslint`
+  reported only the 2 pre-existing, unrelated problems already present before this update — zero new
+  problems. A human with backend/D365 access must complete quickstart.md's Update 19 steps, including
+  seeding the fixture described there (a default template with a parent+2-children step group, 2
+  saved SO templates each covering only part of it), before sign-off.)*
+- [X] T325 [P] Review new/changed lines in `ViewSalesOrderPage.jsx` and `utils/treeUtils.js` to confirm
+  added comments are Vietnamese, matching each file's own existing comment style, per Constitution
+  Principle IV; confirm no new English UI label was introduced — the All chip's label text already
+  exists; new empty-state strings follow this screen's own existing English precedent for other empty
+  states (Update 4/15) (depends on T311-T323).
+  *(Verified: all new code comments in both files are Vietnamese (no diacritics, matching this
+  codebase's existing plain-ASCII Vietnamese comment convention). The All chip's own label text
+  ("All") was not touched. The 3 new empty/error-state strings ("Failed to load the default
+  template...", "No default template is configured...", "No step of the default template
+  matches...") are English, matching this exact screen's existing empty-state precedent ("No template
+  tree yet — please Map File...", "No files available", "No files for this step") — not a new
+  translation decision.)*
+- [X] T326 Confirm `EutrTemplatesController.cs`/`Service.cs`/`Repository.cs`, `MapFilePage.jsx`, and
+  `SalesOrderOverviewPage.jsx` are byte-for-byte unchanged (Principle III — this update relies entirely
+  on their already-existing, unmodified behavior); confirm `GetPagingEutrTemplatesUseCase.js`/
+  `GetEutrTemplatesUseCase.js`/`IEutrTemplatesRepository.js`/`RestEutrTemplatesRepository.js`/
+  `eutrTemplatesApi.js` are reused unchanged, not forked (depends on T311-T323).
+  *(Verified: no backend file was opened for editing this update (only read, during planning); `git
+  diff --stat` on `compliance-client` shows exactly 2 changed files this update —
+  `ViewSalesOrderPage.jsx` and `utils/treeUtils.js` — no edit to `MapFilePage.jsx`,
+  `SalesOrderOverviewPage.jsx`, or any `eutr-templates` domain/infrastructure/application file; the
+  new All-chip fetch calls the existing `getPagingEutrTemplatesUseCase`/`getEutrTemplatesUseCase`
+  singleton instances already constructed at the top of `ViewSalesOrderPage.jsx` since Update 4.)*
+
+**Checkpoint**: PARTIAL — code for the frontend change is complete, compiles, and is build/lint-clean
+(T311-T323, T325, T326 all `[X]`); the live-data quickstart.md verification (T324) could not be run in
+this environment (no live D365-connected backend/browser session available — see T324's note) and
+remains outstanding for a human with backend/D365 access.
+
+---
+
+## Update 19 Dependencies
+
+### Phase Dependencies
+
+- **Phase 58** (Frontend): no dependency on any new backend work (zero backend change this update) —
+  can start immediately. T311 is independent (separate file, `[P]`). T312 has no code dependency; T313
+  depends on T312; T314 depends on T313; T315 depends on T311, T313; T316 depends on T315; T317 and T318
+  depend only on the already-existing `templateComputations` (no new dependency within this phase); T319
+  depends on T314, T315, T316, T317; T320 depends on T315, T318, T319; T321 depends on T313, T320; T322
+  depends on T313-T320; T323 depends on T319, T320.
+- **Phase 59** (Polish): depends on Phase 58 being complete.
+
+### Parallel Opportunities
+
+- T311 (`utils/treeUtils.js`) can run in parallel with T312 (`ViewSalesOrderPage.jsx` state addition) —
+  different files, no shared dependency.
+- T317 and T318 are independent `useMemo` additions (both read only the already-existing
+  `templateComputations`) and can be done in either order or in parallel once that data is available.
+- T324, T325 (Polish) are independent verification passes and can run in parallel once T311-T323 are
+  complete; T326 is a quick review best done last.
+
+### Implementation Strategy
+
+1. Complete Phase 58 (T311-T323) — add the new tree-filter-with-reparent utility, the default-template
+   fetch, and the All-active render/derived-state branches to `ViewSalesOrderPage.jsx`; no new backend
+   work needed.
+2. Complete Phase 59 (polish/validation) — full quickstart.md "Update 19" pass, specifically confirming
+   the fixture's partial-overlap/orphan-reparenting/cross-template scenarios all behave per FR-132..
+   FR-136 (SC-066..SC-069).
+
+### Status (2026-08-12)
+
+Phase 58 done in code and verified by build/lint (T311-T323 all `[X]`); Phase 59's comment/scope-review
+tasks are also done (T325, T326 `[X]`). The one live-data verification task (T324) is **NOT run**: this
+environment has no live, D365-connected `compliance-sys-api`/browser session available to exercise the
+real default-template/multi-saved-template fixture quickstart.md's Update 19 steps call for (same
+category of environment constraint as every prior update's live-verification task in this feature).
+`compliance-client`'s production build (`npx vite build --mode production`) and `eslint` on both changed
+files (`ViewSalesOrderPage.jsx`, `utils/treeUtils.js`) both pass cleanly (2 pre-existing, unrelated
+`no-unused-vars` errors confirmed absent from this update's diff). Before sign-off, a human with
+backend/D365 access should: (1) set one template as default in EUTR Templates with a parent step that
+has 2 children; (2) save 2 templates to a Sales Order where each only covers one of those 2 children
+(not the parent, not each other's child); (3) click All on that Sales Order's View screen and confirm
+both children appear (the parent does not) and their Mapped/missing status and AVAILABLE FILES reflect
+documents from both saved templates combined; (4) confirm clearing the default template flag shows a
+distinct "no default configured" state instead of falling back to the first real template.
+
+---
+
+## Phase 60: Frontend — All Is the Default Selection on First Open (Update 20)
+
+**Purpose**: Correct Update 19's own explicit Assumption — the requester confirmed All MUST be the
+default selection whenever the View screen opens (or its prior selection is no longer valid) and the
+Sales Order has at least one saved template, instead of defaulting to the first real template — spec
+FR-060 (revised)/FR-138 (revised)/FR-141. No backend phase — reuses Update 19's fetch mechanism
+unchanged, only changes when it fires.
+
+- [X] T327 [US5] In `ViewSalesOrderPage.jsx`, change the default-selection `useEffect` (depends on
+  `[templatesData]`) so its fallback branch returns `null` (All) instead of
+  `templatesData[0].templateCode` when there is no still-valid prior selection — the "keep prior
+  selection if still valid" and "empty `templatesData` → `null`" branches are unchanged (spec
+  FR-060 revised).
+  *(Done.)*
+- [X] T328 [US5] In the same file, add a new `useEffect` (depends on `[templatesData,
+  loadDefaultTemplate]`, placed after `loadDefaultTemplate`'s own declaration to avoid a
+  use-before-initialization error) that calls `loadDefaultTemplate()` whenever `templatesData.length >
+  0` — so the default template backing the All view is fetched automatically on first open, not only
+  on an explicit chip click (spec FR-141) (depends on T327, and on Update 19's existing
+  `loadDefaultTemplate`).
+  *(Done.)*
+- [X] T329 [US5] Guardrail: confirm a Sales Order with zero saved templates (`templatesData` empty)
+  still renders the existing "chưa có cây template" empty state (FR-040) — no All-related state or
+  fetch is triggered in this case (depends on T327, T328).
+  *(Verified — both effects guard on `templatesData.length`; when it is `0`, the selection effect
+  returns `null` without touching `defaultTemplate`, and the new auto-load effect's `if
+  (templatesData.length > 0)` condition skips calling `loadDefaultTemplate()` entirely.)*
+- [X] T330 [US5] Guardrail: confirm All's own logic (fetch/filter/reparent/cross-template status,
+  FR-131..FR-137/FR-140) is byte-for-byte unchanged by T327/T328 — this update only changes **when**
+  All becomes selected/fetched, not **how** it behaves once active (depends on T327, T328).
+  *(Verified — `loadDefaultTemplate`, `soStepIds`, `allChipFlatDetails`/`allChipTree`,
+  `stepIdToFileIds`/`allChipDerivedFileMappings`, `allChipFiles`, and every render branch added in
+  Phase 58 were not edited by this update; the All chip's own `onClick` (explicit
+  `loadDefaultTemplate()` call on click/re-click) is also unchanged.)*
+
+**Verification**: `npm run build` (Vite) succeeds; `npx eslint` on `ViewSalesOrderPage.jsx` reports zero
+new problems.
+*(Confirmed: `npx vite build --mode production` completed with 0 errors, producing an updated
+`ViewSalesOrderPage.*.js` chunk (22.19 kB, up from 22.16 kB before this update). `npx eslint` reports the
+same 2 pre-existing, unrelated `no-unused-vars` errors already noted in Phase 56/57/59 (`canSubmit` line
+921, `isMapped` line 1505 — confirmed absent from this update's diff via `git diff`) — zero new problems
+introduced.)*
+
+**Checkpoint**: Opening View for a Sales Order with at least one saved template shows the All chip
+already selected and the Template Checklist/AVAILABLE FILES already showing All's content, with no
+click required; a Sales Order with no saved templates is unaffected.
+
+---
+
+## Phase 61: Polish & Cross-Cutting Concerns (Update 20)
+
+**Purpose**: Final validation for the Update 20 change; no new functionality.
+
+- [ ] T331 [P] Run the frontend manual verification steps in `specs/005-eutr-sales-orders/quickstart.md`
+  "Update 20" section (open View for a Sales Order with 1+ saved templates and confirm All is already
+  selected/loaded with no click; open View for a Sales Order with 0 saved templates and confirm the
+  existing empty state, unaffected) (depends on T327-T330).
+  *(NOT run — requires a browser session against a live, D365-connected backend, unavailable in this
+  environment (same reason as T324 and every prior update's live-verification task). As a proxy check:
+  the production build/lint pass cleanly — see Phase 60's Verification note. A human with backend/D365
+  access must complete quickstart.md's Update 20 steps before sign-off.)*
+- [X] T332 [P] Review the changed lines in `ViewSalesOrderPage.jsx` to confirm added/edited comments are
+  Vietnamese, matching this file's own existing comment style, per Constitution Principle IV; confirm no
+  UI label or empty-state string was added or changed by this update (depends on T327-T330).
+  *(Verified: the 2 edited/new comments are Vietnamese, consistent with this file's existing style. No
+  UI-visible text was added or changed — this update only changes which state a `useEffect` resolves to
+  and when a fetch fires, not any rendered string.)*
+
+**Checkpoint**: PARTIAL — code for Update 20 is complete, compiles, and is build/lint-clean (T327-T330,
+T332 all `[X]`); the live-data quickstart.md verification (T331) could not be run in this environment and
+remains outstanding for a human with backend/D365 access.
+
+---
+
+## Update 20 Dependencies
+
+### Phase Dependencies
+
+- **Phase 60**: no dependency on any new backend work (zero backend change this update). T327 has no
+  code dependency beyond Update 19's existing effect; T328 depends on T327 and on Update 19's existing
+  `loadDefaultTemplate` (must be placed after its declaration in source order); T329 and T330 are
+  review-only, depending on T327, T328.
+- **Phase 61**: depends on Phase 60 being complete.
+
+### Parallel Opportunities
+
+- T327 and T328 touch the same file sequentially (T328's effect must be added after
+  `loadDefaultTemplate`'s declaration) — no parallelism within Phase 60.
+- T331, T332 (Polish) are independent verification passes and can run in parallel.
+
+### Implementation Strategy
+
+1. Complete Phase 60 (T327-T330) — flip the default-selection fallback to All and add the
+   auto-load-on-open effect; no new backend work needed.
+2. Complete Phase 61 (polish/validation) — full quickstart.md "Update 20" pass.
+
+### Status (2026-08-12)
+
+Phase 60 done in code and verified by build/lint (T327-T330 all `[X]`); Phase 61's comment-review task is
+also done (T332 `[X]`). The one live-data verification task (T331) is **NOT run**: this environment has
+no live, D365-connected `compliance-sys-api`/browser session available (same constraint as every prior
+update's live-verification task in this feature). Before sign-off, a human with backend/D365 access
+should open View for a Sales Order with at least one saved template and confirm the All chip is already
+selected and its content already loaded with no click required, then open View for a Sales Order with no
+saved templates and confirm the existing "chưa có cây template" empty state is unaffected.
+
+---
+
+## Phase 62: Backend — Reshape `FolderName` → `FolderPath` on `EutrDownloadZipFolderDto` (Update 21)
+
+**Purpose**: Let the existing, unchanged `download-zip` action express a nested folder (the new **All**
+step tree) instead of only a single-segment folder — spec FR-142..FR-151. No new controller, no new
+Application service, no new repository/entity, no migration, no new policy, no new endpoint — one
+existing request DTO field is reshaped, and one existing controller method's per-folder name derivation
+changes from "sanitize one string" to "sanitize each segment, then join."
+
+- [X] T333 In
+  `compliance-sys-api/src/ComplianceSys.Application/Dtos/Request/EutrDownloadZipFolderDto.cs`, change
+  `FolderName` (`string`) to `FolderPath` (`List<string>`, default `[]`) — ordered path segments from
+  the zip root (e.g. `["Template A"]` for an unchanged per-template folder, `["All", "Forest",
+  "Plantation forest location map"]` for a nested All step folder); `Files`
+  (`List<EutrDownloadZipFileDto>`) is unchanged (research.md Decision 69).
+  *(Done.)*
+- [X] T334 In
+  `compliance-sys-api/src/ComplianceSys.Api/Controllers/EutrDocumentsController.cs`'s `DownloadZip`
+  action, change the per-folder `folderName` derivation from
+  `SanitizeZipNamePart(folder.FolderName, "template")` to
+  `string.Join("/", folder.FolderPath.Select(s => SanitizeZipNamePart(s, "step")))` — every other line
+  (empty-directory-entry creation via `archive.CreateEntry($"{folderName}/")`, the per-file
+  fetch/zip loop, `GetUniqueZipEntryName`'s disambiguation, the `400`/`500` responses) is unchanged,
+  since both already treat `folderName` as a `/`-delimited path string (depends on T333).
+  *(Done — implemented as specified, with one small addition not called out in the task text: guarded
+  against `folder.FolderPath` being null/empty (`folder.FolderPath is { Count: > 0 } ? folder.FolderPath
+  : ["folder"]`) before the per-segment sanitize/join, so a malformed request with an empty path list
+  still produces a valid (fallback) folder name instead of an empty-string zip entry — mirroring the
+  defensive fallback `SanitizeZipNamePart` already provides per segment.)*
+- [ ] T335 Manually verify the updated endpoint directly (e.g. via a REST client), per
+  contracts/eutr-documents-download-zip.md: (a) a request with only 1-element `folderPath` entries
+  behaves identically to before this update (unchanged per-template zip structure); (b) a request
+  containing a multi-element `folderPath` (e.g. `["All", "Forest", "Plantation forest location map"]`)
+  produces a correctly nested zip entry; (c) a `folderPath` segment containing an invalid filename
+  character (e.g. `/` inside the segment's own text) is sanitized within that segment, not mistaken for
+  an additional path separator; (d) same-filename collisions within the same `folderPath` are still
+  disambiguated, independent of any other `folderPath` (depends on T334).
+  *(NOT run — requires a live `compliance-sys-api` process with a real SharePoint-backed `fileId` to
+  download, same environment constraint as T178 (Update 10). As a proxy check: `dotnet build` on
+  `ComplianceSys.Application` succeeds with 0 errors; `dotnet build` on `ComplianceSys.Api` hit the same
+  pre-existing `MSB3027` file-lock error from an already-running `ComplianceSys.Api.exe` instance (same
+  category of issue as T030/T056/T178), confirmed via `grep` that zero `error CS` lines appear in the
+  build output. Someone with D365/SharePoint access must run the actual HTTP round-trips before
+  sign-off.)*
+
+**Checkpoint**: `POST /api/eutr-documents/download-zip` accepts nested `folderPath` entries and produces
+a correctly nested zip, with zero change in behavior for existing 1-element `folderPath` entries — ready
+for the frontend to send All-folder entries.
+
+---
+
+## Phase 63: Frontend — All Folder in the Download Zip, View + Overview (Update 21)
+
+**Purpose**: Build the All folder's `{folderPath, files}` entries from data already computed on screen
+(Update 19/20) and append them to both Download entry points' existing `folders` payload — spec
+FR-142..FR-151. No new fetch on View's Download click (reuses `allChipTree`/`allChipDerivedFileMappings`/
+`allChipFiles`, already populated by Update 20's mount-time effect); Overview's per-row Download gains
+one new on-demand default-template fetch, since Overview has no pre-loaded All-tree state of its own.
+
+- [X] T336 [P] [US5] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/utils/treeUtils.js`, add a new exported
+  pure function `flattenTreeToFolderEntries(tree, derivedFileMappings, filesById, parentPath)`: walks
+  `tree` (the same node shape `flatToTree` produces), and for every node emits one
+  `{ folderPath: [...parentPath, node.stepName], files }` entry — `files` = `(derivedFileMappings[node.id]
+  || []).map(id => filesById.get(id)).filter(Boolean).map(f => ({ fileId: f.fileId, fileName: f.name }))`
+  — then recurses into `node.children` with the extended path; colocated with, and following the same
+  Vietnamese comment style as, `flatToTree`/`filterFlatListByStepIds` in this file (spec FR-142..FR-146,
+  research.md Decision 70).
+  *(Done — implemented exactly as specified, with `parentPath` defaulting to `[]` for standalone
+  callers.)*
+- [X] T337 [US5] In `ViewSalesOrderPage.jsx`, add a new small `filesById` `useMemo` (`new
+  Map(allChipFiles.map(f => [f.id, f]))`, Update 19's `allChipFiles`), then in `buildDownloadFolders`:
+  (a) change each per-template entry from `{ folderName: t.templateName, files }` to `{ folderPath:
+  [t.templateName], files }` (same value, now a 1-element array); (b) call
+  `flattenTreeToFolderEntries(allChipTree, allChipDerivedFileMappings, filesById, ['All'])` (T336) and
+  append its result; (c) if that result is empty, append a single fallback `{ folderPath: ['All'], files:
+  [] }` entry instead, so the All folder always exists in the zip (spec FR-147) (depends on T336, and on
+  Update 19's existing `allChipTree`/`allChipDerivedFileMappings`/`allChipFiles`).
+  *(Done.)*
+- [X] T338 [US5] Guardrail: confirm the existing "every folder's files list is empty → show a message,
+  skip the network call" check (spec FR-074, T184) still runs against the **complete** `folders` array
+  (per-template entries + the new All entries) and still short-circuits correctly when the Sales Order
+  has zero Mapped documents anywhere — even though the All entries built in T337 may otherwise look
+  non-empty in structure (they are still `files: []` in that case) (depends on T337).
+  *(Verified — `handleDownload`'s `const folders = buildDownloadFolders(); const hasAnyFile =
+  folders.some(f => f.files.length > 0);` was not edited by this update; it already iterates whatever
+  `buildDownloadFolders()` returns, now including the appended All entries. Since every All entry's
+  `files` is derived from the same Mapped-document set as the per-template entries (just regrouped by
+  step instead of by template), `hasAnyFile` is `false` in exactly the same cases as before this update —
+  confirmed by inspection, no code change needed.)*
+- [X] T339 [US1] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/SalesOrderOverviewPage.jsx`'s
+  `handleDownload` callback, add one new on-demand call — reusing the exact same 2-call chain
+  `ViewSalesOrderPage.jsx`'s `loadDefaultTemplate` already uses
+  (`getPagingEutrTemplatesUseCase.execute(1, 1, 'Code', 'asc', [{ column: 'IsDefault', operator: 'eq',
+  value: 1 }])`, then `getEutrTemplatesUseCase.execute(templateSummary.id)` if a row is returned) —
+  called inline (not through component state, since this page has no Template Checklist to render it
+  into) and wrapped so a rejection resolves to `null` rather than rejecting the surrounding `Promise.all`
+  (depends on none beyond the existing handler).
+  *(Done — implemented as a new `fetchDefaultTemplateForZip` `useCallback` (mirrors
+  `ViewSalesOrderPage.jsx`'s `loadDefaultTemplate` body, minus the component state it has no equivalent
+  of here), called as `fetchDefaultTemplateForZip().catch(() => null)` inside the existing `Promise.all`
+  alongside the by-codes/po-references calls.)*
+- [X] T340 [US1] In the same callback, build this row's own All-folder entries the same way View does:
+  compute `soStepIds` from this row's own `templatesData`-equivalent slice (T235), call
+  `filterFlatListByStepIds`/`flatToTree`/`flattenTreeToFolderEntries` (T336, all reused, Update 19/21) as
+  plain local variables using T339's fetched default template (or an empty tree if T339 resolved to
+  `null`/failed); change each per-template entry from `{ folderName, files }` to `{ folderPath:
+  [templateName], files }`; append the All entries (with the same `{ folderPath: ['All'], files: [] }`
+  fallback as T337 when empty) to the `folders` payload before calling
+  `DownloadEutrSalesOrderZipUseCase.execute(...)` (depends on T339, T336).
+  *(Done — `soStepIds`/`allFlatDetails`/`allTree`/`stepIdToFileIds`/`allDerivedFileMappings`/`allFiles`/
+  `filesById` computed as plain local `const`s inside `handleDownload` (this page has no `useMemo` chain
+  to host them in, per the plan's own reasoning), then `flattenTreeToFolderEntries(allTree,
+  allDerivedFileMappings, filesById, ['All'])` builds the All entries, appended to the reshaped
+  `templateFolders` with the same empty fallback as View.)*
+- [X] T341 [US1] Guardrail: confirm a failure in T339's new fetch (network error, no default template
+  configured) does not reject or otherwise break this row's Download as a whole — the row's existing
+  per-template folders still build and download normally, only the All folder degrades to the T337-style
+  empty fallback (depends on T339, T340).
+  *(Verified — `fetchDefaultTemplateForZip().catch(() => null)` ensures the `Promise.all` never rejects
+  because of this call; when it resolves to `null`, `allFlatDetails` is `[]` (the `defaultTemplate ? ... :
+  []` guard), so `allTree` is `[]` and `flattenTreeToFolderEntries` returns `[]`, triggering the same `{
+  folderPath: ['All'], files: [] }` fallback used when a default template exists but has no matching
+  steps — the row's `templateFolders` and the rest of `handleDownload` are entirely unaffected.)*
+
+**Checkpoint**: Both Download entry points (View's button, each Overview row's button) produce a zip
+containing the existing per-template folders plus a new **All** folder whose nested structure and
+per-step file contents match the on-screen All tree exactly — matching spec FR-142..FR-151.
+
+---
+
+## Phase 64: Polish & Cross-Cutting Concerns (Update 21)
+
+**Purpose**: Final validation for the Update 21 changes; no new functionality.
+
+- [ ] T342 [P] Run the frontend manual verification steps in `specs/005-eutr-sales-orders/quickstart.md`
+  "Update 21" section (steps 1-10: All folder present alongside template folders, nested step hierarchy
+  matches the on-screen All tree with orphaned children re-parented, per-step Mapped documents merged
+  across templates, empty step folders still created, All folder present-but-empty when no default
+  template is configured, Overview's Download matches View's, "nothing to download" still blocks the
+  whole zip, same-filename disambiguation within a step folder) (depends on T333-T341).
+  *(NOT run — requires a browser session against a live, D365-connected backend with a real fixture
+  Sales Order/default-template/saved-templates setup, unavailable in this environment (same reason as
+  T324/T331 and every prior update's live-verification task). A human with backend/D365 access must
+  complete quickstart.md's Update 21 steps, including seeding the fixture described there, before
+  sign-off.)*
+- [X] T343 [P] Review new/changed lines in `EutrDocumentsController.cs`, `EutrDownloadZipFolderDto.cs`,
+  `utils/treeUtils.js`, `ViewSalesOrderPage.jsx`, and `SalesOrderOverviewPage.jsx` to confirm added
+  comments are Vietnamese, matching each file's own existing comment style, per Constitution Principle
+  IV; confirm no new UI label was introduced — the All folder's names come from `eutr_steps` business
+  data (`stepName`), not a code-owned UI string, and the existing "no documents to download"/error
+  snackbar text is untouched (depends on T333-T341).
+  *(Verified: every new/changed comment in all 5 files is Vietnamese, unaccented ASCII, matching each
+  file's existing comment style. No new UI-visible string was added anywhere — `buildDownloadFolders`/
+  `handleDownload`'s existing snackbar messages ("No documents available for download.", "Download
+  failed. please try again.") were not touched; the only new user-visible content is folder/file names
+  inside the downloaded zip itself, sourced from `stepName`/`templateName`/document file names already
+  read from data, not a new hardcoded string.)*
+- [X] T344 Confirm `EutrDownloadZipRequestDto.cs`/`EutrDownloadZipFileDto.cs`,
+  `DownloadEutrSalesOrderZipUseCase.js`, `eutrDocumentsApi.js`'s `downloadZip`,
+  `IEutrDocumentsRepository.js`, and `RestEutrDocumentsRepository.js` are byte-for-byte unchanged
+  (Principle III — all forward the `folders` payload opaquely, none reference `folderName`/`folderPath`
+  by name); confirm `flatToTree`/`filterFlatListByStepIds` (Update 19) are reused unchanged as inputs to
+  T336's new function (depends on T333-T341).
+  *(Verified: none of the 5 named files were opened for editing this update (confirmed no diff produced
+  against them); `flatToTree`/`filterFlatListByStepIds` in `utils/treeUtils.js` are unchanged — the new
+  `flattenTreeToFolderEntries` (T336) was appended after them, not edited into them.)*
+
+**Checkpoint**: PARTIAL — code for Update 21 is complete, compiles, and is build/lint-clean (T333-T341,
+T343, T344 all `[X]`); the two live-data verification tasks (T335, T342) could not be run in this
+environment (no live D365/SharePoint-connected backend or browser session available — see their notes)
+and remain outstanding for a human with backend/D365 access.
+
+---
+
+## Update 21 Dependencies
+
+### Phase Dependencies
+
+- **Phase 62** (Backend): T333 has no code dependency; T334 depends on T333 (same file, apply after);
+  T335 depends on T334.
+- **Phase 63** (Frontend): depends on Phase 62 being complete (the frontend sends `folderPath`, which
+  only has effect once the backend DTO/controller accept it — though the frontend edits themselves have
+  no *compile-time* dependency on the backend, they should not be exercised end-to-end before Phase 62
+  ships). T336 is independent (`utils/treeUtils.js`, `[P]`). T337 depends on T336 and on Update 19/20's
+  existing `allChipTree`/`allChipDerivedFileMappings`/`allChipFiles`; T338 depends on T337. T339 has no
+  code dependency beyond the existing `handleDownload` callback; T340 depends on T339, T336; T341 depends
+  on T339, T340.
+- **Phase 64** (Polish): depends on Phase 62 and Phase 63 being complete.
+
+### Parallel Opportunities
+
+- T333 (backend DTO) and T336 (frontend `utils/treeUtils.js`) touch unrelated files and can be done in
+  parallel — the frontend function's shape does not depend on the exact backend field name.
+- T339 (Overview's new fetch) has no dependency on T337/T338 (View's own edits, different file) and can
+  be done in parallel with them; both depend on T336.
+- T342, T343 (Polish) are independent verification passes and can run in parallel; T344 is a quick review
+  best done last.
+
+### Implementation Strategy
+
+1. Complete Phase 62 (T333-T335) — reshape the request DTO and update the controller's per-folder name
+   derivation; no new endpoint/entity/migration needed.
+2. Complete Phase 63 (T336-T341) — add the new tree-flattening utility, wire it into View's
+   `buildDownloadFolders` (no new fetch), and add Overview's one new on-demand default-template fetch +
+   the same All-folder entries to its per-row Download handler.
+3. Complete Phase 64 (polish/validation) — full quickstart.md "Update 21" pass, specifically confirming
+   the nested structure/re-parenting/cross-template file-merge/empty-folder/empty-default-template
+   scenarios all behave per FR-142..FR-151 (SC-071..SC-076).
+
+### Status (2026-08-12)
+
+Phases 62-64 done in code and verified by build/lint (T333, T334, T336-T341, T343, T344 all `[X]`).
+`ComplianceSys.Application` builds cleanly (0 errors); `ComplianceSys.Api` hit only the pre-existing
+`MSB3027` file-lock error from an already-running `ComplianceSys.Api.exe` instance (same category as
+T030/T056/T178), with zero `error CS` lines. `compliance-client`'s production build (`npx vite build
+--mode production`) succeeded, producing updated `ViewSalesOrderPage`, `SalesOrderOverviewPage`, and
+`treeUtils` chunks; `npx eslint` on all 3 changed frontend files reports the same 2 pre-existing,
+unrelated `no-unused-vars` errors already noted since Phase 56/57 (`canSubmit`, `isMapped` in
+`ViewSalesOrderPage.jsx`) — zero new problems, and zero problems at all in `SalesOrderOverviewPage.jsx`/
+`utils/treeUtils.js`. The two live-data verification tasks (T335, T342) are **NOT run**: this environment
+has no live, D365/SharePoint-connected `compliance-sys-api` process or browser session available (same
+constraint as every prior update's live-verification task in this feature). Before sign-off, a human with
+backend/D365/SharePoint access should: (1) confirm a real Download from both View and a row in Overview
+now includes an **All** folder alongside the template folders, with the nested step structure/re-parented
+orphans/merged Mapped files matching quickstart.md's Update 21 fixture; (2) confirm a Sales Order with no
+default template configured still downloads successfully with an empty All folder; (3) confirm the
+existing "nothing to download" message/behavior is unchanged when a Sales Order has zero Mapped documents
+anywhere.

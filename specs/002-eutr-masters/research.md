@@ -3,6 +3,9 @@
 Phase 0 — chốt các quyết định kỹ thuật. Các điểm nghiệp vụ chưa rõ đã được giải quyết ở
 `/speckit-clarify` (Session 2026-07-02). Không còn NEEDS CLARIFICATION tồn đọng.
 
+> **Cập nhật 2026-08-11**: Quyết định 3 được sửa lại theo yêu cầu mới trong spec — chống trùng
+> **Prefix duy nhất toàn hệ thống** thay vì cặp (StepId, Prefix). Các quyết định khác không đổi.
+
 ## Quyết định 1 — Tạo mới backend theo mẫu `EutrStep`
 
 - **Decision**: Tạo mới toàn bộ backend cho EUTR Masters (Domain/Application/Api + DI), clone cấu
@@ -26,25 +29,32 @@ Phase 0 — chốt các quyết định kỹ thuật. Các điểm nghiệp vụ
   vì tìm-kiếm-theo-tên server-side sẽ phải map ngược tên→id, phức tạp và dễ lệch phân trang;
   (b) Tạo VIEW DB — bị loại vì vượt phạm vi và khó bảo trì.
 
-## Quyết định 3 — Chống trùng cặp (StepId, Prefix): chặn lưu
+## Quyết định 3 — Chống trùng Prefix (toàn hệ thống, không theo bước): chặn lưu
 
-- **Decision**: Override `AddAsync`/`UpdateAsync` trong `EutrMastersService`; trước khi ghi, kiểm tra
-  tồn tại cặp (StepId, Prefix) (khi update loại trừ chính `Id` đang sửa). Nếu trùng → ném lỗi nghiệp
-  vụ với message tiếng Anh (vd "A master with the same step and prefix already exists.").
-- **Rationale**: Clarify đã chốt **chặn lưu** (FR-007/FR-013). BaseService generic không có sẵn kiểm
-  tra này nên phải bổ sung ở service. Kiểm tra ở service đảm bảo áp dụng cho cả Add, Update và Import.
-- **Alternatives considered**: (a) Chỉ dựa vào unique index DB — hữu ích như phòng tuyến cuối nhưng
-  thông báo lỗi kém thân thiện; có thể thêm unique index sau nhưng validation ở service là bắt buộc;
-  (b) Cho lưu và chỉ cảnh báo — bị loại theo clarify.
+- **Decision** *(cập nhật 2026-08-11, thay thế quyết định cũ theo cặp (StepId, Prefix))*: Override
+  `AddAsync`/`UpdateAsync` trong `EutrMastersService`; trước khi ghi, kiểm tra tồn tại **Prefix** ở
+  bất kỳ bản ghi nào khác — KHÔNG còn điều kiện theo `StepId` (khi update loại trừ chính `Id` đang
+  sửa). Nếu trùng → ném lỗi nghiệp vụ với message tiếng Anh (vd "A master with the same prefix
+  already exists."). Repository method `ExistsStepPrefixAsync(stepId, prefix, excludeId)` đổi thành
+  `ExistsPrefixAsync(prefix, excludeId)` (bỏ điều kiện `StepId` khỏi câu SQL WHERE).
+- **Rationale**: Clarify session 2026-08-11 chốt Prefix phải duy nhất trên toàn hệ thống — cùng một
+  Prefix không được dùng lại cho step khác (khác với thiết kế ban đầu cho phép dùng lại Prefix ở
+  step khác nhau). Kiểm tra ở service đảm bảo áp dụng cho cả Add, Update và Import.
+- **Alternatives considered**: (a) Chỉ dựa vào unique index DB trên cột `Prefix` — hữu ích như phòng
+  tuyến cuối nhưng thông báo lỗi kém thân thiện; validation ở service vẫn bắt buộc để trả message rõ
+  ràng; (b) Giữ nguyên cặp (StepId, Prefix) — bị loại vì không đáp ứng yêu cầu mới; (c) Cho lưu và
+  chỉ cảnh báo — bị loại theo clarify gốc (2026-07-02), vẫn áp dụng.
 
 ## Quyết định 4 — Import Excel bằng ClosedXML, đọc từ dòng 2, import một phần
 
 - **Decision**: `EutrMastersImportService` clone mẫu `ComplMasterImportService`: mở `XLWorkbook`, lấy
   worksheet đầu, lặp từ **dòng 2** (dòng 1 tiêu đề — clarify), cột A = step name, cột B = prefix.
   Với mỗi dòng: map step name→StepId theo `eutr_steps.Name` (khớp không phân biệt hoa/thường, trim);
-  kiểm tra thiếu prefix; chống trùng với DB **và** với các dòng đã nhận trong cùng file. Dòng lỗi →
-  bỏ qua + ghi vào `Errors`/`Duplicates`; dòng hợp lệ → tạo. Trả `ImportEutrMastersResultDto`
-  (TotalRows, SuccessCount, FailCount, DuplicateCount, Errors[], Duplicates[]).
+  kiểm tra thiếu prefix; chống trùng **Prefix** (không theo StepId — cập nhật 2026-08-11) với DB
+  **và** với các dòng đã nhận trong cùng file (key dedupe nội bộ file đổi từ `stepId + "||" + prefix`
+  → chỉ `prefix.ToLowerInvariant()`). Dòng lỗi → bỏ qua + ghi vào `Errors`/`Duplicates` (message
+  "Duplicate prefix"); dòng hợp lệ → tạo. Trả `ImportEutrMastersResultDto` (TotalRows, SuccessCount,
+  FailCount, DuplicateCount, Errors[], Duplicates[]).
 - **Rationale**: Clarify chốt **import một phần** + **dòng tiêu đề bị bỏ qua** (FR-011, FR-014).
   ClosedXML đã có sẵn trong project. Trả về báo cáo chi tiết để UI hiển thị (FR-014).
 - **Alternatives considered**: (a) All-or-nothing — bị loại theo clarify; (b) Thư viện Excel khác

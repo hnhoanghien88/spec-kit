@@ -1695,3 +1695,86 @@ naively setting `filterable: true` everywhere and letting unmapped columns silen
 design; `EutrTemplatesRepository.cs`'s `FilterMap` (backend); `useEutrTemplatesColumns.jsx`'s
 per-column `filterable` flags and `TemplateListPage.jsx`'s `handleSearchChange`/
 `handleFilterModelChange` merge logic (frontend).
+
+---
+
+## 38. Block Duplicate StepId/Name on Add Root Group / Add Child Step (spec Update 21)
+
+**Decision**: Two changes, both scoped entirely to the existing `BulkAddStepsDialog.jsx`/
+`TemplateBuilderPage.jsx` pair from Update 12 — no other file, and no backend/DTO/contract:
+
+1. **FR-076 (reverses Update 12's `existingChildStepIds` scope)**: the `available` filter in
+   `BulkAddStepsDialog.jsx` already excludes master steps that are "already present" — Update 12
+   scoped "already present" to *direct children of the target node only*
+   (`stepItems.filter(s => s.parentId === targetParentId).map(s => s.stepId)`, computed in
+   `TemplateBuilderPage.jsx`). This update widens that same computation to the *entire* tree:
+   `stepItems.map(s => s.stepId).filter(Boolean)` — every non-null `stepId` currently anywhere in
+   `stepItems`, regardless of which parent it sits under. The prop is renamed `usedStepIds` (from
+   `existingChildStepIds`) at both call sites to keep the name honest about the new whole-tree scope.
+2. **FR-077 (new)**: the "Add new step" free-solo `TextField` in `BulkAddStepsDialog.jsx` gains a
+   duplicate-name check against two sources already available as props/state inside that same
+   component — the master `steps` list (for names that already exist in `eutr_steps`) and a new
+   `existingStepNames` prop (all `stepItems[].stepName` values, covering names still pending
+   auto-create that haven't reached `eutr_steps` yet). A case-insensitive, trimmed match blocks the
+   typed name from counting toward the "selected" total and from being included when Add is clicked,
+   with an inline `error`/`helperText` on the field.
+
+**Rationale**: Both FR-029 (Update 12) and the old "Add new step" merge-on-match behavior were
+already implemented in this same dialog component, one filter expression and one draft-state object
+respectively — reversing them is editing existing logic in place, not building a new mechanism.
+Doing the widened `usedStepIds` computation in the same spot `existingChildStepIds` used to be
+computed (`TemplateBuilderPage.jsx`'s `<BulkAddStepsDialog>` JSX) keeps the caller/callee contract
+identical in shape (an array of `stepId`s in, `available` filtered against it) — only the *value*
+computed by the caller changes, so `BulkAddStepsDialog.jsx`'s existing `available = steps.filter(s
+=> !usedStepIds.includes(s.id))` line needs no logic change, just the prop rename. The duplicate-name
+block is deliberately implemented as local component state/derived booleans (no new hook, no
+context) since the dialog already owns `newStepDraft` locally and both comparison sources
+(`steps`, `stepItems`-derived `existingStepNames`) are simple arrays passed in as props — matching
+this component's existing all-local-state shape, no new dependency.
+
+**Alternatives considered**:
+- Enforce StepId uniqueness with a server-side check (e.g. reject the Update-template call if
+  `details[]` contains a duplicate `StepId`) instead of (or in addition to) the UI-level filter —
+  rejected: the spec (FR-076) explicitly scopes this to the two add dialogs' UI, not a
+  database/API-level constraint, and explicitly keeps Edit step (FR-008b) free to still produce a
+  repeated `StepId` if a user deliberately retargets an existing node — a backend rejection would
+  incorrectly also block that still-allowed Edit-step path. No backend change is needed or wanted for
+  this update.
+- Silently auto-rename or auto-suffix a duplicate "Add new step" entry (e.g. append " (2)") instead
+  of blocking it — rejected: the spec's resolved clarification is an explicit block with an error,
+  not a silent workaround; auto-renaming would also risk creating a *second* `eutr_steps` row with a
+  near-duplicate name, defeating the point of the check.
+- Compare the typed name only against the master `steps` list, not against `stepItems`' pending
+  names — rejected: a step typed free-solo in an *earlier* Add Root Group/Add Child Step call within
+  the same Edit session exists only in `stepItems` (client-side, `stepId: null`) until Save creates
+  it in `eutr_steps`; skipping this comparison would let a second dialog open in the same session
+  create an actual duplicate `eutr_steps` row on Save (two rows, same name, two different `StepId`s
+  used at two different tree positions) — exactly the outcome FR-077 exists to prevent.
+
+**Implementation**:
+1. **`TemplateBuilderPage.jsx`** MODIFY — the `<BulkAddStepsDialog>` JSX gains
+   `usedStepIds={stepItems.map(s => s.stepId).filter(Boolean)}` (replaces the old
+   `existingChildStepIds={stepItems.filter(s => s.parentId === ...).map(s => s.stepId)}` line) and
+   `existingStepNames={stepItems.map(s => s.stepName).filter(Boolean)}` (new prop). No other change
+   to this file — `addSteps`, the dialog-open handlers, and everything else from Update 12/19 stay
+   as-is.
+2. **`BulkAddStepsDialog.jsx`** MODIFY:
+   - Rename the `existingChildStepIds` prop to `usedStepIds` (same default `[]`); `available =
+     steps.filter(s => !usedStepIds.includes(s.id))` line is otherwise unchanged — it now excludes
+     tree-wide instead of same-parent-only purely because the caller passes a wider array.
+   - Add prop `existingStepNames = []`.
+   - Add a derived `isDuplicateName` check: `newStepDraft.name.trim()` normalized
+     (`.trim().toLowerCase()`) compared against `steps.map(s => s.name)` and `existingStepNames`,
+     each normalized the same way.
+   - `hasNewStep` becomes `Boolean(newStepDraft.name.trim()) && !isDuplicateName` (was just
+     `Boolean(newStepDraft.name.trim())`) — a duplicate no longer counts toward `selectedCount`/`M`
+     or gets included in `handleAdd`'s `fromNewStep` array.
+   - The "New step name" `TextField` gains `error={isDuplicateName}` and a `helperText` ("A step with
+     this name already exists — pick it from the table above or use a different name.") shown only
+     when `isDuplicateName` is true.
+3. No backend, DTO, or contract change (verified against `contracts/api-endpoints.md` — the Update
+   endpoint's `details[]` payload shape and validation are unaffected; this is a client-side-only
+   guard that simply prevents certain payloads from ever being constructed, not a new server rule).
+4. No change to `useStepTree.js`, `StepFormRow.jsx`, or any Edit-step (FR-008b) code path — per
+   FR-076/FR-077's explicit scope, Edit step keeps its existing free-solo merge-by-name behavior
+   (FR-007a) unchanged.

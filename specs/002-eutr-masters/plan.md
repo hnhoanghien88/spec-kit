@@ -1,6 +1,6 @@
 # Implementation Plan: EUTR Masters Management
 
-**Branch**: `002-eutr-masters` | **Date**: 2026-07-02 | **Spec**: [spec.md](./spec.md)
+**Branch**: `002-eutr-masters` | **Date**: 2026-07-02 (cập nhật 2026-08-11) | **Spec**: [spec.md](./spec.md)
 
 **Input**: Feature specification from `specs/002-eutr-masters/spec.md`
 
@@ -9,16 +9,22 @@
 Xây dựng màn hình **EUTR Masters** với CRUD + Import + Export Excel. Mỗi bản ghi gắn **một bước
 (StepId → `eutr_steps`)** với một **Prefix**, lưu vào bảng `eutr_master_documents`. Grid hiển thị
 **tên bước** (không phải mã). Khi Add/Update dùng **select box** chọn bước rồi nhập Prefix; **chặn
-lưu** khi trùng cặp (StepId, Prefix). Import nhận file Excel 2 cột (step name, prefix), bỏ dòng tiêu
-đề, **import một phần** và báo cáo dòng lỗi. **Export** tải về file Excel 2 cột (Step name, Prefix)
-— luôn có dòng tiêu đề, có dữ liệu thì kèm dòng dữ liệu, rỗng thì chỉ tiêu đề; định dạng khớp import
-để round-trip.
+lưu** khi trùng **Prefix** (không phân biệt bước liên kết — Prefix duy nhất trên toàn hệ thống, cập
+nhật 2026-08-11, xem Clarifications spec.md). Import nhận file Excel 2 cột (step name, prefix), bỏ
+dòng tiêu đề, **import một phần** và báo cáo dòng lỗi. **Export** tải về file Excel 2 cột (Step name,
+Prefix) — luôn có dòng tiêu đề, có dữ liệu thì kèm dòng dữ liệu, rỗng thì chỉ tiêu đề; định dạng khớp
+import để round-trip.
 
 Khác với feature `001-eutr-steps` (frontend-only vì backend đã có), **backend cho EUTR Masters CHƯA
 tồn tại** → phải **tạo mới cả backend lẫn frontend**. Backend clone mẫu **EutrStep** (Nguyên tắc II),
 phần Import clone mẫu **ComplMasterImportService** (ClosedXML). Frontend clone mẫu **eutr-steps**, bổ
 sung select box (dùng lại use case `GetEutrStepsUseCase` sẵn có) và nút/hộp thoại Import (mẫu
 `compliance-master`).
+
+> **Cập nhật 2026-08-11**: Backend/frontend đã được triển khai trước đó theo ràng buộc cũ **cặp
+> (StepId, Prefix) duy nhất**. Spec đã đổi sang **Prefix duy nhất toàn hệ thống**. Phần "Khác biệt so
+> với mẫu" bên dưới mô tả thiết kế MỚI (Prefix-only); việc sửa code hiện có (đổi tên/logic
+> `ExistsStepPrefixAsync` → kiểm tra theo Prefix) là task delta, để `/speckit-tasks` bổ sung.
 
 ## Technical Context
 
@@ -41,7 +47,8 @@ sung select box (dùng lại use case `GetEutrStepsUseCase` sẵn có) và nút/
 dòng/trang; import ≥50 dòng trả kết quả < 30s (SC-006).
 
 **Constraints**: Tuân thủ policy quyền `EutrMasters.*`; comment code **tiếng Việt**, nhưng **toàn bộ
-văn bản UI hiển thị bằng tiếng Anh** (FR-017); ràng buộc duy nhất (StepId, Prefix).
+văn bản UI hiển thị bằng tiếng Anh** (FR-017); ràng buộc duy nhất **Prefix** (toàn hệ thống, không
+theo bước — cập nhật 2026-08-11).
 
 **Scale/Scope**: 1 màn hình. Backend ~9 file mới + sửa DI/mapping. Frontend ~14 file mới + sửa 3 file
 wiring.
@@ -149,15 +156,19 @@ import) + **eutr-steps** (UI CRUD).
 2. **Grid cần tên bước + tìm theo tên bước** → `EutrMastersService.GetPagedAsync` KHÔNG dùng paged
    query generic thuần mà **override bằng Dapper SQL JOIN `eutr_steps`** để trả `StepName` và cho
    lọc theo `s.Name LIKE`. (Xem research Quyết định 2.)
-3. **Chống trùng (StepId, Prefix)** → **override `AddAsync`/`UpdateAsync`** trong `EutrMastersService`:
-   trước khi lưu, truy vấn tồn tại cặp (StepId, Prefix) (loại trừ chính bản ghi khi update); nếu
-   trùng → ném lỗi nghiệp vụ (ValidationException/ArgumentException) trả message tiếng Anh. (research
-   Quyết định 3.)
+3. **Chống trùng Prefix (toàn hệ thống, không theo bước — cập nhật 2026-08-11)** → **override
+   `AddAsync`/`UpdateAsync`** trong `EutrMastersService`: trước khi lưu, truy vấn tồn tại **Prefix**
+   ở bất kỳ bản ghi nào khác (loại trừ chính bản ghi khi update); nếu trùng → ném lỗi nghiệp vụ
+   (ValidationException/ArgumentException) trả message tiếng Anh (vd "A master with the same prefix
+   already exists."). **Delta so với implementation hiện có**: repository method
+   `ExistsStepPrefixAsync(stepId, prefix, excludeId)` cần đổi thành `ExistsPrefixAsync(prefix,
+   excludeId)` (bỏ tham số `stepId` khỏi điều kiện WHERE). (research Quyết định 3.)
 4. **Import** (`EutrMastersImportService`, mẫu `ComplMasterImportService`): mở `XLWorkbook`, đọc từ
    **dòng 2** (dòng 1 là tiêu đề), cột A = step name, cột B = prefix; map step name→StepId theo
-   `eutr_steps.Name` (khớp không phân biệt hoa/thường); áp dụng chống trùng với DB **và** trong nội
-   bộ file; **import một phần**; trả `ImportEutrMastersResultDto` (Errors[], Duplicates[]). (research
-   Quyết định 4.)
+   `eutr_steps.Name` (khớp không phân biệt hoa/thường); áp dụng chống trùng **Prefix** (không theo
+   stepId) với DB **và** trong nội bộ file (key dedupe nội bộ file đổi từ `stepId + "||" + prefix` →
+   chỉ `prefix.ToLowerInvariant()`); **import một phần**; trả `ImportEutrMastersResultDto` (Errors[],
+   Duplicates[]) với message "Duplicate prefix". (research Quyết định 4.)
 5. **Controller** `EutrMastersController` route `api/eutr-masters`, thêm action `POST import`
    (`IFormFile file`) như `ComplMasterController.Import`; policy `EutrMasters.*`.
 6. **DI**: đăng ký `IEutrMastersService`, `IEutrMastersImportService`, `IEutrMastersExportService`,

@@ -2573,3 +2573,89 @@ T359 (Phase 79, standalone) ── T360 ── T361 (Phase 80) ── T362-T366 
 T362, T363, T364, T365, T366 in parallel (once T359+T360+T361 are done)
 T367 sequentially (end-to-end)
 ```
+
+---
+
+## Update 2026-08-11 (Update 21) — Block Duplicate StepId/Name on Add Root Group / Add Child Step
+
+**Context**: "dialog add root và child step. trong đó có bước add new step, the logic cảnh báo
+không thể add new step trùng tên đã có. đồng thời cập nhật logic kiểm tra add root, add child
+trong 1 template chỉ tồn tại 1 stepid, không cho add trùng." Per spec Update 21 (FR-076, FR-077),
+this reverses two Update 12 decisions in the same `BulkAddStepsDialog.jsx`/`TemplateBuilderPage.jsx`
+pair: the "step available" table must exclude a master step if it exists ANYWHERE in the current
+template's tree (was: direct children of the target node only), and the "Add new step" free-solo
+entry must be blocked with an inline error on a duplicate name (was: silently reused the existing
+StepId). Edit step (FR-008b) is explicitly out of scope — unchanged.
+
+**Changes**: Frontend-only, two files. `TemplateBuilderPage.jsx` widens the exclusion list it passes
+to the dialog and adds a new step-names prop. `BulkAddStepsDialog.jsx` renames that prop and adds a
+duplicate-name guard around its existing "Add new step" `TextField`. No backend/DB/contract change.
+See research.md §38 and plan.md's "Update 2026-08-11 (Update 21)" section for full rationale.
+
+---
+
+## Phase 82: Frontend — Widen "Already Used" Step Exclusion to Whole Tree (US3, FR-076)
+
+**Purpose**: Reverse Update 12's same-parent-only scope so a master step already present anywhere in the current template's tree is excluded from the Add Root Group/Add Child Step "step available" table, not just as a direct child of the target node
+
+- [X] T368 [P] [US3] In compliance-client/src/presentation/pages/eutr-templates/TemplateBuilderPage.jsx, change the prop passed to `<BulkAddStepsDialog>` from `existingChildStepIds={stepItems.filter(s => s.parentId === (addModal.type === 'root' ? 0 : selectedId)).map(s => s.stepId)}` to `usedStepIds={stepItems.map(s => s.stepId).filter(Boolean)}` (every non-null `stepId` currently anywhere in the tree, regardless of parent); also add a new prop `existingStepNames={stepItems.map(s => s.stepName).filter(Boolean)}` for Phase 83 to consume (FR-076). **Done** — implemented exactly as specified. **Verified — actually run**: `npx eslint` on this file → 0 errors.
+- [X] T369 [P] [US3] In compliance-client/src/presentation/pages/eutr-templates/components/BulkAddStepsDialog.jsx, rename the prop `existingChildStepIds` to `usedStepIds` (same default `[]`) in the component signature and its one usage (`available = steps.filter(s => !usedStepIds.includes(s.id))` stays otherwise unchanged — the wider exclusion comes entirely from T368's caller now passing a wider array) (FR-076). **Done** — renamed prop and `useMemo` dependency array; the `available` filter expression itself is untouched. **Verified — actually run**: `npx eslint` on this file → 0 errors; confirmed via repo-wide grep that `existingChildStepIds` no longer appears in `eutr-templates/` (the only remaining hit repo-wide is the unrelated, unrouted `pages/eutr/pages/TemplateBuilderPage.jsx` reference file, left untouched per this feature's established precedent for orphaned mock/reference files).
+
+**Checkpoint**: A master step ticked/added via Add Root Group or Add Child Step no longer appears in either dialog's "step available" table for any OTHER node in the same template — not just the node it was originally added under.
+
+---
+
+## Phase 83: Frontend — Block Duplicate Name in "Add New Step" (US3, FR-077)
+
+**Purpose**: Replace the old silent StepId-reuse behavior with a client-side block + inline error when the free-solo "Add new step" name matches an existing EUTR step or a step already in the current tree
+
+- [X] T370 [US3] In compliance-client/src/presentation/pages/eutr-templates/components/BulkAddStepsDialog.jsx, accept new prop `existingStepNames = []`; add a derived `isDuplicateName` that normalizes `newStepDraft.name.trim().toLowerCase()` and compares it against `steps.map(s => s.name)` and `existingStepNames`, each normalized the same way; change `hasNewStep` from `Boolean(newStepDraft.name.trim())` to `Boolean(newStepDraft.name.trim()) && !isDuplicateName` (so a duplicate no longer counts toward the footer's "M selected" or gets included in `handleAdd`'s `fromNewStep` array); add `error={isDuplicateName}` and a `helperText` ("A step with this name already exists — pick it from the table above or use a different name.") on the "New step name" `TextField`, shown only when `isDuplicateName` is true (depends on T369) (FR-077). **Done** — implemented exactly as specified; `isDuplicateName`/`normalizedNewName` derived inline (no new hook), `hasNewStep` and the "New step name" `TextField`'s `error`/`helperText` updated. **Verified — actually run**: `npx eslint` on this file → 0 errors; `npm run build` → succeeded in 38.50s, `TemplateBuilderPage.[hash].js` chunk built at 20.78 kB with no new errors (only the pre-existing, unrelated chunk-size-limit advisory warning).
+
+**Checkpoint**: Typing a name in "Add new step" that matches (case-insensitive, trimmed) an existing EUTR step name or a step already in the current tree shows an inline error immediately, does not increment the "selected" counter, and is excluded from the array `onAdd` receives when Add is clicked.
+
+---
+
+## Phase 84: Validation — Update 21 (Block Duplicate StepId/Name on Add Root Group / Add Child Step)
+
+**Purpose**: End-to-end validation that both FR-076 (whole-tree exclusion) and FR-077 (duplicate-name block) work correctly, and that Edit step (FR-008b) remains unaffected
+
+- [X] T371 [P] Verify whole-tree exclusion (FR-076): add a step as a root node, then open Add Root Group again AND Add Child Step under a different node — confirm the step does not appear in either "step available" table (quickstart.md Scenario 25, steps 1-4). **Verified via code review** (no live browser/DB session available in this environment, same limitation recorded by every prior update in this session): `usedStepIds={stepItems.map(s => s.stepId).filter(Boolean)}` (T368) collects every non-null `stepId` from the FLAT `stepItems` array with no `parentId` filter, so `available = steps.filter(s => !usedStepIds.includes(s.id))` (T369) excludes a step regardless of which node it's currently under or which dialog/target is open — traced both call sites to confirm.
+- [X] T372 [P] Verify duplicate-name block (FR-077): with a step named "Water" already in the tree, type `water` (different case) and ` Water ` (extra whitespace) into "Add new step" — confirm both trigger the inline error, neither increments the selected count, and typing a genuinely new name clears the error (quickstart.md Scenario 25, steps 5-6). **Verified via code review**: `normalizedNewName = newStepDraft.name.trim().toLowerCase()` compared against `steps`/`existingStepNames` entries normalized the same way (T370) makes the match case- and whitespace-insensitive; `hasNewStep` (and therefore `selectedCount`/`fromNewStep`) is `false` whenever `isDuplicateName` is `true`, and reverts as soon as the normalized text no longer matches.
+- [X] T373 [P] Verify duplicate-name check also covers same-session pending entries: add a free-solo step name via one Add Root Group/Add Child Step call, then reopen the dialog (same Edit session, template not yet Saved) and type the same name again — confirm it is still blocked even though that step has no real `StepId` in `eutr_steps` yet (quickstart.md Scenario 25, step 7). **Verified via code review**: `existingStepNames={stepItems.map(s => s.stepName).filter(Boolean)}` (T368) reads from the client-side `stepItems` state (via `useStepTree`'s `addSteps`, which stores the full step object including `stepName` even when `stepId` is `null`), so a pending free-solo entry from earlier in the same session is included in the comparison set regardless of whether it has been persisted to `eutr_steps` yet.
+- [X] T374 [P] Verify Edit step (FR-008b) is unaffected: confirm `useStepTree.js`'s `editStep`, `StepFormRow.jsx`, and TemplateBuilderPage's right-hand single-step Edit form were not modified by T368-T370, and that retargeting an existing tree node to a `StepId` already used elsewhere in the tree via the pencil-icon Edit form still succeeds with no error (quickstart.md Scenario 25, step 8). **Verified via code review**: T368-T370's diff touches only the `<BulkAddStepsDialog>` JSX block and `BulkAddStepsDialog.jsx` itself; confirmed `useStepTree.js`, `StepFormRow.jsx`, and the single-step Edit form section of `TemplateBuilderPage.jsx` (the `editStep`/pencil-icon code path, a separate block from the Add Root/Child `Dialog`) are untouched — no new validation was added there.
+- [X] T375 [P] Verify no backend/contract regression: confirm no `.cs`/controller/DTO file and no entry in `contracts/api-endpoints.md`'s request/response shapes changed — T368-T370 touch only `TemplateBuilderPage.jsx`/`BulkAddStepsDialog.jsx`. **Verified — actually run**: `git status`/diff for this implementation pass shows exactly 2 modified files, both under `compliance-client/src/presentation/pages/eutr-templates/`; `contracts/api-endpoints.md`'s Update 21 note (added during `/speckit-plan`) was a documentation-only addition, not a contract change, and remains accurate against the actual diff.
+- [X] T376 Run `npx eslint` and `npm run build` on the frontend, then a manual click-through of quickstart.md Scenario 25 end-to-end against a live dev server/DB (depends on T371, T372, T373, T374, T375). **Partially done** — `npx eslint` on both changed files → 0 errors; `npm run build` → succeeded in 38.50s, `TemplateBuilderPage.[hash].js` chunk built clean (20.78 kB), no new build errors. **Not run**: the manual browser click-through — requires a live dev server, backend API, and seeded MySQL database with an existing multi-level step tree, none of which are available in this non-interactive session. Full interactive validation is the recommended next step before considering this update production-ready — same limitation recorded by Update 12 (T208), Update 15 (T286), Update 16 (T321), Update 17 (T333), Update 18 (T348), Update 19 (T358), and Update 20 (T367) for this feature.
+
+**Checkpoint**: All Update 21 checks pass at the level achievable in this non-interactive session (code review confirming every data-flow/comparison path, plus real clean `npx eslint`/`npm run build` passes — standing in for a live click-through where neither a dev server nor a browser was available). **Recommended before sign-off**: manually click through Scenario 25 (whole-tree exclusion, duplicate-name block including same-session pending names, and Edit step remaining unaffected) in a real browser against a seeded DB to close the gap between "verified by code review" and "verified end-to-end through the UI."
+
+---
+
+## Update 21 Dependencies
+
+### Phase Dependencies
+
+- **Phase 82 (Frontend — FR-076)**: No dependency on Phases 1-81 — a scope widening of an existing
+  prop/filter expression already in place since Update 12. T368 and T369 touch different files and
+  can be authored in parallel, but both must land together for the app to build (T368's prop name
+  must match T369's).
+- **Phase 83 (Frontend — FR-077)**: Depends on Phase 82 (T369) — T370 adds the duplicate-name guard
+  to the same `BulkAddStepsDialog.jsx` component T369 just renamed the prop in.
+- **Phase 84 (Validation)**: Depends on Phase 82 (T368, T369) and Phase 83 (T370) — T371-T375 verify
+  different facets of the same change, T376 depends on all five.
+
+### Execution Order
+
+```
+T368, T369 (Phase 82, [P]) ── T370 (Phase 83) ── T371-T375 (Phase 84, [P]) ── T376 (E2E)
+```
+
+### Parallel Opportunities
+
+```
+# Phase 82 — both tasks touch different files, no incomplete-task dependency between them:
+T368, T369 in parallel
+
+# Phase 84 — all 5 verification tasks [P] except the final E2E:
+T371, T372, T373, T374, T375 in parallel (once T368+T369+T370 are done)
+T376 sequentially (end-to-end)
+```

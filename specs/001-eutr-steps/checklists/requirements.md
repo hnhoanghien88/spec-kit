@@ -34,6 +34,10 @@
 - Cập nhật (2026-07-01): Bỏ cột/chức năng "Prefix"; người dùng chỉ nhập Step name. Đã gỡ FR-011,
   cột Prefix khỏi FR-001 và các user story, cùng assumption liên quan đến slug.
 - Backend đã tồn tại → ghi rõ trong Assumptions; phạm vi feature thực chất là frontend.
+- Cập nhật (2026-08-11): Bổ sung FR-005a và SC-003a — chặn tạo/sửa bước với tên trùng (không phân
+  biệt hoa/thường, khoảng trắng đầu/cuối) với bước khác đã tồn tại; thêm acceptance scenario cho
+  User Story 2 và 3, cùng edge case liên quan.
 - Tất cả mục đạt; sẵn sàng cho `/speckit-plan` (có thể chạy `/speckit-clarify` nếu muốn de-risk thêm).
 - ⚠️ Các artifact hạ nguồn (plan.md, data-model.md, tasks.md, contracts/) có thể vẫn tham chiếu
-  Prefix — cần chạy lại `/speckit-plan` và `/speckit-tasks` để đồng bộ.
+  Prefix và chưa có logic kiểm tra trùng tên — cần chạy lại `/speckit-plan` và `/speckit-tasks` để
+  đồng bộ với yêu cầu mới (FR-005a).

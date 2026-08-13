@@ -25,9 +25,10 @@ Nguồn sự thật DB: `docs/design/eutr/eutr_db.sql`. Entity backend mới:
 
 - `StepId` bắt buộc (> 0) → chặn submit ở modal (select box) + FluentValidation ở backend.
 - `Prefix` bắt buộc, không rỗng/chỉ khoảng trắng → chặn ở modal + validator backend.
-- **Duy nhất (StepId, Prefix)**: không được tồn tại 2 bản ghi cùng cặp. Kiểm tra ở service khi
-  Add/Update/Import; trùng → **chặn lưu** kèm thông báo tiếng Anh (FR-007/FR-013). Khi Update, loại
-  trừ chính bản ghi đang sửa khỏi phép kiểm tra.
+- **Duy nhất theo `Prefix`, không phân biệt `StepId`** *(cập nhật 2026-08-11, thay cho ràng buộc cũ
+  theo cặp (StepId, Prefix))*: không được tồn tại 2 bản ghi có cùng `Prefix`, bất kể `StepId` khác
+  nhau. Kiểm tra ở service khi Add/Update/Import; trùng → **chặn lưu** kèm thông báo tiếng Anh
+  (FR-007/FR-013). Khi Update, loại trừ chính bản ghi đang sửa khỏi phép kiểm tra.
 - `Id` không sửa được; khi Update gửi qua URL `PUT /eutr-masters/{id}`.
 
 ## Đối tượng truyền (frontend ↔ backend)
@@ -48,8 +49,8 @@ Nguồn sự thật DB: `docs/design/eutr/eutr_db.sql`. Entity backend mới:
 | B | Prefix | Bắt buộc |
 
 - **Dòng 1 = tiêu đề** (Step name, Prefix) → bỏ qua; dữ liệu bắt đầu từ **dòng 2**.
-- Dòng lỗi (không tìm thấy step / thiếu prefix / trùng cặp) → bỏ qua và báo cáo; dòng hợp lệ vẫn
-  import (import một phần).
+- Dòng lỗi (không tìm thấy step / thiếu prefix / **Prefix trùng** với bản ghi khác hoặc dòng khác
+  trong file) → bỏ qua và báo cáo; dòng hợp lệ vẫn import (import một phần).
 
 ## Định dạng file Excel export
 
@@ -59,7 +60,8 @@ Nguồn sự thật DB: `docs/design/eutr/eutr_db.sql`. Entity backend mới:
 
 ## Quan hệ
 
-- `EutrMastersDocument.StepId` → `EutrStep.Id` (nhiều master có thể trỏ tới cùng một step, nhưng cặp
-  (StepId, Prefix) là duy nhất).
+- `EutrMastersDocument.StepId` → `EutrStep.Id` (nhiều master có thể trỏ tới cùng một step; ràng buộc
+  duy nhất áp dụng trên `Prefix` một mình, không theo cặp — hai bản ghi khác step vẫn không được
+  trùng Prefix).
 - Select box "Step name" nạp từ danh mục `eutr_steps` (GET `/eutr-steps`). Feature này **chỉ đọc**
   `eutr_steps`, không tạo/sửa/xóa bước.

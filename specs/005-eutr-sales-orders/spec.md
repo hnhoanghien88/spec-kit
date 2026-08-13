@@ -10,6 +10,248 @@
 
 ## Clarifications
 
+### Session 2026-08-12 (Update 21) — Nút Download bổ sung thư mục "All" trong file zip, theo cấu trúc cây step của chế độ All
+
+- Bối cảnh: Nút Download (View: Update 10, FR-069 đến FR-076; Overview: Update 13, FR-087 đến FR-092)
+  hiện đóng gói file zip chỉ gồm các thư mục con theo tên template đã lưu. Từ Update 19/20, màn hình
+  View có chế độ hiển thị **All** dựng một cây step theo template mặc định toàn hệ thống, chỉ giữ lại
+  (các) step cũng tồn tại ở Sales Order này (FR-130 đến FR-141). Người yêu cầu tính năng muốn file zip
+  Download phản ánh thêm góc nhìn All này: ngoài các thư mục con hiện có theo tên template, bổ sung
+  đúng 1 thư mục **All** ở cùng cấp trong thư mục gốc, bên trong là cây thư mục lồng nhau theo đúng
+  quan hệ cha/con của các step trong cây All (tên thư mục = tên step, tra `eutr_steps`), mỗi thư mục
+  step chứa các file tài liệu "Mapped" đúng step đó (theo `StepId`, hợp nhất qua mọi template đã lưu
+  của Sales Order — cùng nguồn dữ liệu AVAILABLE FILES của chế độ All, FR-135/FR-136). Ví dụ minh hoạ
+  người yêu cầu đưa ra:
+  ```
+  All
+  --- Forest
+        ------- Plantation forest location map
+                    ---- File A
+  --- Sawmill
+  ```
+- Change: Bên trong thư mục gốc `{SalesId}-{CustomerCode}-{CustomerName}` của file zip Download, hệ
+  thống MUST bổ sung thêm đúng 1 thư mục con tên **All**, đặt ngang cấp với (không lồng vào trong, không
+  thay thế) các thư mục con theo tên template hiện có (FR-071/FR-087).
+- Change: Cấu trúc bên trong thư mục All MUST dựng theo đúng cây step của chế độ All đã đặc tả cho
+  màn hình View (FR-130 đến FR-133): tải đúng 1 template mặc định toàn hệ thống (`eutr_templates`,
+  `IsDefault = 1`/`IsHide = 0`/`IsDeleted = 0`), lấy cây step (`eutr_template_details`) của template đó,
+  chỉ giữ lại (các) step có `StepId` tồn tại ở ít nhất 1 template đã lưu của Sales Order này, gắn step
+  con/cháu hợp lệ lên node cha gần nhất còn tồn tại (hoặc lên cấp gốc) khi node cha của nó bị loại — dùng
+  lại đúng 1 cơ chế so khớp, không định nghĩa quy tắc riêng cho Download.
+- Change: Mỗi thư mục step trong cây All MUST đặt tên = tên thật của step (tra `eutr_steps` theo
+  `StepId`) và MUST giữ đúng quan hệ cha/con lồng nhau như cây hiển thị ở màn hình View.
+- Change: Mỗi thư mục step MUST chỉ chứa các file tài liệu thật có Map status = "Mapped" cho đúng
+  `StepId` của step đó, hợp nhất qua toàn bộ template đã lưu của Sales Order này (áp dụng đúng quy tắc
+  phân biệt PO/Template ở FR-055/FR-056 cho từng template trước khi hợp nhất). Một tài liệu MUST chỉ
+  xuất hiện trong đúng 1 thư mục step tương ứng của cây All — không lặp lại ở thư mục step cha/con khác.
+- Change: Nếu một thư mục step không có tài liệu "Mapped" nào, hệ thống MUST vẫn tạo thư mục con của
+  step đó trong cây All, ở trạng thái rỗng — theo đúng quy tắc đã áp dụng cho thư mục template (FR-073).
+- Change: Nếu không tìm được template mặc định nào khớp điều kiện IsDefault/IsHide/IsDeleted, hoặc sau
+  khi lọc không còn step nào của template mặc định tồn tại ở Sales Order này (cùng 2 trạng thái đã đặc
+  tả ở FR-131/FR-134 cho màn hình View), hệ thống MUST vẫn tạo thư mục All trong file zip nhưng ở trạng
+  thái rỗng (không có thư mục step con nào bên trong) — không bỏ qua/loại bỏ hẳn thư mục All khỏi file
+  zip, không báo lỗi toàn bộ thao tác Download.
+- Change: Nếu 2 tài liệu "Mapped" trở lên trong cùng một thư mục step có cùng tên file gốc, hệ thống
+  MUST tự động phân biệt tên file khi đóng gói (cùng cơ chế hậu tố số thứ tự đã áp dụng cho thư mục
+  template, FR-075) — áp dụng độc lập trong phạm vi từng thư mục step.
+- Change: Việc bổ sung thư mục All áp dụng đồng thời cho cả nút Download ở màn hình View (FR-069) và
+  nút Download ở mỗi dòng Overview (FR-087), vì Overview dùng lại nguyên trạng cơ chế đóng gói zip của
+  View (FR-092) — thư mục All luôn được đóng gói cùng lúc với các thư mục template hiện có trong cùng 1
+  lượt Download, không phụ thuộc chip nào (All hay một template cụ thể) đang được chọn ở toolbar
+  Template Checklist của màn hình View tại thời điểm nhấn Download.
+- Change: Nếu toàn bộ Sales Order không có bất kỳ tài liệu "Mapped" nào ở mọi template (FR-074/FR-089),
+  quy tắc đó KHÔNG đổi: hệ thống vẫn hiển thị đúng thông báo không có tài liệu để tải và KHÔNG tải
+  xuống file zip, kể cả khi cây All (theo template mặc định) có step hợp lệ nhưng không step nào có tài
+  liệu Mapped.
+- Change: Việc bổ sung thư mục All KHÔNG được ghi/sửa/xóa bất kỳ bản ghi tài liệu/tham chiếu/purchase
+  attachment/template nào — giữ đúng nguyên tắc chỉ đọc hiện có của thao tác Download (FR-076/FR-092).
+
+### Session 2026-08-12 (Update 20) — Màn hình View: chip All là lựa chọn mặc định khi mở màn hình lần đầu (thay cho template đầu tiên)
+
+- Bối cảnh: Update 19 thêm logic thật cho chip All ở toolbar cây template, nhưng vẫn giữ nguyên hành vi
+  mặc định khi mở màn hình View lần đầu là hiển thị đúng cây của template **đầu tiên** trong
+  `templatesData` (FR-060/FR-138) — All chỉ được kích hoạt khi người dùng chủ động click vào chip này.
+  Người yêu cầu tính năng nay xác nhận: dữ liệu mặc định khi vào màn hình (tab) này phải là **All**,
+  không còn là template đầu tiên.
+- Change: Khi mở màn hình View lần đầu (hoặc khi lựa chọn template hiện tại không còn tồn tại trong
+  `templatesData`, ví dụ sau khi tải lại trang), nếu Sales Order này có ít nhất 1 template đã lưu, hệ
+  thống MUST tự động chọn **All** làm lựa chọn hiển thị mặc định ở toolbar cây template — thay thế hoàn
+  toàn hành vi cũ (tự động chọn template đầu tiên) đã áp dụng từ Update 8 (FR-060) — Template Checklist
+  và khu vực AVAILABLE FILES MUST hiển thị đúng theo chế độ All (FR-130 đến FR-137) ngay từ lần hiển thị
+  đầu tiên, không cần người dùng phải click vào chip All.
+- Change: Vì All nay là lựa chọn mặc định, hệ thống MUST tự động tải template mặc định (FR-130) ngay khi
+  màn hình có `templatesData` (không cần đợi người dùng click vào chip All) — theo đúng cơ chế tải đã
+  đặc tả ở FR-130, chỉ khác về thời điểm kích hoạt (tự động khi mở màn hình, thay vì chỉ khi click).
+- Change: Toàn bộ logic xử lý All đã đặc tả ở Update 19 (FR-131 đến FR-137, FR-140) giữ nguyên không đổi
+  — chỉ thay đổi lựa chọn mặc định ban đầu, không thay đổi cách tính cây All/AVAILABLE FILES/trạng thái
+  lỗi/trạng thái trống.
+- Change: Nếu Sales Order chưa có template nào đã lưu (`templatesData` rỗng), hành vi giữ nguyên như
+  hiện có (FR-040) — không có lựa chọn All hay template nào để mặc định chọn, Template Checklist tiếp
+  tục hiển thị "chưa có cây template".
+
+### Session 2026-08-12 (Update 19) — Màn hình View: logic thật cho chip All ở Toolbar Template Tree (so khớp step với template mặc định) + AVAILABLE FILES hiển thị toàn bộ file mọi template khi All active
+
+- Bối cảnh: Toolbar cây template (`data-marker="template-tree-toolbar"`) ở màn hình **View Sales
+  Order** hiện đã có sẵn một chip **All** cố định (đặt trước các chip template thật, `templateCode =
+  null`), nhưng chip này **chưa có logic riêng** — click vào All chỉ khiến hệ thống rơi về đúng cây và
+  danh sách tài liệu của **template đầu tiên** trong `templatesData` (do các phép tính
+  `selectedTemplateComputation`/cây đang hiển thị đều dùng `?? templateComputations[0]`/
+  `?? templatesData[0]` làm phương án dự phòng khi `selectedTemplateCode = null`) — không khác gì việc
+  chọn lại template đầu tiên. Người yêu cầu tính năng muốn All có ý nghĩa thật: hiển thị đúng cây các
+  step của **template mặc định toàn hệ thống** (bảng `eutr_templates`, điều kiện `IsDefault = 1`,
+  `IsHide = 0`, `IsDeleted = 0` — hệ thống chỉ cho phép tối đa 1 template mặc định tại một thời điểm,
+  theo đúng cơ chế "xoá default cũ trước khi gán default mới" đã có ở 003-eutr-templates), sau đó chỉ
+  giữ lại (các) step của template mặc định mà step đó cũng tồn tại ở ít nhất một trong các template đã
+  lưu thật của Sales Order này — step nào của template mặc định không tồn tại ở bất kỳ template nào của
+  Sales Order thì bị loại bỏ khỏi cây All. Đồng thời, khi All đang được chọn, khu vực AVAILABLE FILES
+  bên phải phải hiển thị toàn bộ tài liệu của **mọi** template đã lưu của Sales Order (không còn giới
+  hạn theo 1 template như các chip template thật).
+- Change: Khi người dùng click vào chip **All**, hệ thống MUST tải đúng 1 bản ghi từ `eutr_templates`
+  thoả đồng thời `IsDefault = 1`, `IsHide = 0`, `IsDeleted = 0` (tra cứu toàn hệ thống, không giới hạn
+  theo Sales Order đang xem), rồi tải chi tiết cây (`eutr_template_details`) của đúng template đó —
+  dùng lại cơ chế tải chi tiết template đã áp dụng cho mỗi chip template thật ở toolbar này (Update 2/
+  Update 4) — gọi là "template mặc định" cho các Change tiếp theo.
+- Change: Nếu không tìm được template nào khớp điều kiện IsDefault/IsHide/IsDeleted ở trên (chưa từng
+  cấu hình template mặc định, hoặc template mặc định hiện đang bị ẩn/xóa), Template Checklist ở chế độ
+  All MUST hiển thị trạng thái rõ ràng cho biết chưa có template mặc định để so sánh — KHÔNG còn rơi về
+  hiển thị cây của template đầu tiên trong `templatesData` như hành vi hiện tại của chip All, và không
+  hiển thị như một lỗi hệ thống.
+- Change: Khi tải được template mặc định, Template Checklist ở chế độ All MUST hiển thị đúng cây gồm
+  các step của template mặc định mà step đó (theo `StepId`, tham chiếu `eutr_steps`) có tồn tại ở ít
+  nhất một node trong (các) cây của **toàn bộ** template đã lưu (`templatesData`) của Sales Order này.
+  (Các) step của template mặc định mà `StepId` không tồn tại ở bất kỳ template nào của Sales Order MUST
+  bị loại bỏ khỏi cây hiển thị ở chế độ All.
+- Change: Nếu việc loại bỏ ở Change trên khiến một step cha (node cha trong cây template mặc định) bị
+  loại, nhưng (các) step con/cháu của node đó lại có `StepId` tồn tại ở Sales Order (thoả điều kiện
+  giữ lại), (các) step con/cháu đó MUST vẫn tiếp tục được hiển thị trong cây All — gắn lên node cha gần
+  nhất còn tồn tại trong cây, hoặc lên cấp gốc nếu không còn node cha nào tồn tại phía trên nó — không
+  bị ẩn/mất khỏi cây chỉ vì node cha của nó bị loại.
+- Change: Nếu sau khi áp dụng hai Change trên, không còn step nào của template mặc định tồn tại ở Sales
+  Order này, Template Checklist ở chế độ All MUST hiển thị trạng thái trống rõ ràng (khác với trạng thái
+  "chưa có template mặc định" ở trên) — không hiển thị một cây trống gây hiểu nhầm là lỗi tải dữ liệu.
+- Change: Trạng thái "đã có tài liệu"/"còn thiếu" của mỗi step còn lại trong cây All MUST được xác định
+  dựa trên việc step đó (`StepId`) có ít nhất 1 tài liệu đã "Mapped" ở bất kỳ template/PO nào của Sales
+  Order này — áp dụng đúng quy tắc phân biệt PO/Template đã có ở Update 8 (FR-061) cho từng template
+  trước khi xét, không chỉ xét trong phạm vi riêng của chính template mặc định (vì template mặc định có
+  thể không phải là một trong các template đã lưu thật của Sales Order này).
+- Change: Khi chế độ All đang được chọn (active) ở toolbar, khu vực **AVAILABLE FILES** MUST hiển thị
+  đầy đủ toàn bộ tài liệu thật của **toàn bộ** template đã lưu (`templatesData`) của Sales Order này
+  (hợp tất cả tài liệu đã "Mapped" của mọi template) — không còn giới hạn theo đúng 1 template như khi
+  người dùng chọn 1 chip template cụ thể. Cơ chế lọc theo step khi click vào cây (Update 15) tiếp tục áp
+  dụng như hiện có, chỉ khác là áp dụng trên tập hợp file đã mở rộng này.
+- Change: Việc click chọn All (hoặc click lại All khi đang active) MUST xoá bộ lọc theo step hiện có ở
+  khu vực AVAILABLE FILES, giống đúng hành vi khi chuyển sang một chip template khác (Update 15,
+  FR-104) — quay về hiển thị toàn bộ tập file mở rộng nói trên.
+- Change: Việc thêm logic thật cho All KHÔNG làm thay đổi hành vi mặc định hiện có khi mở màn hình View
+  lần đầu (Update 8, FR-060 vẫn tự động chọn và hiển thị đúng cây của template **đầu tiên** trong
+  `templatesData`, không phải All) — All chỉ được kích hoạt khi người dùng chủ động click vào chip này.
+- Change: Số liệu tiến độ tổng hợp ở header/Validation Summary (Update 11, FR-062) và cơ chế đóng gói
+  file zip của nút Download (Update 10) KHÔNG bị ảnh hưởng bởi logic All mới này — cả hai tiếp tục
+  cộng dồn/đóng gói trên toàn bộ template đã lưu của Sales Order như hiện có, không phụ thuộc việc All
+  có đang được chọn ở toolbar hay không.
+- Change: Nếu việc tải template mặc định bị lỗi (nguồn dữ liệu tạm thời không phản hồi), Template
+  Checklist ở chế độ All MUST hiển thị trạng thái lỗi/tải thất bại rõ ràng riêng cho chế độ này — không
+  rơi về hiển thị cây của template đầu tiên để che lỗi, không làm crash màn hình View.
+
+### Session 2026-08-12 (Update 18) — Màn hình View: bảng Selected Purchase Orders lấy Variants/Materials thật, giống đúng logic Step 1 của Map File (Update 17)
+
+- Bối cảnh: Bảng **Selected Purchase Orders** ở màn hình **View Sales Order**
+  (`ViewSalesOrderPage.jsx`, `TableContainer` có `data-marker="selected-po-table"`) đã có sẵn 2 cột
+  tiêu đề **Variants** và **Materials** (đặt sau cột **Vendor Name**, trước cột **Percentage used**),
+  nhưng phần thân bảng đang hiển thị **cứng (hardcode)** đúng literal chuỗi `"Variants"`/`"Materials"`
+  cho **mọi** dòng PO — không lấy bất kỳ dữ liệu thật nào, không phân biệt PO này với PO khác. Trong
+  khi đó, bảng PO ở **Step 1** màn hình **Map File** (`MapFilePage.jsx`, cùng
+  `data-marker="selected-po-table"`) đã lấy đúng dữ liệu thật cho 2 cột này từ Update 17 (FR-113 đến
+  FR-120): gọi nguồn tham chiếu dùng chung reference type = 20, lọc theo
+  `InterCompanyOriginalSalesId` = Sales ID hiện tại, nhóm theo `RSVNRefPurchId` để gán đúng cho từng
+  PO, dùng `ProductVariant` cho cột Variants và `ItemId` (gộp duy nhất, nối bằng ", ") cho cột
+  Materials, có trạng thái trống ("—")/lỗi riêng, và tải theo lô (không N+1). Người yêu cầu tính năng
+  muốn bảng Selected Purchase Orders ở màn hình View áp dụng **đúng nguyên vẹn** logic hiển thị này
+  của Map File — không xây dựng lại một cách tính khác cho màn hình View.
+- Change: Bảng **Selected Purchase Orders** ở màn hình View (`data-marker="selected-po-table"`) MUST
+  thay thế hoàn toàn 2 giá trị literal `"Variants"`/`"Materials"` hiện đang hardcode cho mọi dòng bằng
+  dữ liệu thật theo từng PO — áp dụng đúng nguyên vẹn cách lấy dữ liệu, mapping trường, và cách gộp giá
+  trị đã đặc tả ở Update 17 (FR-113 đến FR-120) cho Step 1 của Map File, không định nghĩa lại logic
+  riêng cho màn hình View.
+- Change: Dữ liệu của 2 cột này cho một PO ở màn hình View MUST lấy từ cùng nguồn tham chiếu dùng
+  chung reference type = 20, lọc theo điều kiện đồng thời: `InterCompanyOriginalSalesId` = Sales ID
+  hiện tại (trên URL) và `RSVNRefPurchId` = giá trị PO (`Code`/`RSVNRefPurchId`) của đúng dòng PO đang
+  xét (giống hệt điều kiện lọc FR-114 của Map File) — không lọc theo điều kiện nào khác riêng cho màn
+  hình View.
+- Change: Trên mỗi bản ghi type = 20 khớp điều kiện trên, trường `ProductVariant` MUST được dùng làm
+  giá trị cột **Variants**, và trường `ItemId` MUST được dùng làm giá trị cột **Materials** — đúng
+  mapping đã xác nhận ở FR-115, không đảo ngược hai trường này.
+- Change: Với mỗi dòng PO, cột **Materials** MUST hiển thị đầy đủ các giá trị `ItemId` **duy nhất**
+  (loại bỏ trùng lặp) của mọi bản ghi type = 20 khớp đúng PO đó, nối lại trong cùng 1 ô, phân tách bằng
+  dấu phẩy và khoảng trắng (ví dụ "M01, M02"), theo đúng thứ tự xuất hiện đầu tiên trong dữ liệu trả
+  về — đúng quy tắc gộp đã áp dụng ở FR-116. Cột **Variants** MUST áp dụng đúng quy tắc gộp tương tự
+  cho các giá trị `ProductVariant` duy nhất của PO đó.
+- Change: Việc tải dữ liệu type = 20 cho toàn bộ danh sách PO đang hiển thị ở bảng Selected Purchase
+  Orders của màn hình View MUST áp dụng theo đúng cơ chế nạp theo lô (batch) đã áp dụng ở Step 1 Map
+  File (FR-117) — gọi 1 lần theo điều kiện `InterCompanyOriginalSalesId` = Sales ID hiện tại (không
+  lọc riêng theo từng `RSVNRefPurchId` bằng nhiều lượt gọi), sau đó nhóm kết quả trả về theo
+  `RSVNRefPurchId` để gán đúng cho từng dòng PO tương ứng ở phía giao diện — không phát sinh gọi API
+  riêng lẻ theo từng PO một (N+1).
+- Change: Nếu một PO không có bất kỳ bản ghi type = 20 nào khớp điều kiện trên (hoặc có bản ghi khớp
+  nhưng `ProductVariant`/`ItemId` đều rỗng), hai cột Variants/Materials của dòng PO đó ở màn hình View
+  MUST hiển thị trạng thái trống rõ ràng (ví dụ "—") — không hiển thị lỗi, không hiển thị
+  "undefined"/"null", và không lấy nhầm giá trị của một PO khác — đúng quy tắc FR-118.
+- Change: Nếu việc tải dữ liệu type = 20 cho bảng này bị lỗi (nguồn dữ liệu tạm thời không phản hồi),
+  hai cột Variants/Materials MUST hiển thị trạng thái lỗi/tải thất bại rõ ràng riêng cho 2 cột này —
+  không chặn việc hiển thị các cột PO/Template/Order account/Vendor Name/Percentage used hiện có, và
+  không hiển thị lại literal `"Variants"`/`"Materials"` hay dữ liệu demo/giả để che lỗi — đúng quy tắc
+  FR-119.
+- Change: Hai cột này ở màn hình View chỉ bổ sung **hiển thị** dữ liệu thật — KHÔNG làm thay đổi bất kỳ
+  hành vi nào khác đã có của màn hình View (chế độ chỉ đọc theo FR-042, các nút Edit / Map File,
+  Download, Back, Template Checklist, Validation Summary, khu vực AVAILABLE FILES của Update 15) —
+  Variants/Materials không phải điều kiện ảnh hưởng tới bất kỳ hành vi nào khác của màn hình.
+
+### Session 2026-08-11 (Update 17) — Step 1 (Map File): thêm cột Variants/Materials lấy động từ reference type = 20 theo từng PO
+
+- Bối cảnh: Bảng PO ở **Step 1** của Map File (`{/* Step 1 — Choose PO */}`, trong
+  `<TableContainer component={Paper} variant="outlined">`) hiện chỉ hiển thị 4 cột thật lấy từ nguồn
+  tham chiếu dùng chung reference type = 16 (**PO**, **Name**, **Order account**, **Qty** — FR-017,
+  Update 2/data-model), không có cột nào cho biết PO đó gồm những Material/Variant nào. Người yêu cầu
+  tính năng muốn bổ sung thêm 2 cột mới **Variants** và **Materials** ngay trong bảng này, lấy dữ liệu
+  **động** từ một nguồn tham chiếu dùng chung khác — reference type = 20 — lọc theo điều kiện đồng thời
+  `InterCompanyOriginalSalesId` = Sales ID hiện tại và `RSVNRefPurchId` = giá trị PO (`po.purchId`) của
+  đúng dòng đang xét; một PO có thể có nhiều bản ghi type = 20 (nhiều dòng hàng/line), mỗi bản ghi có
+  trường `ProductVariant` (ứng với **Variant**) và `ItemId` (ứng với **Material**) — cột Materials phải
+  gộp/kết hợp toàn bộ `ItemId` của các bản ghi khớp PO đó thành một danh sách hiển thị trong 1 ô (ví dụ
+  "M01, M02"), và cột Variants áp dụng đúng cách gộp tương tự cho `ProductVariant`.
+- Change: Bảng PO ở Step 1 MUST hiển thị thêm hai cột mới **Variants** và **Materials**, đặt ngay sau
+  cột **Qty** hiện có, trong cùng `TableContainer` — không thay đổi 4 cột PO/Name/Order account/Qty đã
+  có (FR-017).
+- Change: Dữ liệu của hai cột này cho một PO MUST lấy từ nguồn tham chiếu dùng chung reference type =
+  20, với điều kiện lọc đồng thời: `InterCompanyOriginalSalesId` = Sales ID hiện tại (trên URL, giống
+  điều kiện đã dùng cho reference type = 16 ở FR-017) và `RSVNRefPurchId` = giá trị PO (`Code`/
+  `RSVNRefPurchId`) của đúng dòng PO đang xét.
+- Change: Trên mỗi bản ghi type = 20 khớp điều kiện trên, trường `ProductVariant` MUST được dùng làm
+  giá trị cho cột **Variants**, và trường `ItemId` MUST được dùng làm giá trị cho cột **Materials** —
+  đúng theo mapping người yêu cầu tính năng xác nhận, không đảo ngược hai trường này.
+- Change: Với mỗi dòng PO, cột **Materials** MUST hiển thị đầy đủ các giá trị `ItemId` **duy nhất**
+  (loại bỏ trùng lặp) của mọi bản ghi type = 20 khớp đúng PO đó, nối lại trong cùng 1 ô, phân tách bằng
+  dấu phẩy và khoảng trắng (ví dụ "M01, M02"), theo đúng thứ tự xuất hiện đầu tiên trong dữ liệu trả về.
+  Cột **Variants** MUST áp dụng đúng quy tắc gộp/kết hợp tương tự cho các giá trị `ProductVariant` duy
+  nhất của PO đó.
+- Change: Việc tải dữ liệu type = 20 cho toàn bộ danh sách PO đang hiển thị ở Step 1 MUST áp dụng theo
+  cơ chế nạp theo lô (batch) đã áp dụng cho cột Template/Progress ở Overview (FR-085) — gọi 1 lần theo
+  điều kiện `InterCompanyOriginalSalesId` = Sales ID hiện tại (không lọc riêng theo từng `RSVNRefPurchId`
+  bằng nhiều lượt gọi), sau đó nhóm kết quả trả về theo `RSVNRefPurchId` để gán đúng cho từng dòng PO
+  tương ứng ở phía giao diện — không phát sinh gọi API riêng lẻ theo từng PO một (N+1).
+- Change: Nếu một PO không có bất kỳ bản ghi type = 20 nào khớp điều kiện trên (hoặc có bản ghi khớp
+  nhưng `ProductVariant`/`ItemId` đều rỗng), hai cột Variants/Materials của dòng PO đó MUST hiển thị
+  trạng thái trống rõ ràng (ví dụ "—") — không hiển thị lỗi, không hiển thị "undefined"/"null", và
+  không lấy nhầm giá trị của một PO khác.
+- Change: Nếu việc tải dữ liệu type = 20 cho Step 1 bị lỗi (nguồn dữ liệu tạm thời không phản hồi), hai
+  cột Variants/Materials MUST hiển thị trạng thái lỗi/tải thất bại rõ ràng riêng cho 2 cột này — không
+  chặn việc hiển thị 4 cột PO/Name/Order account/Qty hiện có, và không hiển thị dữ liệu demo/giả để che
+  lỗi.
+- Change: Hai cột mới này chỉ bổ sung **hiển thị** — KHÔNG làm thay đổi bất kỳ hành vi nào đã có của
+  Step 1 (tick chọn PO, điều kiện vô hiệu hóa checkbox theo FR-022, Save PO Mapping theo FR-020/FR-021,
+  hay việc tick chọn thêm PO chưa lưu theo FR-031/FR-032) — Variants/Materials không phải điều kiện để
+  cho phép/chặn tick chọn hay lưu một PO.
+
 ### Session 2026-07-28 (Update 16) — Overview: khi mới mở trang chỉ tải Sales ID đã có Template; khi tìm kiếm thì bỏ điều kiện này
 
 - Bối cảnh: Màn hình **EUTR Sales Orders** (Overview, `SalesOrderOverviewPage.jsx`) hiện tải danh sách
@@ -685,6 +927,12 @@ mọi Sales ID theo từ khóa đó bất kể đã có Template hay chưa.
 16. **Given** đã nhấn Download thành công cho một Sales Order ở Overview, **When** kiểm tra dữ liệu
     tài liệu/tham chiếu/purchase attachment của Sales Order đó, **Then** không có bản ghi nào bị
     ghi/sửa/xóa bởi thao tác Download.
+17. **Given** một Sales Order có ít nhất 1 tài liệu "Mapped" và hệ thống có sẵn đúng 1 template mặc
+    định (`IsDefault = 1`/`IsHide = 0`/`IsDeleted = 0`) chứa step tồn tại ở Sales Order đó, **When**
+    nhấn Download ở dòng Overview của Sales Order này, **Then** file zip tải về, bên cạnh các thư mục
+    con theo tên template, còn có đúng 1 thư mục **All** chứa cây thư mục lồng nhau theo tên step (cha/
+    con đúng theo cây All của màn hình View), mỗi thư mục step chỉ chứa đúng tài liệu "Mapped" của
+    step đó hợp nhất qua mọi template đã lưu.
 
 ---
 
@@ -758,7 +1006,11 @@ thật liên quan tới Sales Order đó (lấy từ D365 theo điều kiện PO
 khớp Sales ID này), tick chọn (các) PO áp dụng cho hồ sơ EUTR rồi nhấn **Save PO Mapping** để lưu lại
 lựa chọn; nếu Sales Order đã từng được lưu PO trước đó, các PO đó tự động được tick sẵn khi mở lại, và
 người dùng vẫn có thể tick chọn thêm các PO khác chưa từng được lưu (miễn PO đó có sẵn template từ
-D365) trước khi Save lại. Người dùng cũng có thể nhấn nút **Back** để quay lại màn hình EUTR Sales
+D365) trước khi Save lại. Bảng PO ở Step 1 còn hiển thị thêm hai cột **Variants** và **Materials**
+(từ Update 17) — lấy động từ một nguồn tham chiếu khác (reference type = 20) theo đúng PO của dòng đó,
+gộp lại thành danh sách trong 1 ô (ví dụ Materials hiển thị "M01, M02") khi PO có nhiều dòng hàng ứng
+với nhiều Material/Variant khác nhau; hai cột này chỉ để xem thêm thông tin, không ảnh hưởng tới việc
+tick chọn/Save PO Mapping. Người dùng cũng có thể nhấn nút **Back** để quay lại màn hình EUTR Sales
 Orders bất cứ lúc nào. Ở
 **Step 2**, người dùng thấy cây thư mục của (các) template gắn với PO đã lưu, cùng danh sách tài
 liệu (AVAILABLE FILES) đã có sẵn cho các PO đó, mỗi tài liệu hiển thị đúng vị trí (step) trong cây mà
@@ -877,6 +1129,18 @@ màn hình EUTR Sales Orders.
 24. **Given** tài liệu đó thuộc loại file không được popup xem trước hỗ trợ hiển thị nội dung,
     **When** nhấn nút View, **Then** popup hiển thị trạng thái rõ ràng cho biết không xem trước
     được, không gây lỗi hay crash màn hình Map File.
+25. **Given** một PO ở Step 1 có nhiều bản ghi type = 20 khớp `RSVNRefPurchId` của PO đó với các
+    `ItemId` khác nhau (ví dụ "M01", "M02"), **When** xem bảng PO, **Then** cột **Materials** của
+    dòng đó hiển thị "M01, M02" (đủ giá trị, không lặp, đúng thứ tự xuất hiện đầu tiên).
+26. **Given** cùng PO ở kịch bản 25 có các bản ghi type = 20 với `ProductVariant` khác nhau, **When**
+    xem bảng PO, **Then** cột **Variants** của dòng đó hiển thị đầy đủ các giá trị `ProductVariant`
+    duy nhất đó, theo đúng cách gộp giống cột Materials.
+27. **Given** một PO ở Step 1 không có bản ghi type = 20 nào khớp `InterCompanyOriginalSalesId`/
+    `RSVNRefPurchId` của nó, **When** xem bảng PO, **Then** cột Variants và Materials của dòng đó
+    hiển thị trạng thái trống rõ ràng, không lỗi.
+28. **Given** Sales Order có nhiều PO ở Step 1, **When** trang tải dữ liệu Variants/Materials cho
+    toàn bộ bảng, **Then** hệ thống chỉ gọi 1 lượt tới nguồn tham chiếu type = 20 theo Sales ID hiện
+    tại rồi nhóm kết quả theo `RSVNRefPurchId` cho từng dòng — không gọi riêng lẻ theo từng PO.
 
 ---
 
@@ -886,15 +1150,25 @@ Từ màn hình EUTR Sales Orders, người dùng nhấn nút "View" trên một
 Order** của Sales Order đó. Màn hình kiểm tra Sales Order có tồn tại hay không (cùng nguồn tham chiếu
 dùng chung với Overview/Map File), hiển thị đúng thông tin Sales ID/Customer/Customer name ở header,
 danh sách các **Purchase Order đã chọn** (lấy từ `eutr_purchase_attachments`, tra cứu thêm thông tin
-PO thật từ D365), và **Template Checklist** — cây các bước của (các) template gắn với Sales Order đó.
-Toolbar cây template (`data-marker="template-tree-toolbar"`) hiển thị một chip cho mỗi template đã
-lưu; Template Checklist chỉ hiển thị đúng cây của **một** template tại một thời điểm — cây của
-template đang được chọn ở toolbar, mặc định là template đầu tiên khi mở màn hình. Click vào một
-template khác ở toolbar sẽ chuyển sang hiển thị đúng cây của template đó. Mỗi bước trong cây hiển thị
-đúng trạng thái đã có tài liệu hay còn thiếu, xác định dựa trên tài liệu thật (`eutr_references`)
-thuộc **đúng PO của chính template đang xem** (tra theo `eutr_purchase_attachments`) — không nhầm lẫn
-với tài liệu thuộc PO của một template khác dù hai template dùng chung tên Step. Toàn bộ màn hình chỉ
-ở chế độ xem — không có thao tác tick chọn PO, map/unmap tài liệu hay upload nào. Muốn thay đổi, người
+PO thật từ D365) — bảng này (`data-marker="selected-po-table"`) còn hiển thị hai cột **Variants** và
+**Materials** (từ Update 18), lấy dữ liệu thật theo đúng cách của bảng PO ở Step 1 Map File (Update
+17): nguồn tham chiếu type = 20 lọc theo PO của từng dòng, gộp `ProductVariant`/`ItemId` duy nhất
+thành danh sách trong 1 ô — và **Template Checklist** — cây các bước của (các) template gắn với Sales
+Order đó.
+Toolbar cây template (`data-marker="template-tree-toolbar"`) hiển thị một chip **All** (đầu tiên) cùng
+một chip cho mỗi template đã lưu; Template Checklist chỉ hiển thị đúng cây của **một** lựa chọn tại một
+thời điểm — cây của lựa chọn đang được chọn ở toolbar, **mặc định là All khi mở màn hình lần đầu (Update
+20)** nếu Sales Order đã có ít nhất 1 template lưu sẵn. Click vào một template khác ở toolbar sẽ chuyển
+sang hiển thị đúng cây của template đó. Mỗi bước trong
+cây hiển thị đúng trạng thái đã có tài liệu hay còn thiếu, xác định dựa trên tài liệu thật
+(`eutr_references`) thuộc **đúng PO của chính template đang xem** (tra theo `eutr_purchase_attachments`)
+— không nhầm lẫn với tài liệu thuộc PO của một template khác dù hai template dùng chung tên Step. Click
+vào chip **All** (Update 19) hiển thị cây của **template mặc định toàn hệ thống** (`eutr_templates` với
+`IsDefault = 1`/`IsHide = 0`/`IsDeleted = 0`) nhưng chỉ giữ lại (các) step của template mặc định đó mà
+step cũng tồn tại ở ít nhất một template đã lưu của Sales Order này — step khác bị loại bỏ; khi All
+đang active, khu vực AVAILABLE FILES hiển thị hợp toàn bộ tài liệu của **mọi** template đã lưu của Sales
+Order, không giới hạn theo 1 template. Toàn bộ màn hình chỉ ở chế độ xem — không có thao tác tick chọn
+PO, map/unmap tài liệu hay upload nào. Muốn thay đổi, người
 dùng nhấn nút **Edit / Map File** để chuyển sang màn hình Map File. Nút **Back** đưa người dùng quay
 lại Overview, khôi phục đúng từ khóa tìm kiếm/trang đã xem trước đó nếu người dùng mở màn hình View
 này từ một dòng đang được lọc (Update 14). Nút **Download** tải xuống một file
@@ -965,8 +1239,8 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
     thiếu.
 11. **Given** Sales Order có 2 template đã lưu trở lên, **When** mở màn hình View, **Then** toolbar
     cây template hiển thị đúng một chip cho mỗi template thật lấy từ `templatesData` (không phải nhãn
-    tĩnh demo), và Template Checklist mặc định hiển thị đúng cây của template **đầu tiên** trong danh
-    sách.
+    tĩnh demo), và Template Checklist mặc định hiển thị đúng chế độ **All** (Update 20) — không còn
+    mặc định hiển thị cây của template đầu tiên.
 12. **Given** đang xem cây của Template A ở toolbar, **When** người dùng click vào chip Template B,
     **Then** Template Checklist chuyển sang chỉ hiển thị đúng cây của Template B — không còn hiển thị
     cây của Template A hay của bất kỳ template khác.
@@ -1006,6 +1280,80 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
     View, **Then** hệ thống mở đúng popup xem trước nội dung file (giống Update 9 ở Map File) ở chế độ
     chỉ đọc — đóng popup không ghi/sửa/xóa dữ liệu nào; khu vực này và popup không hiển thị bất kỳ nút
     Edit/Upload/Save nào.
+23. **Given** một PO ở bảng Selected Purchase Orders của màn hình View có nhiều bản ghi type = 20 khớp
+    `RSVNRefPurchId` của PO đó với các `ItemId` khác nhau (ví dụ "M01", "M02"), **When** xem bảng, **Then**
+    cột **Materials** của dòng đó hiển thị "M01, M02" (đủ giá trị, không lặp, đúng thứ tự xuất hiện đầu
+    tiên) — không còn hiển thị literal `"Materials"`.
+24. **Given** cùng PO ở kịch bản 23 có các bản ghi type = 20 với `ProductVariant` khác nhau, **When**
+    xem bảng, **Then** cột **Variants** của dòng đó hiển thị đầy đủ các giá trị `ProductVariant` duy
+    nhất đó, theo đúng cách gộp giống cột Materials — không còn hiển thị literal `"Variants"`.
+25. **Given** một PO ở bảng Selected Purchase Orders của màn hình View không có bản ghi type = 20 nào
+    khớp `InterCompanyOriginalSalesId`/`RSVNRefPurchId` của nó, **When** xem bảng, **Then** cột
+    Variants và Materials của dòng đó hiển thị trạng thái trống rõ ràng ("—"), không lỗi, không còn
+    literal `"Variants"`/`"Materials"`.
+26. **Given** Sales Order có nhiều PO trong bảng Selected Purchase Orders của màn hình View, **When**
+    trang tải dữ liệu Variants/Materials cho toàn bộ bảng, **Then** hệ thống chỉ gọi 1 lượt tới nguồn
+    tham chiếu type = 20 theo Sales ID hiện tại rồi nhóm kết quả theo `RSVNRefPurchId` cho từng dòng —
+    không gọi riêng lẻ theo từng PO.
+27. **Given** hệ thống có sẵn đúng 1 template thoả `IsDefault = 1`/`IsHide = 0`/`IsDeleted = 0`, và Sales
+    Order đang xem có 2 template đã lưu, mỗi template chỉ chứa một phần các step của template mặc định,
+    **When** người dùng click vào chip **All**, **Then** Template Checklist hiển thị đúng cây gồm hợp
+    các step của template mặc định mà step đó có tồn tại ở template A hoặc template B của Sales Order —
+    step nào của template mặc định không xuất hiện ở cả A và B thì không còn hiển thị trong cây All.
+28. **Given** đang ở kịch bản 27, **When** xem một step còn lại trong cây All có tài liệu đã "Mapped" ở
+    template A (nhưng chưa có tài liệu ở template B), **Then** step đó ở cây All hiển thị trạng thái "đã
+    có tài liệu" (không hiển thị "còn thiếu" chỉ vì chưa có tài liệu ở template B).
+29. **Given** một node cha của template mặc định bị loại bỏ khỏi cây All (vì không tồn tại ở Sales Order
+    này) nhưng một step con trực tiếp của nó vẫn tồn tại ở Sales Order, **When** xem cây All, **Then**
+    step con đó vẫn hiển thị trong cây (gắn lên node cha gần nhất còn tồn tại hoặc lên cấp gốc) — không
+    biến mất cùng với node cha đã bị loại.
+30. **Given** hệ thống hiện chưa cấu hình template nào là mặc định (không có bản ghi nào khớp
+    `IsDefault = 1`/`IsHide = 0`/`IsDeleted = 0`), **When** người dùng click vào chip **All**, **Then**
+    Template Checklist hiển thị trạng thái rõ ràng cho biết chưa có template mặc định để so sánh —
+    không hiển thị lại cây của template đầu tiên trong `templatesData`, không hiển thị như một lỗi.
+31. **Given** template mặc định hiện có không chứa bất kỳ step nào cũng tồn tại ở (các) template đã lưu
+    của Sales Order đang xem, **When** xem cây All, **Then** Template Checklist hiển thị trạng thái
+    trống rõ ràng cho biết không có step nào khớp — khác với trạng thái "chưa có template mặc định" ở
+    kịch bản 30.
+32. **Given** đang xem cây của 1 chip template cụ thể với bộ lọc AVAILABLE FILES theo 1 step, **When**
+    người dùng click sang chip **All**, **Then** bộ lọc theo step bị xoá, khu vực AVAILABLE FILES hiển
+    thị hợp toàn bộ tài liệu đã "Mapped" của **mọi** template đã lưu của Sales Order — không còn giới
+    hạn theo template vừa xem trước đó.
+33. **Given** Sales Order có 2 template đã lưu, mỗi template có tài liệu "Mapped" riêng biệt của nó,
+    **When** chip All đang active, **Then** khu vực AVAILABLE FILES liệt kê đầy đủ tài liệu "Mapped" của
+    cả 2 template đó cùng lúc.
+34. **Given** người dùng đang xem chip All, **When** người dùng click vào một chip template cụ thể khác
+    ở toolbar, **Then** hệ thống chuyển đúng sang hành vi hiện có của chip template đó (FR-058/FR-059) —
+    Template Checklist và AVAILABLE FILES thu hẹp lại đúng phạm vi của template đó, không còn hiển thị
+    dữ liệu mở rộng của All.
+35. **Given** người dùng mở màn hình View lần đầu với Sales Order đã có ít nhất 1 template lưu sẵn,
+    **When** trang tải xong, **Then** chip **All** ở toolbar MUST tự động ở trạng thái được chọn, và
+    Template Checklist/AVAILABLE FILES hiển thị đúng nội dung All (không cần click) — theo FR-060/
+    FR-141 đã cập nhật ở Update 20.
+36. **Given** người dùng mở màn hình View lần đầu, sau đó click sang xem một chip template cụ thể,
+    **When** người dùng tải lại (refresh) trang, **Then** lựa chọn mặc định lại quay về All (giống
+    kịch bản 35) — lựa chọn template cụ thể trước đó không được ghi nhớ qua các lần tải trang khác
+    nhau (đúng theo FR-060, không có cơ chế lưu lựa chọn lâu dài nào được yêu cầu).
+37. **Given** một Sales Order có ít nhất 1 tài liệu "Mapped" và hệ thống có sẵn đúng 1 template mặc
+    định chứa step tồn tại ở Sales Order đó, **When** nhấn Download ở màn hình View, **Then** file zip
+    tải về, bên cạnh các thư mục con theo tên template, còn có đúng 1 thư mục **All** chứa cây thư mục
+    lồng nhau theo tên step — cấu trúc cha/con của cây này khớp đúng với cây All đang hiển thị ở
+    Template Checklist (kể cả khi người dùng đang xem một chip template khác, không phải All, tại
+    thời điểm nhấn Download).
+38. **Given** đang ở kịch bản 37, **When** xem một thư mục step cụ thể trong thư mục All của file zip,
+    **Then** thư mục đó chỉ chứa đúng các tài liệu "Mapped" của step đó, hợp nhất từ mọi template đã
+    lưu của Sales Order (một tài liệu Mapped ở template A cho step X và một tài liệu Mapped khác ở
+    template B cũng cho step X cùng xuất hiện trong đúng 1 thư mục step X, không lặp ở nơi khác).
+39. **Given** cây All có một step không có tài liệu "Mapped" nào (ở bất kỳ template nào), **When**
+    nhấn Download, **Then** thư mục step đó vẫn xuất hiện trong thư mục All của file zip, ở trạng thái
+    rỗng — không bị bỏ qua.
+40. **Given** hệ thống chưa cấu hình template mặc định nào (hoặc sau khi lọc theo Sales Order không
+    còn step nào của template mặc định), **When** nhấn Download, **Then** file zip vẫn có đúng 1 thư
+    mục All nhưng ở trạng thái rỗng (không có thư mục step con nào) — không mất thư mục All khỏi zip,
+    không báo lỗi toàn bộ thao tác Download, các thư mục template khác vẫn đầy đủ như bình thường.
+41. **Given** Sales Order không có bất kỳ tài liệu "Mapped" nào ở mọi template, **When** nhấn Download,
+    **Then** hệ thống hiển thị đúng thông báo không có tài liệu để tải và KHÔNG tải xuống file zip —
+    kể cả khi cây All (theo template mặc định) vẫn có step hợp lệ nhưng không step nào có tài liệu.
 
 ---
 
@@ -1155,6 +1503,19 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
 - Sales Order chưa có `templatesData` nào (chưa Save PO Mapping lần nào): toolbar cây template không
   hiển thị chip template nào, do đó không có hành vi click nào để tải lại — giữ đúng trạng thái "chưa
   có cây template" theo FR-025.
+- (Update 17) Một PO ở Step 1 có nhiều bản ghi type = 20 cùng giá trị `ItemId` trùng nhau (nhiều
+  dòng hàng/line cùng 1 material): cột Materials chỉ hiển thị giá trị đó **một lần duy nhất**, không
+  lặp lại theo số lượng bản ghi — áp dụng đúng quy tắc dedup tương tự cho cột Variants với
+  `ProductVariant`.
+- (Update 17) Nguồn dữ liệu type = 20 trả về một bản ghi có `RSVNRefPurchId` không khớp bất kỳ PO nào
+  đang hiển thị ở Step 1 (ví dụ PO đó đã không còn trong kết quả type = 16): bản ghi đó bị bỏ qua khi
+  nhóm kết quả theo PO, không hiển thị lẫn ở dòng PO nào khác.
+- (Update 17) Nguồn dữ liệu type = 20 tạm thời không phản hồi hoặc trả lỗi: hai cột Variants/Materials
+  hiển thị trạng thái lỗi/tải thất bại rõ ràng riêng cho 2 cột này, không chặn việc hiển thị 4 cột
+  PO/Name/Order account/Qty hiện có, không hiển thị dữ liệu demo/giả để che lỗi.
+- (Update 17) Sales Order chưa có PO nào ở Step 1 (reference type = 16 trả về rỗng, giữ đúng trạng
+  thái trống hiện có ở FR-... "Không có PO nào"): không có dòng PO nào để hiển thị Variants/Materials
+  — không phát sinh lượt gọi nguồn type = 20 nào trong trường hợp này.
 - Người dùng nhấn Upload ở Step 2, chọn Type/Step/Value và file hợp lệ nhưng file đó (theo Value/PO
   đã chọn trong popup) không liên quan tới PO/template nào đang hiển thị của Sales Order đang xem: hệ
   thống vẫn lưu bản ghi tài liệu thật (theo đúng lựa chọn của người dùng trong popup Add), nhưng tài
@@ -1222,6 +1583,42 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
 - Thao tác tạo/tải file zip thất bại (lỗi hệ thống/API khi lấy nội dung file thật để đóng gói): hệ
   thống hiển thị thông báo lỗi rõ ràng, không tải xuống một file zip thiếu/hỏng, không làm crash màn
   hình View.
+- (Update 19) Có nhiều hơn 1 bản ghi trong `eutr_templates` khớp `IsDefault = 1`/`IsHide = 0`/
+  `IsDeleted = 0` cùng lúc (không đúng ràng buộc "tối đa 1 default toàn cục" hiện có, ví dụ do sửa dữ
+  liệu trực tiếp): hệ thống chỉ lấy đúng 1 bản ghi làm template mặc định (ví dụ bản ghi đầu tiên theo
+  cùng thứ tự sắp xếp mặc định đã dùng cho các truy vấn `eutr_templates` khác) để dựng cây All — không
+  gộp step của nhiều template mặc định lại với nhau, không báo lỗi.
+- (Update 19) Template mặc định trùng chính với một trong (các) `TemplateCode` đã lưu của Sales Order
+  đang xem: mọi step của template mặc định đều thoả điều kiện "tồn tại ở SO" (khớp chính nó), cây All
+  hiển thị đầy đủ toàn bộ step của template mặc định — không bị lọc bớt step nào.
+- (Update 19) Hai step khác nhau (thuộc hai template khác nhau của Sales Order) vô tình dùng chung
+  `StepId` với đúng 1 step của template mặc định: step đó trong cây All chỉ hiển thị **một lần duy
+  nhất** (không lặp lại theo số template khớp), trạng thái "đã có tài liệu" là true nếu ít nhất một
+  trong hai template đó có tài liệu Mapped cho step đó (theo FR-135).
+- (Update 19) Sales Order đang xem chưa Save PO Mapping nào (`templatesData` rỗng): toolbar vẫn hiển thị
+  chip All (không có chip template thật nào khác), nhưng click vào All MUST tiếp tục hiển thị đúng
+  trạng thái "chưa có cây template" hiện có (FR-040) — không có step nào của Sales Order để so khớp với
+  template mặc định, dù template mặc định có tồn tại hay không.
+- (Update 19) Người dùng click liên tiếp nhiều lần vào chip All: mỗi lượt click tải lại độc lập template
+  mặc định và tính lại cây All/tập file mở rộng, không tích lũy gọi API chồng chéo, không hiển thị dữ
+  liệu của lượt trước đè lên lượt sau.
+- (Update 21) Sales Order có nhiều template đã lưu, mỗi template có tài liệu "Mapped" riêng cho cùng
+  một step (cùng `StepId`): thư mục step tương ứng trong thư mục All của file zip gộp đủ tài liệu Mapped
+  của step đó từ mọi template, không bỏ sót tài liệu của template nào, không tạo thư mục step trùng lặp.
+- (Update 21) Template mặc định (dùng để dựng cây All) có một node cha bị loại (vì `StepId` không tồn
+  tại ở Sales Order) nhưng có step con vẫn tồn tại: thư mục của step con đó trong file zip MUST vẫn
+  xuất hiện, gắn lên thư mục step cha gần nhất còn tồn tại (hoặc lên thư mục All nếu không còn node cha
+  nào) — theo đúng quy tắc "nâng cấp" node đã áp dụng cho cây All ở màn hình View (FR-133).
+- (Update 21) Hai tài liệu "Mapped" khác nhau (thuộc hai template khác nhau) cùng cho cùng một step có
+  cùng tên file gốc: hệ thống tự động phân biệt tên file khi đóng gói vào đúng thư mục step đó trong
+  thư mục All (cùng cơ chế hậu tố đã áp dụng cho thư mục template, FR-075), không ghi đè/mất file nào.
+- (Update 21) Cùng một tài liệu "Mapped" xuất hiện cả trong thư mục template (theo FR-071/FR-072) lẫn
+  trong đúng thư mục step tương ứng của thư mục All: đây là hành vi mong đợi (thư mục All là góc nhìn bổ
+  sung theo cây step, độc lập với các thư mục theo tên template) — tài liệu xuất hiện ở cả hai nơi không
+  bị coi là trùng lặp lỗi.
+- (Update 21) Hệ thống chưa cấu hình template mặc định, hoặc cây All rỗng sau khi lọc theo Sales Order:
+  file zip Download vẫn có đủ các thư mục template như trước (không bị ảnh hưởng), riêng thư mục All là
+  thư mục rỗng duy nhất — không làm thất bại toàn bộ thao tác Download.
 
 ## Requirements *(mandatory)*
 
@@ -1438,9 +1835,10 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   hiển thị nối tiếp cây của mọi template cùng lúc như hiện tại. Chip của template đang được chọn xem
   MUST có trạng thái hiển thị khác biệt so với các chip còn lại.
 - **FR-060**: Khi mở màn hình View lần đầu, hoặc khi lựa chọn template hiện tại không còn tồn tại
-  trong `templatesData` (ví dụ sau khi tải lại trang), hệ thống MUST tự động chọn và hiển thị đúng cây
-  của template **đầu tiên** trong `templatesData` — theo đúng cơ chế mặc định đã áp dụng ở Map File
-  Step 2.
+  trong `templatesData` (ví dụ sau khi tải lại trang), nếu `templatesData` rỗng thì hệ thống MUST tiếp
+  tục hiển thị trạng thái "chưa có cây template" (FR-040) như hiện có; nếu `templatesData` có ít nhất 1
+  template, hệ thống MUST tự động chọn **All** làm lựa chọn hiển thị mặc định ở toolbar cây template
+  (thay cho việc tự động chọn template đầu tiên như trước Update 20) — **cập nhật từ Update 20**.
 - **FR-061**: Trạng thái "đã có tài liệu"/"còn thiếu" của một step trong Template Checklist ở màn hình
   View MUST chỉ đúng ("đã có tài liệu") khi thỏa đồng thời cả hai điều kiện sau — thay thế cách so
   khớp hiện tại (chỉ so tên Step, gộp chung tài liệu của mọi PO/mọi template):
@@ -1637,6 +2035,169 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
 - **FR-112**: Nếu áp dụng điều kiện lọc Template (FR-107) mà không còn Sales ID nào thỏa điều kiện, màn
   hình MUST hiển thị đúng trạng thái trống ("No data") theo FR-012 — không hiển thị lỗi, không tự động
   bỏ điều kiện lọc để hiển thị toàn bộ danh sách gốc.
+- **FR-113**: Bảng PO ở Step 1 (`TableContainer` trong khu vực "Chọn Purchase Order") MUST hiển thị
+  thêm hai cột mới **Variants** và **Materials**, đặt ngay sau cột **Qty** hiện có — không thay đổi 4
+  cột PO/Name/Order account/Qty đã có (FR-017).
+- **FR-114**: Dữ liệu của hai cột Variants/Materials cho một PO MUST lấy từ nguồn tham chiếu dùng
+  chung reference type = 20, lọc theo điều kiện đồng thời: `InterCompanyOriginalSalesId` = Sales ID
+  hiện tại (trên URL) và `RSVNRefPurchId` = giá trị PO (`Code`/`RSVNRefPurchId`) của đúng dòng PO đang
+  xét — một PO có thể có nhiều bản ghi type = 20 tương ứng nhiều dòng hàng (line) của PO đó.
+- **FR-115**: Trên mỗi bản ghi type = 20 khớp điều kiện ở FR-114, trường `ProductVariant` MUST được
+  dùng làm giá trị cho cột **Variants**, và trường `ItemId` MUST được dùng làm giá trị cho cột
+  **Materials** — không đảo ngược hai trường này.
+- **FR-116**: Với mỗi dòng PO, cột **Materials** MUST hiển thị đầy đủ các giá trị `ItemId` duy nhất
+  (loại bỏ trùng lặp) của mọi bản ghi type = 20 khớp đúng PO đó, nối lại trong cùng 1 ô, phân tách
+  bằng dấu phẩy và khoảng trắng (ví dụ "M01, M02"), theo đúng thứ tự xuất hiện đầu tiên trong dữ liệu
+  trả về. Cột **Variants** MUST áp dụng đúng quy tắc gộp tương tự cho các giá trị `ProductVariant`
+  duy nhất của PO đó.
+- **FR-117**: Việc tải dữ liệu type = 20 cho toàn bộ danh sách PO đang hiển thị ở Step 1 MUST áp dụng
+  theo cơ chế nạp theo lô (batch) đã áp dụng cho cột Template/Progress ở Overview (FR-085) — gọi 1 lần
+  theo điều kiện `InterCompanyOriginalSalesId` = Sales ID hiện tại (không lọc riêng theo từng
+  `RSVNRefPurchId` bằng nhiều lượt gọi), sau đó nhóm kết quả trả về theo `RSVNRefPurchId` để gán đúng
+  cho từng dòng PO tương ứng ở phía giao diện — không phát sinh gọi API riêng lẻ theo từng PO một
+  (N+1).
+- **FR-118**: Nếu một PO không có bất kỳ bản ghi type = 20 nào khớp điều kiện ở FR-114 (hoặc có bản
+  ghi khớp nhưng `ProductVariant`/`ItemId` đều rỗng), hai cột Variants/Materials của dòng PO đó MUST
+  hiển thị trạng thái trống rõ ràng (ví dụ "—") — không hiển thị lỗi, không hiển thị "undefined"/
+  "null", và không lấy nhầm giá trị của một PO khác.
+- **FR-119**: Nếu việc tải dữ liệu type = 20 cho Step 1 bị lỗi (nguồn dữ liệu tạm thời không phản hồi),
+  hai cột Variants/Materials MUST hiển thị trạng thái lỗi/tải thất bại rõ ràng riêng cho 2 cột này —
+  không chặn việc hiển thị 4 cột PO/Name/Order account/Qty hiện có, và không hiển thị dữ liệu demo/giả
+  để che lỗi.
+- **FR-120**: Hai cột Variants/Materials MUST chỉ bổ sung hiển thị — KHÔNG làm thay đổi bất kỳ hành vi
+  nào đã có của Step 1 (tick chọn PO, điều kiện vô hiệu hóa checkbox theo FR-022, Save PO Mapping theo
+  FR-020/FR-021, tick chọn thêm PO chưa lưu theo FR-031/FR-032) — Variants/Materials không phải điều
+  kiện để cho phép/chặn tick chọn hay lưu một PO.
+- **FR-121**: Bảng **Selected Purchase Orders** ở màn hình View (`data-marker="selected-po-table"`)
+  MUST thay thế 2 giá trị literal `"Variants"`/`"Materials"` hiện đang hiển thị cho mọi dòng bằng dữ
+  liệu thật theo từng PO, áp dụng đúng nguyên vẹn logic đã đặc tả ở FR-113 đến FR-120 cho Step 1 của
+  Map File — không định nghĩa lại một cách tính khác riêng cho màn hình View.
+- **FR-122**: Dữ liệu của hai cột Variants/Materials cho một PO ở màn hình View MUST lấy từ cùng nguồn
+  tham chiếu dùng chung reference type = 20, lọc theo điều kiện đồng thời: `InterCompanyOriginalSalesId`
+  = Sales ID hiện tại (trên URL) và `RSVNRefPurchId` = giá trị PO (`Code`/`RSVNRefPurchId`) của đúng
+  dòng PO đang xét — đúng điều kiện lọc của FR-114.
+- **FR-123**: Trên mỗi bản ghi type = 20 khớp điều kiện ở FR-122, trường `ProductVariant` MUST được
+  dùng làm giá trị cho cột **Variants**, và trường `ItemId` MUST được dùng làm giá trị cho cột
+  **Materials** — không đảo ngược hai trường này, đúng mapping của FR-115.
+- **FR-124**: Với mỗi dòng PO ở màn hình View, cột **Materials** MUST hiển thị đầy đủ các giá trị
+  `ItemId` duy nhất (loại bỏ trùng lặp) của mọi bản ghi type = 20 khớp đúng PO đó, nối lại trong cùng 1
+  ô, phân tách bằng dấu phẩy và khoảng trắng (ví dụ "M01, M02"), theo đúng thứ tự xuất hiện đầu tiên
+  trong dữ liệu trả về — đúng quy tắc gộp của FR-116. Cột **Variants** MUST áp dụng đúng quy tắc gộp
+  tương tự cho các giá trị `ProductVariant` duy nhất của PO đó.
+- **FR-125**: Việc tải dữ liệu type = 20 cho toàn bộ danh sách PO đang hiển thị ở bảng Selected Purchase
+  Orders của màn hình View MUST áp dụng theo cơ chế nạp theo lô (batch) đã áp dụng ở FR-117 — gọi 1 lần
+  theo điều kiện `InterCompanyOriginalSalesId` = Sales ID hiện tại, sau đó nhóm kết quả trả về theo
+  `RSVNRefPurchId` để gán đúng cho từng dòng PO — không phát sinh gọi API riêng lẻ theo từng PO một
+  (N+1).
+- **FR-126**: Nếu một PO không có bất kỳ bản ghi type = 20 nào khớp điều kiện ở FR-122 (hoặc có bản ghi
+  khớp nhưng `ProductVariant`/`ItemId` đều rỗng), hai cột Variants/Materials của dòng PO đó ở màn hình
+  View MUST hiển thị trạng thái trống rõ ràng (ví dụ "—") — không hiển thị lỗi, không hiển thị
+  "undefined"/"null", và không lấy nhầm giá trị của một PO khác — đúng quy tắc FR-118.
+- **FR-127**: Nếu việc tải dữ liệu type = 20 cho bảng này bị lỗi, hai cột Variants/Materials MUST hiển
+  thị trạng thái lỗi/tải thất bại rõ ràng riêng cho 2 cột này — không chặn việc hiển thị các cột PO/
+  Template/Order account/Vendor Name/Percentage used hiện có, và không hiển thị lại literal
+  `"Variants"`/`"Materials"` hay dữ liệu demo/giả để che lỗi — đúng quy tắc FR-119.
+- **FR-128**: Hai cột Variants/Materials ở màn hình View chỉ bổ sung hiển thị dữ liệu thật — KHÔNG làm
+  thay đổi bất kỳ hành vi nào khác đã có của màn hình View (chế độ chỉ đọc theo FR-042, các nút Edit /
+  Map File, Download, Back, Template Checklist, Validation Summary, khu vực AVAILABLE FILES của
+  Update 15).
+- **FR-129**: Toolbar `template-tree-toolbar` ở màn hình View MUST tiếp tục hiển thị chip **All** ở vị
+  trí đầu tiên, trước các chip template thật (giữ đúng vị trí hiện có) — nhưng thay thế hoàn toàn hành
+  vi hiện tại (click All chỉ rơi về hiển thị lại cây/tài liệu của template đầu tiên, không có logic
+  riêng) bằng logic thật ở các FR-130 đến FR-140 dưới đây.
+- **FR-130**: Khi người dùng click vào chip **All**, hệ thống MUST tải đúng 1 bản ghi từ `eutr_templates`
+  thoả đồng thời `IsDefault = 1`, `IsHide = 0`, `IsDeleted = 0` (tra cứu toàn hệ thống, không giới hạn
+  theo Sales Order đang xem), sau đó tải chi tiết cây (`eutr_template_details`) của đúng template đó,
+  dùng lại cơ chế tải chi tiết đã áp dụng cho mỗi chip template thật ở toolbar này — gọi là "template
+  mặc định" cho các FR tiếp theo.
+- **FR-131**: Nếu không có bản ghi nào khớp điều kiện ở FR-130 (chưa từng cấu hình template mặc định,
+  hoặc template mặc định hiện đang bị ẩn/xóa), Template Checklist ở chế độ All MUST hiển thị trạng thái
+  rõ ràng cho biết chưa có template mặc định để so sánh — KHÔNG rơi về hiển thị cây của template đầu
+  tiên trong `templatesData`, và không hiển thị như một lỗi hệ thống.
+- **FR-132**: Khi tải được template mặc định (FR-130), Template Checklist ở chế độ All MUST chỉ hiển
+  thị các step của template mặc định mà step đó (theo `StepId`, tham chiếu `eutr_steps`) có tồn tại ở
+  ít nhất một node trong (các) cây của toàn bộ template đã lưu (`templatesData`) của Sales Order này.
+  (Các) step của template mặc định mà `StepId` không tồn tại ở bất kỳ template nào của Sales Order MUST
+  bị loại bỏ khỏi cây hiển thị ở chế độ All.
+- **FR-133**: Nếu việc loại bỏ ở FR-132 khiến một node cha trong cây template mặc định bị loại, nhưng
+  (các) step con/cháu của node đó có `StepId` thoả điều kiện giữ lại ở FR-132, (các) step con/cháu đó
+  MUST vẫn tiếp tục được hiển thị trong cây All — gắn lên node cha gần nhất còn tồn tại trong cây, hoặc
+  lên cấp gốc nếu không còn node cha nào tồn tại phía trên nó — không bị ẩn/mất khỏi cây chỉ vì node cha
+  của nó bị loại.
+- **FR-134**: Nếu sau khi áp dụng FR-132/FR-133 không còn step nào của template mặc định tồn tại ở Sales
+  Order này, Template Checklist ở chế độ All MUST hiển thị trạng thái trống rõ ràng (khác với trạng thái
+  "chưa có template mặc định" ở FR-131) — không hiển thị một cây trống gây hiểu nhầm là lỗi tải dữ liệu.
+- **FR-135**: Trạng thái "đã có tài liệu"/"còn thiếu" của mỗi step còn lại trong cây All (sau FR-132/
+  FR-133) MUST được xác định dựa trên việc step đó (`StepId`) có ít nhất 1 tài liệu đã "Mapped" ở bất kỳ
+  template/PO nào của Sales Order này — áp dụng đúng quy tắc phân biệt PO/Template ở FR-061 cho từng
+  template trước khi xét, không chỉ xét trong phạm vi riêng của chính template mặc định (vì template
+  mặc định có thể không phải là một trong các template đã lưu thật của Sales Order này).
+- **FR-136**: Khi chế độ All đang được chọn (active) ở toolbar, khu vực **AVAILABLE FILES** MUST hiển
+  thị đầy đủ toàn bộ tài liệu thật của toàn bộ template đã lưu (`templatesData`) của Sales Order này
+  (hợp tất cả tài liệu đã "Mapped" của mọi template) — không còn giới hạn theo đúng 1 template như khi
+  chọn 1 chip template cụ thể (FR-058/FR-059).
+- **FR-137**: Việc click chọn All (hoặc click lại All khi đang active) MUST xoá bộ lọc theo step hiện
+  có ở khu vực AVAILABLE FILES, giống đúng hành vi khi chuyển sang một chip template khác (FR-104) —
+  quay về hiển thị toàn bộ tập file mở rộng của FR-136.
+- **FR-138**: **Cập nhật từ Update 20** — All nay là lựa chọn hiển thị mặc định khi mở màn hình View lần
+  đầu và Sales Order đã có ít nhất 1 template lưu sẵn (theo FR-060 đã cập nhật); All vẫn tiếp tục được
+  kích hoạt lại đúng như FR-130 đến FR-137 mỗi khi người dùng click vào chip này (kể cả click lại khi
+  đang active) — hành vi tải/so khớp/hiển thị của All không đổi, chỉ đổi thời điểm nó trở thành lựa chọn
+  đầu tiên được hiển thị.
+- **FR-141**: Khi `templatesData` chuyển từ rỗng sang có dữ liệu (mở màn hình lần đầu, hoặc lựa chọn cũ
+  không còn hợp lệ dẫn đến All được chọn lại theo FR-060), hệ thống MUST tự động thực hiện đúng việc tải
+  template mặc định của FR-130 (không cần đợi người dùng click vào chip All) để Template Checklist/
+  AVAILABLE FILES hiển thị đúng nội dung All ngay từ lần hiển thị đầu tiên.
+- **FR-139**: Số liệu tiến độ tổng hợp ở header/Validation Summary (FR-062) và các thư mục con theo tên
+  template hiện có của nút Download (Update 10) KHÔNG bị ảnh hưởng bởi logic All ở FR-130 đến FR-137 —
+  cả hai tiếp tục cộng dồn/đóng gói trên toàn bộ template đã lưu của Sales Order như hiện có, không phụ
+  thuộc việc All có đang được chọn ở toolbar hay không. **Cập nhật từ Update 21**: nút Download nay bổ
+  sung thêm đúng 1 thư mục **All** riêng (FR-142 đến FR-151) bên cạnh các thư mục template này — việc bổ
+  sung đó không làm thay đổi cấu trúc/nội dung các thư mục template hay số liệu tiến độ đã có.
+- **FR-140**: Nếu việc tải template mặc định ở FR-130 bị lỗi (nguồn dữ liệu tạm thời không phản hồi),
+  Template Checklist ở chế độ All MUST hiển thị trạng thái lỗi/tải thất bại rõ ràng riêng cho chế độ
+  này — không rơi về hiển thị cây của template đầu tiên để che lỗi, không làm crash màn hình View.
+- **FR-142**: Bên trong thư mục gốc `{SalesId}-{CustomerCode}-{CustomerName}` của file zip Download
+  (View: FR-069; Overview: FR-087), hệ thống MUST bổ sung thêm đúng 1 thư mục con tên **All**, đặt
+  ngang cấp với (không lồng vào trong, không thay thế) các thư mục con theo tên template hiện có
+  (FR-071).
+- **FR-143**: Cấu trúc bên trong thư mục All MUST dựng theo đúng cây step của chế độ All: tải đúng 1
+  template mặc định toàn hệ thống (`eutr_templates`, `IsDefault = 1`/`IsHide = 0`/`IsDeleted = 0`, cùng
+  điều kiện FR-130), lấy cây step (`eutr_template_details`) của template đó, chỉ giữ lại (các) step có
+  `StepId` tồn tại ở ít nhất 1 template đã lưu của Sales Order này (cùng quy tắc FR-132), và gắn step
+  con/cháu hợp lệ lên node cha gần nhất còn tồn tại (hoặc lên cấp gốc của thư mục All) khi node cha của
+  nó bị loại (cùng quy tắc FR-133).
+- **FR-144**: Mỗi thư mục step trong cây All MUST đặt tên = tên thật của step (tra `eutr_steps` theo
+  `StepId`) và MUST giữ đúng quan hệ cha/con lồng nhau (thư mục con nằm bên trong thư mục cha) như cây
+  hiển thị ở Template Checklist khi All đang active.
+- **FR-145**: Mỗi thư mục step MUST chỉ chứa các file tài liệu thật có Map status = "Mapped" cho đúng
+  `StepId` của step đó, hợp nhất qua toàn bộ template đã lưu của Sales Order này (áp dụng đúng quy tắc
+  phân biệt PO/Template ở FR-055/FR-056 cho từng template trước khi hợp nhất, cùng nguồn dữ liệu FR-135/
+  FR-136). Một tài liệu MUST chỉ xuất hiện trong đúng 1 thư mục step tương ứng của cây All — không lặp
+  lại ở thư mục step cha/con khác trong cùng cây All.
+- **FR-146**: Nếu một thư mục step không có tài liệu "Mapped" nào, hệ thống MUST vẫn tạo thư mục con
+  của step đó trong cây All, ở trạng thái rỗng (không có file bên trong) — theo đúng quy tắc đã áp dụng
+  cho thư mục template (FR-073).
+- **FR-147**: Nếu không tìm được template mặc định nào khớp điều kiện IsDefault/IsHide/IsDeleted (FR-131),
+  hoặc sau khi áp dụng FR-143 không còn step nào của template mặc định tồn tại ở Sales Order này (FR-134),
+  hệ thống MUST vẫn tạo thư mục All trong file zip nhưng ở trạng thái rỗng (không có thư mục step con nào
+  bên trong) — không bỏ qua/loại bỏ hẳn thư mục All khỏi file zip, và không báo lỗi toàn bộ thao tác
+  Download.
+- **FR-148**: Nếu từ 2 tài liệu "Mapped" trở lên trong cùng một thư mục step có cùng tên file gốc, hệ
+  thống MUST tự động phân biệt tên file khi đóng gói (cùng cơ chế hậu tố số thứ tự đã áp dụng cho thư
+  mục template, FR-075) — áp dụng độc lập trong phạm vi từng thư mục step, không ảnh hưởng tên file ở
+  thư mục step khác hay thư mục template.
+- **FR-149**: Việc bổ sung thư mục All (FR-142 đến FR-148) MUST áp dụng đồng thời cho cả nút Download ở
+  màn hình View (FR-069) và nút Download ở mỗi dòng Overview (FR-087) — thư mục All luôn được đóng gói
+  cùng lúc với các thư mục template hiện có trong cùng 1 lượt Download, không phụ thuộc chip nào (All
+  hay một template cụ thể) đang được chọn ở toolbar Template Checklist của màn hình View tại thời điểm
+  nhấn Download.
+- **FR-150**: Quy tắc "không có tài liệu Mapped nào ở mọi template thì hiển thị thông báo và KHÔNG tải
+  file zip" (FR-074/FR-089) KHÔNG đổi bởi việc bổ sung thư mục All — kể cả khi cây All (theo template
+  mặc định) có step hợp lệ nhưng không step nào có tài liệu Mapped, hệ thống vẫn áp dụng đúng FR-074/
+  FR-089, không tải xuống file zip chỉ có thư mục All rỗng.
+- **FR-151**: Việc bổ sung thư mục All KHÔNG MUST ghi/sửa/xóa bất kỳ bản ghi tài liệu/tham chiếu/purchase
+  attachment/template nào — giữ đúng nguyên tắc chỉ đọc hiện có của thao tác Download (FR-076/FR-092).
 
 ### Key Entities *(include if feature involves data)*
 
@@ -1660,10 +2221,24 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   (Purchase Attachment, Template/chi tiết template, tài liệu thật qua `eutr_references`) thành cấu trúc
   thư mục (mỗi template 1 thư mục con, chỉ chứa tài liệu "Mapped") và tải xuống 1 file zip — dùng đúng
   quy tắc/nguồn dữ liệu đã áp dụng cho nút Download của View (Update 10). Không tạo/sửa/xóa bản ghi nào.
+  **Cập nhật từ Update 21**: bên cạnh các thư mục theo tên template, file zip nay có thêm đúng 1 thư mục
+  **All**, chứa cây thư mục lồng nhau theo tên step (dựng từ template mặc định toàn hệ thống, chỉ giữ
+  step tồn tại ở Sales Order này — cùng logic cây All của màn hình View, FR-130 đến FR-133), mỗi thư
+  mục step chỉ chứa tài liệu "Mapped" hợp nhất qua mọi template cho đúng step đó (FR-142 đến FR-151).
+  Vẫn không tạo/sửa/xóa bản ghi nào.
 - **Purchase Order** (dữ liệu tham chiếu từ D365, reference type = 16, chỉ đọc): PO thuộc về một
   Sales Order xác định qua trường `InterCompanyOriginalSalesId` = Sales ID; mỗi PO có sẵn (các)
   thông tin định danh và một template gắn kèm từ D365. Dữ liệu này KHÔNG được tạo/sửa/xóa từ hệ
   thống này, chỉ được hiển thị và dùng làm nguồn để người dùng chọn lưu vào `eutr_purchase_attachments`.
+- **Purchase Order Line** (dữ liệu tham chiếu từ D365, reference type = 20, chỉ đọc — mới từ
+  Update 17): mỗi bản ghi gắn với một Sales Order (`InterCompanyOriginalSalesId`) và một PO
+  (`RSVNRefPurchId`), mang theo `ProductVariant` (Variant) và `ItemId` (Material) của dòng hàng đó;
+  một PO có thể có nhiều bản ghi loại này (nhiều dòng hàng). Dùng để dựng động hai cột **Variants**/
+  **Materials** ở bảng PO Step 1 của Map File, và từ Update 18, dùng đúng nguồn/cách gộp này cho hai
+  cột Variants/Materials ở bảng Selected Purchase Orders của màn hình View
+  (`data-marker="selected-po-table"`) — mỗi cột gộp các giá trị duy nhất của toàn bộ bản ghi khớp đúng
+  PO đó thành một danh sách hiển thị trong 1 ô. Dữ liệu này KHÔNG được tạo/sửa/xóa từ hệ thống này, chỉ
+  đọc và tổng hợp để hiển thị.
 - **Purchase Attachment** (bảng `eutr_purchase_attachments`) — **cập nhật từ Update 2**: ngoài vai
   trò nguồn đọc cho cột Template ở Overview (Update 1), bảng này nay còn là nơi Map File **ghi**
   lựa chọn PO của người dùng ở Step 1 (`SalesId`, `PurchId`, `TemplateCode`); Save PO Mapping thay
@@ -1715,7 +2290,20 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   hình này nay còn hiển thị thêm khu vực AVAILABLE FILES (đọc thêm, không ghi) liệt kê các `Document` đã
   "Mapped" cho template/step đang xem — mặc định theo template đang chọn ở toolbar, thu hẹp theo step
   khi người dùng click vào cây; nút View trên mỗi dòng chỉ đọc thêm nội dung file (giống Update 9 của
-  Map File), không tạo/sửa/xóa bản ghi nào.
+  Map File), không tạo/sửa/xóa bản ghi nào. **Cập nhật từ Update 19**: khi người dùng chọn chip **All**
+  ở toolbar cây template, màn hình này đọc thêm (không ghi) một bản ghi `eutr_templates` khớp
+  `IsDefault = 1`/`IsHide = 0`/`IsDeleted = 0` (template mặc định toàn hệ thống, độc lập với Sales Order
+  đang xem) để dựng cây All — chỉ giữ lại step của template mặc định có `StepId` tồn tại ở ít nhất một
+  template đã lưu của Sales Order này; khu vực AVAILABLE FILES khi All active hiển thị hợp toàn bộ tài
+  liệu "Mapped" của mọi template đã lưu, không giới hạn theo 1 template. Không tạo/sửa/xóa bản ghi nào ở
+  `eutr_templates`, `eutr_template_details`, hay bất kỳ bảng liên quan nào khác.
+- **Template mặc định** (bảng `eutr_templates`, tra cứu theo `IsDefault = 1`/`IsHide = 0`/
+  `IsDeleted = 0` — mới từ Update 19): hệ thống chỉ cho phép tối đa 1 template thoả cả 3 điều kiện này
+  tại một thời điểm (theo đúng cơ chế "xoá default cũ trước khi gán default mới" đã có ở
+  003-eutr-templates), nên truy vấn này trả về 0 hoặc 1 bản ghi. Dùng làm nguồn cây gốc cho chế độ All ở
+  Toolbar Template Tree của màn hình View — hoàn toàn độc lập với (các) `TemplateCode` đã lưu riêng cho
+  Sales Order đang xem (template mặc định có thể không phải là một trong số đó). Chỉ đọc, không tạo/
+  sửa/xóa bản ghi nào từ màn hình View.
 
 ## Success Criteria *(mandatory)*
 
@@ -1784,7 +2372,8 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   liệu" chỉ đúng cho template thực sự khớp PO.
 - **SC-023**: 100% lượt mở màn hình View cho Sales Order có từ 1 template đã lưu trở lên hiển thị đúng
   toolbar với chip thật lấy từ `templatesData` (không còn nhãn tĩnh demo) và Template Checklist mặc
-  định hiển thị đúng cây của template đầu tiên trong danh sách.
+  định hiển thị đúng chế độ **All** (Update 20) — không còn mặc định hiển thị cây của template đầu
+  tiên.
 - **SC-024**: 100% lượt click chọn một template khác ở toolbar của màn hình View chuyển đúng ngay
   sang hiển thị cây của template đó, không còn hiển thị cây của template trước hoặc của bất kỳ
   template khác.
@@ -1877,6 +2466,63 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   ID đã có Template (giống trạng thái mở màn hình lần đầu), kèm quay về trang đầu.
 - **SC-057**: 100% lượt tính tổng số trang/tổng số dòng ở trạng thái ô tìm kiếm trống khớp đúng với số
   lượng Sales ID đã có Template — không tính lẫn Sales ID chưa có Template vào tổng số này.
+- **SC-058**: 100% dòng PO ở Step 1 có ít nhất 1 bản ghi reference type = 20 khớp điều kiện
+  (`InterCompanyOriginalSalesId`/`RSVNRefPurchId`) hiển thị đúng và đầy đủ cột **Materials** — gồm mọi
+  giá trị `ItemId` duy nhất của các bản ghi đó, không thiếu, không lặp.
+- **SC-059**: 100% dòng PO ở Step 1 có ít nhất 1 bản ghi reference type = 20 khớp điều kiện hiển thị
+  đúng và đầy đủ cột **Variants** — gồm mọi giá trị `ProductVariant` duy nhất của các bản ghi đó,
+  không thiếu, không lặp.
+- **SC-060**: 100% dòng PO không có bản ghi reference type = 20 nào khớp điều kiện hiển thị trạng thái
+  trống rõ ràng ở cả cột Variants và Materials — không có dòng nào hiển thị lỗi hoặc dữ liệu sai lệch.
+- **SC-061**: 0% lượt mở Step 1 với danh sách PO gồm nhiều dòng phát sinh nhiều hơn 1 lượt gọi tới
+  nguồn tham chiếu type = 20 cho cùng một Sales ID (chỉ 1 lượt gọi theo Sales ID, nhóm kết quả theo PO
+  ở phía giao diện).
+- **SC-062**: 100% dòng PO ở bảng Selected Purchase Orders của màn hình View có ít nhất 1 bản ghi
+  reference type = 20 khớp điều kiện (`InterCompanyOriginalSalesId`/`RSVNRefPurchId`) hiển thị đúng và
+  đầy đủ cột **Variants**/**Materials** — không còn hiển thị literal `"Variants"`/`"Materials"` cho bất
+  kỳ dòng nào.
+- **SC-063**: 100% dòng PO ở bảng Selected Purchase Orders của màn hình View không có bản ghi reference
+  type = 20 nào khớp điều kiện hiển thị trạng thái trống rõ ràng ("—") ở cả cột Variants và Materials —
+  không có dòng nào hiển thị lỗi, literal cũ, hoặc dữ liệu sai lệch.
+- **SC-064**: 0% lượt mở màn hình View với danh sách PO gồm nhiều dòng phát sinh nhiều hơn 1 lượt gọi
+  tới nguồn tham chiếu type = 20 cho cùng một Sales ID (chỉ 1 lượt gọi theo Sales ID, nhóm kết quả theo
+  PO ở phía giao diện).
+- **SC-065**: 100% giá trị Variants/Materials hiển thị cho cùng một PO khớp giữa màn hình Map File
+  (Step 1) và màn hình View tại cùng một thời điểm dữ liệu — vì cả hai màn hình dùng chung đúng một
+  nguồn dữ liệu và cách gộp giá trị.
+- **SC-066**: 100% lượt click vào chip **All** khi hệ thống có sẵn đúng 1 template mặc định
+  (`IsDefault = 1`/`IsHide = 0`/`IsDeleted = 0`) hiển thị đúng cây gồm hợp các step của template mặc
+  định mà step đó tồn tại ở ít nhất một template đã lưu của Sales Order đang xem — 0% step không tồn
+  tại ở Sales Order này còn xuất hiện trong cây All.
+- **SC-067**: 100% lượt click vào chip All khi hệ thống chưa cấu hình template mặc định nào (không có
+  bản ghi khớp điều kiện) hiển thị đúng trạng thái "chưa có template mặc định" rõ ràng — 0% lượt rơi về
+  hiển thị lại cây của template đầu tiên như hành vi trước Update 19.
+- **SC-068**: 100% tài liệu "Mapped" của mọi template đã lưu của Sales Order đều xuất hiện trong khu vực
+  AVAILABLE FILES khi chip All đang active — 0% tài liệu bị bỏ sót chỉ vì thuộc một template khác với
+  template đang được chọn trước khi chuyển sang All.
+- **SC-069**: 0% step con hợp lệ (có `StepId` tồn tại ở Sales Order) bị biến mất khỏi cây All chỉ vì
+  node cha của nó trong template mặc định không tồn tại ở Sales Order này.
+- **SC-070**: 100% lượt mở màn hình View lần đầu cho Sales Order có từ 1 template đã lưu trở lên hiển
+  thị đúng ngay chế độ All (chip All ở trạng thái được chọn, Template Checklist/AVAILABLE FILES hiển
+  thị đúng nội dung All) mà không cần người dùng phải click — 0% lượt mở lần đầu còn hiển thị cây của
+  template đầu tiên như hành vi trước Update 20.
+- **SC-071**: 100% lượt nhấn Download (ở View hoặc ở một dòng Overview) trên Sales Order có ít nhất 1
+  tài liệu "Mapped" và có template mặc định hợp lệ tải xuống file zip có thêm đúng 1 thư mục **All**
+  bên cạnh các thư mục template hiện có — 0% lượt thiếu thư mục All hoặc thư mục All lẫn vào cấp khác.
+- **SC-072**: 100% thư mục step trong thư mục All có cấu trúc cha/con khớp đúng với cây All đang hiển
+  thị ở Template Checklist của màn hình View cho cùng Sales Order tại cùng thời điểm dữ liệu — 0% sai
+  lệch về tên step hay quan hệ cha/con.
+- **SC-073**: 100% file nằm trong một thư mục step của thư mục All là tài liệu có Map status "Mapped"
+  đúng cho `StepId` của step đó (hợp nhất qua mọi template đã lưu) — 0% tài liệu "No map" hoặc tài liệu
+  của step khác lọt vào nhầm thư mục step.
+- **SC-074**: 100% step trong cây All không có tài liệu "Mapped" nào vẫn có thư mục step tương ứng
+  được tạo trong file zip, ở trạng thái rỗng — 0% thư mục step bị bỏ sót.
+- **SC-075**: 100% lượt Download khi hệ thống chưa cấu hình template mặc định (hoặc cây All rỗng sau
+  khi lọc theo Sales Order) vẫn tải được file zip đầy đủ các thư mục template như trước, riêng thư mục
+  All ở trạng thái rỗng — 0% lượt Download thất bại toàn bộ chỉ vì thiếu template mặc định.
+- **SC-076**: 0% lượt bổ sung thư mục All làm thay đổi bất kỳ bản ghi nào ở `eutr_documents`,
+  `eutr_references`, `eutr_purchase_attachments`, hay `eutr_templates` — kiểm chứng bằng việc xác nhận
+  dữ liệu các bảng này không đổi trước và sau khi dùng nút Download.
 
 ## Assumptions
 
@@ -2078,3 +2724,69 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   quay lại) — không phải giữ nguyên một bản chụp/cache tĩnh của chính danh sách đó, để không mâu thuẫn
   với nguyên tắc luôn hiển thị dữ liệu thật mới nhất đã áp dụng cho Template/Progress/Download ở các
   Update trước.
+- (Update 17) Vị trí cụ thể của hai cột mới (ngay sau cột Qty) là một mặc định hợp lý theo đúng thứ tự
+  các cột hiện có ở Step 1 (PO, Name, Order account, Qty) — người yêu cầu tính năng không chỉ định thứ
+  tự chính xác giữa Variants và Materials với các cột đã có; thứ tự hiển thị chi tiết (cột nào trước,
+  cột nào sau trong 2 cột mới) là quyết định thiết kế giao diện ở giai đoạn plan.
+- (Update 17) Định dạng gộp nhiều giá trị trong 1 ô (nối bằng dấu phẩy + khoảng trắng, ví dụ "M01,
+  M02") dựa trực tiếp trên ví dụ người yêu cầu tính năng đưa ra — cách trình bày cụ thể hơn (chip/tag
+  riêng từng giá trị so với 1 chuỗi văn bản duy nhất) là quyết định thiết kế giao diện ở giai đoạn
+  plan, miễn giữ đúng yêu cầu nghiệp vụ "đủ giá trị duy nhất, không lặp, đúng thứ tự xuất hiện".
+- (Update 17) Cơ chế kỹ thuật cụ thể để đăng ký/định nghĩa reference type = 20 trong nguồn tham chiếu
+  dùng chung (mở rộng cơ chế filter/entity mapping đã có, tương tự cách reference type = 11/16 đã được
+  đăng ký ở các Update trước) là quyết định kỹ thuật ở giai đoạn plan, không thuộc phạm vi đặc tả
+  nghiệp vụ ở đây — yêu cầu nghiệp vụ duy nhất là kết quả cuối cùng đúng theo FR-113 đến FR-120.
+- (Update 17) `RSVNRefPurchId` trên bản ghi type = 20 được hiểu là cùng giá trị định danh PO
+  (`Code`/`RSVNRefPurchId`) đã dùng để hiển thị cột **PO** ở Step 1 (nguồn reference type = 16, FR-017)
+  — dùng trực tiếp giá trị này làm khóa nhóm/so khớp giữa hai nguồn tham chiếu type = 16 và type = 20,
+  không cần một bước ánh xạ/tra cứu trung gian nào khác.
+- (Update 19) "Step" của một template được hiểu là một node/dòng trong `eutr_template_details`, định
+  danh duy nhất theo `StepId` (khoá ngoại tới `eutr_steps`) — việc so sánh "step của template mặc định
+  có tồn tại ở template của SO hay không" ở FR-132 được thực hiện theo `StepId`, không theo tên hiển thị
+  (`stepName`), để nhất quán với quy tắc định danh step theo `StepId` đã áp dụng cho các quy tắc PO/
+  Template khác trong đặc tả này (FR-055/FR-061). Vì mỗi `StepId` chỉ ánh xạ tới đúng 1 tên step trong
+  `eutr_steps`, so theo `StepId` cho kết quả tương đương so theo tên trong đại đa số trường hợp thực tế.
+- (Update 19) Khi một node cha của template mặc định bị loại khỏi cây All nhưng có step con vẫn tồn tại
+  ở Sales Order (FR-133), việc "gắn step con đó lên node cha gần nhất còn tồn tại, hoặc lên cấp gốc"
+  là lựa chọn mặc định hợp lý để không làm mất step hợp lệ khỏi tầm nhìn của người dùng — người yêu cầu
+  tính năng chỉ nêu rõ quy tắc loại bỏ ở cấp step, không nêu rõ cách xử lý phần cây còn lại; cách trình
+  bày/thứ tự cụ thể của các step được "nâng cấp" này trong cây (ví dụ có giữ nguyên `DisplayOrder` gốc
+  hay không) là quyết định thiết kế/kỹ thuật ở giai đoạn plan.
+- (Update 19) Nếu có nhiều hơn 1 bản ghi `eutr_templates` cùng khớp `IsDefault = 1`/`IsHide = 0`/
+  `IsDeleted = 0` tại một thời điểm (trái với ràng buộc "tối đa 1 default toàn cục" mà nghiệp vụ
+  003-eutr-templates đang duy trì), đây được coi là tình huống dữ liệu bất thường ngoài luồng nghiệp vụ
+  bình thường; hệ thống chỉ cần chọn nhất quán đúng 1 bản ghi (không cần gộp/hợp nhiều template mặc
+  định) — quy tắc chọn bản ghi nào cụ thể trong trường hợp bất thường này là quyết định kỹ thuật ở giai
+  đoạn plan, không phải một luồng nghiệp vụ cần thiết kế UX riêng.
+- (Đã thay thế ở Update 20) Update 19 giữ nguyên All chỉ là một lựa chọn hiển thị như các chip
+  template khác, không đổi lựa chọn mặc định khi mở màn hình lần đầu (vẫn là template đầu tiên, FR-060
+  cũ). Từ Update 20, người yêu cầu tính năng xác nhận All MUST là lựa chọn mặc định khi mở màn hình lần
+  đầu — giả định này không còn áp dụng (xem FR-060/FR-138/FR-141 đã cập nhật).
+- (Update 20) Khi Sales Order chưa có template nào đã lưu (`templatesData` rỗng), không có "All" hay
+  template nào để mặc định chọn — hành vi trống hiện có (FR-040, "chưa có cây template") được giữ
+  nguyên, không suy diễn All cho trường hợp này.
+- (Update 20) Việc tự động tải template mặc định khi mở màn hình (FR-141) áp dụng đúng 1 lần khi
+  `templatesData` chuyển từ rỗng sang có dữ liệu (mở màn hình lần đầu hoặc lựa chọn cũ không còn hợp
+  lệ) — không lặp lại mỗi lần re-render; người dùng vẫn có thể chủ động tải lại bằng cách click lại vào
+  chip All (theo đúng FR-130 hiện có).
+- (Update 21) Theo xác nhận của người yêu cầu tính năng ở phần làm rõ đầu Update 21, khi hệ thống chưa
+  cấu hình template mặc định (hoặc cây All rỗng sau khi lọc theo Sales Order), thư mục All vẫn được tạo
+  trong file zip nhưng ở trạng thái rỗng — không bỏ qua/loại bỏ hẳn thư mục All khỏi zip. Tương tự,
+  thư mục step trong cây All không có tài liệu "Mapped" nào vẫn được tạo ở trạng thái rỗng, nhất quán
+  với quy tắc đã áp dụng cho thư mục template (FR-073) thay vì lược bớt cho gọn cấu trúc zip.
+- (Update 21) Việc dựng cây All cho mục đích Download dùng lại nguyên vẹn cùng 1 cơ chế so khớp
+  `StepId`/tải template mặc định đã đặc tả cho màn hình View (FR-130 đến FR-133) — không định nghĩa một
+  công thức hay lượt tải riêng cho Download; nếu cơ chế đó thay đổi ở màn hình View trong một cập nhật
+  sau, thư mục All của file zip cũng cần cập nhật theo để tiếp tục khớp nhau.
+- (Update 21) Thư mục All là một góc nhìn bổ sung, độc lập với các thư mục theo tên template đã có
+  (FR-071/FR-087) — cùng một tài liệu "Mapped" có thể xuất hiện cả trong thư mục template của nó lẫn
+  trong đúng thư mục step tương ứng của thư mục All; đây không phải trùng lặp lỗi mà là kỳ vọng của
+  người yêu cầu tính năng (xem ví dụ cấu trúc ở phần làm rõ Update 21).
+- (Update 21) Việc bổ sung thư mục All áp dụng cho file zip bất kể chip nào (All hay một template cụ
+  thể) đang được chọn ở toolbar Template Checklist của màn hình View tại thời điểm nhấn Download — nút
+  Download luôn đóng gói đầy đủ mọi thư mục (template + All) trong cùng 1 lượt tải, giống nguyên tắc
+  hiện có là Download không phụ thuộc lựa chọn hiển thị hiện tại trên toolbar (FR-139).
+- (Update 21) Cơ chế kỹ thuật cụ thể để dựng cây thư mục lồng nhau bên trong file nén (ví dụ đường dẫn
+  entry dạng `All/Forest/Plantation forest location map/File A`) là quyết định kỹ thuật ở giai đoạn
+  plan, không thuộc phạm vi đặc tả nghiệp vụ ở đây — yêu cầu duy nhất là kết quả giải nén thể hiện đúng
+  quan hệ cha/con của cây step đã mô tả.

@@ -16,6 +16,10 @@
 - Q: Khi file Excel import lẫn dòng hợp lệ và dòng lỗi, hệ thống nên xử lý thế nào? → A: Import một phần — tạo mọi dòng hợp lệ, bỏ qua dòng lỗi và báo cáo lý do.
 - Q: Trong file Excel import, dòng đầu tiên là tiêu đề hay đã là dữ liệu? → A: Dòng 1 là tiêu đề (Step name, Prefix) và được bỏ qua; dữ liệu bắt đầu từ dòng 2.
 
+### Session 2026-08-11
+
+- Q: Quy tắc chống trùng lặp hiện tại kiểm tra theo cặp (bước, Prefix), nghĩa là cùng một Prefix có thể được dùng lại cho các bước khác nhau. Yêu cầu mới là không cho phép trùng Prefix. → A: Prefix phải là duy nhất trên toàn hệ thống, không phụ thuộc vào bước — Add, Edit và Import đều bị chặn nếu Prefix đã tồn tại ở bất kỳ bản ghi nào khác, bất kể bước liên kết.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Xem và tìm kiếm danh sách master document (Priority: P1)
@@ -64,8 +68,9 @@ bản ghi mới xuất hiện trong bảng với đúng tên bước và prefix.
    thị trong bảng kèm tên bước, prefix, người tạo và ngày tạo.
 3. **Given** biểu mẫu thêm mới đang mở, **When** không chọn bước (hoặc để trống Prefix) rồi lưu,
    **Then** hệ thống báo lỗi yêu cầu nhập đủ và không tạo bản ghi.
-4. **Given** đã tồn tại một bản ghi với cùng bước và cùng Prefix, **When** người dùng cố tạo bản
-   ghi mới trùng cả bước và Prefix, **Then** hệ thống cảnh báo trùng và không tạo bản ghi.
+4. **Given** đã tồn tại một bản ghi với cùng Prefix (bất kể bước liên kết là gì), **When** người
+   dùng cố tạo bản ghi mới với Prefix trùng đó, **Then** hệ thống cảnh báo trùng và không tạo bản
+   ghi.
 
 ---
 
@@ -85,8 +90,8 @@ hiển thị.
    bảng hiển thị giá trị đã cập nhật.
 2. **Given** biểu mẫu sửa đang mở, **When** để trống bước hoặc prefix rồi lưu, **Then** hệ thống
    báo lỗi và không lưu.
-3. **Given** đã tồn tại một bản ghi KHÁC có cùng bước và cùng Prefix, **When** người dùng cập nhật
-   một bản ghi thành trùng cả bước và Prefix với bản ghi khác đó, **Then** hệ thống cảnh báo trùng
+3. **Given** đã tồn tại một bản ghi KHÁC có cùng Prefix (bất kể bước liên kết), **When** người dùng
+   cập nhật một bản ghi thành có Prefix trùng với bản ghi khác đó, **Then** hệ thống cảnh báo trùng
    và không lưu.
 
 ---
@@ -115,8 +120,8 @@ cũng hỗ trợ xóa nhiều bản ghi cùng lúc.
 
 Người dùng nhấn nút **Import** trên thanh công cụ và tải lên một file Excel gồm **2 cột: step name
 và prefix**. Hệ thống đọc từng dòng, ánh xạ *step name* sang bước tương ứng trong danh mục bước,
-và tạo các master document mới. Với các dòng lỗi (không tìm thấy bước, thiếu prefix, hoặc trùng
-bước + prefix), hệ thống cảnh báo và bỏ qua dòng đó.
+và tạo các master document mới. Với các dòng lỗi (không tìm thấy bước, thiếu prefix, hoặc Prefix bị
+trùng với bản ghi đã có hoặc với dòng khác trong cùng file), hệ thống cảnh báo và bỏ qua dòng đó.
 
 **Why this priority**: Import giúp nhập số lượng lớn nhanh chóng thay vì thêm từng dòng, nhưng
 phụ thuộc vào việc tạo/xem đã hoạt động.
@@ -130,8 +135,9 @@ bản ghi tương ứng xuất hiện trong bảng với đúng bước và pref
    Import, **Then** hệ thống tạo bản ghi cho mọi dòng và hiển thị trong bảng với đúng tên bước.
 2. **Given** một dòng trong file có step name không khớp bước nào trong danh mục, **When** Import,
    **Then** hệ thống cảnh báo dòng đó và không tạo bản ghi cho nó.
-3. **Given** một dòng trong file trùng bước + prefix với bản ghi đã có (hoặc trùng với dòng khác
-   trong cùng file), **When** Import, **Then** hệ thống cảnh báo trùng và không tạo bản ghi trùng.
+3. **Given** một dòng trong file có Prefix trùng với bản ghi đã có (hoặc trùng với dòng khác trong
+   cùng file), bất kể bước liên kết, **When** Import, **Then** hệ thống cảnh báo trùng và không tạo
+   bản ghi trùng.
 4. **Given** file sai định dạng hoặc không đúng 2 cột yêu cầu, **When** Import, **Then** hệ thống
    báo lỗi định dạng và không import.
 
@@ -194,8 +200,9 @@ các dòng dữ liệu khớp danh sách; khi danh sách rỗng, file chỉ có 
   tạo tự động.
 - **FR-006**: Hệ thống MUST yêu cầu chọn một bước và nhập Prefix (không được để trống) khi tạo
   hoặc khi sửa.
-- **FR-007**: Hệ thống MUST cảnh báo và ngăn lưu khi thao tác tạo hoặc sửa dẫn tới trùng lặp cặp
-  (bước, Prefix) với một bản ghi đã tồn tại.
+- **FR-007**: Hệ thống MUST cảnh báo và ngăn lưu khi thao tác tạo hoặc sửa dẫn tới trùng lặp Prefix
+  với một bản ghi đã tồn tại, không phân biệt bước liên kết (Prefix là duy nhất trên toàn hệ
+  thống, không theo cặp bước + Prefix).
 - **FR-008**: Người dùng MUST có thể sửa bước và/hoặc Prefix của một master document hiện có.
 - **FR-009**: Người dùng MUST có thể xóa một master document, có bước xác nhận trước khi xóa.
 - **FR-010**: Hệ thống MUST hỗ trợ xóa nhiều master document cùng lúc.
@@ -204,9 +211,9 @@ các dòng dữ liệu khớp danh sách; khi danh sách rỗng, file chỉ có 
   dòng thứ hai.
 - **FR-012**: Khi import, hệ thống MUST ánh xạ mỗi step name trong file sang bước tương ứng trong
   danh mục bước; dòng không khớp bước nào MUST bị bỏ qua kèm cảnh báo.
-- **FR-013**: Khi import, hệ thống MUST áp dụng cùng quy tắc chống trùng cặp (bước, Prefix) như
-  khi tạo thủ công (so với dữ liệu hiện có và với các dòng khác trong cùng file); dòng trùng MUST
-  bị bỏ qua kèm cảnh báo.
+- **FR-013**: Khi import, hệ thống MUST áp dụng cùng quy tắc chống trùng Prefix (không phân biệt
+  bước) như khi tạo thủ công (so với dữ liệu hiện có và với các dòng khác trong cùng file); dòng
+  trùng MUST bị bỏ qua kèm cảnh báo.
 - **FR-014**: Khi import, hệ thống MUST import các dòng hợp lệ và báo cáo cho người dùng các dòng
   bị bỏ qua kèm lý do (không tìm thấy bước, thiếu prefix, trùng lặp, hoặc sai định dạng).
 - **FR-015**: Hệ thống MUST hiển thị màn hình trong mục điều hướng "EUTR masters" với breadcrumb
@@ -231,8 +238,8 @@ các dòng dữ liệu khớp danh sách; khi danh sách rỗng, file chỉ có 
 
 - **EUTR Master Document (Master document EUTR)**: Đại diện cho cấu hình gắn một bước với một
   Prefix. Thuộc tính: định danh, tham chiếu tới bước (lưu bằng định danh bước, hiển thị bằng tên
-  bước), Prefix, người tạo, ngày tạo, người cập nhật, ngày cập nhật. Ràng buộc: cặp (bước, Prefix)
-  là duy nhất.
+  bước), Prefix, người tạo, ngày tạo, người cập nhật, ngày cập nhật. Ràng buộc: Prefix là duy nhất
+  trên toàn hệ thống (không phụ thuộc vào bước liên kết).
 - **EUTR Step (Bước EUTR)**: Danh mục bước dùng để nạp hộp chọn và để hiển thị tên bước. Thuộc
   tính liên quan: định danh, tên bước. Feature này CHỈ đọc danh mục bước, không tạo/sửa bước.
 
@@ -244,8 +251,8 @@ các dòng dữ liệu khớp danh sách; khi danh sách rỗng, file chỉ có 
   thống mà không cần hướng dẫn.
 - **SC-002**: Người dùng tạo một master document mới hoàn chỉnh (chọn bước + nhập prefix) trong
   dưới 30 giây.
-- **SC-003**: 100% thao tác tạo/sửa dẫn tới trùng cặp (bước, Prefix) bị chặn và hiển thị cảnh báo
-  rõ ràng.
+- **SC-003**: 100% thao tác tạo/sửa dẫn tới trùng Prefix (không phân biệt bước liên kết) bị chặn và
+  hiển thị cảnh báo rõ ràng.
 - **SC-004**: Người dùng lọc đến đúng bản ghi cần tìm bằng từ khóa tên bước trong dưới 5 giây với
   danh sách tối thiểu 100 bản ghi.
 - **SC-005**: Mọi thao tác xóa đều yêu cầu xác nhận, không có trường hợp xóa nhầm do một cú nhấp.
@@ -266,8 +273,8 @@ các dòng dữ liệu khớp danh sách; khi danh sách rỗng, file chỉ có 
   UpdatedBy, UpdatedDate) theo `docs/design/eutr/eutr_db.sql`; StepId tham chiếu `eutr_steps(Id)`.
 - Hộp chọn Step name được nạp từ danh mục bước hiện có (`eutr_steps`); feature này không tạo/sửa
   bước.
-- "Cảnh báo trùng" được hiểu là CHẶN lưu (từ chối) khi cặp (StepId, Prefix) đã tồn tại, kèm thông
-  báo cho người dùng.
+- "Cảnh báo trùng" được hiểu là CHẶN lưu (từ chối) khi Prefix đã tồn tại ở bất kỳ bản ghi nào khác,
+  không phân biệt StepId, kèm thông báo cho người dùng.
 - Import Excel yêu cầu đúng 2 cột theo thứ tự step name, prefix, với dòng đầu là tiêu đề (bị bỏ
   qua) và dữ liệu bắt đầu từ dòng thứ hai; ánh xạ step name theo tên bước (khớp chính xác, không
   phân biệt hoa thường). Dòng lỗi bị bỏ qua và báo cáo; dòng hợp lệ vẫn được import (import một

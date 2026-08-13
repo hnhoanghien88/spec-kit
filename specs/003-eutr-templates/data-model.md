@@ -179,13 +179,25 @@ approach).
   the backend matches `StepName` (trimmed, case-insensitive) against `eutr_steps`; on no match it
   inserts a new `eutr_steps` row and uses the new Id. Duplicate new names within one Save resolve
   to a single created row.
-- **Bulk add in the UI (Update 12)**: `TemplateBuilderPage.jsx`'s Add Root Group/Add Child Step
-  dialogs can append several detail rows to the client-side tree in one user action (ticking
-  multiple master steps, optionally plus one free-solo new name) instead of one row per dialog
-  open. This is purely a client-side authoring convenience — no schema or DTO change. The one rule
-  this adds: a master step already present as a **direct child of the same target ParentId** is
-  excluded from the dialog's selectable list, to avoid two `eutr_template_details` rows with the
-  same `(ParentId, StepId)` pair; a step remains selectable again under a different ParentId.
+- **Bulk add in the UI (Update 12; scope widened by Update 21)**: `TemplateBuilderPage.jsx`'s Add
+  Root Group/Add Child Step dialogs can append several detail rows to the client-side tree in one
+  user action (ticking multiple master steps, optionally plus one free-solo new name) instead of one
+  row per dialog open. This is purely a client-side authoring convenience — no schema or DTO change.
+  ~~The one rule this adds: a master step already present as a direct child of the same target
+  ParentId is excluded from the dialog's selectable list ... a step remains selectable again under a
+  different ParentId.~~ **(Update 21)** Widened to the whole tree: a master step already present
+  **anywhere** in the current template's client-side tree (any ParentId, not just the target one) is
+  excluded from the dialog's selectable list — a `StepId` can now appear at most once per template
+  when authored through these two dialogs. This is still a **UI-layer** rule only, not a database
+  `UNIQUE` constraint on `eutr_template_details.StepId`: **Edit step** (the existing per-node inline
+  edit, unrelated to these two dialogs) is explicitly unchanged and can still retarget a node to a
+  `StepId` already used elsewhere in the same tree, so a template CAN still end up with a repeated
+  `StepId` if a user deliberately does that via Edit step. Update 21 also adds a duplicate-name guard
+  to the same dialogs' free-solo "Add new step" entry: a typed name matching (trimmed,
+  case-insensitive) an existing `eutr_steps` name or a `StepName` already in the current tree is
+  rejected client-side with an inline error instead of silently resolving to that step's existing
+  `StepId` (Update 6's resolve-by-name behavior is otherwise unchanged everywhere else, e.g. Edit
+  step's own free-solo combobox).
 - **Clone (new, Update 15)**: the backend re-indexes the source template's DB-Id-based detail tree
   (as returned by `GetByIdWithDetailsAsync`) into the same 1-based sequential-position `ParentId`
   convention the frontend already sends on every normal Save, then reuses the existing

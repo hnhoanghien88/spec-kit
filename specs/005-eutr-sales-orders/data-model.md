@@ -956,3 +956,265 @@ the Edit/Upload controls (View stays read-only, FR-042/FR-100).
   entirely.
 - No per-row or per-page network calls — exactly one new call (the whitelist fetch), fired once per
   empty-search entry, reused across page/page-size changes within that same session.
+
+## Update 17 (2026-08-11): Variants/Materials columns on Map File's Step 1 PO table (1 registration fix, no new entity/DTO/migration)
+
+> Covers spec FR-113..FR-120. One backend fix — a single missing `ComplDynamicsService.EntityMappings`
+> dictionary entry for `refType = 20` — makes an already-fully-implemented D365 entity/response-mapping/
+> DTO path reachable for the first time; no new entity class, DTO field, controller action, or migration.
+> Frontend adds one new batched fetch to `MapFilePage.jsx`, grouped client-side by PO. See research.md
+> Decisions 63-65.
+
+### Entity: Purchase Order Line (reference data, `refType = 20`, read-only — newly reachable)
+
+Source: D365 entity `RSVNEutrSalesOrderPurchLines` (`compliance-sys-api/src/ComplianceSys.Domain/
+Dynamics/RSVNEutrSalesOrderPurchLines.cs`, `ModelType = 20`) — the class, its `FilterableFields`, the
+`MapDynamicsResponse` `case 20:`, and every `ComplDynReferenceResponseDto` field it assigns already exist
+in code today; only the `EntityMappings[20]` registration was missing (research.md Decision 63).
+
+| Field (frontend use) | Source property (D365 entity) | Response DTO property (`ComplDynReferenceResponseDto`) | Type |
+|---|---|---|---|
+| Material (`Materials` column) | `ItemId` | `Code` | string |
+| Variant (`Variants` column) | `ProductVariant` | `ProductVariant` | string |
+| PO link (filter/group key, not rendered) | `RSVNRefPurchId` | `RSVNRefPurchId` | string |
+| Sales Order link (filter key, not rendered) | `InterCompanyOriginalSalesId` | `InterCompanyOriginalSalesId` | string |
+
+Filtered per Sales Order via `[{ column: 'InterCompanyOriginalSalesId', operator: 'eq', value: salesId
+}]` only (not per-PO) — the same `BuildFilterString` generic "other column" branch `refType=16`'s own
+`InterCompanyOriginalSalesId` filter already relies on since Update 2 (research.md Decision 10). Grouping
+by PO (`RSVNRefPurchId`) happens client-side, not via a second server-side filter (research.md Decision
+64) — one Sales Order's Step 1 table needs every PO's lines in one call, not one call per PO.
+
+**Backend fix — the only code change**: `ComplDynamicsService.EntityMappings` (Application layer) gains
+one entry: `{ 20, ("RSVNEutrSalesOrderPurchLines", "InterCompanyOriginalSalesId", "ProductVariant") },`
+— `CodeColumn`/`NameColumn` chosen to match `MapSortColumn`'s already-existing assumption for this entity
+(unrelated to this feature's own two filter columns, which land in the generic "other column" bucket).
+Not touched: the entity class, `MapDynamicsResponse`'s `case 20:`, `ComplDynReferenceResponseDto`,
+`DynController.ReferenceData` — all four already compile and already behave correctly, gated only by this
+one dictionary lookup.
+
+### New client-side state: `MapFilePage.jsx`
+
+| State | Type | Set when | Cleared/refreshed when |
+|---|---|---|---|
+| `poLinesByPurchId` | `Map<string, { materials: string[], variants: string[] }>` | The new `refType=20` fetch resolves — grouped by each item's `rsvnRefPurchId`, appending deduped `code` (Material)/`productVariant` (Variant) values in first-seen order | Re-fetched whenever `salesId` changes (new `useEffect`, same dependency as the existing `refType=16` PO-list effect) |
+| `poLinesLoading` / `poLinesError` | `boolean` | Mirrors the existing `poListLoading` pattern for the `refType=16` effect | Same lifecycle as the fetch above |
+
+### Step 1 PO table — Variants/Materials cell resolution (FR-116/FR-118/FR-119)
+
+| `poLinesByPurchId.get(po.purchId)` | Cell content |
+|---|---|
+| Entry with ≥1 `materials`/`variants` value | `materials.join(', ')` / `variants.join(', ')` (e.g. "M01, M02") |
+| No entry for this `purchId` | "—" (clear empty state, not an error, not "undefined") |
+| Fetch failed (`poLinesError`) | Error/failed-to-load indicator on both cells, independent of the PO/Name/Order account/Qty columns which keep rendering from the unaffected `refType=16` data |
+
+### Non-goals confirmed (Update 17)
+
+- No new entity class, `MapDynamicsResponse` case, DTO field, or controller action — all four already
+  exist for `refType=20`; the only backend edit is the one missing `EntityMappings` dictionary entry.
+- No migration, no new policy — reuses whatever authorization the existing `/api/dynamics/reference`
+  endpoint already requires (`[Authorize]`, no per-`refType` policy).
+- No new frontend use case/repository/API client file — reuses `GetReferenceDataUseCase` →
+  `IDynamicsRepository` → `RestDynamicsRepository`, the same chain the existing `refType=16` call uses.
+- No per-PO network call — one batched call per Sales ID, grouped client-side by `RSVNRefPurchId`
+  (FR-117).
+- No change to Step 1's tick/checkbox/Save PO Mapping data or logic (FR-120).
+
+## Update 18 (2026-08-12): Variants/Materials columns on View's Selected Purchase Orders table (0 backend files, pure reuse of Update 17)
+
+> Covers spec FR-121..FR-128. Reuses the **Purchase Order Line** entity/`refType = 20` path above
+> unchanged (already reachable since Update 17 — no backend edit at all this time) and clones its
+> client-side fetch/grouping/rendering logic from `MapFilePage.jsx` into `ViewSalesOrderPage.jsx`,
+> replacing that screen's hardcoded literal `"Variants"`/`"Materials"` cell text. See research.md
+> Decision 66.
+
+### New client-side state: `ViewSalesOrderPage.jsx`
+
+Identical shape to `MapFilePage.jsx`'s own Update 17 state (above), scoped to this screen's already-
+loaded `salesId`/`poList`:
+
+| State | Type | Set when | Cleared/refreshed when |
+|---|---|---|---|
+| `poLinesByPurchId` | `Map<string, { materials: string[], variants: string[] }>` | The same `refType=20` fetch (filtered by `InterCompanyOriginalSalesId` only) resolves — grouped by `rsvnRefPurchId`, deduping `code` (Material)/`productVariant` (Variant) in first-seen order | Re-fetched whenever `salesId` changes (new `useEffect`, same dependency as this screen's own existing `refType=16` PO-list effect) |
+| `poLinesLoading` / `poLinesError` | `boolean` | Mirrors `MapFilePage.jsx`'s own `poLinesLoading`/`poLinesError` pattern | Same lifecycle as the fetch above |
+
+### Selected Purchase Orders table — Variants/Materials cell resolution (FR-124/FR-126/FR-127)
+
+Identical resolution table to Map File's Update 17 (above) — same inputs, same outputs, same "—"/error
+states — applied to `ViewSalesOrderPage.jsx`'s own `poLinesByPurchId` instead of `MapFilePage.jsx`'s.
+
+### Non-goals confirmed (Update 18)
+
+- No backend change of any kind — `EntityMappings[20]` is already registered by Update 17; this update
+  is a new frontend caller only.
+- No new entity class, DTO field, controller action, migration, or policy.
+- No new frontend use case/repository/API client file — reuses the exact same
+  `GetReferenceDataUseCase` → `IDynamicsRepository` → `RestDynamicsRepository` chain Update 17 already
+  wired for Map File.
+- No per-PO network call — one batched call per Sales ID, grouped client-side by `RSVNRefPurchId`
+  (FR-125), same rule as FR-117.
+- No change to View's read-only guarantee (FR-042), Edit/Map File, Download, Back, Template Checklist,
+  Validation Summary, or AVAILABLE FILES (FR-128).
+
+## Update 19 (2026-08-12): Real logic for the View toolbar's All chip — default-template lookup + tree filter/reparent (0 backend files)
+
+> Covers spec FR-129..FR-140. No new entity, no new DTO, no new endpoint — reuses
+> `GetPagingEutrTemplatesUseCase`/`GetEutrTemplatesUseCase` (Update 4) a second way (filtered by
+> `IsDefault` instead of `Code`), and adds one new pure client-side function plus new derived state to
+> `ViewSalesOrderPage.jsx`. See research.md Decisions 67-68.
+
+### New entity read: **Template mặc định** (`eutr_templates`, `IsDefault = 1`/`IsHide = 0`/`IsDeleted = 0`)
+
+Not a new table or column — `IsDefault`/`IsHide`/`IsDeleted` already exist on `eutr_templates` (used
+since `003-eutr-templates`). What's new here is *this screen* querying by `IsDefault` instead of `Code`:
+`GetPagedAsync`'s existing `FilterMap` already whitelists `IsDefault`, and its `WHERE` already forces
+`IsDeleted = 0 AND IsHide = 0` unconditionally — so `{ column: 'IsDefault', operator: 'eq', value: 1 }`
+against the exact same `get-all` endpoint returns 0 or 1 row (0 or 1 by construction, since
+`003-eutr-templates`'s `ClearGlobalDefaultAsync` enforces at most one global default at a time).
+
+### New client-side state: `ViewSalesOrderPage.jsx`
+
+| State | Type | Set when | Cleared/refreshed when |
+|---|---|---|---|
+| `defaultTemplate` | `{ templateCode, templateName, flatDetails } \| null` | User clicks the All chip — `getPagingEutrTemplatesUseCase.execute(1, 1, 'Code', 'asc', [{ column: 'IsDefault', operator: 'eq', value: 1 }])` resolves to 0 or 1 row; if 1, `getEutrTemplatesUseCase.execute(id)` hydrates its `flatDetails` (same `normalizeTemplateDetail` mapping every other template already uses) | Re-fetched fresh on every All click (no caching); `null` while loading or when no row is found |
+| `defaultTemplateLoading` / `defaultTemplateError` | `boolean` | Mirrors this screen's existing `templatesLoading`/error-state pattern, scoped to the default-template fetch only | Same lifecycle as the fetch above |
+
+### New derived value: All tree (filter-and-reparent)
+
+```
+soStepIds = new Set(templatesData.flatMap(t => t.flatDetails).map(d => d.stepId))
+allFlatDetails = filterFlatListByStepIds(defaultTemplate.flatDetails, soStepIds)   // new util, utils/treeUtils.js
+allTree = flatToTree(allFlatDetails)                                              // existing util, unchanged
+```
+
+`filterFlatListByStepIds` (new function) keeps only items whose `stepId ∈ soStepIds`; for a kept item
+whose `parentId` referenced a *removed* item, it rewrites `parentId` to that removed item's nearest
+surviving ancestor (or `'0'`) — so `flatToTree` (unchanged) still builds a valid tree with no orphaned
+`parentId` references (spec FR-132/FR-133). If `defaultTemplate` is `null` (FR-131) or `allFlatDetails`
+ends up empty (FR-134), the Template Checklist renders the corresponding distinct empty state instead of
+a tree.
+
+### New derived value: All "has document" lookup and AVAILABLE FILES file set
+
+```
+allTemplatesFiles = dedupeById(templateComputations.flatMap(c => c.filesForTemplate))   // FR-136
+allMappedStepIds = new Set(
+  templateComputations.flatMap(c =>
+    c.flatDetails.filter(d => (c.derivedFileMappings[d.id] || []).length > 0).map(d => d.stepId)
+  )
+)   // FR-135 — OR across every saved template's own, already-correctly-scoped mapping
+```
+
+Both derive entirely from `templateComputations` (Update 7/8/12, unchanged) — no new fetch, no new
+per-template computation, no re-implementation of the PO/Template scoping rule.
+
+### Toolbar (`data-marker="template-tree-toolbar"`) — All chip behavior
+
+| Before (Update 8, pre-Update-19) | After (Update 19) |
+|---|---|
+| `templateCode: null` chip present; `onClick` sets `selectedTemplateCode = null`, but every downstream read (`selectedTemplateComputation`, rendered tree) falls back to `templateComputations[0]`/`templatesData[0]` — indistinguishable from re-selecting the first template | `onClick` additionally triggers the `defaultTemplate` fetch (above); when `selectedTemplateCode === null`, the Template Checklist renders `allTree` (with each node's mapped/missing status from `allMappedStepIds`) instead of falling back to the first template, and AVAILABLE FILES renders `allTemplatesFiles` instead of `selectedTemplateComputation.filesForTemplate` |
+
+FR-060's existing default-first-template selection on page load (`selectedTemplateCode` seeded from
+`templatesData[0].templateCode`) is unchanged — All is never auto-selected, only reachable by explicit
+click (FR-138).
+
+### Non-goals confirmed (Update 19)
+
+- No backend change of any kind — the default-template fetch reuses `GetPagedAsync`'s already-
+  whitelisted `IsDefault` filter and already-unconditional `IsHide`/`IsDeleted` clauses; zero new
+  endpoint, DTO, entity, repository method, migration, or policy.
+- No new frontend use case/repository/API client file — reuses
+  `GetPagingEutrTemplatesUseCase`/`GetEutrTemplatesUseCase` exactly as already wired since Update 4.
+- No refetch of `purchaseAttachments`/`poReferenceDocs`/`templatesData` on All click — only the new,
+  genuinely-not-yet-loaded default template is fetched (screen stays read-only, spec FR-042).
+- Header/Validation Summary aggregate progress (FR-062) and the Download zip mechanism (Update 10) stay
+  Sales-Order-wide, unaffected by whether All is active (FR-139).
+- No change to FR-060's page-load default (first real template) — All only activates on explicit click
+  (FR-138).
+
+## Update 21 (2026-08-12): Download zip gains an All folder — one existing DTO field reshaped, no new entity/endpoint
+
+> Covers spec FR-142..FR-151. No new entity, no new table, no migration, no new endpoint. Reshapes the
+> one existing `EutrDownloadZipFolderDto.FolderName` field into an ordered `FolderPath`, and reuses
+> Update 19/20's already-computed All-tree state (`allChipTree`/`allChipDerivedFileMappings`/
+> `allChipFiles`) plus the same default-template fetch (Update 19) for Overview's on-demand Download. See
+> research.md Decisions 69-70.
+
+### Request DTO change (`ComplianceSys.Application/Dtos/Request/`)
+
+```
+EutrDownloadZipFolderDto
+  FolderPath      string[]   // was FolderName (string) — ordered path segments from the zip root,
+                              //  e.g. ["Template A"] (unchanged per-template folders) or
+                              //  ["All", "Forest", "Plantation forest location map"] (new nested All
+                              //  step folders); each segment sanitized independently server-side
+                              //  (research.md Decision 69), then joined with "/"
+  Files           EutrDownloadZipFileDto[]   // unchanged — empty array allowed (FR-146/FR-073)
+```
+
+`EutrDownloadZipRequestDto`/`EutrDownloadZipFileDto` are unchanged. `EutrDocumentsController.DownloadZip`
+changes only how `folderName` (the local variable feeding `CreateEntry`/`GetUniqueZipEntryName`) is
+derived — from `SanitizeZipNamePart(folder.FolderName, "template")` to
+`string.Join("/", folder.FolderPath.Select(s => SanitizeZipNamePart(s, "step")))` — every other line of
+`DownloadZip` (empty-folder entry creation, per-file fetch/zip, filename disambiguation, `400`/`500`
+responses) is untouched.
+
+### New client-side derived value: All-folder entries (`ViewSalesOrderPage.jsx`)
+
+```
+filesById = new Map(allChipFiles.map(f => [f.id, f]))                      // new, O(1) lookup
+allFolderEntries = flattenTreeToFolderEntries(allChipTree, allChipDerivedFileMappings, filesById, ['All'])
+                                                                             // new util, utils/treeUtils.js
+if (allFolderEntries.length === 0) allFolderEntries = [{ folderPath: ['All'], files: [] }]  // FR-147
+```
+
+`flattenTreeToFolderEntries` (new pure function, colocated with `flatToTree`/`filterFlatListByStepIds` in
+`utils/treeUtils.js`) walks a tree and emits one `{ folderPath, files }` entry per node — `folderPath` is
+the accumulated `[...parentPath, node.stepName]`, `files` is `(derivedFileMappings[node.id] ||
+[]).map(id => filesById.get(id)).filter(Boolean).map(f => ({ fileId: f.fileId, fileName: f.name }))` —
+then recurses into `node.children` with the extended path. `allChipTree`/`allChipDerivedFileMappings`/
+`allChipFiles` are the exact, unchanged values Update 19 already computes (no new fetch, no re-derivation
+of Map status/PO↔Template).
+
+### Updated request: `ViewSalesOrderPage.jsx`'s `buildDownloadFolders`
+
+| Request field | Before (Update 10) | After (Update 21) |
+|---|---|---|
+| `folders[].folderPath` (was `folderName`) | `[t.templateName]` implicitly (single string) | Unchanged value, now an explicit 1-element array, **plus** one additional entry per node from `allFolderEntries` above |
+| `folders[].files` | Same per-template Mapped-file subset as Update 10 | Unchanged for per-template entries; each All entry's files come from `allFolderEntries` (per-`StepId`, merged across every saved template, FR-145) |
+
+If `templatesData`/every template's Mapped-file subset is empty (FR-074, unchanged), the Download handler
+still shows the "không có tài liệu nào để tải" message and skips the call entirely — this check runs
+**before** the All entries are appended, so a Sales Order with zero Mapped documents never downloads a
+zip containing only an empty All folder (FR-150).
+
+### Updated request: `SalesOrderOverviewPage.jsx`'s per-row Download handler
+
+Adds one new on-demand call, alongside the existing `Promise.all` (Update 13):
+
+```
+[templatesResponse, poReferencesResponse, defaultTemplateResult] = await Promise.all([
+  ...,                                                            // unchanged (Update 13)
+  loadDefaultTemplateForRow().catch(() => null)                   // new — same 2-call chain as
+])                                                                 //  ViewSalesOrderPage.jsx's
+                                                                    //  loadDefaultTemplate (Update 19)
+```
+
+`loadDefaultTemplateForRow` is the same `getPagingEutrTemplatesUseCase` (filtered `IsDefault = 1`) →
+`getEutrTemplatesUseCase` chain, called inline rather than through component state (Overview has no
+Template Checklist to render it into). Its failure is caught locally and treated as "no default
+template" (`allFolderEntries` degrades to the FR-147 empty-All fallback) — it MUST NOT reject the
+row's Download as a whole; the existing per-template folders are built and downloaded exactly as before
+regardless of this call's outcome.
+
+### Non-goals confirmed (Update 21)
+
+- No new backend endpoint/policy/entity/table/migration — `POST /api/eutr-documents/download-zip` is
+  reused as-is; only `EutrDownloadZipFolderDto.FolderName` is reshaped into `FolderPath`.
+- No new frontend use case/repository/API client method — `DownloadEutrSalesOrderZipUseCase`,
+  `eutrDocumentsApi.js`'s `downloadZip`, and `IEutrDocumentsRepository.js` are unchanged (all forward the
+  `folders` payload opaquely; none reference `folderName`/`folderPath` by name).
+- No new fetch added to View's Download click — reuses `allChipTree`/`allChipDerivedFileMappings`/
+  `allChipFiles`, already populated by Update 20's mount-time auto-load.
+- No change to per-template folder naming, Mapped-file scoping, empty-folder, or filename-dedup rules
+  (FR-071..FR-075) — the All folder is purely additive alongside them.

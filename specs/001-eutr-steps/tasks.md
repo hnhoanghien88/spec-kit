@@ -2,8 +2,14 @@
 
 **Feature**: `001-eutr-steps` | **Plan**: [plan.md](./plan.md) | **Spec**: [spec.md](./spec.md)
 
-**Phạm vi**: Frontend-only (`compliance-client`). Backend đã tồn tại → chỉ verify.
+**Phạm vi**: Frontend-only (`compliance-client`) cho CRUD gốc — Backend đã tồn tại → chỉ verify.
 **Mẫu tham chiếu**: feature `document-type` (clone qua mọi tầng, đổi tên `eutr-step`/`EutrStep`/`eutr-steps`).
+
+> **Cập nhật (2026-08-11, FR-005a — chống trùng Step name)**: Phase 8 dưới đây bổ sung một
+> **backend gap đã xác minh** (chưa có kiểm tra trùng tên) + sửa frontend, xem
+> [plan.md](./plan.md) mục "Cập nhật (2026-08-11, theo spec FR-005a)" và
+> [research.md](./research.md) Quyết định 6. Mẫu tham chiếu cho phần backend: `EutrMastersService`
+> + `IEutrMastersRepository.ExistsStepPrefixAsync`.
 
 Quy ước: `[P]` = có thể chạy song song (khác file, không phụ thuộc task chưa xong).
 Đường dẫn gốc frontend: `compliance-client/src/`.
@@ -94,6 +100,34 @@ Quy ước: `[P]` = có thể chạy song song (khác file, không phụ thuộc
 
 ---
 
+## Phase 8: Chống trùng Step name (FR-005a) — bổ sung 2026-08-11
+
+**Mục tiêu**: Không cho tạo mới hoặc sửa một bước thành tên trùng (không phân biệt hoa/thường, đã
+trim) với một bước khác đã tồn tại; bản ghi đang sửa không tự so trùng với chính nó.
+**Independent test**: Add tên đã tồn tại (kể cả khác hoa/thường hoặc có khoảng trắng đầu/cuối) →
+bị chặn với thông báo tiếng Anh, không tạo bản ghi. Edit một bước sang tên đã tồn tại ở bước khác →
+bị chặn, không lưu. Edit một bước và giữ nguyên tên hiện tại của chính nó → lưu thành công.
+
+Backend — GAP đã xác minh (chưa có kiểm tra trùng tên); clone khuôn mẫu `EutrMastersRepository`/`EutrMastersService`:
+
+- [X] T024 [P] Thêm method `ExistsNameAsync(string name, long? excludeId, CancellationToken ct = default)` vào interface mới `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrStepRepository.cs` — kế thừa `IRepository<EutrStep, long>` (clone `IEutrMastersRepository.cs`).
+- [X] T025 Tạo `compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrStepRepository.cs` — kế thừa `DapperRepository<EutrStep, long>`, implement `IEutrStepRepository`; `ExistsNameAsync` dùng SQL `SELECT COUNT(1) FROM eutr_steps WHERE LOWER(TRIM(Name)) = LOWER(TRIM(@name))` + `AND Id <> @excludeId` khi `excludeId.HasValue` (clone `EutrMastersRepository.ExistsStepPrefixAsync`) (phụ thuộc T024).
+- [X] T026 Đăng ký DI trong `compliance-sys-api/src/ComplianceSys.Infrastructure/DependencyInjection.cs`: thêm `services.AddScoped<IEutrStepRepository, EutrStepRepository>();` cạnh dòng đăng ký `IEutrMastersRepository` (phụ thuộc T025).
+- [X] T027 Sửa `compliance-sys-api/src/ComplianceSys.Application/Services/EutrStepService.cs`: đổi field/constructor từ `IRepository<EutrStep, long>` sang `IEutrStepRepository`; override `AddAsync(EutrStepRequestDto dto, string userEmail, CancellationToken ct)` gọi `ExistsNameAsync(dto.Name, null, ct)` và override `UpdateAsync(long id, EutrStepRequestDto dto, string userEmail, CancellationToken ct)` gọi `ExistsNameAsync(dto.Name, id, ct)`; nếu trùng, `throw new InvalidOperationException("A step with this name already exists.")` trước khi gọi `base.AddAsync`/`base.UpdateAsync` (clone `EutrMastersService.AddAsync/UpdateAsync`) (phụ thuộc T026).
+
+Frontend — SỬA cách xử lý lỗi khi submit (file đã tồn tại, không thêm field mới):
+
+- [X] T028 [US2] Sửa catch block của thao tác Create trong `compliance-client/src/presentation/pages/eutr-steps/index.jsx`: khi API trả lỗi (409 trùng tên), lấy `err?.response?.data?.message || err?.message` và hiển thị qua `CustomSnackbar` với `severity: "error"` (clone cách `eutr-masters/index.jsx` xử lý lỗi trùng StepId/Prefix) (phụ thuộc T027).
+- [X] T029 [US3] Sửa catch block của thao tác Update trong cùng file `index.jsx` theo đúng cách T028 (phụ thuộc T028, cùng file nên chạy tuần tự). (Create/Update dùng chung 1 modal `onSubmit` → cùng 1 catch block, đã sửa trong T028.)
+
+Kiểm thử:
+
+- [ ] T030 Kiểm thử thủ công kịch bản 7 & 8 trong [quickstart.md](./quickstart.md): Add tên trùng (kể cả khác hoa/thường, khoảng trắng đầu/cuối) bị chặn; Edit sang tên trùng bị chặn; Edit giữ nguyên tên chính nó lưu thành công (phụ thuộc T029). (CHƯA CHẠY — cần backend chạy + đăng nhập user có quyền `EutrSteps.*`; thực hiện thủ công trên trình duyệt, giống T023.)
+
+**Checkpoint**: FR-005a hoạt động end-to-end, không phá vỡ US1–US4 đã có.
+
+---
+
 ## Dependencies & thứ tự
 
 - **Phase 1** (Setup) → **Phase 2** (Foundational) là điều kiện tiên quyết của mọi user story.
@@ -101,12 +135,17 @@ Quy ước: `[P]` = có thể chạy song song (khác file, không phụ thuộc
 - **US1 (Phase 3)** dựng MVP. **US2/US3/US4** đều bổ sung vào `index.jsx` nên T016 → T017 → T019
   thực thi tuần tự (cùng file); các file component/hook mới (T015, T018, T011, T010) song song được.
 - **Phase 7** sau khi các user story xong.
+- **Phase 8** (FR-005a) độc lập với Phase 7, nhưng cần US2+US3 (Phase 4, 5) đã xong vì sửa cùng
+  `index.jsx`. Trong Phase 8: T024 không phụ thuộc gì (chạy song song với Phase 7 nếu muốn);
+  T025 cần T024; T026 cần T025; T027 cần T026; T028 cần T027; T029 cần T028 (cùng file); T030 cần
+  T029.
 
 ## Cơ hội song song
 
 - Phase 2: `[P]` T004, T005, T006, T009 cùng lúc.
 - Phase 3: `[P]` T010, T011 cùng lúc (trước T012).
 - Component độc lập: T015 (modal), T018 (action cell) có thể làm sớm song song.
+- Phase 8: T024 `[P]` có thể làm sớm, song song với Phase 7 (Polish) vì khác file hoàn toàn.
 
 ## MVP
 
@@ -114,6 +153,9 @@ US1 (Phase 3) — xem + tìm kiếm + phân trang — là lát cắt tối thi�
 
 ## Tổng quan
 
-- Tổng task: **23**
-- Theo story: US1 = 5 (T010–T014), US2 = 2 (T015–T016), US3 = 1 (T017), US4 = 2 (T018–T019).
+- Tổng task: **30**
+- Theo story: US1 = 5 (T010–T014), US2 = 3 (T015–T016, T028), US3 = 2 (T017, T029), US4 = 2
+  (T018–T019).
 - Foundational = 6 (T004–T009), Setup = 3, Polish = 4.
+- Phase 8 (FR-005a, 2026-08-11) = 7 (T024–T030): backend gap = 4 (T024–T027), frontend = 2
+  (T028–T029), kiểm thử = 1 (T030).

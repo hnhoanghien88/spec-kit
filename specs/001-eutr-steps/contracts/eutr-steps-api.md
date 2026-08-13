@@ -9,8 +9,8 @@ Bao bọc phản hồi: `ApiResponse<T>` (`{ data, message, success }`).
 | 1 | GET | `/api/eutr-steps/get-by-id/{id}` | `EutrSteps.ReadOne` | — | `EutrStep` |
 | 2 | GET | `/api/eutr-steps` | `EutrSteps.ReadAll` | — | `IEnumerable<EutrStep>` |
 | 3 | POST | `/api/eutr-steps/get-all` | `EutrSteps.ReadAll` | query: `page,pageSize,sortColumn,sortOrder`; body: `List<FilterRequest>` | `PagedResult<EutrStepResponseDto>` |
-| 4 | POST | `/api/eutr-steps` | `EutrSteps.Create` | `EutrStepRequestDto { name }` | `long` (id mới) |
-| 5 | PUT | `/api/eutr-steps/{id}` | `EutrSteps.Update` | `EutrStepRequestDto { name }` | message |
+| 4 | POST | `/api/eutr-steps` | `EutrSteps.Create` | `EutrStepRequestDto { name }` | `long` (id mới); **409** nếu `name` trùng (không phân biệt hoa/thường, đã trim) với bước khác |
+| 5 | PUT | `/api/eutr-steps/{id}` | `EutrSteps.Update` | `EutrStepRequestDto { name }` | message; **409** nếu `name` trùng với bước khác (loại trừ chính bản ghi đang sửa) |
 | 6 | DELETE | `/api/eutr-steps/{id}` | `EutrSteps.Delete` | — | message |
 | 7 | POST | `/api/eutr-steps/delete-multi` | `EutrSteps.Delete` | `IEnumerable<long> ids` | message |
 
@@ -21,6 +21,14 @@ Bao bọc phản hồi: `ApiResponse<T>` (`{ data, message, success }`).
 ```
 
 Toán tử hỗ trợ: `like`, `between` (`"a,b"`), `in` (`"1,2,3"`), `>=`, `<=`, `>`, `<`, `=`.
+
+## Quy tắc nghiệp vụ mới: chống trùng tên (FR-005a, bổ sung 2026-08-11)
+
+- Create/Update MUST chặn khi `name` (sau khi trim, không phân biệt hoa/thường) trùng với một
+  bước khác đã tồn tại. Update loại trừ chính bản ghi đang sửa khỏi so khớp.
+- Vi phạm → HTTP **409 Conflict**, body `ApiResponse<string>.Fail("A step with this name already
+  exists.")` (qua `ValidationExceptionMiddleware` bắt `InvalidOperationException`, mẫu giống lỗi
+  trùng (StepId, Prefix) của `api/eutr-masters`).
 
 ## Ánh xạ frontend (eutrStepApi.js)
 

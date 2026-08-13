@@ -94,7 +94,7 @@ trùng cặp (StepId, Prefix).
 **Independent Test**: Add → chọn bước + nhập prefix → Save → dòng mới hiện đúng tên bước; bỏ trống
 step/prefix → báo lỗi; tạo trùng step+prefix → cảnh báo, không tạo.
 
-- [X] T026 [US2] Override `AddAsync` trong `EutrMastersService.cs`: trước khi lưu, kiểm tra tồn tại cặp (StepId, Prefix); nếu trùng → ném lỗi nghiệp vụ message tiếng Anh ("A master with the same step and prefix already exists.") (research Quyết định 3).
+- [X] T026 [US2] Override `AddAsync` trong `EutrMastersService.cs`: trước khi lưu, kiểm tra tồn tại cặp (StepId, Prefix); nếu trùng → ném lỗi nghiệp vụ message tiếng Anh ("A master with the same step and prefix already exists.") (research Quyết định 3). ⚠️ **Superseded 2026-08-11** — quy tắc đổi sang Prefix-only, xem Phase 10 (T061–T065).
 - [X] T027 [US2] Thêm action `POST /` create (`[Authorize(Policy="EutrMasters.Create")]`, body `EutrMastersRequestDto`, lấy userEmail từ `HttpContext.Items["UserEmail"]`) trong `EutrMastersController.cs`.
 - [X] T028 [P] [US2] Tạo `compliance-client/src/application/usecases/eutr-masters/CreateEutrMastersUseCase.js`.
 - [X] T029 [US2] Tạo `compliance-client/src/presentation/pages/eutr-masters/components/EutrMastersModal.jsx`: **Select/Autocomplete "Step name"** nạp options từ `GetEutrStepsUseCase` (dùng lại repo `eutrStep` sẵn có; value=id, label=name) + TextField "Prefix"; validate bắt buộc chọn step + nhập prefix (thông báo tiếng Anh).
@@ -111,7 +111,7 @@ step/prefix → báo lỗi; tạo trùng step+prefix → cảnh báo, không t�
 **Independent Test**: Edit dòng → đổi step/prefix → Save → cập nhật; sửa thành trùng bản ghi khác →
 cảnh báo, không lưu.
 
-- [X] T031 [US3] Override `UpdateAsync` trong `EutrMastersService.cs`: kiểm tra trùng cặp (StepId, Prefix) **loại trừ chính Id đang sửa**; trùng → ném lỗi nghiệp vụ tiếng Anh (research Quyết định 3).
+- [X] T031 [US3] Override `UpdateAsync` trong `EutrMastersService.cs`: kiểm tra trùng cặp (StepId, Prefix) **loại trừ chính Id đang sửa**; trùng → ném lỗi nghiệp vụ tiếng Anh (research Quyết định 3). ⚠️ **Superseded 2026-08-11** — quy tắc đổi sang Prefix-only, xem Phase 10 (T061–T065).
 - [X] T032 [US3] Thêm action `PUT /{id}` update (`[Authorize(Policy="EutrMasters.Update")]`, body `EutrMastersRequestDto`) trong `EutrMastersController.cs`.
 - [X] T033 [P] [US3] Tạo `compliance-client/src/application/usecases/eutr-masters/UpdateEutrMastersUseCase.js`.
 - [X] T034 [US3] Tạo `compliance-client/src/presentation/pages/eutr-masters/components/EutrMastersActionCell.jsx` (nút Edit/Delete theo quyền).
@@ -149,7 +149,7 @@ dòng trùng → "Duplicate"; file sai định dạng → báo lỗi; dialog bá
 
 - [X] T040 [P] [US5] Tạo `compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/ImportEutrMastersResultDto.cs` (`TotalRows, SuccessCount, FailCount, DuplicateCount, Errors[], Duplicates[]` với item `{ RowNumber, StepName, Prefix, Reason }`).
 - [X] T041 [P] [US5] Tạo interface `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Services/IEutrMastersImportService.cs` (`Task<ImportEutrMastersResultDto> ImportFromExcelAsync(Stream, string userEmail, CancellationToken)`).
-- [X] T042 [US5] Tạo `compliance-sys-api/src/ComplianceSys.Application/Services/EutrMastersImportService.cs`: dùng ClosedXML mở `XLWorkbook`, đọc từ **dòng 2** (cột A=step name, B=prefix), map step name→StepId theo `eutr_steps.Name` (không phân biệt hoa/thường, trim), chống trùng (DB + nội bộ file), **import một phần**, trả `ImportEutrMastersResultDto` (research Quyết định 4).
+- [X] T042 [US5] Tạo `compliance-sys-api/src/ComplianceSys.Application/Services/EutrMastersImportService.cs`: dùng ClosedXML mở `XLWorkbook`, đọc từ **dòng 2** (cột A=step name, B=prefix), map step name→StepId theo `eutr_steps.Name` (không phân biệt hoa/thường, trim), chống trùng (DB + nội bộ file), **import một phần**, trả `ImportEutrMastersResultDto` (research Quyết định 4). ⚠️ **Superseded 2026-08-11** — dedupe key đổi sang Prefix-only, xem Phase 10 (T061–T065).
 - [X] T043 [US5] Đăng ký `IEutrMastersImportService→EutrMastersImportService` trong `compliance-sys-api/src/ComplianceSys.Application/DependencyInjection.cs`.
 - [X] T044 [US5] Thêm action `POST /import` (`[Authorize(Policy="EutrMasters.Create")]`, tham số `IFormFile file`, validate đuôi .xlsx, lấy userEmail) trả `ApiResponse<ImportEutrMastersResultDto>` trong `EutrMastersController.cs`.
 
@@ -197,6 +197,29 @@ danh sách rỗng → chỉ tiêu đề; dùng lại file để Import → xử 
 - [X] T051 Gating quyền theo `permissionList` từ menu (code `eutr-masters`): ẩn/disable Add/Edit/Delete/Import khi thiếu quyền, trong `eutr-masters/index.jsx` + `EutrMastersActionCell.jsx`.
 - [ ] T052 Chạy kiểm thử theo [quickstart.md](./quickstart.md) (9 kịch bản, gồm Export) và sửa lỗi phát sinh.
 
+---
+
+## Phase 10: Đổi ràng buộc trùng lặp sang Prefix-only (Delta cập nhật 2026-08-11)
+
+**Bối cảnh**: Feature đã triển khai xong (US1–US6) theo ràng buộc **cặp (StepId, Prefix) duy nhất**.
+Spec/plan/research/data-model đã được cập nhật ngày 2026-08-11: **Prefix phải duy nhất trên toàn hệ
+thống, không phân biệt StepId** (Add, Edit, Import đều bị chặn nếu Prefix trùng bất kỳ bản ghi nào
+khác, kể cả khác step). Không có unique index ở DB (`eutr_db.sql` không định nghĩa), nên chỉ cần sửa
+code tầng Application/Infrastructure.
+
+**Goal**: `EutrMastersService`/`EutrMastersImportService` chặn trùng theo `Prefix` một mình.
+
+**Independent Test**: Tạo 2 master ở 2 step KHÁC nhau cùng Prefix → bị chặn ở cả Add, Edit và Import
+(trước đây chỉ bị chặn khi trùng CẢ step lẫn prefix).
+
+- [X] T061 [P] Đổi chữ ký `ExistsStepPrefixAsync(long stepId, string prefix, long? excludeId, ...)` thành `ExistsPrefixAsync(string prefix, long? excludeId, ...)` trong `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrMastersRepository.cs` (bỏ tham số `stepId`, cập nhật XML comment).
+- [X] T062 Cập nhật `compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrMastersRepository.cs`: đổi tên method thành `ExistsPrefixAsync`, sửa SQL từ `WHERE StepId = @stepId AND Prefix = @prefix` thành `WHERE Prefix = @prefix` (giữ nguyên điều kiện `AND Id <> @excludeId` khi `excludeId.HasValue`), bỏ tham số/binding `@stepId`.
+- [X] T063 Cập nhật `compliance-sys-api/src/ComplianceSys.Application/Services/EutrMastersService.cs` (`AddAsync` và `UpdateAsync`): gọi `_repository.ExistsPrefixAsync(dto.Prefix, excludeId, ct)` thay vì `ExistsStepPrefixAsync(dto.StepId, dto.Prefix, excludeId, ct)`; đổi message lỗi thành `"A master with the same prefix already exists."` (research Quyết định 3, cập nhật 2026-08-11).
+- [X] T064 Cập nhật `compliance-sys-api/src/ComplianceSys.Application/Services/EutrMastersImportService.cs`: đổi key dedupe nội bộ file từ `stepId + "||" + prefix.ToLowerInvariant()` thành chỉ `prefix.ToLowerInvariant()`; đổi lời gọi kiểm tra trùng DB thành `_eutrMastersRepository.ExistsPrefixAsync(prefix, null, ct)`; đổi message trong `Duplicates` từ `"Duplicate step and prefix"` thành `"Duplicate prefix"`.
+- [ ] T065 Cập nhật lại kịch bản 4 và 7 trong [quickstart.md](./quickstart.md) (đã cập nhật nội dung) — kiểm thử thủ công: tạo/sửa/import Prefix trùng ở step KHÁC nhau đều bị chặn; xác nhận message lỗi hiển thị đúng tiếng Anh mới trên UI (không cần sửa frontend vì UI chỉ hiển thị message từ backend).
+
+**Checkpoint**: Prefix trùng bị chặn bất kể step, ở cả Add/Edit/Import; các message lỗi đã cập nhật.
+
 ### Tiền đề vận hành/DB (KHÔNG phải task code)
 
 - [ ] T053 [Ops] Tạo động trong DB: menu code `eutr-masters` (url `/eutr/masters`) + các quyền `EutrMasters.ReadAll/ReadOne/Create/Update/Delete/Download` (Download dùng cho Export) và gán cho role/user để màn hình truy cập được (routing backend-driven — research Quyết định 5). Xóa cache `localStorage['userMenu']` sau khi cập nhật.
@@ -214,10 +237,14 @@ danh sách rỗng → chỉ tiêu đề; dùng lại file để Import → xử 
   `EutrMastersController.cs`, `eutr-masters/index.jsx` (chỉnh sửa chồng lấn). US6 (Export) độc lập với
   US1–US5 về logic nhưng vẫn đụng `EutrMastersController.cs`, `index.jsx`, `DependencyInjection.cs`.
 - **Polish (P9)**: sau khi các story mong muốn hoàn tất.
+- **Delta Phase 10**: độc lập về mặt story (rework logic chống trùng đã có), nhưng phải làm SAU khi
+  US1–US5 đã tồn tại (sửa lại code của T026/T031/T042); nên làm trước hoặc song song Polish.
 
 ### Điểm chia sẻ file (tránh sửa song song)
 
-- `EutrMastersService.cs`: T009 → T020 (US1) → T026 (US2) → T031 (US3).
+- `EutrMastersService.cs`: T009 → T020 (US1) → T026 (US2) → T031 (US3) → T063 (Delta Phase 10).
+- `IEutrMastersRepository.cs` / `EutrMastersRepository.cs` (`ExistsStepPrefixAsync`→`ExistsPrefixAsync`): T061 → T062 → dùng ở T063, T064.
+- `EutrMastersImportService.cs`: T042 (US5) → T064 (Delta Phase 10).
 - `EutrMastersController.cs`: T010 → T021 (US1) → T027 (US2) → T032 (US3) → T036 (US4) → T044 (US5) → T057 (US6).
 - `eutr-masters/index.jsx`: T019 → T025 (US1) → T030 (US2) → T035 (US3) → T039 (US4) → T048 (US5) → T060 (US6).
 - `DependencyInjection.cs`: T011 (Foundational) → T043 (US5) → T056 (US6).

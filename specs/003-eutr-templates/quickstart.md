@@ -495,14 +495,17 @@ environment with real auth configured) and manually click through 3'a–3'd in a
 9. **Expected**: all 4 steps appear immediately as **root-level** nodes in the tree (ParentId = 0),
    each showing the Requirement Type/Take From configured per row in step 5-6; the dialog closes
 10. Select one of the newly added root steps, click **Child Step**
-11. **Expected**: the bulk-select dialog reopens; the step just used as the parent's own master
+11. ~~**Expected**: the bulk-select dialog reopens; the step just used as the parent's own master
     entry (if it was one of the ticked master rows) still appears in the list (it's now a sibling,
     not a child, of the target parent) — but any step that is ALREADY a direct child of this
-    selected parent does NOT appear in the list (FR-029)
+    selected parent does NOT appear in the list (FR-029)~~ **superseded (Update 21)**: see Scenario
+    25 — a master step already used anywhere in the tree (not just as a direct child of this
+    parent) no longer appears in the list at all (FR-076)
 12. Tick 2 steps, click **Add**
 13. **Expected**: both appear as children of the selected step (ParentId = selected step's Id)
 14. Reopen **Add Child Step** on the SAME parent again: **Expected** the 2 steps just added in step
-    12 are now excluded from the "available" list (already direct children of this parent)
+    12 are now excluded from the "available" list (already direct children of this parent) — this
+    part is unchanged by Update 21, which only widens the exclusion, never narrows it
 15. Open the bulk-select dialog again, tick a step and type a free-solo name, then click **Cancel**
     (not Add)
 16. **Expected**: dialog closes, nothing was added to the tree — reopening the dialog shows the
@@ -882,6 +885,38 @@ review" and "verified end-to-end through the UI."
 8. Confirm no sort arrows or column-visibility toggle appeared on any column as a side effect of
    this change — only filter was added (FR-021b's sort/column-visibility deferral still applies)
 
+### Scenario 25: Block Duplicate StepId/Name on Add Root Group / Add Child Step (FR-076, FR-077, Update 21)
+
+1. Edit a template whose tree is empty; click **Add Root Group**, tick one master step (e.g.
+   "Forest"), click **Add**; **Expected**: "Forest" appears as a root node
+2. Click **Root Group** again; **Expected**: "Forest" no longer appears in the "step available"
+   table at all (previously it would have — Update 12 only excluded direct children of the SAME
+   parent, and Root Group's target parent is always 0, so re-opening Root Group before Update 21
+   would still have hidden it too; the real change shows in step 3-4 below) (FR-076)
+3. Select "Forest", click **Child Step**; **Expected**: the "step available" table does NOT show
+   "Forest" itself (can't be its own child) — tick a different master step (e.g. "Water"), click
+   **Add**; "Water" becomes a child of "Forest"
+4. Select the ROOT of the tree area (or any other node that is NOT "Forest"), click **Child Step**
+   (or **Root Group**); **Expected**: "Water" does NOT appear in this dialog's "step available"
+   table either, even though it is not a direct child of THIS target — before Update 21 it would
+   have reappeared here (FR-076, reverses the old FR-029 same-parent-only scope)
+5. In either dialog from step 2-4, type `water` (lowercase) or ` Water ` (extra spaces) into the
+   **"Add new step"** name field; **Expected**: an inline error appears on the field (e.g. "A step
+   with this name already exists..."), the footer's "selected" count does NOT include this entry,
+   and the **Add** button's enabled state ignores it (ticking at least one other master row is still
+   required to enable Add) (FR-077)
+6. Clear the field and type a genuinely new name (e.g. "Soil"); **Expected**: the error clears, the
+   entry counts toward "selected" again
+7. In the SAME dialog session, tick a master step AND type "Soil" in "Add new step", click **Add**;
+   click the SAME toolbar button again (reopen the dialog) before Saving the template, and type
+   "soil" (different case) into "Add new step" again; **Expected**: still blocked with the
+   duplicate-name error — the check includes steps added earlier in this same Edit session that are
+   still only pending in the client-side tree (`stepId: null`), not yet written to `eutr_steps`
+8. Click template **Save**; select an existing step already in the tree, click its **Edit** icon
+   (pencil, not Root Group/Child Step) and change it to a step used elsewhere in the tree (e.g.
+   retarget it to "Forest"'s `StepId`); **Expected**: this single-step Edit form still allows it with
+   no error — Edit step (FR-008b) is explicitly unaffected by FR-076/FR-077, unlike step 2-5 above
+
 ### Scenario 13: Edge Cases
 
 - Empty grid: **Expected** "No data" message, no errors
@@ -907,15 +942,19 @@ review" and "verified end-to-end through the UI."
   **Expected** step tree shows an empty state (not an error), Vendor combobox shows unselected
 - After the Create Template dialog's Save succeeds (Update 9): **Expected** the app stays on
   TemplateListPage — it does NOT auto-navigate to the Edit screen
-- Bulk-select dialog (Update 12) with all master steps already used as direct children of the
-  target parent: **Expected** the table shows an empty "available" list, but the "Add new step"
-  area remains usable
+- Bulk-select dialog with all master steps already used ANYWHERE in the template's tree (was:
+  "already used as direct children of the target parent" — widened by Update 21, FR-076):
+  **Expected** the table shows an empty "available" list, but the "Add new step" area remains
+  usable
 - Tick-all via the header checkbox then untick one row (Update 12): **Expected** the "selected"
   counter decreases by exactly 1, matching the remaining ticked rows
-- Free-solo name typed in "Add new step" matches (case-insensitive, trimmed) a step already ticked
+- ~~Free-solo name typed in "Add new step" matches (case-insensitive, trimmed) a step already ticked
   from the master table, or another free-solo entry from a prior Add in the same session (Update
-  12): **Expected** the existing dedupe-by-name rule (FR-007a) applies on Save — only one
-  `eutr_steps` row is created/reused, no duplicates
+  12): Expected the existing dedupe-by-name rule (FR-007a) applies on Save — only one `eutr_steps`
+  row is created/reused, no duplicates.~~ **superseded (Update 21)**: a free-solo name matching
+  (case-insensitive, trimmed) any name already in the `eutr_steps` master list OR any `StepName`
+  already in the current tree (including still-pending entries from earlier in the same Edit
+  session) is now blocked with an inline error at entry time — see Scenario 25 (FR-077)
 - Clicking **Root Group** while a tree node is currently selected (Update 12): **Expected** the
   bulk-added steps still land at the tree **root** (ParentId=0) — the current selection only
   affects the **Child Step** button, not Root Group

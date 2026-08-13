@@ -2,7 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-07-02
-**Updated**: 2026-07-24 (Update 20)
+**Updated**: 2026-08-11 (Update 21)
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -715,3 +715,50 @@
 - **Change: Quick-search + column-filter coexistence** — the existing Code/Name search box and the new column-filter panel both write to the same `filterModel`; merge logic added so neither one clobbers the other's items.
 - Success Criteria: SC-055, SC-056 added.
 - No new [NEEDS CLARIFICATION] markers — scope (which columns get real filter support) was resolved by auditing the backend's existing `FilterMap`/`SortMap` whitelist before writing, consistent with this spec's established pattern of pre-write code audits (Update 13, 17, 19).
+
+### Update 2026-08-11 (Update 21) — Block Duplicate StepId/Name on Add Root Group / Add Child Step
+
+- **Input**: "dialog add root và child step. trong đó có bước add new step, the logic cảnh báo
+  không thể add new step trùng tên đã có. đồng thời cập nhật logic kiểm tra add root, add child
+  trong 1 template chỉ tồn tại 1 stepid, không cho add trùng." (Reverses two previously explicit
+  decisions from Update 12: FR-029's "step available" filter only excluded direct children of the
+  target parent node — not the whole tree — and FR-030's "Add new step" area silently reused an
+  existing step's Id on a name match instead of warning/blocking.)
+- **Two scope questions asked back to the user before writing this update (both answered via
+  AskUserQuestion), consistent with this spec's established "resolve via question, not marker"
+  pattern**: (1) whether the new "1 StepId per template" constraint applies only to Add Root
+  Group/Add Child Step, or also to Edit step (FR-008b, which currently allows changing an existing
+  node to a StepId already used elsewhere in the tree) → **answered: only Add Root Group/Add Child
+  Step** — Edit step is explicitly unchanged; (2) whether a duplicate name typed in the "Add new
+  step" free-solo area should still be silently merged (reusing the existing StepId, just with an
+  informational note) or blocked outright → **answered: blocked outright** — the entry is rejected
+  with an inline error until renamed or the existing step is picked from the master table instead.
+- **Change: FR-029 scope reversed in place** — "step available" in the bulk-select dialog (Add Root
+  Group/Add Child Step) now excludes a step if it exists ANYWHERE in the template's current tree
+  (not just as a direct child of the target node); cross-referenced to new **FR-076**.
+- **New: FR-076** — formalizes the "1 StepId ≤ 1 occurrence per template" constraint for the two add
+  dialogs only; explicitly carves out Edit step (FR-008b) as unaffected.
+- **New: FR-077** — the "Add new step" free-solo area MUST validate the typed name (case-insensitive,
+  trimmed) against both the full EUTR steps master list and every step already in the current tree
+  (including other pending entries from the same dialog session); on a match, block with an inline
+  error instead of the previous silent-merge behavior. FR-007a's general merge-by-name mechanism is
+  explicitly preserved everywhere else (e.g. Edit step's free-solo combobox).
+- Acceptance scenario 15 (Update 12, "already-a-direct-child" exclusion) marked superseded; new
+  scenarios 15a (whole-tree exclusion), 15b (duplicate-name block for a fresh typed name), and 15c
+  (duplicate-name block even when the matching step has already been filtered out of "step
+  available") added to User Story 3.
+- Edge cases updated: the Update 12 "Add new step" duplicate-name-merge bullet marked superseded
+  (replaced by FR-077's blocking behavior); the existing Edit-step "no unique StepId constraint"
+  edge case annotated to confirm Update 21 does not change it.
+- Key Entities: EUTR Step bullet annotated with the Update 21 constraint and its UI-layer (not
+  database-UNIQUE-constraint) enforcement, explicitly noting Edit step can still produce a repeated
+  StepId if the user chooses to.
+- Success Criteria: SC-057, SC-058 added (100% of re-opened add dialogs exclude already-present
+  steps tree-wide; 100% of duplicate-name entries in "Add new step" are blocked with a clear error).
+- Assumptions: 2 new bullets added — the existing name-matching/reuse rule (FR-007a) gets an explicit
+  exception carved out for the "Add new step" area only; the new per-template StepId uniqueness is
+  scoped to the two add dialogs, not to Edit step.
+- No [NEEDS CLARIFICATION] markers were embedded in the spec — both scope questions above were
+  resolved interactively via AskUserQuestion before writing.
+- Spec Quality Checklist re-validated against the updated spec: all 16/16 items remain passing (no
+  regressions, no newly-failing items).

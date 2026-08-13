@@ -28,7 +28,9 @@ tương ứng. Bao bọc phản hồi: `ApiResponse<T>` (`{ data, message, succe
 
 - `stepId`: bắt buộc, > 0 (FluentValidation).
 - `prefix`: bắt buộc, không rỗng.
-- Ràng buộc dịch vụ: cặp (stepId, prefix) phải **duy nhất** → trùng trả lỗi (chặn lưu).
+- Ràng buộc dịch vụ *(cập nhật 2026-08-11)*: `prefix` phải **duy nhất trên toàn hệ thống**, không
+  phân biệt `stepId` → trùng Prefix với bất kỳ bản ghi nào khác trả lỗi (chặn lưu). Trước đây kiểm
+  tra theo cặp (stepId, prefix); nay bỏ điều kiện stepId.
 
 ## EutrMastersResponseDto
 
@@ -48,7 +50,7 @@ tương ứng. Bao bọc phản hồi: `ApiResponse<T>` (`{ data, message, succe
 {
   "totalRows": 50, "successCount": 47, "failCount": 1, "duplicateCount": 2,
   "errors": [ { "rowNumber": 8, "stepName": "khong ton tai", "prefix": "X", "reason": "Step not found" } ],
-  "duplicates": [ { "rowNumber": 15, "stepName": "hop dong mua ban", "prefix": "HD", "reason": "Duplicate step + prefix" } ]
+  "duplicates": [ { "rowNumber": 15, "stepName": "hop dong mua ban", "prefix": "HD", "reason": "Duplicate prefix" } ]
 }
 ```
 

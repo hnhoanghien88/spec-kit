@@ -14,6 +14,10 @@
 
 - Q: Phạm vi chuyển sang tiếng Anh — tài liệu spec, giao diện ứng dụng, hay cả hai? → A: Chỉ toàn bộ văn bản hiển thị cho người dùng trên front-end (nhãn cột, nút, breadcrumb, thông báo kiểm tra/lỗi/thành công, trạng thái rỗng, hộp thoại xác nhận) phải bằng tiếng Anh; tài liệu spec giữ nguyên.
 
+### Session 2026-08-11
+
+- Bổ sung yêu cầu: không cho phép tạo mới hoặc sửa một bước thành tên trùng với tên của bước khác đã tồn tại (so khớp không phân biệt hoa/thường, sau khi loại bỏ khoảng trắng đầu/cuối).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Xem và tìm kiếm danh sách bước (Priority: P1)
@@ -55,6 +59,9 @@ tế. Tạo mới là thao tác nghiệp vụ chính cùng với xem.
    bước mới hiển thị trong bảng kèm người tạo và ngày tạo.
 2. **Given** biểu mẫu thêm mới đang mở, **When** để trống tên và lưu, **Then** hệ thống báo lỗi
    yêu cầu nhập tên và không tạo bản ghi.
+3. **Given** đã tồn tại một bước có tên "Sourcing", **When** nhập tên "Sourcing" (hoặc "sourcing",
+   " Sourcing ") vào biểu mẫu thêm mới và lưu, **Then** hệ thống báo lỗi tên bước đã tồn tại và
+   không tạo bản ghi mới.
 
 ---
 
@@ -73,6 +80,11 @@ phản ánh ngay trong bảng.
    cập nhật.
 2. **Given** biểu mẫu sửa đang mở, **When** xóa trống tên và lưu, **Then** hệ thống báo lỗi và
    không lưu.
+3. **Given** đã tồn tại một bước khác có tên "Sourcing", **When** sửa bước hiện tại thành tên
+   "Sourcing" (hoặc khác biệt chỉ ở hoa/thường hay khoảng trắng đầu/cuối) và lưu, **Then** hệ
+   thống báo lỗi tên bước đã tồn tại và không lưu thay đổi.
+4. **Given** đang sửa một bước, **When** giữ nguyên tên hiện tại (không đổi) và lưu, **Then** hệ
+   thống lưu thành công vì bước không bị so trùng với chính nó.
 
 ---
 
@@ -103,6 +115,10 @@ cũng hỗ trợ xóa nhiều bước cùng lúc.
   dụng hoặc thao tác bị từ chối với thông báo rõ ràng.
 - Khi lưu/xóa thất bại do lỗi mạng hoặc máy chủ, người dùng nhận thông báo lỗi và dữ liệu không
   bị thay đổi sai lệch.
+- Khi tên nhập vào chỉ khác tên đã tồn tại ở khoảng trắng đầu/cuối hoặc hoa/thường, hệ thống vẫn
+  coi là trùng và chặn lưu.
+- Khi sửa một bước và giữ nguyên tên hiện tại của chính nó, hệ thống không báo trùng (không tự so
+  khớp với bản ghi đang sửa).
 
 ## Requirements *(mandatory)*
 
@@ -116,6 +132,9 @@ cũng hỗ trợ xóa nhiều bước cùng lúc.
 - **FR-004**: Người dùng MUST có thể tạo bước mới bằng cách nhập tên; hệ thống ghi nhận người
   tạo và ngày tạo tự động.
 - **FR-005**: Hệ thống MUST yêu cầu tên bước không được để trống khi tạo hoặc khi sửa.
+- **FR-005a**: Hệ thống MUST chặn việc tạo mới hoặc sửa một bước thành tên trùng với tên của một
+  bước khác đã tồn tại (so khớp không phân biệt hoa/thường, sau khi loại bỏ khoảng trắng đầu/cuối)
+  và hiển thị thông báo lỗi rõ ràng; bản ghi đang được sửa không tự so trùng với chính nó.
 - **FR-006**: Người dùng MUST có thể sửa tên một bước hiện có.
 - **FR-007**: Người dùng MUST có thể xóa một bước, có bước xác nhận trước khi xóa.
 - **FR-008**: Hệ thống MUST hỗ trợ xóa nhiều bước cùng lúc.
@@ -141,6 +160,8 @@ cũng hỗ trợ xóa nhiều bước cùng lúc.
   thống mà không cần hướng dẫn.
 - **SC-002**: Người dùng tạo một bước mới hoàn chỉnh trong dưới 30 giây.
 - **SC-003**: 100% thao tác tạo/sửa với tên trống bị chặn và hiển thị thông báo lỗi rõ ràng.
+- **SC-003a**: 100% thao tác tạo/sửa với tên trùng (không phân biệt hoa/thường, khoảng trắng
+  đầu/cuối) với một bước khác đã tồn tại bị chặn và hiển thị thông báo lỗi rõ ràng.
 - **SC-004**: Người dùng lọc đến đúng bước cần tìm bằng từ khóa trong dưới 5 giây với danh sách
   tối thiểu 100 bản ghi.
 - **SC-005**: Mọi thao tác xóa đều yêu cầu xác nhận, không có trường hợp xóa nhầm do một cú nhấp.

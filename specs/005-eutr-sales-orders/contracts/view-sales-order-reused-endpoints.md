@@ -58,6 +58,25 @@ No request/response shape changes, no new endpoint, no policy change. The panel'
 screen already receives from the two rows above, both already listed in this document. See
 `data-model.md`'s "Update 15" section and `research.md` Decisions 57-59.
 
+## Update 19 (2026-08-12) — All chip real logic: one more caller of an already-reused endpoint, no contract change
+
+Spec Update 19 (FR-129..FR-140, real logic for the All toolbar chip) introduces **no new and no changed
+endpoint**:
+
+- `POST /api/eutr-templates/get-all` + `GET /api/eutr-templates/{id}` — the same row already listed
+  above for per-chip template fetching, called a second way: on click of the All chip, the `get-all`
+  filter is `{ column: "IsDefault", operator: "eq", value: 1 }` instead of `{ column: "Code", ... }`
+  (both already accepted by the same whitelisted `FilterMap` on `EutrTemplatesRepository.GetPagedAsync`
+  — research.md Decision 67); `IsHide = 0`/`IsDeleted = 0` are already unconditional on every call to
+  this endpoint, so no additional filter is sent for them. The result (0 or 1 row) feeds the same
+  `GetById` call already used for every other template.
+
+Everything else All needs — the union of every saved template's own `filesForTemplate` for AVAILABLE
+FILES, and the per-step "has document" lookup across templates — is computed client-side from
+`templateComputations`, already built from the two rows this document's table already lists
+(`by-sales-id/{salesId}` + `list-po-references`). No request/response shape change, no new endpoint, no
+policy change. See `data-model.md`'s "Update 19" section and `research.md` Decisions 67-68.
+
 ## Update 10 (2026-07-27) — Download button: one new endpoint, not a reused one
 
 Unlike every prior update in this table, spec Update 10 (FR-069..FR-076, real zip Download) introduces
