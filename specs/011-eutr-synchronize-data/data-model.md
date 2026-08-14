@@ -148,7 +148,7 @@ per purchase order.
 | `VendorCode` | varchar(50), NULL | blank when the ERP data has no `OrderAccount` for this purchase order |
 | `VendorName` | varchar(255), NULL | blank when the vendor lookup (refType 14) has no match for `VendorCode` |
 | `TemplateId` | varchar(50), NULL | the ERP `EutrTemplate` value; NULL for a "Missing template id" record |
-| `Note` | text, NOT NULL | exactly one of `"Missing template id"`, `"Have no PO folder"`, or one-or-more `"{Template name} - step {n} : Missing"` lines joined by newline |
+| `Note` | text, NOT NULL | exactly one of `"Missing template id"`, `"No PO folder"`, or one-or-more `"{n} - {step name} - Missing"` lines joined by newline (`n` sequential among that purchase order's own missing steps; step name from Step Management, 001-eutr-steps — corrected 2026-08-14, see research.md R11) |
 | `AlertForGroupId` | bigint unsigned, NULL | the resolved template's `AlertFor`; NULL for a "Missing template id" record (no template, so no group) |
 
 **Business rules**: The table is fully cleared (`DELETE FROM eutr_purchase_missing`, no `WHERE`) at
@@ -186,7 +186,7 @@ mailbox directly (spec FR-019 parity with FR-007 / SC-004-style self-describing 
 | `VendorCode` | D365 `refType=15` `OrderAccount` (R9) |
 | `VendorName` | `refType=14` vendor dictionary lookup by `VendorCode` (R9) |
 | `TemplateId` | D365 `refType=15` `EutrTemplate` (report column header says "Template id"; value is the same Template **Code** identifier User Story 1 calls `TemplateCode` — spec Assumptions) |
-| `Note` | Computed per FR-010/FR-011/FR-013 — blank, `"Missing template id"`, `"Have no PO folder"`, or one-or-more `"{Template name} - step {n} : Missing"` lines |
+| `Note` | Computed per FR-010/FR-011/FR-013 — blank, `"Missing template id"`, `"No PO folder"`, or one-or-more `"{n} - {step name} - Missing"` lines |
 | `AlertForGroupId` | Resolved template's `AlertFor` (null when `Note = "Missing template id"` — no template to resolve from) |
 
 Only findings with a non-blank `Note` are kept past the evaluation loop (FR-014). As of the
@@ -206,10 +206,11 @@ EutrSynchronizeDataController.TestPurchaseMissing (GET test-purchase-missing)
        -> IEutrTemplatesRepository.GetManyByCodesWithDetailsAsync(distinct codes) // R10 — build TemplateCode->Template dict, once
        -> for each purchase order:
             -> blank/unmatched EutrTemplate -> Note = "Missing template id" (FR-010)
-            -> else folder missing (HashSet lookup) -> Note = "Have no PO folder" (FR-011)
+            -> else folder missing (HashSet lookup) -> Note = "No PO folder" (FR-011)
             -> else flatten template steps (R11) and check each against the (PoCode,StepId) coverage
-               set built from IEutrReferencesRepository.GetDocumentsByPoCodesAsync(all PurchIds, ct)  // R13, once
-               -> any step missing -> Note = "{Template name} - step {n} : Missing" lines (FR-013)
+               set built from IEutrReferencesRepository.GetDocumentsByPoCodesAsync(all PurchIds, ct)
+               (no RefType filter — R13 correction) -> any step missing -> Note = "{n} - {step name} -
+               Missing" lines, n among that PO's own missing steps (FR-013)
                -> no step missing -> not flagged, discarded (FR-014)
             -> if flagged: IEutrPurchaseMissingRepository.InsertManyAsync([row], ct)                  // FR-021, R17
        -> IEutrPurchaseMissingRepository.GetAllAsync(ct)                           // FR-022, R17 — read back once, after the loop

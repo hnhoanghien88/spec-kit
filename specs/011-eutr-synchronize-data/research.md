@@ -214,16 +214,25 @@ one `GetByIdWithDetailsAsync` call per purchase order (up to 3,000+ calls) in fa
 **Alternatives considered**: `GetByIdWithDetailsAsync` per distinct template Code — rejected, exactly
 the N-round-trip pattern `GetManyByCodesWithDetailsAsync` already exists to avoid.
 
-## R11: How to flatten a template's step tree into the report's "step 1", "step 2", … numbering?
+## R11: How to flatten a template's step tree, and what to show in the report's Note lines?
 
 **Decision**: Add one small private helper to the new service (no existing shared helper does this
 today — the equivalent tree-walk currently only exists client-side in `TemplateBuilderPage.jsx`) that
 takes `EutrTemplatesResponseDto.Details` (a flat list of `EutrTemplateDetailsResponseDto`, each
-carrying `Id`/`ParentId`/`DisplayOrder`), and recursively walks it depth-first starting from
-`ParentId = 0` (root), at each level ordering siblings by `DisplayOrder` — the same tree shape and
-ordering convention the frontend already uses (spec Assumptions: "flattens the full set of steps in
-the same order they are configured/displayed in Template Management") — and numbers the flattened
-result sequentially starting at 1.
+carrying `Id`/`ParentId`/`DisplayOrder`/`StepId`/`StepName`), and recursively walks it depth-first
+starting from `ParentId = 0` (root), at each level ordering siblings by `DisplayOrder` — the same
+tree shape and ordering convention the frontend already uses (spec Assumptions: "flattens the full
+set of steps in the same order they are configured/displayed in Template Management"). For each step
+found missing (R13), the Note line uses that step's own `StepName` (already joined from `eutr_steps`
+by `GetManyByCodesWithDetailsAsync`'s SQL — no extra lookup needed), in the form `"{n} - {StepName} -
+Missing"`, with `n` numbered sequentially starting at 1 **among that purchase order's own missing
+steps only** (not the step's absolute position in the full template tree).
+
+**Correction (2026-08-14, found via live testing)**: the original decision here numbered by absolute
+template position and displayed the *template's* name instead of the step's own name (producing
+lines like `"Template A - step 1 : Missing"`), which does not identify which document is actually
+missing — an admin reading the alert has no way to tell "step 1" apart from any other step without
+opening Template Management. Corrected to show each missing step's own `StepName` instead.
 
 **Rationale**: `EutrTemplateDetails`'s `ParentId`/`DisplayOrder` fields are exactly the fields the
 frontend's own reorder/tree logic already relies on (data-model.md of feature 003, Entity 2's
@@ -243,7 +252,7 @@ this way by `EutrUploadService.ResolveOrCreatePoFolderAsync`,
 _configuration["SharePointEutrPath"]`) **once** at the start of the run, build a
 `HashSet<string>(StringComparer.OrdinalIgnoreCase)` of folder names, and check membership per
 purchase order in-memory. Unlike `ResolveOrCreatePoFolderAsync`, this feature never calls
-`CreateFolder` — a missing folder is a finding ("Have no PO folder"), not something to fix.
+`CreateFolder` — a missing folder is a finding ("No PO folder"), not something to fix.
 
 **Rationale**: Same one-bulk-call-then-in-memory-check shape as R5 (User Story 1) and R9/R10 above —
 established, repeated pattern in this feature for exactly this "avoid N round-trips over a
@@ -262,12 +271,20 @@ existing folder), collect its `PurchId` into one batch and call
 `IEutrReferencesRepository.GetDocumentsByPoCodesAsync(purchIds, ct)` (already exists,
 `ComplianceSys.Infrastructure/Repositories/EutrReferencesRepository.cs:47-68`, already used by the
 "List PO" grid and the `eutr-sales-orders` Template Checklist for this exact "documents recorded
-against these PO codes" need) **once** for the whole batch. Filter the returned rows in-memory to
-`RefType == 15` (the "PO" condition type per feature 004 research Quyết định 39/1073 — the same
-`refType` numbering this feature's own D365 side also uses for Purchase Orders, though the two `15`s
-are unrelated namespaces: one is a D365 `refType`, the other an `eutr_reference_types.Id`), then
-build a `HashSet<(string PoCode, long StepId)>` of "already covered" pairs. A template step is
-"Missing" for a purchase order when `(PurchId, StepId)` is not in that set.
+against these PO codes" need) **once** for the whole batch, then build a
+`HashSet<(string PoCode, long StepId)>` of "already covered" pairs from every returned row that has a
+`StepId` — **no filter on `RefType`**. A template step is "Missing" for a purchase order when
+`(PurchId, StepId)` is not in that set.
+
+**Correction (2026-08-14, found via live testing)**: the original decision filtered the returned rows
+to `RefType == 15`, based on an incorrect assumption that `15` is the "PO" condition-type Id in
+`eutr_reference_types` (it was actually confusing this with the unrelated D365 `refType = 15` this
+same feature's own User Story 2 uses for Purchase Orders — two different `15`s in two unrelated
+namespaces, per the corrected comment now in the code). Because `eutr_references.RefType` for a
+document actually attached via a PO condition is not `15`, that filter excluded every legitimately-
+recorded PO document, making every template step falsely appear "Missing" for every purchase order
+regardless of what was actually uploaded. The filter has been removed entirely — a step now counts as
+covered by any recorded document for that `(PurchId, StepId)` pair, regardless of `RefType`.
 
 For Alert-group routing: for every flagged purchase order that resolved to a template (R10), read that
 template's `AlertFor` (Id). Group all such purchase orders by distinct `AlertFor` value. For each

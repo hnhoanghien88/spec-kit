@@ -151,16 +151,17 @@ Inspect the email sent to every notified group (per the clarified per-group-plus
 behavior — Acceptance Scenario 8) and/or its Excel attachment: the blank/unmatched-template purchase
 order from step 10 appears with `Note = "Missing template id"`.
 
-## 13. Confirm "Have no PO folder" (Acceptance Scenario 3)
+## 13. Confirm "No PO folder" (Acceptance Scenario 3)
 
 In the email/attachment for the group whose template's `AlertFor` matches that purchase order, the
-no-folder purchase order from step 10 appears with `Note = "Have no PO folder"`.
+no-folder purchase order from step 10 appears with `Note = "No PO folder"`.
 
 ## 14. Confirm per-step "Missing" notes (Acceptance Scenario 4)
 
-The purchase order with an existing folder but incomplete steps appears with one `"{Template name} -
-step {n} : Missing"` line per step that has no recorded document — `n` matching that step's position
-in Template Management's own step order for that template.
+The purchase order with an existing folder but incomplete steps appears with one `"{n} - {step name}
+- Missing"` line per step that has no recorded document, using each step's own name from Step
+Management (001-eutr-steps) — not the template's name — with `n` numbered sequentially starting at 1
+among that purchase order's own missing steps (not each step's absolute position in the template).
 
 ## 15. Confirm fully-complete purchase orders are excluded (Acceptance Scenarios 5 & 6)
 

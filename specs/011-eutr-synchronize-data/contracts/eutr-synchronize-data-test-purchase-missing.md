@@ -33,12 +33,13 @@ instead of staying in memory only — see steps 0 and 5a-5b below (research.md R
    present in the fetched purchase orders — research.md R10.
 5. For each fetched purchase order, computes a Note:
    - Blank/unmatched `EutrTemplate` → `"Missing template id"`.
-   - Non-blank, matched `EutrTemplate`, but no SharePoint folder named exactly `{PurchId}` → `"Have
-     no PO folder"`.
+   - Non-blank, matched `EutrTemplate`, but no SharePoint folder named exactly `{PurchId}` → `"No PO
+     folder"`.
    - Non-blank, matched `EutrTemplate`, folder exists → for every step configured on that template
-     (flattened/numbered per research.md R11), one line `"{Template name} - step {n} : Missing"` per
-     step with no recorded document for that purchase order (research.md R13); blank Note if every
-     step already has a document.
+     (flattened per research.md R11), one line `"{n} - {step name} - Missing"` per step with no
+     recorded document for that purchase order (research.md R13, no `RefType` filter), step name from
+     Step Management (001-eutr-steps) and `n` sequential among that purchase order's own missing
+     steps; blank Note if every step already has a document.
 5a. Purchase orders with a blank Note are discarded — never inserted, never reported, never emailed
     (FR-014).
 5b. Purchase orders with a non-blank Note are immediately inserted into `eutr_purchase_missing`
