@@ -67,6 +67,7 @@ CREATE TABLE `eutr_documents`(
     `FileId` VARCHAR(255) NULL,
     `ValidFrom` DATE NULL,
     `ValidTo` DATE NULL,
+    `Invoice` VARCHAR(255) NULL,
     `CreatedBy` VARCHAR(50) NULL,
     `CreatedDate` DATETIME NULL,
     `UpdatedBy` VARCHAR(50) NULL,

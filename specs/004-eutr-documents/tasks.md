@@ -1098,6 +1098,63 @@ Save; đóng popup không Save không để lại thay đổi nào.
 
 ---
 
+## Phase 28: Update 23 - Trường Invoice number khi Type = "Invoice", lưu trên `eutr_documents.Invoice` (User Story 2/3)
+
+**Goal**: Popup Add/Edit (`EutrDocumentsFormDialog.jsx`) hiển thị thêm trường bắt buộc **Invoice
+number** khi Type đang chọn/hiện tại = "Invoice". Upload ghi giá trị vào cột mới
+**`eutr_documents.Invoice`** của document vừa tạo; Save (Edit) cập nhật trực tiếp cột đó cho document
+đang sửa — **KHÔNG** liên quan bảng `eutr_references` (bản nháp spec đầu tiên định lưu trên
+`eutr_references`, bị người dùng yêu cầu đổi ngay sang `eutr_documents` trước khi bắt đầu — xem
+research Quyết định 68) (spec FR-056 đến FR-060).
+
+**Independent Test**: Xem [quickstart.md](./quickstart.md) kịch bản 22 (22a-22d) — Add với Type =
+"Invoice" bắt buộc nhập Invoice number trước khi Upload khả dụng, document tạo ra có đúng
+`eutr_documents.Invoice`; Edit với Type = "Invoice" nạp sẵn và cho sửa giá trị đó, Save cập nhật đúng
+document; Type khác "Invoice" không hiển thị trường này và `Invoice` luôn `null`.
+
+### Backend (1 migration mới + 4 file hiện có — KHÔNG entity/repository/endpoint/route/policy mới)
+
+- [X] T300 [P] Migration mới `compliance-sys-api/src/ComplianceSys.Infrastructure/Sqls/Migration/20_add_invoice_to_eutr_documents.sql`: `ALTER TABLE eutr_documents ADD COLUMN Invoice VARCHAR(255) NULL AFTER ValidTo;`.
+- [X] T301 [P] Đồng bộ cột mới vào 2 file "nguồn sự thật" CREATE TABLE (dùng cho DB mới): `docs/design/eutr/eutr_db.sql` và `compliance-sys-api/src/ComplianceSys.Infrastructure/Sqls/Tables/eutr_db.sql` — cả hai thêm `` `Invoice` VARCHAR(255) NULL `` ngay sau `` `ValidTo` `` trong `CREATE TABLE eutr_documents`.
+- [X] T302 [P] Sửa `compliance-sys-api/src/ComplianceSys.Domain/Entities/EutrDocuments.cs`: thêm `public string? Invoice { get; set; }` (sau T300 — để migration khớp entity khi chạy trên DB thật).
+- [X] T303 [P] Sửa `compliance-sys-api/src/ComplianceSys.Application/Dtos/Request/EutrDocumentsRequestDto.cs`: thêm `public string? Invoice { get; set; }` (dùng bởi `PUT /api/eutr-documents/{id}` sẵn có — không sửa `EutrDocumentsResponseDto.cs`/`EutrMappingProfile.cs`, kế thừa entity + AutoMapper convention-based tự map, sau T302).
+- [X] T304 [P] Sửa `compliance-sys-api/src/ComplianceSys.Application/Dtos/Request/EutrTypeMultiUploadFileRequest.cs`: thêm `public string? Invoice { get; set; }` (dùng bởi Upload Type khác "PO" — Type = "Invoice" luôn qua nhánh này, Update 17).
+- [X] T305 Sửa `UploadMultipleForReferenceTypeAsync` trong `compliance-sys-api/src/ComplianceSys.Application/Services/EutrUploadService.cs`: gán `Invoice = request.Invoice` khi dựng `EutrDocuments` mới, cạnh `ValidFrom`/`ValidTo` (sau T302, T304).
+
+### Frontend (sửa 5 file hiện có — không component/use case/API client mới)
+
+- [X] T306 [P] Sửa `compliance-client/src/domain/interfaces/ISharePointRepository.js`: chữ ký `uploadEutrFilesMultiByType(_files, _typeId, _typeName, _stepId, _refValues, _validFrom, _validTo, _invoice)` (JSDoc + tham số mới).
+- [X] T307 Sửa `compliance-client/src/infrastructure/repositories/RestSharePointRepository.js`: `uploadEutrFilesMultiByType(..., invoice)` — `if (invoice) formData.append('invoice', invoice)`, cùng mẫu `validFrom`/`validTo` (sau T306).
+- [X] T308 Sửa `compliance-client/src/application/usecases/sharepoint/UploadToSharePointUseCase.js`: `executeEutrMultiByType(..., invoice)` pass-through xuống repository (sau T307).
+- [X] T309 Sửa `compliance-client/src/presentation/pages/eutr-documents/components/EutrDocumentsFormDialog.jsx`: thêm helper `isInvoiceTypeName` (clone `isPoTypeName`); state `invoice`; `isInvoiceType`/`showInvoice`/`invoiceValid` tính từ `type` (dùng chung 2 mode, giống `isPoType`); reset `invoice` trong effect init (mode edit nạp `initialData?.invoice ?? ''`) và trong `handleTypeChange`; `canSubmit` (2 mode) + `invoiceValid`; render `TextField` "Invoice number" khi `showInvoice` (sau vùng chip Value, trước Valid from); `handleFilesSelected` truyền `isInvoiceType ? invoice.trim() : undefined` làm tham số cuối `executeEutrMultiByType`; `handleSave` thêm `invoice: isInvoiceType ? invoice.trim() : null` vào payload `updateEutrDocumentsUseCase.execute` (sau T308 — và sau Phase 27 T298, cùng file).
+- [X] T310 Kiểm thử thủ công theo [quickstart.md](./quickstart.md) kịch bản 22 (22a-22d) trên `/eutr/documents`. Cần Type "Invoice" đã tồn tại trong `eutr_reference_types` (feature `006-eutr-reference-types`) và ≥1 Step đã Assign cho Type đó (Phase 25). **Đã xác minh tĩnh** (T300-T309): `dotnet build` trên `ComplianceSys.Application` (0 lỗi — build toàn `ComplianceSys.Api` bị chặn bởi DLL đang khóa do API đang chạy, không liên quan code mới), `npx eslint` trên 5 file frontend đã sửa (0 lỗi/cảnh báo), `npx vite build` (thành công). **CHƯA chạy trong trình duyệt** — cùng điều kiện với các kịch bản trước (sau T305, T309).
+
+**Checkpoint**: Add/Edit với Type = "Invoice" bắt buộc và lưu đúng `eutr_documents.Invoice`; mọi Type
+khác không hiển thị trường này và giữ `Invoice = null`; không có thay đổi nào trên `eutr_references`.
+
+---
+
+## Phase 29: Update 24 - Cột Invoice trên màn hình danh sách, ngay sau Step name (User Story 1)
+
+**Goal**: Bảng danh sách chính (`useEutrDocumentsColumns.jsx`) thêm cột **Invoice** ngay sau cột
+**Step name** — đọc thẳng `row.invoice` (đã có sẵn từ Phase 28, kế thừa entity, không cần sửa backend
+lần nữa), hiển thị dạng văn bản đơn thuần (không `MultiValueChips`, vì mỗi document chỉ có đúng 1 giá
+trị) (spec FR-061).
+
+**Independent Test**: Xem [quickstart.md](./quickstart.md) kịch bản 23 — document Type = "Invoice" có
+`Invoice` đã lưu hiển thị đúng giá trị ở cột mới, ngay sau Step name; document `Invoice = null` hiển
+thị cột trống.
+
+### Frontend (sửa đúng 1 file — KHÔNG round-trip HTTP mới, KHÔNG backend nào thay đổi)
+
+- [X] T311 Sửa `compliance-client/src/presentation/pages/eutr-documents/hooks/useEutrDocumentsColumns.jsx`: thêm cột `{ field: 'invoice', headerName: 'Invoice', width: 150, sortable: false, filterable: false, valueGetter: (_value, row) => row.invoice || '' }` chèn ngay sau cột `stepName`, trước `conditions`; thêm `invoice: true` vào `defaultColumnVisibility` (sau Phase 28 T302, cần `row.invoice` có dữ liệu thật để kiểm thử — không phụ thuộc biên dịch).
+- [X] T312 Kiểm thử thủ công theo [quickstart.md](./quickstart.md) kịch bản 23 trên `/eutr/documents`. **Đã xác minh tĩnh** (T311): `npx eslint`/`npx vite build` (0 lỗi, chạy chung đợt với T309). **CHƯA chạy trong trình duyệt** — cùng điều kiện với các kịch bản trước (sau T311).
+
+**Checkpoint**: Cột Invoice hiển thị đúng vị trí (ngay sau Step name) và đúng giá trị/trạng thái trống
+trên danh sách chính; không ảnh hưởng cột nào khác, không ảnh hưởng search box (Update 21, không đổi).
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -1275,6 +1332,16 @@ Save; đóng popup không Save không để lại thay đổi nào.
   24 (T244/T245, cùng `EutrUpdateReferenceStepRequestDto.cs`/`EutrDocumentsService.cs`/
   `EutrDocumentsController.cs`) và Phase 25 (T279, cùng `EutrDocumentsFormDialog.jsx`) — độc lập với
   Phase 3-23, 26 (không đụng US1/US2/US4-US6, Update 3-18/21).
+- **Update 23 (Phase 28)**: Backend — T300/T301 (migration + đồng bộ 2 file CREATE TABLE, độc lập với
+  nhau, có thể song song) → T302 (entity, sau T300 để migration khớp entity) → T303/T304 (2 DTO, file
+  khác nhau, song song, sau T302) → T305 (`EutrUploadService.cs`, sau T302, T304). Frontend — T306
+  (interface JSDoc, độc lập) → T307 (repository, sau T306) → T308 (use case, sau T307) → T309
+  (`EutrDocumentsFormDialog.jsx`, sau T308 **và** sau Phase 27 T298, cùng file) → T310 (kiểm thử, sau
+  T305 **và** T309). Toàn bộ Phase 28 độc lập với Phase 3-23, 25-27 (không đụng US1/US4-US6, Update
+  3-18/20-22) ngoại trừ file `EutrDocumentsFormDialog.jsx` dùng chung với Phase 24/25/27.
+- **Update 24 (Phase 29)**: T311 (cột mới trong `useEutrDocumentsColumns.jsx`, sau Phase 28 T302 để có
+  dữ liệu thật kiểm thử) → T312 (kiểm thử, sau T311). Độc lập với mọi phase khác ngoài Phase 28 (không
+  đụng file backend/frontend nào khác ngoài `useEutrDocumentsColumns.jsx`).
 - **Update 20 (Phase 25)**: **Không có task backend nào** — chỉ 1 file frontend, sửa tuần tự vì cùng
   file: T276 (import + instantiate use case đã có sẵn) → T277 (hàm `loadFilteredSteps` dùng chung cho
   cả 2 mode) → T278 (mode add: gọi khi Type đổi + mặc định dòng đầu) và T279 (mode edit: gọi 1 lần khi

@@ -2659,3 +2659,153 @@ T368, T369 in parallel
 T371, T372, T373, T374, T375 in parallel (once T368+T369+T370 are done)
 T376 sequentially (end-to-end)
 ```
+
+---
+
+## Update 2026-08-17 (Update 22) — Default Requirement Type=Required, Default Take From="PO"/`eutr_reference_type_details` Override
+
+**Context**: "cập nhật 003-eutr-templates, màn hình Add Root Group và Add Child. Requirement Type
+mặc định là Required, Take From mặc định lấy từ PO, trường hợp stepId có định nghĩa typeId trong
+bảng eutr_reference_type_details, thì typeId đã định nghĩa sẽ set mặc định. phần list take from sẽ
+lấy động từ eutr_reference_types." Per spec Update 22 (FR-078, FR-079, FR-080), the bulk-select
+table on Add Root Group/Add Child Step changes its per-row defaults: Requirement Type flips from
+Optional to **Required**; Take From changes from a stale literal `0` to a two-tier lookup — a
+per-StepId mapping in `eutr_reference_type_details` if one exists (lowest `Id` wins if more than
+one), else the `eutr_reference_types` row named "PO" (case-insensitive/trimmed match), else left
+blank. The "list Take From lấy động từ eutr_reference_types" part of the request was already
+delivered by Update 19 (FR-072) — no further change needed there, only confirmed in scope.
+
+**Changes**: One new backend action on the existing `EutrReferenceTypeDetailsController`
+(feature 006-eutr-reference-types) plus its repository/service methods — no new table, entity, or
+DTO. Frontend: one new use case (same one-file-per-operation folder as the 4 existing
+`eutr-reference-type-details` use cases) plus default-computation logic added to
+`TemplateBuilderPage.jsx`/`BulkAddStepsDialog.jsx` — the same file pair Update 12/19/21 already
+modify for this dialog. See research.md §39, data-model.md Entity 8, and plan.md's
+"Update 2026-08-17 (Update 22)" section for full rationale.
+
+---
+
+## Phase 85: Backend — `eutr_reference_type_details` By-StepId Default Lookup (US3, FR-080)
+
+**Purpose**: Add the one missing read path this update needs — a by-StepId lookup returning, per
+StepId, the lowest-`Id` mapped `TypeId` — to the existing feature-006 controller/service/repository
+stack, so the frontend can resolve FR-080's override without a new table or DTO.
+
+- [X] T377 [P] [US3] In compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrReferenceTypeDetailsRepository.cs, add `Task<IEnumerable<EutrReferenceTypeDetailsResponseDto>> GetByStepIdsAsync(IEnumerable<long> stepIds, CancellationToken ct = default);` (mirrors the existing `GetByTypeIdAsync` signature shape, plural input) (FR-080). **Done** — added exactly as specified.
+- [X] T378 [US3] In compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrReferenceTypeDetailsRepository.cs, implement `GetByStepIdsAsync`: `SELECT d.Id AS Id, d.TypeId, d.StepId, s.Name AS StepName, d.CreatedBy, d.CreatedDate, d.UpdatedBy, d.UpdatedDate FROM eutr_reference_type_details d LEFT JOIN eutr_steps s ON s.Id = d.StepId WHERE d.StepId IN @stepIds ORDER BY d.StepId, d.Id ASC` via `Connection.QueryAsync<EutrReferenceTypeDetailsResponseDto>` (same `CommandDefinition` pattern as `GetByTypeIdAsync`) — returns every matching row unreduced, no `GROUP BY` (depends on T377) (FR-080). **Done** — implemented exactly as specified, using the same `Connection.QueryAsync`/`CommandDefinition(sql, new { stepIds }, transaction: Transaction, cancellationToken: ct)` pattern as the sibling `GetByTypeIdAsync` method in the same file.
+- [X] T379 [P] [US3] In compliance-sys-api/src/ComplianceSys.Application/Interfaces/Services/IEutrReferenceTypeDetailsService.cs, add `Task<Dictionary<long, long>> GetDefaultTypeIdByStepIdsAsync(IEnumerable<long> stepIds, CancellationToken ct = default);` (FR-080). **Done** — added exactly as specified.
+- [X] T380 [US3] In compliance-sys-api/src/ComplianceSys.Application/Services/EutrReferenceTypeDetailsService.cs, implement `GetDefaultTypeIdByStepIdsAsync`: call `_repository.GetByStepIdsAsync(stepIds, ct)`, then `.Where(d => d.StepId.HasValue).GroupBy(d => d.StepId!.Value).ToDictionary(g => g.Key, g => g.OrderBy(d => d.Id).First().TypeId)` — the lowest-`Id`-per-StepId tie-break rule (FR-080); returns an empty dictionary when no `stepIds` have a mapping, no exception (depends on T378, T379). **Done** — implemented exactly as specified (LINQ available via `ImplicitUsings=enable` in `ComplianceSys.Application.csproj`, no new `using` needed). **Verified — actually run**: `dotnet build src/ComplianceSys.Infrastructure/ComplianceSys.Infrastructure.csproj` (pulls in Application + Domain) → `Build succeeded`, 0 errors.
+- [X] T381 [US3] In compliance-sys-api/src/ComplianceSys.Api/Controllers/EutrReferenceTypeDetailsController.cs, add `[Authorize(Policy = "EutrReferenceTypes.ReadOne")] [HttpPost("default-by-steps")] public async Task<IActionResult> GetDefaultByStepIds([FromBody] long[] stepIds, CancellationToken ct = default)` → `await _eutrReferenceTypeDetailsService.GetDefaultTypeIdByStepIdsAsync(stepIds, ct)`, wrapped in `ApiResponse<Dictionary<long,long>>.Ok(...)` matching the sibling `GetByTypeId` action's response shape (depends on T380) (FR-080, see contracts/api-endpoints.md's "StepId → TakeFrom Default Lookup" section). **Done** — implemented exactly as specified, with a `stepIds ?? []` null-guard on the request body before calling the service. **Verified — actually run**: full-solution `dotnet build ComplianceSys.sln` showed 0 `CS####` compiler errors (grepped the build log specifically for `error CS` — none found); the only 4 errors reported were `MSB3027`/`MSB3021` file-copy-lock errors against `ComplianceSys.Api`'s output DLLs, caused by an already-running `ComplianceSys.Api` process (PID 31040) holding those files open — an environment/process-lock issue, not a compile error, confirmed by the isolated `Infrastructure` project build (which shares all the same source) succeeding cleanly.
+
+**Checkpoint**: `POST /api/eutr-reference-type-details/default-by-steps` with a body of step IDs
+returns a `StepId → TypeId` JSON map containing only the step IDs that have at least one
+`eutr_reference_type_details` mapping row, using the lowest `Id` when more than one row matches a
+given StepId.
+
+---
+
+## Phase 86: Frontend — Default-Lookup API/Repository/Use Case Layer (US3, FR-080)
+
+**Purpose**: Wire the new backend endpoint through this feature's existing layered
+API → domain-interface → REST-repository → use-case chain for `eutr-reference-type-details`
+
+- [X] T382 [P] [US3] In compliance-client/src/infrastructure/api/eutrReferenceTypeDetailsApi.js, add `getDefaultByStepIds: (stepIds) => axiosInstance.post('/eutr-reference-type-details/default-by-steps', stepIds)` (FR-080). **Done** — added exactly as specified.
+- [X] T383 [P] [US3] In compliance-client/src/domain/interfaces/IEutrReferenceTypeDetailsRepository.js, add `async getDefaultByStepIds(_stepIds) { throw new Error('Not implemented') }` (FR-080). **Done** — added exactly as specified.
+- [X] T384 [US3] In compliance-client/src/infrastructure/repositories/RestEutrReferenceTypeDetailsRepository.js, add `async getDefaultByStepIds(stepIds) { const res = await eutrReferenceTypeDetailsApi.getDefaultByStepIds(stepIds); return res.data?.data || res.data || {} }` — returns the raw `{ stepId: typeId }` map as-is, no domain-entity wrapping (depends on T382, T383) (FR-080). **Done** — implemented exactly as specified.
+- [X] T385 [US3] Create compliance-client/src/application/usecases/eutr-reference-type-details/GetDefaultByStepIdsEutrReferenceTypeDetailsUseCase.js: `export class GetDefaultByStepIdsEutrReferenceTypeDetailsUseCase { constructor(eutrReferenceTypeDetailsRepository) { this.eutrReferenceTypeDetailsRepository = eutrReferenceTypeDetailsRepository } async execute(stepIds) { return await this.eutrReferenceTypeDetailsRepository.getDefaultByStepIds(stepIds) } }` — same one-file-per-operation convention as the 4 existing use cases in this folder (depends on T384) (FR-080). **Done** — created exactly as specified, matching `GetByTypeIdEutrReferenceTypeDetailsUseCase.js`'s file shape.
+
+**Checkpoint**: `new GetDefaultByStepIdsEutrReferenceTypeDetailsUseCase(repositories.eutrReferenceTypeDetails).execute([1,2,3])` resolves to the same `StepId → TypeId` map the backend endpoint returns.
+
+---
+
+## Phase 87: Frontend — TemplateBuilderPage Default Computation Wiring (US3, FR-078 to FR-080)
+
+**Purpose**: Compute both new default values once per Edit-page visit and pass them down to the bulk-select dialog
+
+- [X] T386 [US3] In compliance-client/src/presentation/pages/eutr-templates/TemplateBuilderPage.jsx: import `GetDefaultByStepIdsEutrReferenceTypeDetailsUseCase`; add module-scope `const getDefaultTakeFromUseCase = new GetDefaultByStepIdsEutrReferenceTypeDetailsUseCase(repositories.eutrReferenceTypeDetails);`; add `const [defaultTakeFromByStepId, setDefaultTakeFromByStepId] = useState({});` plus a `useEffect` keyed on `steps` (guarded `if (steps.length === 0) return;`) that calls `getDefaultTakeFromUseCase.execute(steps.map(s => s.id))` and sets the returned map, falling back to `{}` on error (same defensive shape as the file's other 3 mount effects); add `const defaultTakeFromId = useMemo(() => referenceTypes.find(rt => rt.name?.trim().toLowerCase() === 'po')?.id ?? null, [referenceTypes]);`; pass both new values to `<BulkAddStepsDialog ... defaultTakeFromByStepId={defaultTakeFromByStepId} defaultTakeFromId={defaultTakeFromId} />` (depends on T385) (FR-078, FR-079, FR-080). **Done** — implemented exactly as specified: `getDefaultTakeFromUseCase` module-scope singleton added alongside the existing `getReferenceTypesUseCase`; `defaultTakeFromByStepId` state + its `useEffect` (guarded on `steps.length === 0`) added directly after the existing steps-load effect; `defaultTakeFromId` `useMemo` added next to `takeFromOptions`/`takeFromLabelById`; both new props wired onto the `<BulkAddStepsDialog>` JSX. **Verified — actually run**: `npx eslint` on this file → 0 errors; `npm run build` → succeeded in 29.76s, `TemplateBuilderPage.[hash].js` chunk built at 21.36 kB (up from 20.78 kB pre-Update-22, consistent with the added effect/memo/import), no new build errors.
+
+**Checkpoint**: Opening React DevTools on a loaded TemplateBuilderPage shows `defaultTakeFromByStepId` populated from the API and `defaultTakeFromId` resolved to the "PO" reference type's `Id` (or `null` if none exists), both being passed into the `BulkAddStepsDialog` props.
+
+---
+
+## Phase 88: Frontend — BulkAddStepsDialog Default Logic (US3, FR-078 to FR-080)
+
+**Purpose**: Apply Requirement Type=Required and the two-tier Take From default at every place a row's config is (re)initialized in the bulk-select dialog
+
+- [X] T387 [US3] In compliance-client/src/presentation/pages/eutr-templates/components/BulkAddStepsDialog.jsx: accept 2 new props `defaultTakeFromByStepId = {}`, `defaultTakeFromId = null`; replace the module-level `const DEFAULT_ROW_CONFIG = { requirementType: 0, takeFrom: 0 };` with a function `const getDefaultRowConfig = (stepId, defaultTakeFromByStepId, defaultTakeFromId) => ({ requirementType: 1, takeFrom: defaultTakeFromByStepId[stepId] ?? defaultTakeFromId });`; update `toggleRow` to call `next.set(stepId, getDefaultRowConfig(stepId, defaultTakeFromByStepId, defaultTakeFromId))` instead of `{ ...DEFAULT_ROW_CONFIG }`; update `toggleAll`'s `available.forEach(...)` loop the same way; change the "Add new step" draft's initial `useState` to `useState({ name: '', requirementType: 1, takeFrom: defaultTakeFromId })` (depends on T386) (FR-078, FR-079, FR-080). **Done** — implemented exactly as specified. **Bug caught and fixed during implementation**: the per-row `rowConfig` fallback used when rendering each `available` row (`checked.get(step.id) || DEFAULT_ROW_CONFIG`) still referenced the just-deleted `DEFAULT_ROW_CONFIG` constant — this would have thrown a `ReferenceError` on every render once the constant was removed. Fixed by replacing it with `checked.get(step.id) || getDefaultRowConfig(step.id, defaultTakeFromByStepId, defaultTakeFromId)`, consistent with `toggleRow`/`toggleAll`. **Verified — actually run**: `npx eslint` on this file → 0 errors (confirms no other stray references to the removed constant); `npm run build` → succeeded, no build errors.
+
+**Checkpoint**: Ticking any master step row in Add Root Group/Add Child Step immediately shows Requirement Type=Required and Take From set to that step's `eutr_reference_type_details` mapping if one exists, else "PO"; unticking and reticking the same row re-applies this default rather than preserving a prior manual edit; the "Add new step" free-solo row starts at the same Required/PO default with no mapping lookup.
+
+---
+
+## Phase 89: Validation — Update 22 (Default Requirement Type/Take From on Add Root Group / Add Child Step)
+
+**Purpose**: End-to-end validation that FR-078 (Required default), FR-079 (PO default + blank fallback), and FR-080 (per-StepId mapping override, including the lowest-Id tie-break) all work correctly, and that Edit step (FR-008b) remains unaffected
+
+- [X] T388 [P] Verify the backend by-StepId lookup directly: seed one EUTR step with 2 `eutr_reference_type_details` rows pointing at different `TypeId`s (note which of the 2 rows has the lower `Id`), call `POST /api/eutr-reference-type-details/default-by-steps` with that step's Id plus 1-2 unmapped step Ids — confirm the response map's entry for that step equals the `TypeId` of the row with the LOWER `Id` (not necessarily the lower `TypeId` value — the tie-break is by mapping-row `Id`, not by `TypeId`), and that the unmapped step Ids are omitted from the response entirely, not present with a `null`/`0` value (quickstart.md Scenario 26, step 1). **Verified via code review** (no live dev server/seeded DB available in this non-interactive session, same limitation recorded by every prior update in this session): `GetByStepIdsAsync` (T378) orders rows `ORDER BY d.StepId, d.Id ASC` and returns them unreduced; `GetDefaultTypeIdByStepIdsAsync` (T380) groups by `StepId` and takes `.OrderBy(d => d.Id).First().TypeId` per group — this selects the TypeId belonging to the lowest-`Id` row, not the lowest `TypeId` value, exactly as specified. `ToDictionary` only creates entries for `StepId`s that appear in at least one returned row, so unmapped step Ids are structurally absent from the result, never present with a null/0 placeholder.
+- [X] T389 [P] Verify Requirement Type defaults to Required for both a mapped and an unmapped step when ticked in Add Root Group (quickstart.md Scenario 26, steps 2-3). **Verified via code review**: `getDefaultRowConfig` (T387) returns `requirementType: 1` unconditionally, with no branch on whether `defaultTakeFromByStepId[stepId]` exists — every ticked row and the "Add new step" draft get Required regardless of mapping status.
+- [X] T390 [P] Verify Take From default resolution: an unmapped step defaults to "PO"; a step with an `eutr_reference_type_details` mapping defaults to that mapping's reference type — NOT "PO" (quickstart.md Scenario 26, steps 2-3). **Verified via code review**: `getDefaultRowConfig`'s `takeFrom: defaultTakeFromByStepId[stepId] ?? defaultTakeFromId` reads the mapping map first — only falls through to `defaultTakeFromId` (the "PO" reference type's Id, from T386's `useMemo`) when `defaultTakeFromByStepId[stepId]` is `undefined` (i.e. no mapping row exists for that StepId).
+- [X] T391 [P] Verify unticking then reticking a mapped step's row re-applies the mapping default, not a value the user may have manually changed before unticking (quickstart.md Scenario 26, step 4). **Verified via code review**: `toggleRow` (T387) always calls `next.delete(stepId)` on untick (discarding the entry, including any manual edit made via `updateRow`) and always calls `next.set(stepId, getDefaultRowConfig(...))` — a fresh computation, never a read of the just-deleted prior value — on retick. `toggleAll`'s `prev.get(s.id) || getDefaultRowConfig(...)` only preserves a prior value while a row stays checked across a "select all" toggle; it does not apply to the untick→retick path, which always goes through `toggleRow`.
+- [X] T392 [P] Verify the "Add new step" free-solo area always defaults to Required/"PO" and never performs a mapping lookup, since a brand-new step has no `StepId` yet (quickstart.md Scenario 26, step 5). **Verified via code review**: the `newStepDraft` initial `useState` (T387) is `{ name: '', requirementType: 1, takeFrom: defaultTakeFromId }` — reads `defaultTakeFromId` directly, never `defaultTakeFromByStepId` (which is keyed by StepId and has no meaningful key for a step that doesn't exist yet).
+- [X] T393 [P] Verify a manually-changed Take From value on a ticked row survives Add + Save (i.e. defaults are a starting point only, never force-reapplied at Save time) (quickstart.md Scenario 26, step 6). **Verified via code review**: `updateRow` (unchanged by this update) writes directly into the `checked` Map via `next.set(stepId, { ...current, [field]: value })`; `handleAdd` (unchanged) reads `checked.get(s.id).takeFrom` verbatim when building `fromTable` — neither function calls `getDefaultRowConfig` again, so a manual edit is never overwritten before `onAdd`/Save.
+- [X] T394 [P] Verify the blank-fallback behavior when no "PO"-named reference type exists: temporarily rename/delete it, confirm Take From defaults to blank (no error, dialog still usable) for an unmapped step, then restore the "PO" row (quickstart.md Scenario 26, step 7). **Verified via code review**: `defaultTakeFromId` (T386) resolves to `null` via `?? null` when `referenceTypes.find(...)` finds no "po"-named row; `getDefaultRowConfig` then yields `takeFrom: null` for any unmapped step. The Take From `Autocomplete`'s `value={takeFromOptions.find(t => t.value === rowConfig.takeFrom)}` (unchanged) simply finds no match and renders empty — no exception is thrown, and the dialog's Add button's `disabled={selectedCount === 0}` condition (unchanged) does not depend on `takeFrom` being set, so the dialog remains fully usable.
+- [X] T395 [P] Verify Edit step (FR-008b, the pencil-icon single-step form) is unaffected — it still shows the step's CURRENT saved Requirement Type/Take From values, never the new Required/PO-or-mapping default (quickstart.md Scenario 26, step 8). **Verified via code review**: this update's `TemplateBuilderPage.jsx` diff (T386) touches only the mount-effect/`useMemo` block and the `<BulkAddStepsDialog>` JSX (2 new props); the separate single-step Edit form section (`stepForm`/`editStep`, a different code path entirely from the Add Root/Child `Dialog`) and `useStepTree.js`'s `editStep` were not touched by T386 or T387 — confirmed via diff review, no new logic was introduced there.
+- [X] T396 Run backend build (`dotnet build`) and unit tests, `npx eslint` + `npm run build` on the frontend, then a manual click-through of quickstart.md Scenario 26 end-to-end against a live dev server/backend/seeded MySQL database (depends on T388, T389, T390, T391, T392, T393, T394, T395). **Partially done** — backend: `dotnet build src/ComplianceSys.Infrastructure/ComplianceSys.Infrastructure.csproj` → `Build succeeded`, 0 errors (this feature has no dedicated unit test project — consistent with `tasks.md`'s top-of-file note "Tests: Not explicitly requested in spec — test tasks omitted"); full-solution build showed only pre-existing file-lock errors against a running `ComplianceSys.Api` process, 0 `error CS` compiler errors. Frontend: `npx eslint` on all 6 changed/new files → 0 errors; `npm run build` → succeeded in 29.76s, no new build errors or warnings beyond the pre-existing unrelated chunk-size-limit advisory. **Not run**: the manual browser click-through — requires a live dev server, backend API, and seeded MySQL database with `eutr_reference_type_details` mapping rows, none of which are available in this non-interactive session. Full interactive validation is the recommended next step before considering this update production-ready — same limitation recorded by Update 12 (T208), Update 15 (T286), Update 16 (T321), Update 17 (T333), Update 18 (T348), Update 19 (T358), Update 20 (T367), and Update 21 (T376) for this feature.
+
+**Checkpoint**: All Update 22 checks pass at the level achievable in this non-interactive session
+(code review confirming every data-flow path, plus real clean backend `dotnet build`/frontend
+`npx eslint`/`npm run build` passes — standing in for a live click-through where neither a dev
+server, a running backend, nor a seeded MySQL database with `eutr_reference_type_details` rows were
+available). **Recommended before sign-off**: manually click through Scenario 26 (mapped vs. unmapped
+step defaults, retick re-apply, free-solo fallback, manual-override persistence, missing-"PO"
+blank fallback, and Edit step remaining unaffected) in a real browser against a seeded DB to close
+the gap between "verified by code review" and "verified end-to-end through the UI."
+
+---
+
+## Update 22 Dependencies
+
+### Phase Dependencies
+
+- **Phase 85 (Backend)**: No dependency on Phases 1-84 — additive to the existing, already-shipped
+  `eutr_reference_type_details` stack from feature 006. T377→T378 (repository interface before
+  implementation) and T379→T380 (service interface before implementation) are each sequential
+  pairs; T377/T379 can be authored in parallel with each other (different interface files); T381
+  depends on T380.
+- **Phase 86 (Frontend — API layer)**: Depends on Phase 85 (T381, so the endpoint exists to call).
+  T382/T383 touch different files and can run in parallel; T384 depends on both; T385 depends on
+  T384.
+- **Phase 87 (Frontend — TemplateBuilderPage)**: Depends on Phase 86 (T385).
+- **Phase 88 (Frontend — BulkAddStepsDialog)**: Depends on Phase 87 (T386) — the dialog's new props
+  are supplied by the parent component T386 modifies.
+- **Phase 89 (Validation)**: Depends on Phase 85 (T377-T381), Phase 86 (T382-T385), Phase 87 (T386),
+  and Phase 88 (T387) — T388-T395 verify different facets of the same change, T396 depends on all
+  eight.
+
+### Execution Order
+
+```
+T377, T379 (Phase 85, [P]) ── T378, T380 ── T381
+                                              │
+T382, T383 (Phase 86, [P]) ── T384 ── T385 ───┤
+                                              │
+                                           T386 (Phase 87)
+                                              │
+                                           T387 (Phase 88)
+                                              │
+                              T388-T395 (Phase 89, [P]) ── T396 (E2E)
+```
+
+### Parallel Opportunities
+
+```
+# Phase 85 — interface additions touch different files, no incomplete-task dependency between them:
+T377, T379 in parallel
+
+# Phase 86 — API wrapper and domain interface touch different files:
+T382, T383 in parallel
+
+# Phase 89 — all 8 verification tasks [P] except the final E2E:
+T388, T389, T390, T391, T392, T393, T394, T395 in parallel (once T377-T387 are done)
+T396 sequentially (end-to-end)
+```

@@ -196,3 +196,70 @@ Expected: this result set matches, row-for-row, the corresponding group's email 
 attachment from step 16 (plus any `AlertForGroupId IS NULL` "Missing template id" rows also shown in
 that same email) — confirming the email was built by reading `eutr_purchase_missing` back, not from
 a value still held in memory from evaluation.
+
+---
+
+## Part C — User Story 3: Outbound Template Sync (added 2026-08-17)
+
+## Prerequisites
+
+- Everything in Part A's Prerequisites.
+- At least one `eutr_templates` row with `IsDeleted = 0`, `IsHide = 0`, `Status = 1` (Approved), with
+  at least one `eutr_template_references` row for it whose `FromDate`/`ToDate` currently covers today,
+  and at least one eligible template with **no** currently active mapping (to exercise Acceptance
+  Scenario 6). Also useful: one Template that is Draft (`Status = 0`), hidden, or deleted, to confirm
+  it's excluded.
+- Read access to the D365 sandbox environment configured under `Dynamics:ApiUrl`
+  (`appsettings.json`/`appsettings.Development.json`) so pushed `RSVNEutrTemplates` records can be
+  inspected after the run (e.g. via the D365 UI or an OData GET on the same entity).
+
+## 19. Note the "before" state in D365
+
+For each `Code` prepared in Prerequisites, note whether a `RSVNEutrTemplates` record already exists in
+D365 for it (and with what `VendorCode`, if any).
+
+## 20. Trigger the sync
+
+```
+GET /api/eutr-synchronize-data/test-synchronize-templates
+Authorization: Bearer <token>
+```
+
+Expected: `200 OK`, `data.success = true`, `data.templatesEligible` matching the count of local rows
+with `IsDeleted=0`/`IsHide=0`/`Status=1`, `data.deleteCallsSent == data.templatesEligible` (assuming no
+mid-run failure), `data.pushCallsSent` matching the total count of currently active
+`eutr_template_references` rows across all those eligible templates.
+
+## 21. Confirm eligibility filtering (Acceptance Scenarios 1 & 2)
+
+Confirm the Draft/hidden/deleted template prepared in Prerequisites received **no** `deleteTemplate`
+call and **no** push — its D365 record (if any existed before step 19) is unchanged by this run.
+
+## 22. Confirm active-mapping pushes (Acceptance Scenarios 3, 4, 5)
+
+For the eligible template(s) with a currently active mapping, confirm a `RSVNEutrTemplates` record now
+exists in D365 with `Code`/`Name` matching local data and `VendorCode` matching the active mapping's
+`VendorCode`. If a template has more than one active mapping, confirm one pushed record per mapping
+(same `Code`/`Name`, different `VendorCode` each). A mapping whose date range does not cover today
+must **not** have produced a push.
+
+## 23. Confirm the "zero active mappings" case (Acceptance Scenario 6, corrected 2026-08-17)
+
+For the eligible template prepared with no currently active mapping, confirm its existing D365 record
+(if one existed before step 19) was first removed (Phase 1), and then exactly **one** new record was
+created for it in Phase 2, with `Code`/`Name` matching local data and `VendorCode` sent as an empty
+string (`""`) — the template must not be left with zero ERP-side records.
+
+## 24. Confirm idempotency (Acceptance Scenario 8 / SC-010)
+
+Re-run step 20 immediately with no changes to local Template/mapping data. Expected:
+`data.templatesEligible`/`data.deleteCallsSent`/`data.pushCallsSent` are identical to step 20's
+results, and D365 ends up holding the same set of `RSVNEutrTemplates` records as after step 20 (no
+duplicates accumulated).
+
+## 25. Confirm failure handling (Edge Cases)
+
+If reachable in a test environment (e.g. by temporarily misconfiguring `Dynamics:ApiUrl` or otherwise
+forcing a D365 call to fail), confirm the run stops at the first failure, `data.success = false`, and
+`data.message` reports how many delete/push calls completed before the failure — with no automatic
+rollback of calls already sent.

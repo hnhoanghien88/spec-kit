@@ -477,11 +477,50 @@ Mở SPA, đăng nhập, vào menu **EUTR documents** (đường dẫn `/eutr/do
     Save) → xác nhận danh sách chính và cột Conditions của document đó **không đổi** — mở lại Edit lần
     nữa để xác nhận chip hiện có vẫn y như trước khi thao tác thử ở bước này (không có
     `eutr_references` nào bị tạo/xóa).
+22. **Add — trường Invoice number khi Type = "Invoice" (Update 23, FR-056/FR-057)**: Mở popup Add →
+    chọn Type có `Name` = "Invoice" → xác nhận popup hiển thị thêm trường **Invoice number** (ô nhập
+    tự do). Chọn/gõ 1 PO gợi ý vào ô Value (Type "Invoice" vẫn gợi ý PO, `refType=15`, không đổi từ
+    Update 15). Để trống Invoice number → xác nhận nút **Upload** vẫn vô hiệu hóa dù Type/Value/Step
+    đã đủ. Nhập 1 giá trị (ví dụ "INV-2026-001") → nút Upload khả dụng → chọn 1 file hợp lệ, Upload →
+    xác nhận document mới xuất hiện trên danh sách; kiểm tra qua tab Network (response `get-all`/
+    `get-by-id`) hoặc DB trực tiếp: `eutr_documents.Invoice` = "INV-2026-001" đúng cho document vừa
+    tạo; `eutr_references` của document đó **không có** cột/giá trị Invoice nào (chỉ có
+    `DocumentId`/`StepId`/`RefType`/`RefValue` như các Type khác).
+22a. **Đổi Type xóa Invoice number đã nhập (Update 23)**: Ở popup Add, chọn Type = "Invoice", nhập
+    Invoice number, sau đó đổi sang Type khác (ví dụ "PO") → xác nhận trường Invoice number biến mất;
+    đổi lại về Type = "Invoice" → xác nhận trường hiện lại ở trạng thái **trống** (giá trị cũ không
+    được khôi phục).
+22b. **Type khác "Invoice" không có trường này (Update 23)**: Mở popup Add, thử lần lượt Type = "PO",
+    "Vendor", "Delivery note" (hoặc bất kỳ Type nào khác "Invoice") → xác nhận trường Invoice number
+    không xuất hiện ở bất kỳ Type nào trong số này; Upload thành công tạo document với
+    `eutr_documents.Invoice = null`.
+22c. **Edit — nạp sẵn và cho sửa Invoice number (Update 23, FR-058/FR-059)**: Nhấn Edit trên document
+    Type = "Invoice" vừa tạo ở kịch bản 22 → xác nhận trường Invoice number hiển thị đúng giá trị đã
+    lưu ("INV-2026-001") và có thể sửa. Đổi sang giá trị khác (ví dụ "INV-2026-002"), Save → xác nhận
+    bảng chính (sau khi thêm cột ở kịch bản 23) hiển thị đúng giá trị mới; kiểm tra `eutr_documents`
+    của document đó có `Invoice` = "INV-2026-002" — không có bản ghi `eutr_references` nào bị
+    thêm/xóa/đổi vì thay đổi này.
+22d. **Chặn Save khi xóa trắng Invoice number (Update 23)**: Mở popup Edit của document Type =
+    "Invoice" → xóa trắng trường Invoice number → xác nhận nút Save chuyển sang trạng thái vô hiệu hóa
+    (hoặc nhấn Save bị chặn kèm thông báo lỗi yêu cầu nhập Invoice number).
+23. **Cột Invoice trên danh sách chính, ngay sau Step name (Update 24, FR-061)**: Mở `/eutr/documents`
+    → xác nhận bảng có cột **Invoice** nằm ngay sau cột **Step name** (trước Conditions). Với document
+    Type = "Invoice" đã có `Invoice` (kịch bản 22/22c), xác nhận cột hiển thị đúng giá trị dạng văn
+    bản đơn thuần (không phải chip). Với document Type khác "Invoice" (`Invoice = null`), xác nhận cột
+    này hiển thị trống — không lỗi, không ảnh hưởng các cột khác.
 
 ## Tiêu chí đạt
 
-- Tất cả 21 kịch bản trên (cùng các kịch bản phụ 9a-9s, 10a, 11a-11b, 15a-15e, 16a-16b, 17a, 18a-18i,
-  19a-19b, 20a-20b, 21a-21d, 1a, 5a-5c, 6a) hoạt động đúng.
+- Tất cả 23 kịch bản trên (cùng các kịch bản phụ 9a-9s, 10a, 11a-11b, 15a-15e, 16a-16b, 17a, 18a-18i,
+  19a-19b, 20a-20b, 21a-21d, 22a-22d, 1a, 5a-5c, 6a) hoạt động đúng.
+- **(Update 24)** Bảng danh sách chính hiển thị cột **Invoice** ngay sau cột Step name, đọc trực tiếp
+  `eutr_documents.Invoice` (không JOIN `eutr_references`) — xem SC-015/FR-061; document `Invoice =
+  null` hiển thị cột này ở trạng thái trống.
+- **(Update 23)** Popup Add/Edit hiển thị trường bắt buộc **Invoice number** khi Type = "Invoice",
+  ẩn hoàn toàn với Type khác — xem SC-013/FR-056. Upload ghi giá trị vào `eutr_documents.Invoice` của
+  document tạo ra (FR-057); Save (Edit) cập nhật trực tiếp cột đó cho document đang sửa (FR-059) — xem
+  SC-014. Không bản ghi `eutr_references` nào (của bất kỳ Type nào) có giá trị Invoice — cột này chỉ
+  tồn tại trên `eutr_documents`.
 - **(Update 22)** Ở popup Edit, vùng chip Value chỉ còn chỉ đọc khi Type = "PO" — Type khác "PO" (kể
   cả "Vendor") cho phép thêm/xóa chip, đối chiếu đúng với `eutr_references` khi Save (INSERT chip mới,
   DELETE chip đã xóa, UPDATE `StepId` mọi dòng còn lại) — xem SC-012/FR-051 đến FR-055; Vendor vẫn giới

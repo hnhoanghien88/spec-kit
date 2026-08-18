@@ -3,27 +3,28 @@
 description: "Task list template for feature implementation"
 ---
 
-# Tasks: EUTR Synchronize Data (Sales Order Template Sync + Purchase-Order Missing-Documentation Alert)
+# Tasks: EUTR Synchronize Data (Sales Order Template Sync + Purchase-Order Missing-Documentation Alert + Outbound Template Sync)
 
 **Input**: Design documents from `/specs/011-eutr-synchronize-data/`
 
 **Prerequisites**: [plan.md](./plan.md), [spec.md](./spec.md), [research.md](./research.md), [data-model.md](./data-model.md), [contracts/](./contracts/), [quickstart.md](./quickstart.md)
 
 **Tests**: Not explicitly requested by the feature spec. Unit-test tasks (T008 for US1, T014 and T023
-for US2) are included to cover each story's acceptance scenarios, matching the existing
+for US2, T032 for US3) are included to cover each story's acceptance scenarios, matching the existing
 `ComplianceSysApi.UnitTests` convention already used elsewhere in this solution — not a TDD-first
 requirement.
 
-**Organization**: The spec defines two user stories, both P1: US1 (Sales Order Template Sync,
-already implemented — see Phase 3) and US2 (Purchase-Order Missing-Documentation Alert, added
+**Organization**: The spec defines three user stories, all P1: US1 (Sales Order Template Sync,
+already implemented — see Phase 3), US2 (Purchase-Order Missing-Documentation Alert, added
 2026-08-13, persisted to a new store per the 2026-08-14 update — see Phase 4, including its
-"persistence redesign" sub-section). Each has its own foundational fix scoped to only what it needs;
-there is no cross-story foundational work shared by both.
+"persistence redesign" sub-section), and US3 (Outbound Template Sync, added 2026-08-17 — see Phase
+5). Each has its own foundational fix/prerequisite scoped to only what it needs; there is no
+cross-story foundational work shared by all three.
 
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel (different files, no dependencies)
-- **[Story]**: Which user story this task belongs to (US1 or US2)
+- **[Story]**: Which user story this task belongs to (US1, US2, or US3)
 - Include exact file paths in descriptions
 
 ## Path Conventions
@@ -438,9 +439,195 @@ per spec FR-020/FR-021/FR-022 — independently testable per quickstart.md Part 
 
 ---
 
-## Phase 5: Polish & Cross-Cutting Concerns
+## Phase 5: User Story 3 - Push eligible local Templates and their active Vendor mappings out to the ERP (Priority: P1) (added 2026-08-17)
 
-**Purpose**: Final validation across the whole feature (both user stories).
+**Goal**: A third, independent manually-triggered endpoint that reads every local `eutr_templates` row
+matching `IsDeleted=0`/`IsHide=0`/`Status=1`, removes each one's existing ERP-side `RSVNEutrTemplates`
+record via D365's `deleteTemplate` bound action (Phase 1, all eligible templates before Phase 2
+starts), then pushes one `RSVNEutrTemplates` create record per eligible template's currently active
+`eutr_template_references` Vendor mapping (Phase 2) — without touching User Story 1's sync logic,
+User Story 2's alert logic, or any local table (this story only reads locally and writes to D365).
+
+**Independent Test**: Per spec.md — trigger the endpoint against a local Template population with a
+mix of eligible templates (one active mapping, several active mappings, zero active mappings) and
+ineligible templates (Draft, hidden, or deleted); confirm the ERP received exactly one removal
+request per eligible template and exactly one push per eligible template's currently active mapping,
+with no request at all for ineligible templates or expired/future-dated mappings. See quickstart.md
+Part C (steps 19-25) for the full walkthrough.
+
+### Implementation for User Story 3
+
+- [X] T026 [P] [US3] Create `EutrSynchronizeTemplatesSummaryDto` in
+  `compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/EutrSynchronizeTemplatesSummaryDto.cs`
+  with fields `TemplatesEligible` (int), `DeleteCallsSent` (int), `PushCallsSent` (int), `Success`
+  (bool), `Message` (string) — per data-model.md "User Story 3 — New DTO".
+
+- [X] T027 [P] [US3] In `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrTemplatesRepository.cs`,
+  add `Task<IEnumerable<EutrTemplates>> GetEligibleForDynamicsSyncAsync(CancellationToken ct = default);`
+  to the interface; implement it in
+  `compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrTemplatesRepository.cs`
+  following the existing `SetStatusAsync`/`SetIsDefaultAsync` style (`Connection.QueryAsync<EutrTemplates>`
+  with a `CommandDefinition`), SQL: `SELECT * FROM eutr_templates WHERE IsDeleted = 0 AND IsHide = 0
+  AND Status = 1` — per data-model.md/research.md R18. Add a short Vietnamese comment noting this
+  differs from `GetPagedAsync` by additionally filtering `Status` and returning plain entities, not a
+  paged DTO.
+  *(Implemented exactly as specified — appended after `ResolveAlertGroupIdByNameAsync`.)*
+
+- [X] T028 [P] [US3] In `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrTemplateReferencesRepository.cs`,
+  add `Task<IEnumerable<EutrTemplateReferences>> GetActiveByTemplateIdsAsync(IEnumerable<long> templateIds, DateTime asOfDate, CancellationToken ct = default);`
+  to the interface; implement it in
+  `compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrTemplateReferencesRepository.cs`
+  following the existing `GetByTemplateIdAsync` style (`Connection.QueryAsync<EutrTemplateReferences>`
+  with a `CommandDefinition`), SQL: `SELECT id AS Id, TemplateId, VendorCode, FromDate, ToDate,
+  CreatedBy, CreatedDate, UpdatedBy, UpdatedDate FROM eutr_template_references WHERE TemplateId IN
+  @templateIds AND FromDate <= @asOfDate AND ToDate >= @asOfDate` — one call for every eligible
+  template's `Id` at once, not one call per template — per data-model.md/research.md R19.
+  *(Implemented exactly as specified — appended after `CopyReferencesAsync`.)*
+
+- [X] T029 [US3] Extend `IEutrSynchronizeDataService` in
+  `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Services/IEutrSynchronizeDataService.cs`
+  (depends on T026): add `Task<EutrSynchronizeTemplatesSummaryDto> SyncTemplatesToDynamicsAsync(CancellationToken ct = default);`
+  alongside the existing two members — same interface, no new file.
+
+- [X] T030 [US3] Implement `SyncTemplatesToDynamicsAsync` in
+  `compliance-sys-api/src/ComplianceSys.Application/Services/EutrSynchronizeDataService.cs` (depends
+  on T027, T028, T029), extending the existing `EutrSynchronizeDataService` class:
+  - Constructor-inject `Shared.ExternalServices.Interfaces.IDynamicService` alongside the existing
+    dependencies.
+  - Call `_eutrTemplatesRepository.GetEligibleForDynamicsSyncAsync(ct)` once; set `TemplatesEligible`
+    to its count. If the call throws, set `Success = false`, `Message` describing the failure, and
+    return immediately (no partial phase runs).
+  - Build the two D365 URLs once from `_configuration["Dynamics:ApiUrl"]` (throw
+    `InvalidOperationException` if unset, matching `SendPurchaseMissingAlertAsync`'s
+    `SharePointEutrPath` null-check style): `{apiUrl}/data/RSVNEutrTemplates/Microsoft.Dynamics.DataEntities.deleteTemplate`
+    and `{apiUrl}/data/RSVNEutrTemplates`.
+  - **Phase 1**: loop every eligible template in order; call
+    `_dynamicService.PostAsync(deleteUrl, new { Code = template.Code }, ct)`; increment
+    `DeleteCallsSent` on success. If any call throws, log it (Vietnamese comment), set `Success =
+    false`, `Message` reporting how many delete calls completed before the failure, and return
+    immediately — do **not** proceed to Phase 2 (research.md R21, spec FR-025/Assumptions).
+  - **Phase 2** (only reached once Phase 1 has completed for every eligible template): call
+    `_eutrTemplateReferencesRepository.GetActiveByTemplateIdsAsync(eligibleTemplates.Select(t =>
+    t.Id), DateTime.UtcNow.Date, ct)` once. Build a `Dictionary<long, EutrTemplates>` from the
+    eligible-templates list keyed by `Id`. Loop every returned mapping; look up its `TemplateId` in
+    that dictionary (skip if not found — should not happen since the query was scoped to the same
+    `Id` list); call `_dynamicService.PostAsync(createUrl, new RSVNEutrTemplates { Code =
+    template.Code, Name = template.Name, VendorCode = mapping.VendorCode }, ct)`; increment
+    `PushCallsSent` on success. If any call throws, log it, set `Success = false`, `Message`
+    reporting how many delete/push calls completed before the failure, and return immediately (same
+    stop-the-run shape as Phase 1 — research.md R21).
+  - On normal completion, set `Success = true` and `Message` to a short summary (e.g.
+    `$"Eligible {TemplatesEligible}, deleted {DeleteCallsSent}, pushed {PushCallsSent}"`).
+  - This method performs **no local writes** anywhere — no `IUnitOfWork`, no repository
+    `AddAsync`/`Update` calls; every write this method performs is the `IDynamicService.PostAsync`
+    call to D365.
+  *(Implemented as specified, with one deliberate deviation from the task text: the Phase 1 delete
+  payload uses a new private nested class `DeleteTemplateRequest { Code }` instead of an anonymous
+  type `new { Code = template.Code }` — `IDynamicService.PostAsync<T>` is a generic method, and Moq
+  can only Setup/Verify a generic method against a concrete, nameable `T`; an anonymous type can't be
+  referenced from the test project. The wire-format JSON body is identical either way (`{"Code":
+  "..."}`). `dotnet build` on `ComplianceSys.Application` succeeds with 0 compiler errors (only
+  pre-existing warnings, same class of noise as prior tasks' notes).)*
+  *(Post-implementation fix, prompted by explicit user request to compare against
+  `DynController`'s existing `[HttpPost("reference")]`: decompiling `DynamicsParameterManager.BuildUrl()`
+  (`Res.Shared.ExternalServices` 1.0.11 — the same package/version `IComplDynamicsService` and every
+  `DynController` action already use) showed every existing Dynamics call in this codebase always
+  appends `?cross-company=true` to its URL. Both `deleteUrl` and `createUrl` were missing it — since
+  `RSVNEutrTemplates` has no `dataAreaId` field, this risked D365 scoping the write to one default
+  company instead of behaving like every other call against this entity. Fixed by appending
+  `?cross-company=true` to both URLs (research.md R20 updated with the full decompiled evidence and
+  rationale). All 30 tests in this file (including the `DeleteUrl`/`CreateUrl` test constants, updated
+  to match) still pass after the fix.)*
+
+- [X] T031 [US3] Add `[HttpGet("test-synchronize-templates")]` action to
+  `compliance-sys-api/src/ComplianceSys.Api/Controllers/EutrSynchronizeDataController.cs` (depends on
+  T029, T030), alongside the existing two actions, same controller/injected service instance:
+  ```csharp
+  [HttpGet("test-synchronize-templates")]
+  public async Task<IActionResult> TestSynchronizeTemplates(CancellationToken ct)
+  {
+      var result = await _eutrSynchronizeDataService.SyncTemplatesToDynamicsAsync(ct);
+      return Ok(ApiResponse<EutrSynchronizeTemplatesSummaryDto>.Ok(result, result.Message));
+  }
+  ```
+  matching the same `ApiResponse<T>.Ok(data, message)` pattern as the other two actions — see
+  contracts/eutr-synchronize-data-test-synchronize-templates.md for the exact response envelope.
+  *(Implemented exactly as specified. `dotnet build` on `ComplianceSys.Api` hits only the same
+  pre-existing MSB3027/MSB3021 file-copy lock errors from a locally-running dev instance noted in
+  T001/T012 — actual C# compilation of the controller succeeds with 0 code errors.)*
+
+- [X] T032 [P] [US3] Add unit tests in
+  `compliance-sys-api/tests/ComplianceSysApi.UnitTests/Services/EutrSynchronizeDataServiceTests.cs`
+  (depends on T030), covering spec.md User Story 3's eight Acceptance Scenarios: (1) eligible template
+  → `deleteTemplate` called with its `Code` before any push; (2) Draft/hidden/deleted template →
+  excluded, no delete/push call at all; (3) eligible template with one currently active mapping → one
+  push with matching `Code`/`Name`/`VendorCode`; (4) mapping whose date range excludes today → no
+  push; (5) eligible template with 2+ active mappings → one push per mapping, same `Code`/`Name`,
+  different `VendorCode`; (6) eligible template with zero active mappings → delete still happens, no
+  push; (7) multi-item eligible/mapping sets are all processed (no early stop absent a failure); (8)
+  re-running with unchanged mock data produces the same `DeleteCallsSent`/`PushCallsSent` counts both
+  times. Also cover the two failure-handling edge cases: a `PostAsync` throw during Phase 1 stops the
+  run before any Phase 2 call is made; a `PostAsync` throw during Phase 2 stops the run and does not
+  affect templates already pushed. Add `Mock<IEutrTemplateReferencesRepository>` and
+  `Mock<IDynamicService>` fields, wire them into `CreateService()`, and verify call counts/arguments
+  via `_dynamicService.Verify(...)` rather than a live HTTP call.
+  *(Implemented as 11 test methods — the 8 Acceptance Scenarios plus 3 edge cases: no eligible
+  templates found (a variant of Scenario 2 at the service level, since eligibility filtering itself
+  lives in the mocked repository), Phase 1 failure stops before Phase 2, Phase 2 failure stops the
+  run with prior successes intact. Since `IDynamicService.PostAsync<T>` is a generic method, calls are
+  matched/verified using Moq 4.20's `It.IsAny<It.IsAnyType>()` generic-type-parameter wildcard for the
+  delete payload (whose concrete type, `DeleteTemplateRequest`, is private) and by the concrete,
+  public `RSVNEutrTemplates` type for push-payload assertions (e.g. asserting `Code`/`Name`/
+  `VendorCode` via `It.Is<RSVNEutrTemplates>(...)`). All 30 tests in this file pass (19 previous + 11
+  new); full suite: 120 passed, 1 failed (same pre-existing unrelated `MappingConfigurationTests`
+  failure noted in T001/T014/T023) — no regression.)*
+
+### Correction for User Story 3 — left join, not inner join (added 2026-08-17)
+
+**Goal**: Fix Phase 2 so an eligible template with zero currently active Vendor mappings still
+receives exactly one push (with a blank Vendor Code), instead of being skipped entirely — per explicit
+follow-up request ("bảng eutr_templates left join với eutr_template_references, nếu
+eutr_template_references không tồn tại thì đẩy dữ liệu VendorCode = ''"), spec Acceptance Scenario 6/
+FR-026/FR-027/FR-028 (corrected), research.md R24.
+
+- [X] T034 [US3] Rewrite Phase 2 of `SyncTemplatesToDynamicsAsync` in
+  `compliance-sys-api/src/ComplianceSys.Application/Services/EutrSynchronizeDataService.cs` (depends
+  on T030) to iterate the **eligible templates** list (not the `activeMappings` list) as the outer
+  loop: build `activeMappings.ToLookup(m => m.TemplateId)` once; for each eligible template, look up
+  its mappings from that `Lookup` — if one or more, push one record per mapping exactly as before
+  (`VendorCode = mapping.VendorCode`); if zero, push exactly one record with `VendorCode =
+  string.Empty` instead of skipping the template. Keep the same stop-the-run-on-failure behavior in
+  both branches (research.md R21, unchanged). Do not change `GetActiveByTemplateIdsAsync`'s SQL or
+  return type (research.md R19 unaffected) — the left join is applied in C# only (research.md R24).
+  *(Implemented exactly as specified. `dotnet build` on `ComplianceSys.Application` succeeds with 0
+  compiler errors (only pre-existing warnings).)*
+
+- [X] T035 [P] [US3] Update unit tests in
+  `compliance-sys-api/tests/ComplianceSysApi.UnitTests/Services/EutrSynchronizeDataServiceTests.cs`
+  (depends on T034) to match the corrected behavior: rename/rewrite
+  `SyncTemplatesToDynamicsAsync_ShouldNotPush_WhenMappingDateRangeExcludesToday` →
+  `..._ShouldPushBlankVendorCode_WhenMappingDateRangeExcludesToday` (now asserts `PushCallsSent == 1`
+  with `VendorCode == ""`, not `Times.Never()`); rename/rewrite
+  `..._ShouldDeleteButNotPush_WhenTemplateHasNoActiveMapping` →
+  `..._ShouldDeleteAndPushBlankVendorCode_WhenTemplateHasNoActiveMapping` (now asserts
+  `PushCallsSent == 1` with a verified blank-`VendorCode` call, not `PushCallsSent == 0`); update
+  `..._ShouldProcessEveryEligibleTemplateAndMapping_WhenNoFailure`'s expected `PushCallsSent` from `2`
+  to `3` (the third template, with no active mapping, now contributes one blank-`VendorCode` push) and
+  add a verification for that push.
+  *(Implemented as specified — all 3 tests renamed/updated. All 30 tests in this file still pass
+  (same 30, none added/removed — this was a correction to existing tests, not new coverage); full
+  suite: 120 passed, 1 failed (same pre-existing unrelated `MappingConfigurationTests` failure) — no
+  regression.)*
+
+**Checkpoint**: User Story 3 is fully functional and independently testable, now with corrected
+left-join Phase 2 behavior — the endpoint can be called end-to-end per quickstart.md Part C, without
+affecting User Story 1's or User Story 2's already-shipped behavior.
+
+---
+
+## Phase 6: Polish & Cross-Cutting Concerns
+
+**Purpose**: Final validation across the whole feature (all three user stories).
 
 - [ ] T024 Run [quickstart.md](./quickstart.md) Part A validation (steps 1-8) against a real or test
   D365 connection: confirm the pre-fix empty result (step 1), the post-fix real data (step 2),
@@ -461,6 +648,22 @@ per spec FR-020/FR-021/FR-022 — independently testable per quickstart.md Part 
   complete; needs the same kind of live D365/SharePoint/mailbox/MySQL access as T024 (also not
   completable in this environment). *(Renumbered from T016.)*
 
+- [ ] T033 Run [quickstart.md](./quickstart.md) Part C validation (steps 19-25) against a real or test
+  D365 sandbox environment: confirm eligibility filtering excludes Draft/hidden/deleted templates
+  (step 21), active-mapping pushes carry the correct `Code`/`Name`/`VendorCode` including the
+  multi-mapping and expired-mapping cases (step 22), an eligible template with zero active mappings
+  gets its ERP record removed then recreated with a blank Vendor Code — never left with zero ERP
+  records (step 23, corrected 2026-08-17 per T034/T035), re-running with unchanged data is idempotent
+  (step 24), and a forced D365 failure stops the run with an accurate partial-progress `Message`
+  (step 25). Depends on T026-T032 **and** T034-T035 (the left-join correction) being complete; needs
+  live D365 sandbox access (same class of gap as T024/T025 — not completable in this environment
+  without D365 credentials).
+  **NOT COMPLETED** — this environment has no live D365 sandbox connection/credentials to exercise the
+  real endpoint end-to-end. Unit tests (T032, corrected by T035) cover the same eight Acceptance
+  Scenarios plus the two failure-handling edge cases against mocked dependencies; T033 still needs a
+  human (or an environment with D365 sandbox access) to run before User Story 3 is considered fully
+  verified.
+
 ---
 
 ## Dependencies & Execution Order
@@ -479,8 +682,17 @@ per spec FR-020/FR-021/FR-022 — independently testable per quickstart.md Part 
   (adding a second action/method to each, not modifying the first), so in practice implement Phase 4
   after Phase 3 lands to avoid two people editing the same files concurrently — but there is no
   *functional* dependency between the two stories' behavior.
-- **Polish (Phase 5)**: T024 depends on User Story 1 (all of Phase 3) being complete. T025 depends on
-  User Story 2 (all of Phase 4, including the T017-T023 persistence redesign) being complete.
+- **User Story 3 (Phase 5)**: Depends only on Setup (Phase 1) — does **not** depend on Phase 2, Phase
+  3, or Phase 4 completion (it has no shared foundational fix; `IEutrTemplatesRepository`/
+  `IEutrTemplateReferencesRepository` are extended additively, not fixed). All three stories touch
+  the same `EutrSynchronizeDataController`/`EutrSynchronizeDataService`/`IEutrSynchronizeDataService`
+  files (adding a third action/method to each, not modifying the first two), so in practice implement
+  Phase 5 after Phase 4 lands to avoid concurrent edits to the same files — but there is no
+  *functional* dependency between User Story 3's behavior and User Story 1's or User Story 2's.
+- **Polish (Phase 6)**: T024 depends on User Story 1 (all of Phase 3) being complete. T025 depends on
+  User Story 2 (all of Phase 4, including the T017-T023 persistence redesign) being complete. T033
+  depends on User Story 3 (all of Phase 5, including the T034-T035 left-join correction) being
+  complete.
 
 ### Within User Story 1
 
@@ -510,6 +722,20 @@ per spec FR-020/FR-021/FR-022 — independently testable per quickstart.md Part 
   and T021 (DI registration, so the constructor-injected dependency resolves at runtime).
 - T023 depends on T022 (the rewired method under test must exist).
 
+### Within User Story 3
+
+- T026, T027, and T028 have no code dependency on each other (three different files/interfaces) and
+  can all be done in parallel.
+- T029 depends on T026 (DTO shape referenced by the new interface member).
+- T030 depends on T027 (eligible-templates query), T028 (active-mappings query), and T029 (interface
+  signature) — and is written into the same class T005/T012 already created, as a third method.
+- T031 depends on T029 (interface to inject — already satisfied by Phase 3, extended here) and T030
+  (the method it calls must exist and be implemented).
+- T032 depends on T030 (the method under test must exist) but not on T031.
+- T034 depends on T030 (the method it rewrites Phase 2 of must already exist).
+- T035 depends on T034 (the corrected behavior under test must exist) — it is a correction to T032's
+  own test file, not new coverage, so T032 is a prerequisite transitively but not a direct one.
+
 ### Parallel Opportunities
 
 - T003 and T004 (Phase 3) — different files, no shared code.
@@ -523,6 +749,12 @@ per spec FR-020/FR-021/FR-022 — independently testable per quickstart.md Part 
   staffed/implemented by a different person in parallel with Phase 3, at the cost of both people
   touching `EutrSynchronizeDataController.cs`/`EutrSynchronizeDataService.cs`/
   `IEutrSynchronizeDataService.cs` concurrently (merge-conflict risk, not a correctness risk).
+- T026, T027, and T028 (Phase 5) — three different files, no shared code.
+- T032 can be written in parallel with T031 once T030 exists.
+- Phase 5 (User Story 3) as a whole has no functional dependency on Phase 2/Phase 3/Phase 4 and could
+  be staffed/implemented by a different person in parallel with either, at the same
+  `EutrSynchronizeDataController.cs`/`EutrSynchronizeDataService.cs`/`IEutrSynchronizeDataService.cs`
+  merge-conflict risk (not a correctness risk) already noted for Phase 4.
 
 ---
 
@@ -557,6 +789,18 @@ Task: "Create EutrPurchaseMissing entity in compliance-sys-api/src/ComplianceSys
 Task: "Create IEutrPurchaseMissingRepository in compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrPurchaseMissingRepository.cs"
 ```
 
+## Parallel Example: User Story 3
+
+```bash
+# Launch these three together at the start of Phase 5:
+Task: "Create EutrSynchronizeTemplatesSummaryDto in compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/EutrSynchronizeTemplatesSummaryDto.cs"
+Task: "Add + implement GetEligibleForDynamicsSyncAsync on IEutrTemplatesRepository/EutrTemplatesRepository"
+Task: "Add + implement GetActiveByTemplateIdsAsync on IEutrTemplateReferencesRepository/EutrTemplateReferencesRepository"
+
+# After T030 lands, this can run alongside T031:
+Task: "Add unit tests in compliance-sys-api/tests/ComplianceSysApi.UnitTests/Services/EutrSynchronizeDataServiceTests.cs"
+```
+
 ---
 
 ## Implementation Strategy
@@ -568,7 +812,7 @@ User Story 1 is the original, already-shipped MVP:
 1. Complete Phase 1: Setup (T001).
 2. Complete Phase 2: Foundational (T002) — CRITICAL, blocks User Story 1.
 3. Complete Phase 3: User Story 1 (T003-T008).
-4. **STOP and VALIDATE**: Run Phase 5's T024 (quickstart.md Part A) before considering User Story 1
+4. **STOP and VALIDATE**: Run Phase 6's T024 (quickstart.md Part A) before considering User Story 1
    fully done.
 
 ### Incremental Delivery (User Story 2)
@@ -577,27 +821,45 @@ User Story 1 is the original, already-shipped MVP:
 6. Complete Phase 4's persistence redesign (T017-T023) — replaces T012's in-memory findings list
    with the `eutr_purchase_missing` store; no functional change to what gets emailed to whom, only
    where the data is read from immediately before sending.
-7. **STOP and VALIDATE**: Run Phase 5's T025 (quickstart.md Part B, including steps 11a/18) before
+7. **STOP and VALIDATE**: Run Phase 6's T025 (quickstart.md Part B, including steps 11a/18) before
    considering User Story 2 fully done.
+
+### Incremental Delivery (User Story 3, added 2026-08-17)
+
+8. Complete Phase 5: User Story 3 (T026-T032) — independent of Phase 2/3/4, addable at any time; the
+   reverse direction from User Story 1/2 (pushes local data to D365 instead of reading D365 in).
+9. Complete Phase 5's left-join correction (T034-T035) — an eligible template with zero currently
+   active Vendor mappings now still gets exactly one push, with a blank Vendor Code, instead of being
+   skipped entirely.
+10. **STOP and VALIDATE**: Run Phase 6's T033 (quickstart.md Part C) before considering User Story 3
+    fully done.
 
 ### Suggested Sequencing for a Single Implementer
 
 T001 → T002 → {T003, T004 in either order} → T005 → {T006, T008 in either order} → T007 → T024 →
 {T009, T010 in either order} → T011 → T012 → {T013, T014 in either order} → T017 →
-{T018, T019 in either order} → T020 → T021 → T022 → T023 → T025.
+{T018, T019 in either order} → T020 → T021 → T022 → T023 → T025 →
+{T026, T027, T028 in any order} → T029 → T030 → {T031, T032 in either order} → T034 → T035 → T033.
 
 ---
 
 ## Notes
 
 - [P] tasks = different files, no dependencies.
-- [US1]/[US2] labels map every Phase 3/Phase 4 task to its user story for traceability.
+- [US1]/[US2]/[US3] labels map every Phase 3/Phase 4/Phase 5 task to its user story for traceability.
 - T002 (Foundational, US1) and T009 (US2) are each the highest-risk task in their story: both edit
   the same shared file (`ComplDynamicsService.cs`, different `case`s) used by many other `refType`
   values. Keep each diff scoped exactly to its own entry/case per research.md R2/R3 (T002) and R9
-  (T009) — do not reformat or touch neighboring entries/cases.
+  (T009) — do not reformat or touch neighboring entries/cases. User Story 3 (T027/T028) has no
+  equivalent shared-file risk — both new methods live on interfaces/implementations dedicated to this
+  feature's own repositories, not a shared switch/dictionary used by unrelated `refType`s.
 - T012 extends the same class T005 created (`EutrSynchronizeDataService`) with a second method —
-  do not create a second service class or a second `IEutrSynchronizeDataService` file.
+  do not create a second service class or a second `IEutrSynchronizeDataService` file. T030 extends
+  it further with a third method, same rule applies.
+- T030 (User Story 3) is the first method in this codebase to call `IDynamicService.PostAsync` — it
+  has no existing in-repo call site to copy the exact usage from (unlike every other task in this
+  file, which clones an established pattern per research.md's R-numbered decisions); research.md R20
+  is this task's primary reference instead.
 - T022 modifies (not replaces) the body of the same `SendPurchaseMissingAlertAsync` method T012
   wrote — the template/folder/step Note-computation logic is unchanged; only where flagged findings
   end up (a new table instead of only an in-memory list) and where the per-group email-building step
@@ -608,5 +870,5 @@ T001 → T002 → {T003, T004 in either order} → T005 → {T006, T008 in eithe
   performance micro-optimization the precedent itself doesn't make.
 - Commit after each task or logical group, per repository convention.
 - No frontend (`compliance-client/`) tasks exist for this feature — it is backend-only (plan.md
-  Constitution Check, Principle V: N/A), for both user stories, including the 2026-08-14 persistence
-  redesign.
+  Constitution Check, Principle V: N/A), for all three user stories, including the 2026-08-14
+  persistence redesign and the 2026-08-17 outbound Template sync.

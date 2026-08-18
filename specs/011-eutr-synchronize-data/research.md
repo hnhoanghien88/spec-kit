@@ -411,3 +411,222 @@ for this update: `ComplSoMissingRepository.InsertManyAsync` itself loops one `IN
 matching that exactly (Principle II) was judged more valuable here than a performance optimization
 the existing precedent doesn't also make (row counts here — flagged purchase orders only, not the
 full >3,000 population — are expected to be small enough that this is not a bottleneck).
+
+## User Story 3 — Outbound Template Sync (added 2026-08-17)
+
+## R18: Where does "eligible templates" (IsDeleted=0, IsHide=0, Status=1) come from?
+
+**Decision**: Add one new method to the existing `IEutrTemplatesRepository`/`EutrTemplatesRepository`
+(`ComplianceSys.Application/Interfaces/Repositories/IEutrTemplatesRepository.cs` /
+`ComplianceSys.Infrastructure/Repositories/EutrTemplatesRepository.cs`):
+`Task<IEnumerable<EutrTemplates>> GetEligibleForDynamicsSyncAsync(CancellationToken ct = default)`,
+returning full `EutrTemplates` entities (not a DTO) filtered `WHERE IsDeleted = 0 AND IsHide = 0 AND
+Status = 1`.
+
+**Rationale**: No existing method filters by all three columns together —
+`GetPagedAsync`/`GetManyByCodesWithDetailsAsync` filter `IsDeleted`/`IsHide` but not `Status`, and
+both return response DTOs shaped for the Template Management UI (nested step details, vendor names),
+which this action doesn't need. This action only needs `Id`/`Code`/`Name` (`Id` to join
+`eutr_template_references.TemplateId`, `Code`/`Name` for the ERP push body), so returning the plain
+entity avoids an unnecessary DTO/join. Constitution Principle III (Reuse Existing Backend) is
+satisfied by extending the existing repository interface rather than adding a new one.
+
+**Alternatives considered**: Filtering client-side in the service after calling the existing
+unfiltered `GetAllAsync()` (from the generic `IRepository<EutrTemplates,long>`) — rejected: it would
+pull every template row (including Draft/hidden/deleted ones) over the wire for every run, which
+`EutrTemplatesRepository`'s own existing methods (`GetPagedAsync`) already avoid by filtering in SQL.
+
+## R19: How to determine each eligible template's "currently active" Vendor mapping(s)?
+
+**Decision**: Add one new method to `IEutrTemplateReferencesRepository`/`EutrTemplateReferencesRepository`:
+`Task<IEnumerable<EutrTemplateReferences>> GetActiveByTemplateIdsAsync(IEnumerable<long> templateIds,
+DateTime asOfDate, CancellationToken ct = default)`, filtering `WHERE TemplateId IN @templateIds AND
+FromDate <= @asOfDate AND ToDate >= @asOfDate` in one round-trip for all eligible templates at once
+(not one query per template), mirroring `GetByTemplateIdAsync`'s existing SQL style
+(`Connection.QueryAsync<EutrTemplateReferences>` with a `CommandDefinition`).
+
+**Rationale**: The existing `GetByTemplateIdAsync(long templateId, ct)` takes one template at a time
+and doesn't filter by date at all (it returns every mapping, sorted `FromDate DESC`, letting the
+caller — currently the frontend's Apply-to-Customer screen — decide what "active" means). Looping it
+once per eligible template would be N round-trips for what should be one; a new batched method keeps
+this action's D365 push loop proportional to its actual data volume, the same "load once, not once
+per outer-loop item" principle User Story 2 already established for its own template/document/folder
+lookups (research.md R9–R12).
+
+**Alternatives considered**: Reusing `GetByTemplateIdAsync` in a loop plus filtering
+`FromDate <= today <= ToDate` in C# — rejected as an unnecessary N-round-trip pattern this same
+feature's User Story 2 already moved away from for an equivalent reason.
+
+## R20: How does the outbound POST to Dynamics actually get sent?
+
+**Decision**: Inject `Shared.ExternalServices.Interfaces.IDynamicService` directly into
+`EutrSynchronizeDataService` (new constructor parameter) and call its existing
+`Task<string> PostAsync<T>(string url, T payload, CancellationToken ct = default)` method twice per
+eligible template — once against a hand-built delete-action URL, once against a hand-built
+create-entity URL — both built from the existing `Dynamics:ApiUrl` configuration key
+(`appsettings.json`, already used by `ComplDynamicsService`/`DynamicsParameterManager`, no new
+config):
+
+- Delete: `{Dynamics:ApiUrl}/data/RSVNEutrTemplates/Microsoft.Dynamics.DataEntities.deleteTemplate?cross-company=true`,
+  body `{ Code = template.Code }`.
+- Create: `{Dynamics:ApiUrl}/data/RSVNEutrTemplates?cross-company=true`, body `new RSVNEutrTemplates
+  { Code, Name, VendorCode }` (existing `ComplianceSys.Domain/Dynamics/RSVNEutrTemplates.cs` — its
+  `ModelType`/`EntityName`/`FilterableFields` metadata members are already `[JsonIgnore]`d via
+  `RSVNModelBase`, so serializing the object directly is safe and produces exactly `{Code,Name,Note,
+  IsDefault,VendorCode}` with `Note`/`IsDefault` left `null`).
+
+  **`?cross-company=true` (added 2026-08-17, post-implementation)**: both URLs append this query
+  parameter, matching `DynamicsParameterManager.BuildUrl()`'s own convention — decompiled from the
+  referenced `Res.Shared.ExternalServices` 1.0.11 package:
+  ```csharp
+  public string BuildUrl()
+  {
+      string text = _dynApiUrl + "/data";
+      string value = Build();
+      if (!string.IsNullOrEmpty(value))
+          return $"{text}/{_entity}?cross-company=true&{value}";
+      return text + "/" + _entity + "?cross-company=true";
+  }
+  ```
+  Every existing Dynamics call in this codebase (every `case` in `ComplDynamicsService`, every action
+  in `DynController` including `[HttpPost("reference")]` → `GetDynRefePagedAsync` →
+  `_dynamicService.QueryAsync(url)`) goes through this method and therefore always carries
+  `cross-company=true`. `RSVNEutrTemplates` has no `dataAreaId` field (unlike company-scoped entities
+  such as `RSVNDataAreas`), so omitting this flag on the two new outbound calls risked D365 scoping
+  the delete/create to one default company instead of behaving like every other call against this
+  same entity. `DynamicsParameterManager` itself isn't reused for these two URLs (R20's original
+  rationale still holds — `BuildUrl()` has no concept of a bound-action path segment, and for the
+  plain create URL, hand-building keeps both URLs built the same, obviously-paired way rather than
+  building one via `DynamicsParameterManager` and one by string interpolation); only its
+  `?cross-company=true` convention is replicated manually.
+
+`IDynamicService`'s existing implementation (`DynamicService`) already owns bearer-token
+acquisition/caching (`AuthTokenClient`) and raises `DynamicsApiException` on a non-success response —
+both reused as-is.
+
+**Confirmed body format (added 2026-08-17, post-implementation)**: both calls are sent as JSON, not
+`multipart/form-data`. Decompiled `IDynamicService.PostAsync<T>` from the exact package version this
+solution references (`Res.Shared.ExternalServices` 1.0.11 — `ComplianceSys.Application`/
+`ComplianceSys.Api`'s `.csproj` files, not the newer 1.0.14 also present in the local NuGet cache):
+
+```csharp
+public async Task<string> PostAsync<T>(string url, T payload, CancellationToken ct = default)
+{
+    ...
+    string content = JsonSerializer.Serialize(payload);
+    using StringContent content2 = new StringContent(content, Encoding.UTF8, "application/json");
+    HttpResponseMessage res = await _http.PostAsync(url, content2, ct);
+    ...
+}
+```
+
+`AddDynamicExternalServices` (`Shared.ExternalServices.ServiceCollectionExtensions`) registers
+`IDynamicService`'s `HttpClient` with `services.AddHttpClient<IDynamicService, DynamicService>()` and
+no additional message handlers or default headers — nothing downstream of `PostAsync<T>` can turn this
+into a multipart request. No `MultipartFormDataContent`/`FormUrlEncodedContent` is used anywhere in
+this feature's own code either (`EutrSynchronizeDataService.SyncTemplatesToDynamicsAsync`, T030).
+
+**Rationale**: `IDynamicService` is the only HTTP-to-Dynamics primitive that exists in this codebase
+(Constitution Principle III); every other call site (`ComplDynamicsService`) already depends on it
+directly rather than wrapping it further. This is the first *outbound* (POST/write) call to Dynamics
+in the codebase — no existing service already builds an OData bound-action URL
+(`.../Microsoft.Dynamics.DataEntities.*`) — so the URL is built inline in the new service method
+rather than forcing a fit into `DynamicsParameterManager`, which is purpose-built for GET/query
+construction (`SetEntity`/`AddFilter`/`SetPaging`/`EnableCount`/`BuildUrl`) and has no bound-action or
+POST-body concept.
+
+**Alternatives considered**: (a) Extending `DynamicsParameterManager` (a `Shared.ExternalServices`
+NuGet package type, not owned by this repo) to support bound-action URLs — rejected as out of scope
+for a single feature; that type is shared across other API's/features and changing its shape isn't
+this feature's call. (b) Routing the outbound calls back through `IComplDynamicsService` by adding a
+new method there — considered, and rejected only because `IComplDynamicsService`'s existing shape
+(`GetDynRefePagedAsync`, `EntityMappings`, `MapDynamicsResponse`) is entirely read/paging-oriented;
+forcing a two-call outbound POST sequence through it would need more new surface there than injecting
+`IDynamicService` directly into `EutrSynchronizeDataService` once.
+
+## R21: Two-phase run shape (delete-all-first, then push-all) and failure handling
+
+**Decision**: `SyncTemplatesToDynamicsAsync` runs two full sequential loops over the eligible template
+list fetched once at the start — Phase 1 loops every eligible template calling the delete action;
+only once Phase 1 has finished for every template does Phase 2 fetch active mappings
+(`GetActiveByTemplateIdsAsync`, R19) and loop pushing one create call per mapping. If any single
+D365 call in either phase throws, the run stops immediately and returns `Success = false` with a
+message reporting how much of the run completed before the failure — no automatic rollback of calls
+already sent, matching `SyncSalesOrderTemplatesAsync`'s (User Story 1) and
+`SendPurchaseMissingAlertAsync`'s (User Story 2) existing "D365 source error stops the whole run"
+shape, per the spec's User Story 3 Assumptions (added 2026-08-17).
+
+**Rationale**: The user's own request described this exact two-loop order ("loop đẩy dữ liệu...
+deleteTemplate, sau đó join... loop gửi post"), and the spec's Assumptions explicitly reuse User
+Story 1/2's stop-on-error precedent rather than inventing a new per-item continue-on-error model — so
+no new failure-handling shape needs to be designed here (Constitution Principle II).
+
+**Alternatives considered**: A per-item continue-on-error model (log the failure, keep going to the
+next template/mapping, report failure counts at the end) — considered because outbound POSTs are
+naturally independent per item (unlike a single paginated GET stream), but rejected to stay consistent
+with this feature's own established precedent per the spec's explicit Assumption, avoiding two
+different failure-handling philosophies inside the same controller/service.
+
+## R22: New response DTO shape
+
+**Decision**: New `ComplianceSys.Application/Dtos/Response/EutrSynchronizeTemplatesSummaryDto.cs`:
+`TemplatesEligible` (int), `DeleteCallsSent` (int), `PushCallsSent` (int), `Success` (bool), `Message`
+(string, default `""`) — mirroring `EutrSynchronizeSummaryDto`/`EutrPurchaseMissingSummaryDto`'s exact
+shape (plain POCO, `Success`/`Message` last).
+
+**Rationale**: Matches this feature's own established DTO convention (Constitution Principle II) and
+satisfies spec FR-029's "success/failure, count of eligible Templates processed, count of ERP push
+records sent" requirement directly from the response body.
+
+## R23: Controller/route shape
+
+**Decision**: Add a third thin action to the existing `EutrSynchronizeDataController`:
+`[HttpGet("test-synchronize-templates")]`, calling
+`_eutrSynchronizeDataService.SyncTemplatesToDynamicsAsync(ct)` and wrapping the result in
+`Ok(ApiResponse<EutrSynchronizeTemplatesSummaryDto>.Ok(result, result.Message))` — byte-for-byte the
+same shape as the controller's existing two actions.
+
+**Rationale**: Directly matches the feature's own established controller convention (research.md R8/
+R16) and the user's explicitly requested endpoint name.
+
+## R24 (Correction, added 2026-08-17): Phase 2 join — left join, not inner join
+
+**Decision**: `SyncTemplatesToDynamicsAsync`'s Phase 2 treats the join between eligible Templates and
+their currently active Vendor mappings (R19's `GetActiveByTemplateIdsAsync`) as a **left join**,
+performed in C# rather than in SQL: after fetching `activeMappings`, build a
+`ILookup<long,EutrTemplateReferences>` keyed by `TemplateId`, then iterate the **eligible Templates**
+list (not the mappings list) — for a Template with one-or-more active mappings, push one record per
+mapping exactly as before (FR-027); for a Template with zero active mappings, push exactly one record
+with `VendorCode = string.Empty` (FR-028, corrected). Every eligible Template is therefore visited
+exactly once for "does it have mappings" and pushed at least once regardless.
+
+**Rationale**: The user's explicit follow-up request ("bảng eutr_templates left join với
+eutr_template_references, nếu eutr_template_references không tồn tại thì đẩy dữ liệu VendorCode =
+''") named the join type and the exact fallback value directly — no ambiguity to resolve. The left
+join is implemented in application code rather than as a SQL `LEFT JOIN` in
+`GetActiveByTemplateIdsAsync` (R19) because `EutrTemplateReferences.VendorCode` maps to a `NOT NULL`
+database column and is a non-nullable `string` on the entity — a synthetic "no mapping" row from a SQL
+`LEFT JOIN` would produce a `NULL` `VendorCode` that doesn't fit that entity shape, and would require
+either a nullable-VendorCode variant of the entity or a second, parallel result DTO just for this one
+call site. Iterating the already-fetched `eligibleTemplates` list (in memory, already available in
+the method) against a `Lookup` built from the unchanged `GetActiveByTemplateIdsAsync` result achieves
+the identical net effect — one push per active mapping, or exactly one blank-`VendorCode` push when
+there are none — without changing R19's repository method, its SQL, or its return type at all.
+
+**Alternatives considered**: (a) A true SQL `LEFT JOIN` inside `GetActiveByTemplateIdsAsync`, changing
+the query to `SELECT t.Id AS TemplateId, r.VendorCode, r.FromDate, r.ToDate FROM eutr_templates t LEFT
+JOIN eutr_template_references r ON r.TemplateId = t.Id AND r.FromDate <= @asOfDate AND r.ToDate >=
+@asOfDate WHERE t.Id IN @templateIds` — rejected: requires either changing `EutrTemplateReferences`'s
+`VendorCode` to nullable (a change with a wider blast radius, since that entity/column is also read
+elsewhere by 003-eutr-templates' "Apply to Customer/Vendor" feature) or introducing a new result shape
+just for this one repository method, for no behavioral difference from doing the join in C#. (b)
+Returning a sentinel/placeholder `EutrTemplateReferences` row (e.g. `Id = 0`, `VendorCode = ""`) from
+the repository itself when a Template has no active mapping — rejected as conflating "a real database
+row" with "a computed absence," which belongs in the service's business logic (where FR-026's
+left-join semantic actually lives), not in a repository whose contract should return what the database
+actually contains.
+
+**Scope of this correction**: Only Phase 2's push loop changes. Phase 1 (delete, FR-025), the
+eligibility filter (FR-024, R18), `GetActiveByTemplateIdsAsync`'s own query and return type (R19), the
+two-phase ordering and failure-handling shape (R21), the `?cross-company=true`/JSON body format (R20),
+and the response DTO's field set (R22) are all unchanged.

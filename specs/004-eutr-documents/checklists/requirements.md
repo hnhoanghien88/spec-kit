@@ -105,3 +105,41 @@
   Clarifications entry. All checklist items pass after this update — no regressions; downstream
   artifacts (plan.md, tasks.md, data-model.md, contracts, quickstart.md, research.md) still reflect the
   pre-Update-22 design and should be regenerated via `/speckit-plan` and `/speckit-tasks`.
+- 2026-08-17 `/speckit-specify` update 23: per direct user request, the Add popup gains a new
+  **Invoice number** field (free-text string, required) shown only when Type = "Invoice"; on
+  successful Upload its value is written to a new column **`Invoice`** on the `eutr_documents` row
+  created for that document (one document per uploaded file). Edit mirrors this: when the document's
+  (locked) Type = "Invoice", the field is pre-filled from that document's own `Invoice` value and
+  remains editable/required; Save updates `eutr_documents.Invoice` directly, the same way Save already
+  updates `ValidFrom`/`ValidTo` — no `eutr_references` row is read or written for this field. Added
+  FR-056 through FR-060, SC-013/SC-014, three new/updated Edge Cases, updated both the EUTR Document
+  and EUTR Reference Key Entities, and four new Assumptions; extended User Story 2 and User Story 3
+  narratives/acceptance scenarios. Two clarifying questions were asked via `AskUserQuestion` before the
+  first draft (both resolved to the recommended/only sensible option): (1) Invoice number is
+  **required** before Upload/Save, not optional; (2) the value **is editable** in Edit mode, not
+  read-only. A third point — the same Invoice number value applies uniformly to every document created
+  within one Upload batch, mirroring the Valid from/Valid to pattern from Update 19 — had only one
+  sensible interpretation and was recorded directly as an Assumption rather than asked.
+  **Immediately after the first draft**, a follow-up user message changed the storage target: "không
+  lưu Invoice vào bảng eutr_references, chuyển sang lưu vào bảng eutr_documents, cột Invoice" — the
+  entire Update 23 section, User Story 2/3 text, Edge Cases, FR-056–FR-060, both Key Entities,
+  SC-013/SC-014, and the Assumptions were revised in place to read/write `eutr_documents.Invoice`
+  instead of `eutr_references.Invoice`; this also **removed** the need for the "lowest-`Id` row" lookup
+  rule Update 23's first draft had borrowed from Step (FR-032), since `eutr_documents` is already
+  one-row-per-document. All checklist items pass after this update — no regressions; downstream
+  artifacts (plan.md, tasks.md, data-model.md, contracts, quickstart.md, research.md) still reflect the
+  pre-Update-23 design (including the DB migration for the new `Invoice` column on `eutr_documents`)
+  and should be regenerated via `/speckit-plan` and `/speckit-tasks`.
+- 2026-08-17 `/speckit-specify` update 24: per direct user request, the main list (User Story 1) gains
+  a new **Invoice** column placed immediately after **Step name** (full order: File name, Step name,
+  Invoice, Conditions, Type, Valid from, Valid to, Created by, Created date, Action). Unlike Step
+  name/Conditions/Type, it reads directly from `eutr_documents.Invoice` (added in Update 23, one value
+  per document) — no `eutr_references` JOIN needed — and renders as plain text (not a chip list), since
+  a document only ever has one Invoice value. Blank when `Invoice` is `null`. Added FR-061, SC-015, two
+  new acceptance scenarios under User Story 1, one new Edge Case, and updated the EUTR Document Key
+  Entity. No `[NEEDS CLARIFICATION]` markers were needed — the two embedded Q&A entries in the new
+  "Session 2026-08-17 (Update 24)" Clarifications section (plain text vs. chip rendering; whether the
+  search box also gains an Invoice filter) were resolved as informed defaults matching the request's
+  literal scope. All checklist items pass after this update — no regressions; downstream artifacts
+  (plan.md, tasks.md, data-model.md, contracts, quickstart.md, research.md) still reflect the
+  pre-Update-24 design and should be regenerated via `/speckit-plan` and `/speckit-tasks`.

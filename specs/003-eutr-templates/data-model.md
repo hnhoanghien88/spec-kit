@@ -179,6 +179,13 @@ approach).
   the backend matches `StepName` (trimmed, case-insensitive) against `eutr_steps`; on no match it
   inserts a new `eutr_steps` row and uses the new Id. Duplicate new names within one Save resolve
   to a single created row.
+- **Bulk-select default values (Update 12; changed by Update 22)**: when a master step row is
+  ticked in the Add Root Group/Add Child Step dialog, `RequirementType` now defaults to `1`
+  (Required — was `0`/Optional through Update 21) and `TakeFrom` defaults to the `Id` of the
+  `eutr_reference_type_details` mapping for that `StepId` if one exists (lowest `Id` if more than
+  one), else the `Id` of the `eutr_reference_types` row named "PO" (see Entity 7/Entity 8 below),
+  else left unset. This is a UI default only — the user can still change either value before Add;
+  Edit step's own per-node form is unaffected (it shows the step's *current* value, not a default).
 - **Bulk add in the UI (Update 12; scope widened by Update 21)**: `TemplateBuilderPage.jsx`'s Add
   Root Group/Add Child Step dialogs can append several detail rows to the client-side tree in one
   user action (ticking multiple master steps, optionally plus one free-solo new name) instead of one
@@ -321,7 +328,43 @@ the bulk-select dialog (FR-027–FR-030), and for the TakeFrom label lookup on t
 (FR-073) — replacing the previously hardcoded `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` frontend
 constants for these call sites. See research.md §36 for the cross-feature note on why
 `helpers.js`'s `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` constants themselves are NOT removed (still
-consumed by the out-of-scope `eutr-sales-orders` feature).
+consumed by the out-of-scope `eutr-sales-orders` feature). **(Update 22)** Also used to resolve the
+bulk-select dialog's Take From **default** value: the row whose `Name` matches "PO"
+(case-insensitive, trimmed) becomes the fallback default when a step has no
+`eutr_reference_type_details` mapping (Entity 8) — no seed data is guaranteed for this row (verified
+— no `INSERT INTO eutr_reference_types` script exists in the repo today), so the default silently
+resolves to blank if none exists, rather than erroring (FR-079).
+
+### 8. EutrReferenceTypeDetails (existing — feature 006-eutr-reference-types; read-only reference for this feature) — Update 22
+
+**Table**: `eutr_reference_type_details`
+
+| Field | Type | Nullable | Description |
+|-------|------|----------|-------------|
+| Id | BIGINT UNSIGNED | NO | PK |
+| StepId | BIGINT UNSIGNED | YES | FK → `eutr_steps.Id`. Which EUTR step this mapping applies to. |
+| TypeId | BIGINT UNSIGNED | NO | FK → `eutr_reference_types.Id`. The reference type this StepId defaults to. |
+| CreatedBy / CreatedDate / UpdatedBy / UpdatedDate | — | YES | Standard audit columns |
+
+**No `IsDeleted`/`IsHide` columns** — like `EutrTemplateReferences` (Entity 6), a row here is hard-
+deleted, not soft-deleted (owned/managed entirely by feature 006-eutr-reference-types' "Assign
+Steps" screen).
+
+Owned and CRUD-managed entirely by feature 006-eutr-reference-types; this feature only **reads** it,
+via a **new** action added to the existing `EutrReferenceTypeDetailsController` in this update:
+`POST /api/eutr-reference-type-details/default-by-steps` (body: `long[]` of StepIds; response:
+`StepId → TypeId` map). Before Update 22, this feature made no calls into this table at all — the
+006 feature only exposed a by-TypeId lookup, which nothing in 003-eutr-templates needed.
+
+**Business rules relevant to this feature**:
+- No UNIQUE constraint on `StepId` — a StepId can have more than one mapping row (across different
+  `TypeId`s). When resolving a Take From default for the bulk-select dialog (FR-080), this feature
+  MUST use the mapping row with the lowest `Id` if more than one exists for the same `StepId` — a
+  business rule enforced in `EutrReferenceTypeDetailsService.GetDefaultTypeIdByStepIdsAsync`
+  (Application layer), not in SQL.
+- `StepId` can be `NULL` at the schema level (a mapping not tied to any step) — such rows are
+  simply excluded from the by-StepId default lookup's grouping (a `NULL` `StepId` never matches any
+  requested `stepIds`).
 
 ## Relationships
 
@@ -337,6 +380,10 @@ D365 VendorsV3 ──lookup── EutrTemplateReferences (via VendorCode — Upd
 compl_group_email ──lookup── EutrTemplates (via AlertFor → Id, no DB FK — Update 7)
 
 EutrTemplateDetails ──self-ref── EutrTemplateDetails (via ParentId → Id, recursive tree)
+
+EutrStep (1) ──lookup── (*) EutrReferenceTypeDetails (via StepId, nullable FK — Update 22, default-lookup only)
+
+EutrReferenceTypes (1) ──lookup── (*) EutrReferenceTypeDetails (via TypeId FK — Update 22, default-lookup only)
 ```
 
 ## State Transitions

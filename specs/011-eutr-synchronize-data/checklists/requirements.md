@@ -2,7 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-08-11
-**Updated**: 2026-08-14 (User Story 2 now persists per-run results to a dedicated store, cleared and repopulated each run, before building emails from it; added 2026-08-13: User Story 2 — Purchase-Order Missing-Documentation Alert)
+**Updated**: 2026-08-17 (corrected User Story 3's join to a left join — a Template with no currently active Vendor mapping still gets one push with a blank Vendor Code, instead of no push at all); 2026-08-17 (added User Story 3 — Outbound Template Sync, pushing eligible local Templates and their active Vendor mappings to the ERP); 2026-08-14 (User Story 2 now persists per-run results to a dedicated store, cleared and repopulated each run, before building emails from it; added 2026-08-13: User Story 2 — Purchase-Order Missing-Documentation Alert)
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -57,3 +57,19 @@
   requiring a decision with materially different implications. FR-020/FR-021/FR-022 and the revised
   Key Entities/Assumptions sections were added to reflect the store; FR-014/FR-016/FR-017's existing
   wording was adjusted minimally to reference "the store" instead of only "the report/email".
+- **User Story 3 (2026-08-17 update)**: no clarification needed — the request explicitly named the
+  source table and its eligibility filter (`eutr_templates`, IsDeleted = 0, IsHide = 0, Status = 1),
+  the two-phase call sequence (delete-by-Code first, then join `eutr_template_references` on the
+  FromDate/ToDate-active condition and push Code/Name/VendorCode), and the target ERP entity
+  (`RSVNEutrTemplates`), leaving no ambiguous scope-defining point. One judgment call was made using
+  an existing in-feature precedent rather than a new marker: ERP-call failure handling reuses User
+  Story 1/2's established "stop the run, report failure, no rollback, retry a subsequent run" behavior
+  rather than inventing a new per-item continue-on-error model, since the request didn't specify
+  behavior on a partial failure and this feature already has one consistent answer for that question.
+- **User Story 3 (2026-08-17 correction)**: no clarification needed — the request explicitly named
+  the join type (left join) and the exact fallback value (`VendorCode = ''`), leaving no ambiguous
+  point. This is a correction to Acceptance Scenario 6/FR-026/FR-027/FR-028 (originally an inner-join
+  reading where a Template with zero active mappings received no push and no ERP record at all), not
+  a new capability — documented as a **Correction** entry in the User Story 3 Assumptions per this
+  spec's own established pattern for in-place corrections (see the 2026-08-14 condition-type
+  correction under User Story 2's Assumptions).

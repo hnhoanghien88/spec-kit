@@ -1171,6 +1171,134 @@ for the bulk-select dialog — this is an edit to existing logic in place, not a
 
 See research.md Section 38 for the full rationale and alternatives considered.
 
+### Update 2026-08-17 (Update 22) — Default Requirement Type=Required, Default Take From="PO"/`eutr_reference_type_details` Override
+
+**Backend: one new read-only lookup action added to the existing `eutr-reference-type-details`
+stack (feature 006-eutr-reference-types) — no new table, entity, or DTO. Frontend: default-
+computation logic added to `BulkAddStepsDialog.jsx`/`TemplateBuilderPage.jsx`, the same two files
+Update 12/19/21 already modify for this dialog.**
+
+**Pre-write code audit** (Explore agent, re-verified by direct file reads before writing this
+section):
+1. `eutr_reference_type_details` (entity/repository/service/controller) already exists end-to-end
+   from feature 006-eutr-reference-types, but only exposes a by-**TypeId** lookup
+   (`GET .../by-type/{typeId}`) — there is no by-**StepId** lookup. This update adds one.
+2. `eutr_reference_type_details` has no UNIQUE constraint on `StepId` (only `HasStepAssignedAsync`
+   enforces uniqueness on the `(TypeId, StepId)` pair) — a StepId can have more than one mapping
+   row. Per spec FR-080, the row with the lowest `Id` wins; this tie-break is applied in the
+   **Application layer** (business rule), not embedded in SQL.
+3. `BulkAddStepsDialog.jsx`'s current `DEFAULT_ROW_CONFIG = { requirementType: 0, takeFrom: 0 }`
+   (Optional; `takeFrom=0` is a stale literal left over from the pre-Update-19 hardcoded 0/1 enum,
+   meaningless now that TakeFrom is an `eutr_reference_types.Id`) is applied identically at 3 call
+   sites: `toggleRow` (single tick), `toggleAll` (select-all), and the "Add new step" draft's
+   initial `useState`. All three need the new default logic.
+4. `TemplateBuilderPage.jsx` already loads `referenceTypes` (full `eutr_reference_types` list,
+   Update 19) and `steps` (full `eutr_steps` list) on mount — both are already available as inputs
+   to compute the "PO" default without an extra round trip; only the by-StepId mapping needs a new
+   API call.
+
+#### Backend: by-StepId default lookup (FR-080)
+
+- **`ComplianceSys.Application/Interfaces/Repositories/IEutrReferenceTypeDetailsRepository.cs`**
+  MODIFY — add `Task<IEnumerable<EutrReferenceTypeDetailsResponseDto>> GetByStepIdsAsync(IEnumerable<long> stepIds, CancellationToken ct = default);`
+  (mirrors `GetByTypeIdAsync`'s shape, plural input).
+- **`ComplianceSys.Infrastructure/Repositories/EutrReferenceTypeDetailsRepository.cs`** MODIFY — add
+  `GetByStepIdsAsync`: `SELECT d.Id, d.TypeId, d.StepId, s.Name AS StepName, d.CreatedBy,
+  d.CreatedDate, d.UpdatedBy, d.UpdatedDate FROM eutr_reference_type_details d LEFT JOIN eutr_steps
+  s ON s.Id = d.StepId WHERE d.StepId IN @stepIds ORDER BY d.StepId, d.Id ASC` (Dapper expands
+  `IN @stepIds` natively for a list parameter). Returns every matching row unreduced — the
+  lowest-Id-per-StepId reduction stays in the service layer (Principle I).
+- **`ComplianceSys.Application/Interfaces/Services/IEutrReferenceTypeDetailsService.cs`** +
+  **`.../Services/EutrReferenceTypeDetailsService.cs`** MODIFY — add
+  `Task<Dictionary<long, long>> GetDefaultTypeIdByStepIdsAsync(IEnumerable<long> stepIds, CancellationToken ct = default)`:
+  calls `_repository.GetByStepIdsAsync(stepIds, ct)`, then
+  `.Where(d => d.StepId.HasValue).GroupBy(d => d.StepId!.Value).ToDictionary(g => g.Key, g =>
+  g.OrderBy(d => d.Id).First().TypeId)` (lowest `Id` wins per FR-080). Returns an empty dictionary
+  when no `stepIds` have a mapping — no exception, no special-case for empty input; the caller
+  falls back to the "PO" default for every absent key.
+- **`ComplianceSys.Api/Controllers/EutrReferenceTypeDetailsController.cs`** MODIFY — add
+  `[Authorize(Policy = "EutrReferenceTypes.ReadOne")] [HttpPost("default-by-steps")] public async
+  Task<IActionResult> GetDefaultByStepIds([FromBody] long[] stepIds, CancellationToken ct =
+  default)` → `await _eutrReferenceTypeDetailsService.GetDefaultTypeIdByStepIdsAsync(stepIds, ct)`,
+  wrapped in the same `ApiResponse<T>.Ok(...)` shape as the sibling `GetByTypeId` action. `POST`
+  (not `GET`) because the step-master list can be dozens of IDs — a request body avoids an
+  unbounded query string, matching how this codebase already prefers `POST` for other
+  bulk-lookup-by-array calls (e.g. `POST /api/dynamics/reference`). See
+  `contracts/api-endpoints.md`'s new "StepId → TakeFrom Default Lookup" section for the full
+  request/response shape.
+- **Authorization note, flagged for `/speckit-implement` verification** (same treatment as the
+  Update 7 `GroupEmail.ReadAll` cross-policy flag, the Update 13 `EutrTemplateReferences.*` policy
+  flag, and Update 19's own `EutrReferenceTypes.ReadAll` flag for the TakeFrom-options endpoint):
+  this new action reuses `EutrReferenceTypes.ReadOne` — the same policy the existing
+  `by-type/{typeId}` action already uses, for consistency within this controller. Since it is now
+  called from `TemplateBuilderPage.jsx` (menu `eutr-templates`, not `eutr-reference-types`),
+  confirm EUTR Templates users are also granted `EutrReferenceTypes.ReadOne` during implementation
+  — otherwise this call 403s for some users while the rest of the dialog still works (a silent
+  partial-default-failure, not a hard error, since the frontend falls back to the "PO" default on a
+  failed fetch — see below).
+- No new entity, no new DTO, no new table, no migration —
+  `EutrReferenceTypeDetailsResponseDto` (existing) is reused verbatim as the row shape internally
+  (Principle III — reuse existing backend); only the final controller response shape
+  (`Dictionary<long, long>`) is new.
+
+#### Frontend: Requirement Type=Required + Take From default resolution (FR-078, FR-079, FR-080)
+
+- **`compliance-client/src/infrastructure/api/eutrReferenceTypeDetailsApi.js`** MODIFY — add
+  `getDefaultByStepIds: (stepIds) => axiosInstance.post('/eutr-reference-type-details/default-by-steps', stepIds)`.
+- **`compliance-client/src/domain/interfaces/IEutrReferenceTypeDetailsRepository.js`** MODIFY — add
+  `async getDefaultByStepIds(_stepIds) { throw new Error('Not implemented') }`.
+- **`compliance-client/src/infrastructure/repositories/RestEutrReferenceTypeDetailsRepository.js`**
+  MODIFY — add `async getDefaultByStepIds(stepIds) { const res = await
+  eutrReferenceTypeDetailsApi.getDefaultByStepIds(stepIds); return res.data?.data || res.data || {}
+  }` — returns the raw `{ stepId: typeId }` map as-is, no domain-entity wrapping (it's a lookup
+  dictionary, not a list of `EutrReferenceTypeDetails` records).
+- **`compliance-client/src/application/usecases/eutr-reference-type-details/GetDefaultByStepIdsEutrReferenceTypeDetailsUseCase.js`**
+  NEW — `execute(stepIds) { return this.eutrReferenceTypeDetailsRepository.getDefaultByStepIds(stepIds) }`,
+  same one-file-per-operation convention as the 4 existing use cases in this folder.
+- **`compliance-client/src/presentation/pages/eutr-templates/TemplateBuilderPage.jsx`** MODIFY —
+  - Import the new use case; add module-scope
+    `const getDefaultTakeFromUseCase = new GetDefaultByStepIdsEutrReferenceTypeDetailsUseCase(repositories.eutrReferenceTypeDetails);`
+    (matches the existing `getStepsUseCase`/`getReferenceTypesUseCase` singleton pattern).
+  - Add `const [defaultTakeFromByStepId, setDefaultTakeFromByStepId] = useState({});` and a
+    `useEffect` keyed on `steps` (guarded with `if (steps.length === 0) return;`, so it fires once
+    right after the existing steps-load effect populates `steps`) that calls
+    `getDefaultTakeFromUseCase.execute(steps.map(s => s.id))` and sets the returned map — falls back
+    to `{}` on error, the same defensive shape as this file's other three mount-time effects.
+  - Add `const defaultTakeFromId = useMemo(() => referenceTypes.find(rt =>
+    rt.name?.trim().toLowerCase() === 'po')?.id ?? null, [referenceTypes]);` (FR-079's Name-match
+    rule; resolves to `null` when no "PO" row exists, matching the spec's documented blank-fallback
+    — no error, no blocked dialog).
+  - Pass both new values to the dialog: `<BulkAddStepsDialog ...
+    defaultTakeFromByStepId={defaultTakeFromByStepId} defaultTakeFromId={defaultTakeFromId} />`.
+- **`compliance-client/src/presentation/pages/eutr-templates/components/BulkAddStepsDialog.jsx`**
+  MODIFY —
+  - Accept the two new props (`defaultTakeFromByStepId = {}`, `defaultTakeFromId = null`).
+  - Replace the module-level `DEFAULT_ROW_CONFIG` constant with a function
+    `getDefaultRowConfig(stepId, defaultTakeFromByStepId, defaultTakeFromId) => ({ requirementType:
+    1, takeFrom: defaultTakeFromByStepId[stepId] ?? defaultTakeFromId })` — `requirementType: 1` is
+    "Required" per `REQUIREMENT_TYPES` (FR-078); `takeFrom` resolves the StepId mapping first, "PO"
+    second, `null` if neither exists (FR-079/FR-080).
+  - `toggleRow`: `next.set(stepId, getDefaultRowConfig(stepId, defaultTakeFromByStepId,
+    defaultTakeFromId))` replaces `{ ...DEFAULT_ROW_CONFIG }`. Since `toggleRow` already
+    unconditionally overwrites a row's config every time it's ticked (never preserving a prior
+    value across an untick/retick), this one-line substitution also satisfies spec acceptance
+    scenario 12c (retick re-applies the default) with no extra logic.
+  - `toggleAll`: same substitution, computed per-`stepId` inside the existing
+    `available.forEach(...)` loop.
+  - The "Add new step" draft's initial `useState` becomes `useState({ name: '', requirementType: 1,
+    takeFrom: defaultTakeFromId })` — safe to read `defaultTakeFromId` synchronously here because
+    `BulkAddStepsDialog` only mounts when the user opens the Add Root Group/Add Child Step `Dialog`
+    (no `keepMounted`, so it unmounts on close and remounts fresh on each open), by which point
+    `TemplateBuilderPage`'s mount-time effects have already resolved in normal usage. Falls back to
+    `takeFrom: null` in the rare case the dialog is opened before `referenceTypes` resolves — the
+    same "blank, not an error" fallback FR-079 already specifies for the missing-"PO"-row case, not
+    a new failure mode.
+- **`REQUIREMENT_TYPES`/`TAKE_FROM_OPTIONS`/`utils/helpers.js`** NO CHANGE — this update only
+  changes which value is pre-selected by default, not the option lists themselves (already dynamic
+  since Update 19 for TakeFrom, already static Required/Optional for RequirementType).
+
+See research.md Section 39 for the full rationale and alternatives considered.
+
 ## Technical Context
 
 **Language/Version**: .NET 8 (backend), JavaScript/React 18 + Vite 7 (frontend)
@@ -1419,6 +1547,26 @@ route, no new menu entry (Principle V unaffected — this is an interaction chan
 already-routed `/eutr/templates/edit/:id` page). Explicitly out of scope, not a violation: Edit step
 (FR-008b) and `useStepTree.js`'s `editStep` are unchanged, per FR-076's carve-out.
 
+**Post-design re-check (2026-08-17 update 22)**: All principles still PASS. The new
+`GetByStepIdsAsync`/`GetDefaultTypeIdByStepIdsAsync`/`GetDefaultByStepIds` trio is added to the
+existing `EutrReferenceTypeDetailsRepository`/`EutrReferenceTypeDetailsService`/
+`EutrReferenceTypeDetailsController` stack from feature 006-eutr-reference-types — one new action
+on an existing controller, not a new stack (Principle II — reference-pattern reuse, mirroring the
+sibling `GetByTypeIdAsync` action's shape end-to-end: repository returns raw rows, service applies
+the business-rule reduction, controller stays a thin delegating wrapper — Principle I, no business
+logic in the controller or repository layers). No new table, entity, or DTO — the existing
+`EutrReferenceTypeDetailsResponseDto` is reused verbatim (Principle III — reuse existing backend).
+Frontend changes stay inside the presentation layer (`TemplateBuilderPage.jsx`,
+`BulkAddStepsDialog.jsx`) plus one new use case following this feature's established
+one-file-per-operation convention in `application/usecases/eutr-reference-type-details/` (Principle
+II — the same folder Update 19-era code already established for this table's other operations). No
+new route, no new menu entry (Principle V unaffected — this is a default-value change on the
+already-routed `/eutr/templates/edit/:id` page's existing Add Root Group/Add Child Step dialog). No
+new dependency. One flagged, not-yet-resolved item carried into `/speckit-implement` (consistent
+with how Update 7/13/19 each flagged a cross-policy dependency rather than guessing at role-seed
+data): whether `eutr-templates` menu users already hold the reused `EutrReferenceTypes.ReadOne`
+policy this new endpoint requires.
+
 ## Project Structure
 
 ### Documentation (this feature)
@@ -1556,7 +1704,7 @@ compliance-client/src/
 │   └── pages/
 │       └── eutr-templates/
 │           ├── TemplateListPage.jsx              # RENAME (Update 9) — was index.jsx/EutrTemplatesPage; (Update 10/11) MODIFY — keep its own Table/search/chip layout, swap mock data (`mock/eutrTemplates.js`, `mock/eutrTemplateDetails.js`) for `useEutrTemplatesData`/`permissionList`/`DeleteEutrTemplatesUseCase`/`DeleteMultiEutrTemplatesUseCase`/`CreateTemplateDialog`/`ConfirmDialog`/`CustomSnackbar` (reused from TemplateListPageOld.jsx, itself unchanged); Code shown bold, Name as caption; Steps column reads real `stepsCount`; add per-row checkbox + bulk-delete toolbar button; add `TablePagination`; search box sends a debounced `{field:'keyword', operator:'contains', value}` filter item and resets to page 0; Clone/Apply-to-Customer icons kept but `disabled` (mock onClick/dialog removed); **(Update 13) MODIFY** — Apply-to-Customer icon becomes active: `onClick={() => navigate(\`/eutr/templates/apply/${tmpl.id}\`)}`, gated by the same permission check as Edit; Clone stays disabled; **(Update 15) MODIFY** — Clone icon becomes active: `onClick={() => setCloneDialogTemplate(row)}` opens `CloneTemplateDialog` for that row; on successful Clone, closes the dialog and re-runs the existing list-refresh (same `fetchData()` call `CreateTemplateDialog` already triggers); **(Update 16) MODIFY** — add a Status `Chip` per row; add **Approve**/**Request change** toolbar `Button`s next to Create Template, enabled only when the existing `selectedIds` (bulk-delete checkbox state) has exactly 1 entry whose row status matches; clicking either opens `ConfirmDialog` (Yes/No), confirming calls `ApproveEutrTemplatesUseCase`/`RequestChangeEutrTemplatesUseCase.execute(id)`, clears selection, re-runs `fetchData()`, shows `CustomSnackbar`; **(Update 19) MODIFY** — replace `TableContainer`/`Table`/`TableHead`/`TableRow`/`TableCell`/`TableBody`/`TablePagination`/manual `Checkbox` with `DataGridStyled` + `DataGrid` (rows/columns from the repurposed `useEutrTemplatesColumns.jsx`, server-mode pagination via the existing `paginationModel`/`setPaginationModel`, `checkboxSelection`/`rowSelectionModel`/`onRowSelectionModelChange` replacing the manual per-row `Checkbox`/`toggleSelectRow`/`toggleSelectAll`); search box, toolbar buttons, and dialogs below the grid unchanged (FR-069 to FR-071; research.md §36); **(Update 20) MODIFY** — destructure `filterModel` from `useEutrTemplatesData`; wire `filterMode="server"`/`filterModel`/`onFilterModelChange`/`disableColumnFilter={false}` onto `<DataGrid>`, remove `disableColumnMenu`; `handleSearchChange` now merges the `keyword` item into `filterModel` instead of overwriting it, and a new `handleFilterModelChange` re-appends the current `keyword` item onto whatever the column-filter panel emits (FR-074, FR-075; research.md §37)
-│           ├── TemplateBuilderPage.jsx           # (Update 10) MODIFY — keep its own tree-view + toolbar + side-panel layout, swap mock data (`mock/eutrTemplates.js`, `mock/eutrTemplateDetails.js`, `mock/eutrSteps.js`, `utils/treeUtils.js`) for `GetEutrTemplatesUseCase`/`UpdateEutrTemplatesUseCase`/`GetEutrStepsUseCase`/`GetAllGroupEmailUseCase`/`ReferenceObjectAutocomplete` (refType=13) and the existing `useStepTree` hook (replaces its own hand-rolled tree state); Add Root/Add Child step-picker becomes free-solo Autocomplete over the real steps list; Type/FSC fields and the 8-option mock TakeFrom list removed (not in the real schema); Move Up/Down buttons call `reorderSiblings`; side panel shows the header form (Code/Name/AlertFor/Vendor/Default/Save) when no step is selected, step detail (real RequirementType/TakeFrom) when one is; Save calls `UpdateEutrTemplatesUseCase` then navigates to `/eutr/templates`; Back reuses the `isDirty` + `ConfirmDialog` pattern from EutrTemplatesAddEdit.jsx; **(Update 12) MODIFY** — Add Root Group/Add Child Step `Dialog` content swaps `<StepFormRow>` (+ `addStepFormRef`/`addStepValid`, removed) for `<BulkAddStepsDialog onAdd={addSteps} existingChildStepIds={...} />`; **(Update 13) MODIFY** — remove `vendorCode`/`vendorName` state, the two setters in the load effect, `vendorCode` from the Save payload, and the entire Vendor `ReferenceObjectAutocomplete` block + its now-unused import from the side panel (FR-041); **(Update 16) MODIFY** — read `template.status`; when `TEMPLATE_STATUS.APPROVED`, render a warning `Alert` banner and `disabled` every header field, the Save button, Root Group/Child Step toolbar buttons, and each step row's Edit/Delete icons (FR-061); Draft behaves unchanged; **(Update 17) MODIFY** — wrap `<SimpleTreeView>` in a `<DndContext>`, wrap each tree level's siblings in their own `<SortableContext>`, add a drag-handle icon per `TreeItem` wired to `useSortable` (`disabled: isReadOnly`), and add `handleDragEnd` which calls the existing `reorderSiblings` when the dragged/target nodes share a `parentId` (no-op otherwise) — additive to the unchanged Move Up/Down buttons (FR-064 to FR-067; research.md §34); **(Update 18) MODIFY** — Set-as-default `Checkbox` no longer follows the blanket `isReadOnly` disabled flag; its `onChange` branches on `status` — Draft: unchanged (local state, saved via Save); Approved: opens `ConfirmDialog` with the intended value, Yes calls `SetDefaultEutrTemplatesUseCase.execute(id, value)` and updates local state from the result, No closes the dialog with no change (FR-068; research.md §35); **(Update 19) MODIFY** — add `GetEutrReferenceTypesUseCase` load-on-mount (mirrors the existing steps/alertGroups effects) into a `referenceTypes` state; derive `takeFromOptions`/`takeFromLabelById` via `useMemo`; remove `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` from the `@utils/helpers` import; replace both inline Add/Edit-step-form TakeFrom combobox usages and the tree-node `label={TAKE_FROM_LABELS[...]}` lookup with the derived values; pass `takeFromOptions` down to `<BulkAddStepsDialog>` as a new prop (FR-072, FR-073; research.md §36); **(Update 21) MODIFY** — the `<BulkAddStepsDialog>` prop for "steps already present" changes from `existingChildStepIds={stepItems.filter(s => s.parentId === (addModal.type === 'root' ? 0 : selectedId)).map(s => s.stepId)}` (same-parent-only) to `usedStepIds={stepItems.map(s => s.stepId).filter(Boolean)}` (whole-tree, prop renamed); add new prop `existingStepNames={stepItems.map(s => s.stepName).filter(Boolean)}` (FR-076, FR-077; research.md §38)
+│           ├── TemplateBuilderPage.jsx           # (Update 10) MODIFY — keep its own tree-view + toolbar + side-panel layout, swap mock data (`mock/eutrTemplates.js`, `mock/eutrTemplateDetails.js`, `mock/eutrSteps.js`, `utils/treeUtils.js`) for `GetEutrTemplatesUseCase`/`UpdateEutrTemplatesUseCase`/`GetEutrStepsUseCase`/`GetAllGroupEmailUseCase`/`ReferenceObjectAutocomplete` (refType=13) and the existing `useStepTree` hook (replaces its own hand-rolled tree state); Add Root/Add Child step-picker becomes free-solo Autocomplete over the real steps list; Type/FSC fields and the 8-option mock TakeFrom list removed (not in the real schema); Move Up/Down buttons call `reorderSiblings`; side panel shows the header form (Code/Name/AlertFor/Vendor/Default/Save) when no step is selected, step detail (real RequirementType/TakeFrom) when one is; Save calls `UpdateEutrTemplatesUseCase` then navigates to `/eutr/templates`; Back reuses the `isDirty` + `ConfirmDialog` pattern from EutrTemplatesAddEdit.jsx; **(Update 12) MODIFY** — Add Root Group/Add Child Step `Dialog` content swaps `<StepFormRow>` (+ `addStepFormRef`/`addStepValid`, removed) for `<BulkAddStepsDialog onAdd={addSteps} existingChildStepIds={...} />`; **(Update 13) MODIFY** — remove `vendorCode`/`vendorName` state, the two setters in the load effect, `vendorCode` from the Save payload, and the entire Vendor `ReferenceObjectAutocomplete` block + its now-unused import from the side panel (FR-041); **(Update 16) MODIFY** — read `template.status`; when `TEMPLATE_STATUS.APPROVED`, render a warning `Alert` banner and `disabled` every header field, the Save button, Root Group/Child Step toolbar buttons, and each step row's Edit/Delete icons (FR-061); Draft behaves unchanged; **(Update 17) MODIFY** — wrap `<SimpleTreeView>` in a `<DndContext>`, wrap each tree level's siblings in their own `<SortableContext>`, add a drag-handle icon per `TreeItem` wired to `useSortable` (`disabled: isReadOnly`), and add `handleDragEnd` which calls the existing `reorderSiblings` when the dragged/target nodes share a `parentId` (no-op otherwise) — additive to the unchanged Move Up/Down buttons (FR-064 to FR-067; research.md §34); **(Update 18) MODIFY** — Set-as-default `Checkbox` no longer follows the blanket `isReadOnly` disabled flag; its `onChange` branches on `status` — Draft: unchanged (local state, saved via Save); Approved: opens `ConfirmDialog` with the intended value, Yes calls `SetDefaultEutrTemplatesUseCase.execute(id, value)` and updates local state from the result, No closes the dialog with no change (FR-068; research.md §35); **(Update 19) MODIFY** — add `GetEutrReferenceTypesUseCase` load-on-mount (mirrors the existing steps/alertGroups effects) into a `referenceTypes` state; derive `takeFromOptions`/`takeFromLabelById` via `useMemo`; remove `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` from the `@utils/helpers` import; replace both inline Add/Edit-step-form TakeFrom combobox usages and the tree-node `label={TAKE_FROM_LABELS[...]}` lookup with the derived values; pass `takeFromOptions` down to `<BulkAddStepsDialog>` as a new prop (FR-072, FR-073; research.md §36); **(Update 21) MODIFY** — the `<BulkAddStepsDialog>` prop for "steps already present" changes from `existingChildStepIds={stepItems.filter(s => s.parentId === (addModal.type === 'root' ? 0 : selectedId)).map(s => s.stepId)}` (same-parent-only) to `usedStepIds={stepItems.map(s => s.stepId).filter(Boolean)}` (whole-tree, prop renamed); add new prop `existingStepNames={stepItems.map(s => s.stepName).filter(Boolean)}` (FR-076, FR-077; research.md §38); **(Update 22) MODIFY** — add `defaultTakeFromByStepId` state populated by a new mount-time effect (`GetDefaultByStepIdsEutrReferenceTypeDetailsUseCase`, keyed on `steps`) and `defaultTakeFromId` (`useMemo` over `referenceTypes`, matches `Name === 'PO'` case-insensitively); pass both as new props to `<BulkAddStepsDialog>` (FR-078 to FR-080; research.md §39)
 │           ├── ApplyCustomerPage.jsx             # NEW-scope, EXISTS as mock (Update 13) MODIFY — rewrite from `MOCK_CUSTOMERS`/`MOCK_TEMPLATE_CUSTOMERS` (`mock/eutrTemplates.js`) + `status !== 'Published'` gate to real data: Vendor combobox via `ReferenceObjectAutocomplete`(refType=13), load/save via the new `eutr-template-references` use cases keyed by the `:id` route param, drop the Published gate (no Status concept on real templates at that time), keep the existing `hasOverlap()` client pre-check rescoped from `customerId` to `vendorCode` (server `HasOverlapAsync` is authoritative); **(Update 14) MODIFY** — add Import/Export `Button`s to the header `Stack` (FR-043): hidden `<input type="file" accept=".xlsx">` wired to `ImportEutrTemplateReferencesUseCase.execute(id, file)`, opens `ImportMappingResultDialog` with the result and calls `fetchMappings()` to refresh; Export button calls `ExportEutrTemplateReferencesUseCase.execute(id)` directly (no dialog); new `importing`/`importResult`/`importDialogOpen` state; **(Update 16) NO CHANGE** — the real Status added by this update does NOT gate Apply to Customer; this page keeps working at any Status (Draft or Approved), per FR-032
 │           ├── EutrTemplatesAddEdit.jsx          # MODIFY (through Update 9) — 2-column layout (widened header/narrowed steps), vendor via ReferenceObjectAutocomplete (refType=13) (Update 5), Save button moved below Default checkbox, Back dirty-check confirm dialog; (Update 7) Alert for `Autocomplete` switches from `freeSolo`/hardcoded `ALERT_FOR_OPTIONS` to `GetAllGroupEmailUseCase`-backed, select-only, filtered to `groupType===2 && isAddition===false`, storing the selected group's `id`; (Update 9) becomes Edit-only; **(Update 10) UNCHANGED but no longer routed** — `/eutr/templates/edit/:id` now points at TemplateBuilderPage.jsx; left in place unreferenced (cleanup candidate for a future task, same precedent as the unused vendors endpoint from Update 5), not deleted by this feature
 │           ├── components/
@@ -1564,7 +1712,7 @@ compliance-client/src/
 │           │   ├── CreateTemplateDialog.jsx      # NEW (Update 9) — quick-create dialog: Name, Alert for combobox, Set as default checkbox only; calls CreateEutrTemplatesUseCase with vendorCode=null, details=[]; (Update 10) reused as-is by TemplateListPage.jsx's Table layout, no change needed; (Update 13) MODIFY — delete the hardcoded `vendorCode: null` line from the Save payload
 │           │   ├── StepTree.jsx                  # MODIFY — add inline Edit step mode; (Update 6) inline-edit Step combobox becomes freeSolo; (Update 8) delete local REQUIREMENT_TYPES/TAKE_FROM_OPTIONS/REQUIREMENT_LABELS/TAKE_FROM_LABELS, import from utils/helpers.js; (Update 10) not reused by TemplateBuilderPage.jsx (which keeps its own tree-rendering shell) — only its underlying `useStepTree` hook and `utils/helpers.js` constants are shared; **(Update 19) NO CHANGE** — confirmed orphaned (no route/component imports it; `EutrTemplatesAddEdit.jsx`, its former consumer, no longer exists in the repo); still imports `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` unchanged from `helpers.js`, which keeps exporting them for `eutr-sales-orders`
 │           │   ├── StepFormRow.jsx               # NEW — add step form; (Update 6) Step combobox becomes freeSolo (pick existing or type new name); (Update 8) delete local REQUIREMENT_TYPES/TAKE_FROM_OPTIONS duplicate, import from utils/helpers.js; (Update 10) same free-solo Autocomplete pattern reused inside TemplateBuilderPage.jsx's own Add Root/Add Child dialogs; **(Update 12) no longer used by TemplateBuilderPage.jsx** (replaced there by BulkAddStepsDialog.jsx) — still used by the unrouted EutrTemplatesAddEdit.jsx, left unchanged; **(Update 19) NO CHANGE** — `EutrTemplatesAddEdit.jsx` no longer exists in the repo (confirmed via repo-wide search), so this file is now fully orphaned too; left untouched for the same reason as StepTree.jsx above
-│           │   ├── BulkAddStepsDialog.jsx        # NEW (Update 12) — checkbox table of available EUTR steps (per-row Requirement Type/Take From once ticked) + a single free-solo "Add new step" entry row + "{N} available - {M} selected" footer; used only by TemplateBuilderPage.jsx's Add Root Group/Add Child Step dialogs; **(Update 19) MODIFY** — accept a new `takeFromOptions` prop; remove `TAKE_FROM_OPTIONS` from the `@utils/helpers` import (keep `REQUIREMENT_TYPES`); replace both TakeFrom combobox usages (per-row bulk config, "Add new step" draft row) with the prop; **(Update 21) MODIFY** — rename prop `existingChildStepIds` → `usedStepIds` (same `available = steps.filter(s => !usedStepIds.includes(s.id))` line, now whole-tree scoped by the caller); accept new prop `existingStepNames = []`; add derived `isDuplicateName` (typed `newStepDraft.name`, trimmed/lower-cased, checked against `steps.map(s => s.name)` and `existingStepNames`); `hasNewStep` becomes `Boolean(newStepDraft.name.trim()) && !isDuplicateName`; "New step name" `TextField` gains `error={isDuplicateName}` + inline `helperText` (FR-076, FR-077; research.md §38)
+│           │   ├── BulkAddStepsDialog.jsx        # NEW (Update 12) — checkbox table of available EUTR steps (per-row Requirement Type/Take From once ticked) + a single free-solo "Add new step" entry row + "{N} available - {M} selected" footer; used only by TemplateBuilderPage.jsx's Add Root Group/Add Child Step dialogs; **(Update 19) MODIFY** — accept a new `takeFromOptions` prop; remove `TAKE_FROM_OPTIONS` from the `@utils/helpers` import (keep `REQUIREMENT_TYPES`); replace both TakeFrom combobox usages (per-row bulk config, "Add new step" draft row) with the prop; **(Update 21) MODIFY** — rename prop `existingChildStepIds` → `usedStepIds` (same `available = steps.filter(s => !usedStepIds.includes(s.id))` line, now whole-tree scoped by the caller); accept new prop `existingStepNames = []`; add derived `isDuplicateName` (typed `newStepDraft.name`, trimmed/lower-cased, checked against `steps.map(s => s.name)` and `existingStepNames`); `hasNewStep` becomes `Boolean(newStepDraft.name.trim()) && !isDuplicateName`; "New step name" `TextField` gains `error={isDuplicateName}` + inline `helperText` (FR-076, FR-077; research.md §38); **(Update 22) MODIFY** — accept new props `defaultTakeFromByStepId = {}`/`defaultTakeFromId = null`; replace the module-level `DEFAULT_ROW_CONFIG` constant with `getDefaultRowConfig(stepId, ...)` (`requirementType: 1` "Required", `takeFrom` resolves the StepId mapping first then "PO"); `toggleRow`/`toggleAll` and the "Add new step" draft's initial state all use the new default (FR-078 to FR-080; research.md §39)
 │           │   ├── ImportResultDialog.jsx        # NEW — import result display; (Update 9) reference pattern reused by CreateTemplateDialog
 │           │   ├── ImportMappingResultDialog.jsx # NEW (Update 14) — copies ImportResultDialog.jsx's structure, error table columns Row/TemplateCode/VendorCode/Reason; used only by ApplyCustomerPage.jsx's Import button
 │           │   └── CloneTemplateDialog.jsx       # NEW (Update 15) — read-only source Code/Name, required New template name field, required Alert for combobox (reuses CreateTemplateDialog's GetAllGroupEmailUseCase-backed pattern), Cancel/Clone buttons; Clone opens the existing ConfirmDialog warning before calling CloneEutrTemplatesUseCase

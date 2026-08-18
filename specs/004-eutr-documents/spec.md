@@ -128,20 +128,86 @@ VARCHAR(255) — vẫn còn hiệu lực và được kế thừa nguyên vẹn 
   lập trên dữ liệu đã tồn tại (không phải nhập liệu tạo mới), nên dropdown Step name luôn liệt kê
   toàn bộ `eutr_steps`, không phụ thuộc Type đang chọn trong search box.
 
+### Session 2026-08-17 (Update 23) — Thêm trường Invoice number khi Type = "Invoice"
+
+- Input: "cập nhật 004-eutr-documents chức năng Add EUTR documents, với type = Invoice thì hiển thị
+  thêm 1 cột string để nhập số Invoice. sau đó lưu vào bảng eutr_references, cột Invoice mới thêm".
+- Input (sửa lại): "cập nhật lại spec trên. không lưu Invoice vào bảng eutr_references, chuyển sang
+  lưu vào bảng eutr_documents, cột Invoice" — đổi nơi lưu trữ từ `eutr_references` sang
+  **`eutr_documents`** (cột mới **`Invoice`**, một giá trị duy nhất trên mỗi document, không phải một
+  giá trị lặp lại trên nhiều bản ghi `eutr_references`).
+- Change: Popup Add (và popup Edit ở chế độ sửa, khi Type hiện tại của document = "Invoice") bổ sung
+  một trường nhập liệu mới **Invoice number** (ô nhập tự do, kiểu chuỗi) — MUST chỉ hiển thị khi Type
+  đang chọn (Add) hoặc Type hiện tại đã khóa (Edit) có `Name` = "Invoice". Type khác "Invoice" MUST
+  không hiển thị trường này.
+- Change: Trường Invoice number MUST bắt buộc nhập (không rỗng/không chỉ khoảng trắng) khi Type =
+  "Invoice" — nút Upload (Add) MUST tiếp tục ở trạng thái vô hiệu hóa cho tới khi trường này có giá
+  trị, cạnh các điều kiện hiện có (FR-017); Save (Edit) MUST tương tự bị chặn nếu trường này rỗng.
+- Change: Với mỗi file upload thành công trong một lượt Upload (Type = "Invoice"), hệ thống MUST ghi
+  giá trị Invoice number đang hiển thị ở popup tại thời điểm Upload vào cột mới **`Invoice`** (chuỗi,
+  nullable) trên chính bản ghi **`eutr_documents`** vừa tạo cho file đó — cùng document, KHÔNG ghi vào
+  bảng `eutr_references`. Mỗi file trong cùng lượt Upload tạo một document riêng, nên mỗi document
+  nhận đúng một giá trị Invoice number (giá trị nhập trong popup áp dụng cho mọi document tạo ra từ
+  cùng lượt Upload đó, cùng cách Valid from/Valid to đã áp dụng — Update 19).
+- Change: Ở popup Edit, khi Type hiện tại (đã khóa) của document = "Invoice", trường Invoice number
+  MUST nạp sẵn giá trị `Invoice` hiện có của **chính document đang sửa** (không cần tra cứu qua
+  `eutr_references`) và MUST cho phép sửa. Nhấn Save MUST cập nhật trực tiếp cột `Invoice` của
+  `eutr_documents` cho document đó thành giá trị mới — cùng cách Save đã cập nhật `ValidFrom`/`ValidTo`
+  (FR-033), không liên quan/không ảnh hưởng tới bất kỳ bản ghi `eutr_references` nào.
+- Change: Với Type khác "Invoice" (bao gồm document Type trống), cột `Invoice` trên `eutr_documents`
+  tiếp tục MUST là `null` — không luồng nào khác trong feature này ghi giá trị cho cột này.
+- Q: Cột `Invoice` mới có ràng buộc duy nhất (unique) trên toàn hệ thống không? → A: **Không** — yêu
+  cầu gốc chỉ nói "1 cột string để nhập số Invoice", không đề cập ràng buộc duy nhất; nhiều document
+  được phép trùng giá trị Invoice number, tương tự cách File name không có ràng buộc duy nhất
+  (FR-007b hiện có).
+- Q: Cột Conditions trên bảng danh sách chính (FR-005, lấy từ `RefValue` của `eutr_references`) có
+  hiển thị thêm giá trị Invoice number không? → A: **Không** — Conditions tiếp tục chỉ lấy từ
+  `RefValue` như hiện tại; Invoice number là một cột riêng trên `eutr_documents`, không hiển thị lẫn
+  vào cột Conditions ở phạm vi cập nhật này.
+- Q: Search box (User Story 6, Update 21) có lọc theo Invoice number không? → A: **Không** — nằm
+  ngoài phạm vi yêu cầu gốc của cập nhật này; ba điều kiện lọc hiện có (Type/Step name/Conditions)
+  không đổi.
+- Q: Vì sao đổi từ `eutr_references` sang `eutr_documents`? → A: `eutr_documents` là bảng 1-dòng-1-
+  document sẵn có (giống `Name`/`ValidFrom`/`ValidTo`), nên lưu Invoice number trực tiếp trên đó tránh
+  hẳn việc phải đồng bộ cùng một giá trị trên nhiều bản ghi `eutr_references` (vốn có thể nhiều dòng
+  cho cùng document, ví dụ nhiều `StepId` khớp) — đơn giản hơn cả ở ghi (Upload) lẫn sửa (Edit/Save),
+  không còn quy tắc "lấy theo bản ghi `Id` nhỏ nhất" như Step (FR-032) hay rủi ro các dòng
+  `eutr_references` của cùng document lệch giá trị Invoice number với nhau.
+
+### Session 2026-08-17 (Update 24) — Hiển thị cột Invoice trên màn hình danh sách (index), sau cột Step name
+
+- Input: "cập nhật spec, hiển thị thêm cột Invoice ở màn hình index, sau cột Step name".
+- Change: Bảng danh sách chính (User Story 1) bổ sung cột **Invoice**, đặt ngay sau cột **Step name**
+  (thứ tự cột đầy đủ: File name, Step name, **Invoice**, Conditions, Type, Valid from, Valid to,
+  Created by, Created date, Action).
+- Change: Cột Invoice hiển thị trực tiếp giá trị `eutr_documents.Invoice` của chính document đó (cột
+  đã có sẵn từ Update 23) — KHÔNG cần tra cứu qua `eutr_references` (khác Step name/Conditions/Type).
+  Document có `Invoice = null` (Type khác "Invoice", hoặc document cũ trước Update 23) MUST hiển thị
+  cột này ở trạng thái trống.
+- Q: Cột Invoice hiển thị dạng gì — văn bản đơn thuần hay chip giống Conditions/Step name? → A: **Văn
+  bản đơn thuần** (plain text) — mỗi document chỉ có đúng một giá trị `Invoice` (không phải danh sách
+  nhiều giá trị như Step name/Conditions), nên không cần mẫu chip/"+N more".
+- Q: Search box (User Story 6) có bổ sung điều kiện lọc theo Invoice không? → A: **Không** — nằm ngoài
+  phạm vi yêu cầu gốc của cập nhật này; search box tiếp tục chỉ gồm Type/Step name/Conditions (Update
+  21), không đổi.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Xem danh sách EUTR documents (Priority: P1)
 
 Người dùng vào mục **EUTR > EUTR documents** từ thanh điều hướng và thấy bảng liệt kê các document
-EUTR đã thêm vào hệ thống, với các cột File name, Step name, Conditions, Type, Valid from, Valid
-to, Created by, Created date và cột Action (Edit, Delete, View). Step name và Type được tra cứu từ
-bảng `eutr_references` theo `DocumentId` (Step name JOIN `eutr_steps`, Type JOIN
+EUTR đã thêm vào hệ thống, với các cột File name, Step name, **Invoice**, Conditions, Type, Valid
+from, Valid to, Created by, Created date và cột Action (Edit, Delete, View). Step name và Type được
+tra cứu từ bảng `eutr_references` theo `DocumentId` (Step name JOIN `eutr_steps`, Type JOIN
 `eutr_reference_types` theo `RefType`); document chưa có bản ghi `eutr_references` nào hiển thị hai
 cột này ở trạng thái trống. Cột **Conditions** hiển thị mọi giá trị `RefValue` (khác null) của các
 bản ghi `eutr_references` thuộc document đó, mỗi giá trị một chip — document không có `RefValue` nào
-hiển thị cột này ở trạng thái trống. Người dùng có thể chuyển trang khi danh sách dài. Icon **View**
-trên cột Action mở popup xem trước file thật (nếu document có `FileId`); document không có `FileId`
-hiển thị icon View ở trạng thái vô hiệu hóa kèm tooltip "No file to view".
+hiển thị cột này ở trạng thái trống. **(Update 24)** Cột **Invoice** hiển thị trực tiếp giá trị
+`eutr_documents.Invoice` của document đó dưới dạng văn bản đơn thuần (không phải chip) — document có
+`Invoice = null` (Type khác "Invoice") hiển thị cột này ở trạng thái trống. Người dùng có thể chuyển
+trang khi danh sách dài. Icon **View** trên cột Action mở popup xem trước file thật (nếu document có
+`FileId`); document không có `FileId` hiển thị icon View ở trạng thái vô hiệu hóa kèm tooltip "No file
+to view".
 
 **Why this priority**: Đây là giá trị cốt lõi — xem danh sách document hiện có là thao tác đầu tiên
 người dùng cần trước khi thêm mới, sửa, xóa hay xem chi tiết bất kỳ document nào.
@@ -150,13 +216,16 @@ người dùng cần trước khi thêm mới, sửa, xóa hay xem chi tiết b�
 File name/Valid from/Valid to/Created by/Created date; với một document có nhiều bản ghi
 `eutr_references` mang các `RefValue` khác nhau, xác nhận cột Conditions hiển thị đầy đủ từng giá
 trị dưới dạng chip; với document không có bản ghi `eutr_references` nào, xác nhận Step name/
-Conditions/Type đều trống; chuyển trang và thấy trang kế tiếp.
+Conditions/Type đều trống; với một document Type = "Invoice" có `Invoice` đã lưu, xác nhận cột
+**Invoice** hiển thị ngay sau cột Step name đúng giá trị đó; với document `Invoice = null`, xác nhận
+cột này trống; chuyển trang và thấy trang kế tiếp.
 
 **Acceptance Scenarios**:
 
 1. **Given** đang ở mục EUTR, **When** chọn "EUTR documents" ở thanh điều hướng, **Then** thấy
-   breadcrumb "EUTR > EUTR documents" và bảng với các cột File name, Step name, Conditions, Type,
-   Valid from, Valid to, Created by, Created date, Action.
+   breadcrumb "EUTR > EUTR documents" và bảng với các cột File name, Step name, **Invoice**,
+   Conditions, Type, Valid from, Valid to, Created by, Created date, Action — theo đúng thứ tự đó
+   (Invoice ngay sau Step name).
 2. **Given** một document không có bản ghi `eutr_references` nào, **When** bảng hiển thị dòng đó,
    **Then** cột File name/Valid from/Valid to/Created by/Created date hiển thị đúng dữ liệu đã lưu;
    cột Step name, Conditions, Type hiển thị trống.
@@ -183,6 +252,12 @@ Conditions/Type đều trống; chuyển trang và thấy trang kế tiếp.
 10. **Given** popup xem trước file đang mở, **When** gọi `get-file-by-idref` thất bại hoặc file có
     định dạng không hỗ trợ xem trước, **Then** popup hiển thị thông báo lỗi/cảnh báo thân thiện thay
     vì treo giao diện, người dùng vẫn có thể đóng popup.
+11. **(Update 24)** **Given** một document Type = "Invoice" có `eutr_documents.Invoice` đã lưu (ví dụ
+    "INV-2026-001"), **When** bảng hiển thị dòng đó, **Then** cột Invoice (ngay sau cột Step name)
+    hiển thị đúng giá trị đó dưới dạng văn bản đơn thuần.
+12. **(Update 24)** **Given** một document có `eutr_documents.Invoice = null` (Type khác "Invoice",
+    hoặc document cũ trước Update 23), **When** bảng hiển thị dòng đó, **Then** cột Invoice hiển thị
+    trống, không lỗi.
 
 ---
 
@@ -203,6 +278,10 @@ Chọn Type = "PO", "Invoice", hoặc "Delivery note" hiển thị gợi ý PO (
 do. Với Type = "PO" hoặc "Vendor", vùng chọn chỉ nhận tối đa 1 chip; các Type khác nhận nhiều chip.
 Đổi Type xóa toàn bộ chip hiện có.
 
+**(Update 23)** Riêng khi Type đã chọn có `Name` = "Invoice", popup MUST hiển thị thêm một trường
+nhập liệu **Invoice number** (ô nhập tự do, kiểu chuỗi, bắt buộc) — Type khác "Invoice" MUST không
+hiển thị trường này. Nút Upload MUST vô hiệu hóa thêm cho tới khi trường này có giá trị.
+
 Nút Upload chỉ khả dụng khi đã chọn Type, có ít nhất 1 chip, và — với Type khác "PO" — đã chọn Step.
 Nhấn Upload mở hộp thoại chọn nhiều file; mỗi file hợp lệ (PDF/DOC/DOCX/XLS/XLSX/JPG/PNG, tối đa
 10MB) được tải lên thư mục SharePoint xác định theo Type (PO/Vendor → thư mục theo chip đã chọn;
@@ -216,7 +295,10 @@ FileId = id từ SharePoint). Với Type khác "PO", hệ thống ghi một bả
 chip (DocumentId, StepId đã chọn, RefType = `Id` của Type đã chọn, RefValue = giá trị chip). Với
 Type = "PO", hệ thống ghi một bản ghi `eutr_references` cho **mỗi** `StepId` khớp Prefix của file đó
 (RefType = `Id` của Type "PO" đang chọn — gửi kèm dưới dạng `TypeId`, RefValue = giá trị chip PO đã
-chọn). Sau khi lượt Upload hoàn tất (toàn bộ hoặc một phần thành công), popup MUST tự đóng lại.
+chọn). **(Update 23)** Với Type = "Invoice", bản ghi `eutr_documents` vừa tạo cho file đó MUST được
+ghi thêm giá trị Invoice number đang hiển thị ở popup vào cột `Invoice` (không ghi vào
+`eutr_references`). Sau khi lượt Upload hoàn tất (toàn bộ hoặc một phần thành công), popup MUST tự
+đóng lại.
 
 **Why this priority**: Đây là cách duy nhất để tạo document mới — là nghiệp vụ chính của màn hình.
 
@@ -281,6 +363,16 @@ from/Valid to thì document tạo ra có Valid from = hôm nay, Valid to = ngày
     mới.
 20. **Given** Type đã chọn chưa được gán Step nào ở màn Assign Steps (danh sách lọc rỗng), **Then**
     combobox Step hiển thị trống và nút Upload vẫn vô hiệu hóa cho tới khi có Step để chọn.
+21. **(Update 23)** **Given** popup Add đang mở, **When** chọn Type có `Name` = "Invoice", **Then**
+    popup hiển thị thêm trường **Invoice number** (ô nhập tự do); chọn Type khác "Invoice" MUST
+    không hiển thị trường này (nếu đang hiển thị từ lượt chọn Type = "Invoice" trước đó, MUST ẩn đi).
+22. **(Update 23)** **Given** Type đã chọn = "Invoice" và mọi điều kiện khác đã đủ (Type/Step/ít nhất
+    1 chip), **When** trường Invoice number đang trống, **Then** nút Upload vẫn ở trạng thái vô hiệu
+    hóa; nhập giá trị vào Invoice number MUST làm nút Upload khả dụng (nếu các điều kiện khác đã đủ).
+23. **(Update 23)** **Given** Type đã chọn = "Invoice", đã nhập Invoice number, và upload file hợp lệ
+    thành công, **Then** bản ghi `eutr_documents` tạo ra cho file đó có cột `Invoice` = giá trị đang
+    hiển thị ở popup tại thời điểm Upload; các bản ghi `eutr_references` tạo cùng lượt Upload đó KHÔNG
+    có cột/giá trị Invoice nào (dữ liệu chỉ nằm trên `eutr_documents`).
 
 ---
 
@@ -353,6 +445,13 @@ lại (kể cả bản ghi vừa tạo) thành Step đang chọn. Document khôn
 (Type trống) hiển thị Type/chip Value trống, **ẩn** trường Step — chỉ Valid from/Valid to khả dụng để
 sửa.
 
+**(Update 23)** Riêng khi Type hiện tại (đã khóa) của document = "Invoice", popup Edit MUST hiển thị
+thêm trường **Invoice number**, nạp sẵn giá trị `Invoice` hiện có trên chính document đang sửa (cột
+`eutr_documents.Invoice`, không tra cứu qua `eutr_references`), và MUST cho phép sửa (bắt buộc có giá
+trị, không được để trống trước khi Save). Nhấn Save với Type = "Invoice" MUST cập nhật trực tiếp cột
+`Invoice` của `eutr_documents` cho document đó thành giá trị mới — cùng cách Save cập nhật
+`ValidFrom`/`ValidTo`, hoàn toàn độc lập với việc đồng bộ chip Value/`eutr_references` ở trên.
+
 **Why this priority**: Sửa Step, hiệu lực, hoặc điều chỉnh (các) giá trị Condition của document hiện
 có là nhu cầu thường gặp nhưng đứng sau xem và thêm mới.
 
@@ -415,6 +514,17 @@ nhận Type/chip trống, không có trường Step, chỉ sửa được Valid 
 18. **Given** popup Edit đang mở với Type khác "PO", **When** đóng popup mà không nhấn Save sau khi đã
     thêm/xóa chip trên giao diện, **Then** không có bản ghi `eutr_references` nào bị tạo/xóa trong hệ
     thống — mọi thay đổi trên giao diện bị hủy bỏ.
+19. **(Update 23)** **Given** một document có Type hiện tại = "Invoice", **When** nhấn Edit, **Then**
+    popup hiển thị thêm trường Invoice number, nạp sẵn đúng giá trị `Invoice` hiện có của chính
+    document đó (`eutr_documents.Invoice`) và cho phép sửa.
+20. **(Update 23)** **Given** popup Edit đang mở với Type = "Invoice", **When** đổi Invoice number
+    sang giá trị khác rồi nhấn Save, **Then** cột `Invoice` của bản ghi `eutr_documents` đó được cập
+    nhật thành giá trị mới; không có bản ghi `eutr_references` nào bị ảnh hưởng bởi thay đổi này.
+21. **(Update 23)** **Given** popup Edit đang mở với Type = "Invoice", **When** xóa trắng trường
+    Invoice number rồi cố nhấn Save, **Then** hệ thống chặn Save kèm thông báo lỗi yêu cầu nhập Invoice
+    number, giống quy tắc bắt buộc ở Add.
+22. **(Update 23)** **Given** popup Edit đang mở với Type khác "Invoice" (bao gồm Type trống), **Then**
+    trường Invoice number MUST không hiển thị.
 
 ---
 
@@ -586,14 +696,25 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
 - **(Update 22)** Việc thêm/xóa chip trong popup Edit chỉ là thay đổi tạm thời trên giao diện — đóng
   popup mà không nhấn Save MUST không tạo/xóa bất kỳ bản ghi `eutr_references` nào (kế thừa quy tắc
   chung đã có cho Add/Edit).
+- **(Update 23)** Khi người dùng đổi Type từ "Invoice" sang Type khác trong popup Add trước khi Upload,
+  trường Invoice number MUST bị ẩn đi và giá trị đã nhập MUST không được gửi lên khi Upload (đổi Type
+  ngược lại "Invoice" sau đó MUST hiển thị lại trường ở trạng thái trống, không khôi phục giá trị cũ).
+- **(Update 23)** Vì Invoice number lưu trực tiếp trên `eutr_documents` (1 giá trị/1 document, không
+  phải trên `eutr_references`), không có kịch bản nhiều bản ghi cùng document mang giá trị Invoice
+  khác nhau cần hòa giải — mỗi document luôn có đúng một giá trị `Invoice` (hoặc `null`).
+- **(Update 23)** Đóng popup Add/Edit mà không Upload/Save khi Type = "Invoice" MUST không ghi bất kỳ
+  giá trị Invoice number nào vào `eutr_documents` — kế thừa quy tắc chung đã có.
+- **(Update 24)** Khi giá trị `eutr_documents.Invoice` dài, cột Invoice trên bảng danh sách chính tuân
+  theo cùng cơ chế hiển thị/cắt ngắn văn bản (nếu có) như các cột văn bản đơn khác của bảng (ví dụ File
+  name) — không có yêu cầu riêng biệt nào về giới hạn độ dài hiển thị cho cột này.
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
-- **FR-001**: Hệ thống MUST hiển thị danh sách các EUTR document dạng bảng với các cột: File name,
-  Step name, Conditions, Type, Valid from, Valid to, Created by, Created date và cột Action (Edit,
-  Delete, View).
+- **FR-001**: Hệ thống MUST hiển thị danh sách các EUTR document dạng bảng với các cột theo đúng thứ
+  tự: File name, Step name, **Invoice** *(Update 24)*, Conditions, Type, Valid from, Valid to, Created
+  by, Created date và cột Action (Edit, Delete, View).
 - **FR-002**: Hệ thống MUST hiển thị màn hình trong mục điều hướng "EUTR documents" với breadcrumb
   "EUTR > EUTR documents".
 - **FR-003**: Người dùng MUST có thể phân trang danh sách khi số bản ghi vượt một trang và chuyển
@@ -775,30 +896,55 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   đã tồn tại sẵn dưới dạng chip khác (trùng `RefValue`), cùng quy tắc chống trùng đã áp dụng ở Add.
 - **FR-055 (Update 22)**: Ở chế độ sửa, khi Type hiện tại của document = "PO", vùng chip Value tiếp
   tục MUST ở dạng chỉ đọc theo FR-028 — FR-051 đến FR-054 KHÔNG áp dụng cho Type = "PO".
+- **FR-056 (Update 23)**: Popup Add MUST hiển thị thêm trường **Invoice number** (ô nhập tự do, kiểu
+  chuỗi, bắt buộc) khi Type đang chọn có `Name` = "Invoice"; Type khác "Invoice" MUST không hiển thị
+  trường này. Nút Upload MUST tiếp tục vô hiệu hóa (cạnh các điều kiện ở FR-017) cho tới khi trường
+  này có giá trị, khi Type = "Invoice".
+- **FR-057 (Update 23)**: Với mỗi file upload thành công khi Type = "Invoice", hệ thống MUST ghi giá
+  trị Invoice number đang hiển thị ở popup tại thời điểm Upload vào cột mới **`Invoice`** trên bản ghi
+  **`eutr_documents`** vừa tạo cho file đó — KHÔNG ghi giá trị này vào bất kỳ bản ghi `eutr_references`
+  nào.
+- **FR-058 (Update 23)**: Ở chế độ sửa, khi Type hiện tại (đã khóa) của document = "Invoice", popup
+  Edit MUST hiển thị trường Invoice number, nạp sẵn giá trị `Invoice` hiện có trên chính document đang
+  sửa (`eutr_documents.Invoice`), và MUST cho phép sửa (bắt buộc có giá trị trước khi Save).
+- **FR-059 (Update 23)**: Khi nhấn Save ở chế độ sửa với document có Type = "Invoice", hệ thống MUST
+  cập nhật trực tiếp cột `Invoice` trên bản ghi `eutr_documents` của document đó thành giá trị Invoice
+  number mới — không ảnh hưởng tới bất kỳ bản ghi `eutr_references` nào (độc lập với việc đồng bộ chip
+  Value ở FR-052).
+- **FR-060 (Update 23)**: Với Type khác "Invoice" (bao gồm Type trống), cột `Invoice` trên
+  `eutr_documents` được ghi bởi feature này MUST tiếp tục là `null`.
+- **FR-061 (Update 24)**: Bảng danh sách chính MUST hiển thị cột **Invoice** ngay sau cột Step name,
+  lấy trực tiếp giá trị `eutr_documents.Invoice` của mỗi document (không qua `eutr_references`), hiển
+  thị dạng văn bản đơn thuần; document có `Invoice = null` MUST hiển thị cột này ở trạng thái trống.
 
 ## Key Entities *(include if feature involves data)*
 
 - **EUTR Document**: Đại diện cho một document EUTR. Thuộc tính: định danh, File name (văn bản,
-  không duy nhất giữa các document, VARCHAR(255)), Valid from, Valid to, FileId, người tạo, ngày
-  tạo, người cập nhật, ngày cập nhật. Lưu vào bảng `eutr_documents`. Mọi document mới MUST được tạo
-  thông qua một lượt Upload thành công trong popup Add (không còn cách tạo document nào khác) — Valid
-  from/Valid to lấy từ giá trị đang hiển thị ở popup tại thời điểm Upload (mặc định ngày hiện tại/
-  ngày tối đa, có thể chỉnh sửa). `FileId` dùng làm khóa để đọc lại nội dung file thật từ SharePoint
-  khi nhấn icon View; document có `FileId = null` (dữ liệu cũ) không có nội dung để xem trước. Edit
-  MUST có thể cập nhật trực tiếp `ValidFrom`/`ValidTo` của document mà không tạo bản ghi mới.
+  không duy nhất giữa các document, VARCHAR(255)), Valid from, Valid to, FileId, **`Invoice`** (chuỗi,
+  nullable — cột mới, Update 23), người tạo, ngày tạo, người cập nhật, ngày cập nhật. Lưu vào bảng
+  `eutr_documents`. Mọi document mới MUST được tạo thông qua một lượt Upload thành công trong popup Add
+  (không còn cách tạo document nào khác) — Valid from/Valid to lấy từ giá trị đang hiển thị ở popup tại
+  thời điểm Upload (mặc định ngày hiện tại/ngày tối đa, có thể chỉnh sửa). `FileId` dùng làm khóa để
+  đọc lại nội dung file thật từ SharePoint khi nhấn icon View; document có `FileId = null` (dữ liệu cũ)
+  không có nội dung để xem trước. **(Update 23)** `Invoice` chỉ được ghi giá trị khi Type đã chọn/hiện
+  tại của document = "Invoice" (nhập ở popup Add/Edit); mọi Type khác giữ `null`. Edit MUST có thể cập
+  nhật trực tiếp `ValidFrom`/`ValidTo`/`Invoice` của document mà không tạo bản ghi mới. **(Update 24)**
+  `Invoice` MUST hiển thị trên bảng danh sách chính (cột riêng, ngay sau Step name) — xem FR-061.
 - **EUTR Reference (liên kết Document ↔ Step/Type/Value)**: Bảng `eutr_references` (Id, RefId,
-  DocumentId, StepId, RefType, RefValue). Mỗi file upload thành công qua popup Add tạo một hoặc
-  nhiều bản ghi: với Type khác "PO", một bản ghi cho mỗi chip Value đã chọn (`RefValue` = giá trị
-  chip); với Type = "PO", một bản ghi cho mỗi `StepId` khớp Prefix (`RefValue` = mã PO đã chọn,
-  giống nhau trên các bản ghi). `RefType` = `Id` của bản ghi `eutr_reference_types` đã chọn ở Type.
-  Cột `RefId` hiện có KHÔNG được ghi bởi feature này (giữ nguyên mục đích thiết kế cũ, trỏ tới
-  `eutr_template_details`). Bảng này là nguồn dữ liệu duy nhất cho cột Step name/Type/Conditions
-  trên danh sách chính (JOIN `eutr_steps`/`eutr_reference_types`; `RefValue` hiển thị trực tiếp làm
-  chip Conditions). Edit (User Story 3) với Type = "PO" MUST cập nhật trực tiếp `StepId` của mọi bản
-  ghi thuộc một document khi Save — không xóa/tạo lại bản ghi nào. Edit với Type khác "PO" (Update 22)
-  MUST đồng bộ cả tập bản ghi theo tập chip Value đang hiển thị khi Save — tạo bản ghi mới cho chip
-  mới thêm, xóa bản ghi cho chip đã xóa, và cập nhật `StepId` của mọi bản ghi còn lại (xem FR-052).
-  Xóa document (User Story 4) MUST xóa toàn bộ bản ghi có `DocumentId` tương ứng, cùng giao dịch.
+  DocumentId, StepId, RefType, RefValue). Mỗi file upload thành công qua popup Add tạo một hoặc nhiều
+  bản ghi: với Type khác "PO", một bản ghi cho mỗi chip Value đã chọn (`RefValue` = giá trị chip); với
+  Type = "PO", một bản ghi cho mỗi `StepId` khớp Prefix (`RefValue` = mã PO đã chọn, giống nhau trên
+  các bản ghi). `RefType` = `Id` của bản ghi `eutr_reference_types` đã chọn ở Type. Cột `RefId` hiện
+  có KHÔNG được ghi bởi feature này (giữ nguyên mục đích thiết kế cũ, trỏ tới `eutr_template_details`).
+  **(Update 23)** Bảng này KHÔNG liên quan tới Invoice number — giá trị đó lưu trên `eutr_documents`
+  (xem entity trên), không thêm cột nào ở đây. Bảng này là nguồn dữ liệu duy nhất cho cột Step
+  name/Type/Conditions trên danh sách chính (JOIN `eutr_steps`/`eutr_reference_types`; `RefValue`
+  hiển thị trực tiếp làm chip Conditions). Edit (User Story 3) với Type = "PO" MUST cập nhật trực tiếp
+  `StepId` của mọi bản ghi thuộc một document khi Save — không xóa/tạo lại bản ghi nào. Edit với Type
+  khác "PO" (Update 22) MUST đồng bộ cả tập bản ghi theo tập chip Value đang hiển thị khi Save — tạo
+  bản ghi mới cho chip mới thêm, xóa bản ghi cho chip đã xóa, và cập nhật `StepId` của mọi bản ghi còn
+  lại (xem FR-052). Xóa document (User Story 4) MUST xóa toàn bộ bản ghi có `DocumentId` tương ứng,
+  cùng giao dịch.
 - **EUTR Reference Type — KHÔNG thuộc phạm vi CRUD feature này**: Bảng `eutr_reference_types` (Id,
   Name, ...), quản lý CRUD bởi feature `006-eutr-reference-types`. Feature này **đọc (read-only)**
   bảng này để: (a) làm nguồn dữ liệu dropdown Type trong popup Add/Edit; (b) JOIN `RefType` với `Id`
@@ -862,6 +1008,15 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
 - **SC-011 (Update 21)**: 100% lượt bấm Search với ít nhất một điều kiện (Type/Step name/Conditions)
   trả về đúng và đầy đủ tập document thỏa FR-048; 100% lượt bấm Search khi search box trống trả về
   đầy đủ danh sách gốc (không thiếu/thừa bản ghi).
+- **SC-013 (Update 23)**: 100% lượt Upload thành công với Type = "Invoice" tạo ra bản ghi
+  `eutr_documents` có cột `Invoice` đúng bằng giá trị Invoice number đã nhập ở popup tại thời điểm
+  Upload; 100% document Type khác "Invoice" giữ cột `Invoice` = `null`; không bản ghi `eutr_references`
+  nào (của bất kỳ Type nào) có giá trị Invoice number ghi vào.
+- **SC-014 (Update 23)**: 100% lượt Save trong popup Edit với document Type = "Invoice" cập nhật đúng
+  cột `Invoice` trên bản ghi `eutr_documents` của document đó thành giá trị mới.
+- **SC-015 (Update 24)**: 100% document có `eutr_documents.Invoice` khác `null` hiển thị đúng giá trị
+  đó ở cột Invoice (ngay sau cột Step name) trên bảng danh sách chính; 100% document `Invoice = null`
+  hiển thị cột này ở trạng thái trống.
 
 ## Assumptions
 
@@ -910,3 +1065,17 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
 - **(Update 22)** Thêm/xóa chip trong Edit không có API riêng — Save tiếp tục dùng cùng endpoint cập
   nhật document/Step hiện có (FR-033), backend tính toán phần chênh lệch (tạo/xóa `eutr_references`)
   dựa trên tập `RefValue` gửi lên so với tập hiện có trong DB tại thời điểm Save.
+- **(Update 23)** Cột `Invoice` mới trên `eutr_documents` (không phải `eutr_references`) không có ràng
+  buộc duy nhất (unique) và không được dùng để tính cột Conditions/tiêu chí lọc ở search box — phạm vi
+  cập nhật này chỉ dừng ở việc thu thập và lưu trữ giá trị, hiển thị/lọc thêm theo cột này (nếu cần)
+  thuộc phạm vi một cập nhật sau.
+- **(Update 23)** Giá trị Invoice number áp dụng đồng nhất cho mọi document tạo ra trong cùng một lượt
+  Upload (khi chọn nhiều file cùng lúc, mỗi file → một document → một giá trị `eutr_documents.Invoice`)
+  — cùng cách Valid from/Valid to đã áp dụng từ Update 19; không có input Invoice number riêng theo
+  từng file.
+- **(Update 23)** Trường Invoice number là bắt buộc khi Type = "Invoice" ở cả Add và Edit (đã xác nhận
+  qua clarify) — không có giá trị mặc định, người dùng phải nhập trước khi Upload/Save.
+- **(Update 23)** Lưu trên `eutr_documents` (1 dòng/1 document) thay vì `eutr_references` (có thể
+  nhiều dòng/1 document, ví dụ nhiều `StepId` khớp Prefix) loại bỏ hoàn toàn nhu cầu đồng bộ/hòa giải
+  giá trị Invoice number giữa nhiều bản ghi — không cần migration nào trên `eutr_references` cho tính
+  năng này (chỉ `eutr_documents` cần cột mới).

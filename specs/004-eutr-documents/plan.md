@@ -469,6 +469,53 @@ Frontend: `toRefValue` (helper đã có sẵn trong `EutrDocumentsFormDialog.jsx
 through` tới body `{ stepId, refValues }`) — không đổi route/tên use case/tên method nào. Type = "PO"
 tiếp tục gọi với `refValues = undefined` (không đổi hành vi).
 
+**Cập nhật (spec Session Update 23 — trường Invoice number khi Type = "Invoice", lưu trên
+`eutr_documents.Invoice`, FR-056 đến FR-060)**: Bản nháp spec đầu tiên định lưu số Invoice trên
+`eutr_references` (mỗi dòng một bản sao, cần đồng bộ theo `Id` nhỏ nhất giống Step) — người dùng phản
+hồi trực tiếp ngay sau đó yêu cầu đổi sang lưu trên `eutr_documents` (1 dòng/1 document sẵn có), nên
+kế hoạch/implementation đi thẳng theo phương án `eutr_documents.Invoice`, KHÔNG có bước triển khai
+trung gian nào chạm `eutr_references`.
+
+Backend: 1 cột mới `Invoice VARCHAR(255) NULL` trên `eutr_documents` — migration mới
+`20_add_invoice_to_eutr_documents.sql` (`ALTER TABLE ... ADD COLUMN ... AFTER ValidTo`) cho môi trường
+đã có DB, cộng cập nhật đồng bộ 2 file "nguồn sự thật" `docs/design/eutr/eutr_db.sql` và
+`ComplianceSys.Infrastructure/Sqls/Tables/eutr_db.sql` (CREATE TABLE dùng cho DB mới). Entity
+`EutrDocuments.cs` thêm `public string? Invoice { get; set; }`; vì `EutrDocumentsResponseDto` kế thừa
+trực tiếp `EutrDocuments` (không phải composition), field mới tự động có mặt trên response — không
+sửa gì thêm ở DTO response. `EutrDocumentsRequestDto` thêm `Invoice` (dùng bởi Save/Edit qua
+`PUT /api/eutr-documents/{id}` sẵn có — `EutrMappingProfile`'s `CreateMap<EutrDocumentsRequestDto,
+EutrDocuments>()` là convention-based nên map theo tên thuộc tính tự động, không cần sửa mapping
+profile). Với Upload (Type = "Invoice" luôn đi qua nhánh `executeEutrMultiByType`/
+`UploadMultipleForReferenceTypeAsync`, không bao giờ qua nhánh PO `EutrMultiUploadFileRequest` —
+Update 17): `EutrTypeMultiUploadFileRequest` thêm `Invoice` (nullable), `EutrUploadService.
+UploadMultipleForReferenceTypeAsync` gán thẳng `entity.Invoice = request.Invoice` khi dựng
+`EutrDocuments` mới. Không có validator backend bắt buộc Invoice khi Type = "Invoice" — nhất quán với
+cách Step/≥1 chip bắt buộc theo Type hiện chỉ enforce ở nút Upload/Save phía client (FR-017 kiểu cũ),
+không phải FluentValidation.
+
+Frontend: `EutrDocumentsFormDialog.jsx` thêm helper `isInvoiceTypeName(refType)` (clone
+`isPoTypeName`), state `invoice`, và field tính `isInvoiceType`/`showInvoice`/`invoiceValid` dựa trên
+`type` — dùng chung 1 biểu thức cho cả 2 mode (giống `isPoType`, vì `type` đã được nạp đúng ở cả Add
+lẫn Edit). `TextField` "Invoice number" chỉ render khi `showInvoice`, đặt sau vùng chip Value và trước
+Valid from. `canSubmit` (cả 2 mode) thêm điều kiện `invoiceValid`. `handleTypeChange` reset `invoice`
+về rỗng khi đổi Type (mode add). Upload (`handleFilesSelected`) truyền thêm `isInvoiceType ?
+invoice.trim() : undefined` làm tham số cuối của `executeEutrMultiByType`; Save (`handleSave`) thêm
+`invoice: isInvoiceType ? invoice.trim() : null` vào payload `updateEutrDocumentsUseCase.execute`.
+Truyền tham số `invoice` xuyên suốt: `UploadToSharePointUseCase.executeEutrMultiByType` →
+`ISharePointRepository.uploadEutrFilesMultiByType` (JSDoc) →
+`RestSharePointRepository.uploadEutrFilesMultiByType` (`formData.append('invoice', invoice)` khi có
+giá trị, cùng mẫu `validFrom`/`validTo`) — không route/endpoint mới, không sửa `eutrDocumentsApi.js`
+cho phần Upload (đã đi qua `sharepoint` API sẵn có).
+
+**Cập nhật (spec Session Update 24 — cột Invoice trên màn hình danh sách, ngay sau Step name,
+FR-061)**: Không cần round-trip HTTP mới — `EutrDocumentsResponseDto.Invoice` đã có sẵn từ Update 23
+(kế thừa từ entity). Chỉ sửa `useEutrDocumentsColumns.jsx`: thêm 1 cột `field: 'invoice'` (chèn ngay
+sau cột `stepName`, trước `conditions`, đúng thứ tự spec yêu cầu), `valueGetter` đọc thẳng
+`row.invoice || ''` (KHÔNG dùng `MultiValueChips` như Step name/Conditions — mỗi document chỉ có
+đúng 1 giá trị `Invoice`, hiển thị văn bản đơn thuần), và thêm `invoice: true` vào
+`defaultColumnVisibility`. Không đổi `EutrDocumentsFilterBar.jsx`/search box (spec xác nhận không mở
+rộng điều kiện lọc theo Invoice ở cập nhật này).
+
 ## Technical Context
 
 **Language/Version**: .NET 8 (backend); JavaScript (ES modules), React 18 + Vite (frontend)
@@ -1079,6 +1126,19 @@ endpoint hiện có (Nguyên tắc III); không có UI label tiếng Việt phá
 không route/policy/menu mới — vẫn dùng chung `EutrDocuments.Update` của endpoint `{id}/step` (Nguyên
 tắc V không đổi).
 
+**Re-check sau Update 23/24** (trường + cột Invoice, lưu trên `eutr_documents.Invoice`): vẫn PASS cả 5
+nguyên tắc — cột mới nằm đúng tầng `Domain/Entities/EutrDocuments.cs`, gán giá trị nằm đúng
+`Application/Services/EutrUploadService.cs`, không SQL/business logic nào lọt lên Controller (Nguyên
+tắc I); frontend tái dùng đúng khuôn `isPoTypeName`/`isPoType` đã có để suy ra `isInvoiceTypeName`/
+`isInvoiceType`, cột Invoice ở list tái dùng đúng cấu trúc cột `valueGetter` đã dùng cho `type` (Nguyên
+tắc II); ghi Invoice tái dùng nguyên vẹn 2 luồng ghi `eutr_documents` đã có (Update endpoint chung + 
+`UploadMultipleForReferenceTypeAsync`), không tạo entity/endpoint/route mới — kể cả AutoMapper cũng
+không cần sửa vì mapping convention-based đã tự nhận field mới (Nguyên tắc III, tinh thần "mở rộng
+thay vì tạo mới" áp dụng triệt để hơn cả Update 22 vì hoàn toàn không cần transaction/reconcile mới);
+nhãn "Invoice"/"Invoice number" bằng tiếng Anh theo FR-038 (Nguyên tắc IV không đổi); không route/
+policy/menu mới — Save tiếp tục qua `EutrDocuments.Update`, Upload tiếp tục qua policy hiện có của
+`SharePointController` (Nguyên tắc V không đổi).
+
 ## Project Structure
 
 ### Documentation (this feature)
@@ -1610,6 +1670,48 @@ compliance-client/src/
 └── application/usecases/eutr-documents/UpdateEutrDocumentReferenceStepUseCase.js   # (SỬA) execute(id, stepId, refValues) truyền refValues qua repository
 ```
 
+Backend — **Update 23** (trường + cột `Invoice` trên `eutr_documents` — 1 migration mới, sửa 5 file
+hiện có, KHÔNG entity/repository/controller/route/policy mới):
+
+```text
+compliance-sys-api/src/
+├── ComplianceSys.Infrastructure/Sqls/Migration/
+│   └── 20_add_invoice_to_eutr_documents.sql   # MỚI: ALTER TABLE eutr_documents ADD COLUMN Invoice VARCHAR(255) NULL AFTER ValidTo
+├── ComplianceSys.Infrastructure/Sqls/Tables/eutr_db.sql   # (SỬA) CREATE TABLE eutr_documents thêm `Invoice` VARCHAR(255) NULL (đồng bộ với migration, dùng cho DB mới)
+├── ComplianceSys.Domain/Entities/EutrDocuments.cs         # (SỬA) + public string? Invoice { get; set; }
+├── ComplianceSys.Application/Dtos/Request/EutrDocumentsRequestDto.cs         # (SỬA) + public string? Invoice { get; set; } (dùng bởi Save/Edit qua PUT {id} sẵn có)
+└── ComplianceSys.Application/Dtos/Request/EutrTypeMultiUploadFileRequest.cs  # (SỬA) + public string? Invoice { get; set; } (dùng bởi Upload Type khác "PO", luôn qua nhánh này — Update 17)
+```
+
+```text
+compliance-sys-api/src/ComplianceSys.Application/Services/
+└── EutrUploadService.cs   # (SỬA) UploadMultipleForReferenceTypeAsync: entity.Invoice = request.Invoice khi dựng EutrDocuments mới
+```
+
+> Không sửa `EutrMappingProfile.cs` (AutoMapper convention-based tự map `Invoice` theo tên thuộc
+> tính) và không sửa `EutrDocumentsResponseDto.cs` (kế thừa trực tiếp entity `EutrDocuments`, field
+> mới tự động có mặt trên response).
+
+Frontend — **Update 23/24** (trường Invoice number ở popup Add/Edit + cột Invoice ở danh sách —
+sửa 6 file hiện có, KHÔNG component/use case/API client mới):
+
+```text
+compliance-client/src/
+├── presentation/pages/eutr-documents/components/
+│   └── EutrDocumentsFormDialog.jsx   # (SỬA) + helper isInvoiceTypeName (clone isPoTypeName); state invoice; isInvoiceType/showInvoice/invoiceValid tính từ `type` (dùng chung cho add/edit, giống isPoType); TextField "Invoice number" render khi showInvoice (sau vùng chip Value, trước Valid from); canSubmit + invoiceValid; handleTypeChange reset invoice khi đổi Type; handleFilesSelected truyền invoice làm tham số cuối executeEutrMultiByType; handleSave thêm invoice vào payload updateEutrDocumentsUseCase.execute
+├── presentation/pages/eutr-documents/hooks/useEutrDocumentsColumns.jsx   # (SỬA) + cột `invoice` (chèn ngay sau `stepName`, trước `conditions`), valueGetter đọc row.invoice || '' (văn bản đơn thuần, KHÔNG MultiValueChips); + invoice: true vào defaultColumnVisibility
+├── application/usecases/sharepoint/UploadToSharePointUseCase.js       # (SỬA) executeEutrMultiByType(...) + tham số invoice, pass-through xuống repository
+├── domain/interfaces/ISharePointRepository.js                        # (SỬA) chữ ký uploadEutrFilesMultiByType(...) + _invoice (JSDoc)
+└── infrastructure/repositories/RestSharePointRepository.js           # (SỬA) uploadEutrFilesMultiByType(...): formData.append('invoice', invoice) khi có giá trị (cùng mẫu validFrom/validTo)
+```
+
+> Không sửa `eutrDocumentsApi.js`/`RestEutrDocumentsRepository.js`/`UpdateEutrDocumentsUseCase.js` —
+> payload `update(payload)` đã forward nguyên object gửi lên (bao gồm field `invoice` mới) mà không
+> cần khai báo lại field trên các lớp trung gian này (xem Update 22 cho tiền lệ tương tự với
+> `refValues`, dù ở đó vẫn phải sửa vì đi qua endpoint `{id}/step` — khác endpoint `PUT {id}` chung ở
+> đây). Không sửa `EutrDocumentsFilterBar.jsx` (search box không mở rộng lọc theo Invoice, spec Update
+> 24 xác nhận ngoài phạm vi).
+
 Frontend — **CÁC FILE MỚI** (clone `eutr-masters` cho list/Edit-popup; clone routing `eutr-templates` cho Add):
 
 ```text
@@ -1680,6 +1782,7 @@ chiếu chuẩn: **EutrStep** (backend CRUD, không JOIN/không repository riên
 | Add/Edit hợp nhất 1 popup duy nhất, xóa hoàn toàn trang Add cũ + Assign condition (Update 19) | Masters/Templates/Steps: Add và Edit luôn là 2 UI tách biệt (trang riêng hoặc 2 popup khác nhau) | Duy nhất trong feature này Add VÀ Edit dùng chung **đúng 1** component qua prop `mode` — thay thế hoàn toàn "Edit rẽ nhánh theo Type mở 1-trong-3 UI" của Update 12 (dòng phía trên, nay đã lỗi thời); đây cũng là lần **duy nhất** trong lịch sử feature một quyết định "giữ dead code" (Update 15) bị đảo ngược — trang Add cũ/popup Assign condition bị xóa hẳn thay vì giữ lại; `PUT {id}/step` đổi từ "chỉ PO, xóa-tạo-lại" sang "mọi Type, UPDATE tại chỗ" — đơn giản hơn hẳn cơ chế nó thay thế |
 | Lọc Step theo Assign Steps của Type (Update 20) | Masters/Templates/Steps: không có khái niệm "Step được gán cho 1 Type cụ thể" — mọi Step hiển thị đều là toàn bộ `eutr_steps` | Duy nhất trong feature này combobox Step phụ thuộc dữ liệu cấu hình của **một feature khác** (`006-eutr-reference-types`, bảng `eutr_reference_type_details`) — nếu Type chưa được gán Step nào ở màn Assign Steps thì popup Add/Edit của feature này không có Step nào để chọn (Upload bị chặn); đây cũng là lần đầu tiên feature **tiêu thụ** (không phải tạo) hạ tầng CRUD của feature `006` cho mục đích lọc dữ liệu (trước đó Update 14/15/16 chỉ tiêu thụ dropdown Type nguyên khối, không lọc theo quan hệ) — 0 dòng backend mới, giống mức tái sử dụng cao nhất đã đạt ở Update 17 |
 | Search box lọc danh sách theo Type/Step name/Conditions (Update 21) | Masters/Templates/Steps: lọc chỉ qua cột filter của DataGrid, luôn trên cột vật lý của chính entity | Duy nhất trong feature này endpoint `get-all` lọc theo 3 "cột ảo" không tồn tại trên `EutrDocuments` (`TypeId`/`StepId`/`Conditions` — thực chất nằm ở bảng `eutr_references` liên kết) bằng cách tính trước danh sách `DocumentId` khớp (SQL EXISTS) rồi tái dùng cơ chế `Operator="in"` sẵn có để IN-filter chính query phân trang gốc — chưa từng có cơ chế "lọc bảng cha theo bảng con" nào trong lịch sử feature này (khác Update 8, chỉ *hiển thị* dữ liệu JOIN, không *lọc* theo nó) |
+| Trường + cột `Invoice` trên `eutr_documents` (Update 23/24) | Mọi cột động khác của feature này (Step name/Type/Conditions, Update 8/14/19) đều JOIN từ `eutr_references` | Duy nhất trong feature này (và duy nhất trong lịch sử `eutr_documents`) một trường Type-điều-kiện được lưu **trực tiếp trên chính `eutr_documents`** thay vì bảng liên kết `eutr_references` — quyết định đảo ngược ngay trong phiên làm việc: bản nháp đầu định lưu trên `eutr_references` (đòi hỏi đồng bộ nhiều dòng, quy tắc "Id nhỏ nhất" giống Step) nhưng bị người dùng yêu cầu đổi sang `eutr_documents` trước khi plan/implementation bắt đầu — kết quả đơn giản hơn hẳn mọi cập nhật Type-điều-kiện trước đó (không transaction, không diff insert/delete, không round-trip JOIN nào cho cột list) |
 
 > **Lưu ý**: Dòng "Edit rẽ nhánh theo Type" (Update 12) ở trên mô tả kiến trúc **đã bị thay thế hoàn
 > toàn** bởi Update 19 — giữ lại trong bảng vì đây là tài liệu lịch sử theo từng Update, không phải

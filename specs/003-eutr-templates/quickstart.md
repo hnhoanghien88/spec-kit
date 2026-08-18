@@ -917,6 +917,43 @@ review" and "verified end-to-end through the UI."
    retarget it to "Forest"'s `StepId`); **Expected**: this single-step Edit form still allows it with
    no error — Edit step (FR-008b) is explicitly unaffected by FR-076/FR-077, unlike step 2-5 above
 
+### Scenario 26: Default Requirement Type/Take From on Add Root Group / Add Child Step (FR-078 to FR-080, Update 22)
+
+**Prerequisite**: via the 006-eutr-reference-types screen (or `POST /api/eutr-reference-types`),
+confirm a reference type named exactly "PO" exists (create one if not — note its `Id`); via the same
+screen's "Assign Steps" feature (or `POST /api/eutr-reference-type-details`), assign one specific
+EUTR step (e.g. "Certificate check") to a DIFFERENT reference type (e.g. "Upload manual", note its
+`Id`) — this step now has a mapping in `eutr_reference_type_details`.
+
+1. Call `POST /api/eutr-reference-type-details/default-by-steps` directly with a body containing the
+   "Certificate check" step's Id (and a couple of other step Ids with no mapping); **Expected**:
+   response `data` contains `{ "<Certificate check's Id>": <"Upload manual"'s Id> }` and omits the
+   other, unmapped step Ids entirely (not a `null`/`0` entry)
+2. Edit a Draft template; click **Add Root Group**; tick a master step that has NO
+   `eutr_reference_type_details` mapping (e.g. "Forest"); **Expected**: that row's Requirement Type
+   immediately shows **Required** (not Optional) and Take From immediately shows **"PO"** (not
+   blank, not a stale "Optional"/0 default) — no manual selection needed
+3. In the same dialog, tick "Certificate check" (the step mapped to "Upload manual" above);
+   **Expected**: Requirement Type shows Required, but Take From shows **"Upload manual"** — NOT
+   "PO" — reflecting the step-specific mapping (FR-080 overriding FR-079)
+4. Untick "Certificate check", then tick it again; **Expected**: Take From resets to "Upload manual"
+   again (the mapping default, not whatever value might have been manually changed before unticking)
+5. In the "Add new step" area, type a brand-new name not in the EUTR steps list (e.g. "Soil
+   testing"); **Expected**: Requirement Type defaults to Required and Take From defaults to "PO" —
+   never looks up a mapping, since this step has no `StepId` yet to look one up by
+6. Manually change "Certificate check"'s Take From to a third value (e.g. "Vendor") before clicking
+   Add; click **Add**; Save the template; **Expected**: the saved detail row for "Certificate check"
+   persists the manually-chosen value ("Vendor"), not the mapping default — defaults are a starting
+   point only, never enforced after the user changes them
+7. (Optional, requires temporarily renaming/deleting the "PO" reference type) Rename the "PO"
+   reference type to something else via 006-eutr-reference-types, then reopen Add Root Group/Add
+   Child Step on a template; tick a step with no mapping; **Expected**: Take From is left **blank**
+   (no default, no error, dialog still usable) — rename it back to "PO" afterward to avoid affecting
+   other scenarios
+8. Open Edit step (pencil icon) on a step already in the tree; **Expected**: the form shows that
+   step's CURRENT Requirement Type/Take From values (whatever was saved), not the new
+   Required/PO-or-mapping default — FR-078/FR-079/FR-080 are explicitly out of scope for Edit step
+
 ### Scenario 13: Edge Cases
 
 - Empty grid: **Expected** "No data" message, no errors

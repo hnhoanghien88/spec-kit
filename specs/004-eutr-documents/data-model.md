@@ -12,6 +12,7 @@ Nguồn sự thật DB: `docs/design/eutr/eutr_db.sql`. Entity backend mới:
 | `FileId` | string? (VARCHAR(255)) | **(Update 6)** id file trả về từ SharePoint khi tạo qua nút Upload | Tồn tại sẵn trong schema. Document tạo qua form Save (File name/Valid from/Valid to nhập tay) vẫn luôn `null`; document tạo qua nút Upload (Screen1, FR-029) MUST được gán giá trị này |
 | `ValidFrom` | DateTime? (DATE) | Người dùng nhập, hoặc **ngày hiện tại** khi tạo qua Upload (Update 6) | Tùy chọn khi nhập tay; bắt buộc = hôm nay khi qua Upload |
 | `ValidTo` | DateTime? (DATE) | Người dùng nhập, hoặc **`9999-12-31`** (sentinel "không giới hạn") khi tạo qua Upload (Update 6) | Tùy chọn khi nhập tay; cố định sentinel khi qua Upload |
+| `Invoice` | string? (VARCHAR(255)) | **(Update 23)** Popup Add/Edit, chỉ khi Type = "Invoice" | Cột **mới** — số Invoice number, `null` với mọi Type khác. Xem mục "Update 23/24" bên dưới |
 | `CreatedBy` | string | Hệ thống | Ghi tự động từ user đăng nhập |
 | `CreatedDate` | datetime | Hệ thống | Ghi tự động |
 | `UpdatedBy` | string | Hệ thống | Ghi tự động khi sửa |
@@ -345,13 +346,19 @@ public override async Task DeleteMultiAsync(IEnumerable<long> ids, CancellationT
 - Xóa là **hard delete** thật (không có cờ `IsDeleted`/`IsHide` trong schema `eutr_documents`).
   **(Update 9)** Xóa MUST kèm dọn toàn bộ `eutr_references` có `DocumentId` = document bị xóa —
   xem mục "Xóa `eutr_references` khi xóa document" dưới đây.
+- `Invoice`: **(Update 23)** không bắt buộc ở backend (không có FluentValidation rule mới trên
+  `EutrDocumentsRequestDtoValidator`) — bắt buộc khi Type = "Invoice" MUST chặn hoàn toàn ở **client**
+  (nút Upload/Save vô hiệu hóa), cùng nguyên tắc "client là điểm chặn duy nhất" đã áp dụng cho
+  `ValidFrom <= ValidTo` (Update 19) và tối thiểu 1 chip (Update 22). Không có ràng buộc duy nhất.
 
 ## Đối tượng truyền (frontend ↔ backend)
 
-- **Tạo/Sửa (request)** — `EutrDocumentsRequestDto`: `{ name, validFrom, validTo }` (Update kèm
-  `id` ở URL). Không có `fileId` trong request DTO (chưa có input file).
+- **Tạo/Sửa (request)** — `EutrDocumentsRequestDto`: `{ name, validFrom, validTo, invoice }`
+  **(Update 23: + `invoice`)** (Update kèm `id` ở URL). Không có `fileId` trong request DTO (chưa có
+  input file).
 - **Phản hồi danh sách (get-all)**: `PagedResult<EutrDocumentsResponseDto>` →
-  `{ items: [{ id, name, fileId, validFrom, validTo, createdBy, createdDate, updatedBy, updatedDate }], totalCount }`.
+  `{ items: [{ id, name, fileId, validFrom, validTo, invoice, createdBy, createdDate, updatedBy, updatedDate }], totalCount }`.
+  **(Update 23: + `invoice`, kế thừa trực tiếp từ entity — không cần sửa `EutrDocumentsResponseDto.cs`)**
   (`fileId` sẽ luôn `null` cho các bản ghi tạo qua feature này, nhưng field vẫn tồn tại trên
   entity/DTO để phản ánh đúng schema DB).
 - **Xóa nhiều**: mảng `ids` (number[]) → `POST /eutr-documents/delete-multi`.
@@ -1308,3 +1315,118 @@ mới, tái dùng nguyên vẹn để đảm bảo cùng quy tắc trích xuất
 - Type = "PO": `RefValues` luôn gửi `undefined`/không có trong request — hành vi Save với Type = "PO"
   không đổi so với Update 19 (chỉ `UPDATE StepId`, giữ nguyên toàn bộ `RefValue`/`RefType`/số lượng bản
   ghi).
+
+## Update 23/24 — Cột `Invoice` trên `eutr_documents` + hiển thị ở danh sách (FR-056 đến FR-061)
+
+Bản nháp spec đầu tiên của Update 23 định lưu số Invoice trên `eutr_references` (đồng bộ theo `Id`
+nhỏ nhất, giống Step ở FR-032) — người dùng phản hồi trực tiếp yêu cầu đổi sang lưu trên
+`eutr_documents`, nên toàn bộ mục này mô tả **thẳng phương án cuối cùng** đã triển khai; không có
+migration/entity nào từng chạm `eutr_references` cho tính năng Invoice.
+
+### Migration mới — `20_add_invoice_to_eutr_documents.sql`
+
+```sql
+ALTER TABLE eutr_documents
+ADD COLUMN Invoice VARCHAR(255) NULL AFTER ValidTo;
+```
+
+Đồng bộ cột này vào 2 file "nguồn sự thật" CREATE TABLE dùng cho DB mới (không chỉ migration cho DB
+đã tồn tại) — `docs/design/eutr/eutr_db.sql` và
+`ComplianceSys.Infrastructure/Sqls/Tables/eutr_db.sql` — cả hai đều thêm dòng
+`` `Invoice` VARCHAR(255) NULL `` ngay sau `` `ValidTo` `` trong `CREATE TABLE eutr_documents`.
+
+### Entity + DTO — convention-based mapping, không sửa `EutrMappingProfile`/`EutrDocumentsResponseDto`
+
+```csharp
+// EutrDocuments.cs (entity)
+public string? Invoice { get; set; }
+
+// EutrDocumentsRequestDto.cs
+public string? Invoice { get; set; }
+
+// EutrTypeMultiUploadFileRequest.cs
+public string? Invoice { get; set; }
+```
+
+- `EutrMappingProfile.CreateMap<EutrDocumentsRequestDto, EutrDocuments>()` là convention-based (map
+  theo tên thuộc tính khớp) — thêm `Invoice` ở cả 2 phía tự động được map, không cần `ForMember` mới.
+- `EutrDocumentsResponseDto : EutrDocuments` (kế thừa trực tiếp, không phải composition) — `Invoice`
+  tự động có mặt trên response ngay khi thêm vào entity, không sửa file DTO response.
+- `EutrTypeMultiUploadFileRequest` (KHÔNG phải `EutrMultiUploadFileRequest`) là DTO cần sửa cho luồng
+  Upload, vì Type = "Invoice" luôn đi qua nhánh `executeEutrMultiByType`/
+  `UploadMultipleForReferenceTypeAsync` — nhánh PO (`EutrMultiUploadFileRequest`) chỉ dùng khi Type
+  = "PO" (Update 17), không bao giờ áp dụng cho Type = "Invoice".
+
+### Ghi `Invoice` ở 2 đường ghi `eutr_documents` hiện có — không entity/endpoint mới
+
+```csharp
+// EutrUploadService.UploadMultipleForReferenceTypeAsync — dựng entity moi cho moi file
+var entity = new EutrDocuments
+{
+    Name = file.FileName,
+    FileId = uploaded.Id,
+    ValidFrom = request.ValidFrom ?? DateTime.Today,
+    ValidTo = request.ValidTo ?? MaxValidTo,
+    Invoice = request.Invoice,   // MOI, Update 23 (FR-057) - null khi Type khac "Invoice"
+    ...
+};
+```
+
+`PUT /api/eutr-documents/{id}` (Save trong Edit) không cần sửa controller/service — `BaseService.
+UpdateAsync` đã `_mapper.Map(dto, existing)` rồi `_repository.UpdateAsync(existing, ct)`; `Invoice`
+trên `EutrDocumentsRequestDto` tự động được map và ghi xuống DB qua đường có sẵn này (FR-059).
+
+### Frontend — `EutrDocumentsFormDialog.jsx`
+
+```js
+function isInvoiceTypeName(refType) {
+  return (refType?.name ?? '').trim().toLowerCase() === 'invoice';
+}
+// Dung chung 1 dieu kien cho ca 2 mode (giong isPoType) vi `type` state da duoc nap
+// dung o ca Add (chon truc tiep) lan Edit (nap tu initialData.refType o effect init).
+const isInvoiceType = isInvoiceTypeName(type);
+const showInvoice = Boolean(type) && isInvoiceType;
+const invoiceValid = !showInvoice || invoice.trim().length > 0;
+```
+
+- `canSubmit` (cả 2 mode) thêm điều kiện `invoiceValid` — bắt buộc phía client, không có validator
+  server-side (xem "Quy tắc nghiệp vụ" ở trên).
+- `handleTypeChange` (mode add) reset `invoice` về `''` khi đổi Type — cùng cách chip/step đã reset.
+- Upload: tham số cuối mới của `executeEutrMultiByType` là `isInvoiceType ? invoice.trim() :
+  undefined` — truyền xuyên suốt `UploadToSharePointUseCase` → `ISharePointRepository` (JSDoc) →
+  `RestSharePointRepository.uploadEutrFilesMultiByType` (`formData.append('invoice', invoice)` khi có
+  giá trị, cùng mẫu `validFrom`/`validTo` đã có từ Update 19).
+- Save: `updateEutrDocumentsUseCase.execute({ id, name, validFrom, validTo, invoice: isInvoiceType ?
+  invoice.trim() : null })` — `update(payload)` ở mọi lớp trung gian (`RestEutrDocumentsRepository`,
+  `eutrDocumentsApi.update(id, data)`) forward nguyên `payload` không đổi hình dạng, nên field `invoice`
+  mới **không đòi hỏi sửa** 3 lớp đó (khác `refValues` ở Update 22 — đi qua endpoint `{id}/step`
+  riêng, phải khai báo tham số tường minh ở từng lớp).
+
+### Frontend — cột Invoice trên danh sách (`useEutrDocumentsColumns.jsx`, Update 24, FR-061)
+
+```js
+{
+  field: 'invoice',
+  headerName: 'Invoice',
+  width: 150,
+  sortable: false,
+  filterable: false,
+  valueGetter: (_value, row) => row.invoice || '',
+}
+```
+
+Chèn ngay sau cột `stepName`, trước `conditions` (đúng thứ tự spec yêu cầu). Đọc thẳng `row.invoice`
+— dữ liệu đã có sẵn trên mỗi row (raw JSON từ `get-all`, không wrap qua domain entity
+`EutrDocuments.js`) nhờ `EutrDocumentsResponseDto.Invoice` kế thừa từ entity (Update 23) — **0
+round-trip HTTP mới** cho cột này. Dùng `valueGetter` trả chuỗi thô (không `MultiValueChips`) vì mỗi
+document chỉ có đúng 1 giá trị `Invoice` (khác Step name/Conditions, vốn tổng hợp từ nhiều dòng
+`eutr_references`).
+
+### Quy tắc nghiệp vụ bổ sung (Update 23/24)
+
+- Không có ràng buộc duy nhất trên `Invoice` — nhiều document được phép trùng số Invoice (cùng
+  nguyên tắc với File name, FR-007b).
+- Cột Conditions (FR-005) và search box (Update 21) **không** đọc/lọc theo `Invoice` — phạm vi 2 cập
+  nhật này chỉ dừng ở thu thập + hiển thị cột riêng.
+- Đóng popup Add/Edit mà không Upload/Save không ghi bất kỳ giá trị `Invoice` nào — kế thừa quy tắc
+  chung đã có cho mọi trường khác của popup này.

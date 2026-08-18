@@ -2,7 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-07-02
-**Updated**: 2026-08-11 (Update 21)
+**Updated**: 2026-08-17 (Update 22)
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -762,3 +762,55 @@
   resolved interactively via AskUserQuestion before writing.
 - Spec Quality Checklist re-validated against the updated spec: all 16/16 items remain passing (no
   regressions, no newly-failing items).
+
+### Update 2026-08-17 (Update 22) — Default Requirement Type/Take From on Add Root Group / Add Child Step
+
+- **Input**: "cập nhật 003-eutr-templates, màn hình Add Root Group và Add Child. Requirement Type
+  mặc định là Required, Take From mặc định lấy từ PO, trường hợp stepId có định nghĩa typeId trong
+  bảng eutr_reference_type_details, thì typeId đã định nghĩa sẽ set mặc định. phần list take from sẽ
+  lấy động từ eutr_reference_types."
+- **Pre-write code/data audit** (via Explore agent): confirmed `eutr_reference_type_details`
+  (feature 006-eutr-reference-types) already exists end-to-end on the backend (entity, repository,
+  controller) but only exposes a by-TypeId lookup (`GET .../by-type/{typeId}`) — there is no
+  by-StepId lookup today, so resolving a default Take From per step requires new backend work, left
+  for `/speckit-plan`. Also confirmed no UNIQUE constraint on `StepId` in
+  `eutr_reference_type_details` (a StepId could theoretically map to more than one TypeId), and that
+  no real seed data exists yet for `eutr_reference_types` — "PO" is currently only an illustrative
+  example value, not a guaranteed row.
+- **Two scope decisions resolved via informed default (not asked back to the user), consistent with
+  this spec's established "reasonable default for low-impact/reversible decisions" pattern (Update
+  12/15/19)**: (1) how to identify "PO" now that TakeFrom is a fully dynamic list (Update 19) →
+  resolved: match `eutr_reference_types.Name` = "PO" (case-insensitive, trimmed), falling back to a
+  blank Take From (not an error) if no such row exists; (2) which TypeId to use as default when a
+  StepId has more than one mapping row in `eutr_reference_type_details` (no UNIQUE constraint
+  prevents this) → resolved: use the mapping row with the lowest `Id`.
+- **Change: FR-027 updated in place** — the bulk-select table's default column values changed:
+  Requirement Type default flips from Optional to **Required**; Take From default changes from a
+  hardcoded value to the dynamically-resolved "PO" `Id` (or a per-StepId override, see below).
+- **New: FR-078 through FR-080 added** — FR-078 formalizes the Requirement Type=Required default.
+  FR-079 formalizes the Take From="PO"-by-Name default (with the blank-if-missing fallback). FR-080
+  adds the higher-priority override: if a step master row's StepId has any mapping row in
+  `eutr_reference_type_details`, Take From defaults to that mapping's TypeId instead of "PO" (lowest
+  `Id` if multiple mappings exist). All three explicitly exclude Edit step (FR-008b, which shows the
+  step's *current* value, not a new default) and explicitly note the "Add new step" free-solo area
+  (no StepId yet) always falls back to the general Required/PO default.
+- New **Key Entity: EUTR Reference Type Detail** added, documenting the `eutr_reference_type_details`
+  table's shape, the missing-UNIQUE-on-StepId caveat, and the new by-StepId default-lookup behavior
+  this update requires.
+- User Story 3 acceptance scenarios 12a-12d added: default Required/PO with no mapping, default
+  overridden by a StepId mapping, re-applying the default (not a stale custom value) on
+  untick-then-retick, and the "Add new step" area always using the general default (no mapping
+  lookup possible).
+- Success Criteria: SC-059 through SC-061 added (100% Required default, 100% correct PO-vs-mapping
+  Take From default, 100% default re-applied on retick).
+- Assumptions: the Update 12 bullet describing the old Optional/PO `stepForm` defaults is marked
+  superseded (struck through, kept for history) with a forward pointer; three new Update 22 bullets
+  added documenting the Name-based "PO" match rule and its blank fallback, the new by-StepId lookup
+  gap in the existing `eutr_reference_type_details` API (left for `/speckit-plan`), and the
+  lowest-Id tie-break rule as a documented default rather than a pre-confirmed business rule.
+- No [NEEDS CLARIFICATION] markers were embedded in the spec — both decisions above were resolved as
+  documented Assumptions with explicit rationale, consistent with this spec's established pattern.
+- Spec Quality Checklist re-validated against the updated spec: all 16/16 items remain passing (no
+  regressions, no newly-failing items). The new by-StepId lookup requirement is stated at the
+  business-rule level (FR-080) without prescribing an endpoint shape, keeping the spec
+  implementation-agnostic per this checklist's Content Quality criteria.

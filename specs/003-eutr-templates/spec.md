@@ -575,6 +575,53 @@
   cùng lượt mở dialog này); nếu trùng, hiển thị lỗi và KHÔNG cho thêm tên đó vào danh sách đang chờ.
   Xem FR-077.
 
+### Session 2026-08-17 (Update 22) — Đổi mặc định Requirement Type/Take From khi Add Root Group/Add Child Step
+
+- Input: "cập nhật 003-eutr-templates, màn hình Add Root Group và Add Child. Requirement Type mặc
+  định là Required, Take From mặc định lấy từ PO, trường hợp stepId có định nghĩa typeId trong bảng
+  eutr_reference_type_details, thì typeId đã định nghĩa sẽ set mặc định. phần list take from sẽ lấy
+  động từ eutr_reference_types."
+- Q: Sau Update 19, Take From không còn là hằng số cứng — "PO" chỉ còn tồn tại như một **Name** bất
+  kỳ trong bảng `eutr_reference_types` (quản lý CRUD tự do ở feature 006-eutr-reference-types). Vậy
+  hệ thống xác định "PO" bằng cách nào để dùng làm giá trị mặc định? → A: Khớp theo cột **Name = "PO"**
+  của `eutr_reference_types` (so khớp không phân biệt hoa/thường, đã trim khoảng trắng đầu/cuối), lấy
+  `Id` của bản ghi khớp làm giá trị mặc định. Nếu tại thời điểm mở dialog KHÔNG có reference type nào
+  tên "PO" (đã bị đổi tên hoặc xóa qua màn hình 006-eutr-reference-types), Take From mặc định để
+  **trống** thay vì báo lỗi chặn dialog — người dùng tự chọn giá trị khác, giống quy tắc "để trống khi
+  Id không còn tồn tại" đã áp dụng cho tra cứu nhãn TakeFrom ở FR-073.
+- Q: Bảng `eutr_reference_type_details` (Id, StepId, TypeId) không có ràng buộc UNIQUE trên StepId —
+  một StepId về lý thuyết có thể có nhiều hơn 1 bản ghi ánh xạ tới nhiều TypeId khác nhau. Khi đó hệ
+  thống lấy TypeId nào làm mặc định? → A: Lấy bản ghi có **Id nhỏ nhất** (bản ghi được tạo sớm nhất)
+  trong số các bản ghi `eutr_reference_type_details` khớp StepId đó.
+- Q: Quy tắc default mới (Requirement Type=Required, Take From=PO hoặc theo mapping StepId) áp dụng
+  cho những đâu trong dialog bulk-select? → A: Áp dụng cho **mọi dòng step master** trong bảng khi
+  vừa được tick chọn (kể cả tick lại sau khi đã untick — không giữ giá trị tùy chỉnh trước đó, giống
+  hành vi hiện hành), ở cả 2 dialog **Add Root Group** và **Add Child Step** (FR-027). Khu vực
+  **"Add new step"** (step hoàn toàn mới, CHƯA có StepId nên chưa thể có mapping trong
+  `eutr_reference_type_details`) chỉ dùng default chung: Requirement Type=Required, Take From=PO
+  (theo Name). Thao tác **Edit step** trên một node đã có sẵn trong cây (FR-008b) KHÔNG thuộc phạm vi
+  thay đổi này — form Edit step vẫn hiển thị đúng giá trị RequirementType/TakeFrom hiện tại của step
+  đó (không phải giá trị "mặc định" mới), không tự động ghi đè theo mapping.
+- Change: Cột **Requirement Type** trong bảng bulk-select (FR-027) đổi giá trị mặc định khi một dòng
+  vừa được tick từ **Optional** sang **Required** — xem FR-078.
+- Change: Cột **Take From** trong bảng bulk-select (FR-027) đổi mặc định từ giá trị cứng sang **Id**
+  của reference type có Name="PO" trong `eutr_reference_types` (tra cứu động, không còn phụ thuộc
+  hằng số cứng) — xem FR-079.
+- Change: Bổ sung ngoại lệ ưu tiên cao hơn default PO — nếu StepId của một dòng step master có ít
+  nhất 1 bản ghi ánh xạ trong `eutr_reference_type_details`, Take From MUST mặc định theo TypeId đã
+  ánh xạ cho StepId đó thay vì PO — xem FR-080. Yêu cầu bổ sung logic tra cứu
+  `eutr_reference_type_details` theo StepId cho toàn bộ danh sách "step available" tại thời điểm mở
+  dialog (backend hiện tại — feature 006-eutr-reference-types — chỉ có endpoint tra cứu theo TypeId,
+  chưa có tra cứu theo StepId; chi tiết API bổ sung được quyết định ở bước `/speckit-plan`).
+- Change: List lựa chọn Take From (combobox trên bảng bulk-select) tiếp tục tải động từ
+  `eutr_reference_types` như đã có từ Update 19 (FR-072) — yêu cầu "list take from sẽ lấy động từ
+  eutr_reference_types" trong input của đợt cập nhật này đã được đáp ứng bởi FR-072, không cần thêm
+  thay đổi nào ngoài việc xác nhận lại phạm vi áp dụng cho logic default mới ở FR-079/FR-080.
+- No [NEEDS CLARIFICATION] markers được nhúng vào spec — cả 2 quy tắc khớp "PO" theo Name và tie-break
+  khi StepId có nhiều mapping đều được giải quyết bằng default hợp lý, có tài liệu hóa ở Assumptions,
+  theo đúng pattern đã thiết lập của spec này (ví dụ Update 12, 15, 19) cho các quyết định ít rủi
+  ro/dễ đảo ngược.
+
 ### User Story 1 - Xem danh sách EUTR Templates (Priority: P1)
 
 Người dùng vào mục **EUTR system > EUTR templates** từ thanh điều hướng trái và thấy màn hình
@@ -780,6 +827,25 @@ hiển thị ở chế độ read-only. Cây bước đúng với thay đổi, P
     Requirement Type/Take From cho 2 trong số đó, rồi nhấn nút **Add** ("Thêm"), **Then** cả 5
     step MUST xuất hiện ngay trong cây bước dưới dạng step gốc (ParentId = 0), mỗi step giữ đúng
     Requirement Type/Take From đã cấu hình cho dòng tương ứng, và dialog đóng lại.
+12a. **(Update 22)** **Given** dialog bulk-select đang mở, step master "Forest inventory" (StepId=5)
+    KHÔNG có bản ghi nào trong `eutr_reference_type_details`, **When** người dùng tick chọn dòng
+    "Forest inventory", **Then** Requirement Type của dòng đó tự động là **Required** và Take From tự
+    động là Id của reference type có Name="PO" trong `eutr_reference_types` (không cần người dùng tự
+    chọn).
+12b. **(Update 22)** **Given** dialog bulk-select đang mở, step master "Certificate check"
+    (StepId=8) CÓ 1 bản ghi ánh xạ trong `eutr_reference_type_details` tới reference type
+    "Upload manual" (TypeId=3), **When** người dùng tick chọn dòng "Certificate check", **Then**
+    Requirement Type tự động là Required nhưng Take From tự động là TypeId=3 ("Upload manual") —
+    KHÔNG phải "PO" — theo đúng mapping đã định nghĩa cho StepId=8. Người dùng vẫn có thể tự đổi lại
+    Take From sang giá trị khác trước khi nhấn Add.
+12c. **(Update 22)** **Given** dialog bulk-select đang mở, step master "Certificate check" đã được
+    tick (Take From tự động = TypeId=3 theo 12b), **When** người dùng bỏ tick rồi tick lại đúng dòng
+    đó, **Then** Take From MUST áp dụng lại đúng default theo mapping (TypeId=3) — không giữ giá trị
+    tùy chỉnh mà người dùng có thể đã đổi trước khi bỏ tick.
+12d. **(Update 22)** **Given** dialog bulk-select đang mở, **When** người dùng nhập một tên step mới
+    (chưa có StepId) ở khu vực "Add new step", **Then** Requirement Type mặc định là Required và Take
+    From mặc định là Id của reference type Name="PO" — KHÔNG tra cứu `eutr_reference_type_details` vì
+    step này chưa tồn tại StepId để tra cứu.
 13. **Given** đã chọn một step cha trong cây, **When** nhấn nút **Child Step**, tick chọn 2 step
     master và nhập thêm 1 tên step mới ở khu vực "Add new step", rồi nhấn Add, **Then** cả 3 step
     (2 step có sẵn + 1 step tự nhập) MUST được thêm làm con của step cha đang chọn (ParentId = Id
@@ -1187,6 +1253,13 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   null), dialog bulk-select MUST vẫn thêm các step đã chọn làm step **gốc** (ParentId = 0), không
   bị ảnh hưởng bởi node đang được chọn trong cây (chỉ nút **Child Step** mới dùng node đang chọn
   làm cha).
+- **(Update 22)** Khi KHÔNG có reference type nào tên "PO" trong `eutr_reference_types` tại thời
+  điểm mở dialog bulk-select (bị đổi tên hoặc xóa qua màn hình 006-eutr-reference-types), Take From
+  của các dòng vừa tick (không có mapping StepId) MUST mặc định để **trống** thay vì lỗi hoặc chặn
+  dialog — người dùng tự chọn giá trị từ danh sách nạp động (FR-072) trước khi nhấn Add.
+- **(Update 22)** Khi một StepId có nhiều hơn 1 bản ghi ánh xạ trong `eutr_reference_type_details`
+  (bảng không ràng buộc UNIQUE trên StepId), hệ thống MUST dùng bản ghi có Id nhỏ nhất làm default
+  Take From, không báo lỗi hay yêu cầu người dùng chọn giữa nhiều mapping.
 - **(Update 13)** Khi ApplyCustomerPage tải danh sách mapping cho một template không tồn tại hoặc
   đã bị xóa (IsDeleted=1), hệ thống hiển thị thông báo lỗi/trạng thái phù hợp thay vì màn hình
   trống không rõ nguyên nhân.
@@ -1496,12 +1569,15 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   **Clone** KHÔNG còn disabled kể từ Update 15 — xem FR-050 cho hành vi mới (mở dialog Clone
   Template). *(Trước Update 15, icon Clone giữ trạng thái disabled làm placeholder cho tính năng
   tương lai.)*
-- **FR-027**: Dialog **Add Root Group** và **Add Child Step** trên TemplateBuilderPage MUST hiển
+- **FR-027 (Mặc định Requirement Type/Take From cập nhật ở Update 22 — xem FR-078 đến FR-080)**:
+  Dialog **Add Root Group** và **Add Child Step** trên TemplateBuilderPage MUST hiển
   thị dạng **bảng bulk-select** (thay cho form thêm 1 step) liệt kê toàn bộ EUTR steps master khả
   dụng (theo FR-029), mỗi dòng gồm: checkbox chọn dòng, cột **Step Master** (mã step nếu có + tên
   step), cột **Requirement Type** (dropdown Required/Optional, chỉ chỉnh được khi dòng đã tick,
-  mặc định Optional khi vừa tick), cột **Take From** (dropdown PO/Upload manual, chỉ chỉnh được khi
-  dòng đã tick, mặc định PO khi vừa tick). Bảng MUST có checkbox ở header để chọn/bỏ chọn tất cả
+  mặc định **Required** khi vừa tick — Update 22, xem FR-078), cột **Take From** (dropdown nạp động
+  từ `eutr_reference_types` — xem FR-072, chỉ chỉnh được khi dòng đã tick, mặc định theo Id của
+  reference type Name="PO", hoặc theo mapping `eutr_reference_type_details` của StepId nếu có —
+  Update 22, xem FR-079/FR-080). Bảng MUST có checkbox ở header để chọn/bỏ chọn tất cả
   các dòng. Footer của dialog MUST hiển thị bộ đếm "{N} step available - {M} đã chọn" (N = tổng số
   step khả dụng, M = số dòng đang tick cộng số step đã nhập ở khu vực Add new step theo FR-030),
   cùng nút Cancel (đóng dialog, không thêm gì) và nút Add ("Thêm") — nút Add MUST disabled khi
@@ -1818,6 +1894,30 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   cho đến khi người dùng đổi sang một tên khác chưa tồn tại hoặc xóa nội dung đã nhập. Ràng buộc này
   chỉ áp dụng cho khu vực "Add new step" của dialog bulk-select — KHÔNG thay đổi hành vi gộp-theo-tên
   chung của FR-007a ở các nơi khác (ví dụ combobox free-solo của form Edit step FR-008b).
+- **FR-078 (Update 22)**: Trong bảng bulk-select của dialog **Add Root Group**/**Add Child Step**
+  (FR-027), khi một dòng step master vừa được tick chọn (hoặc một step mới được thêm ở khu vực "Add
+  new step", FR-030), cột **Requirement Type** MUST mặc định là **Required** (thay cho **Optional**
+  trước đây). Người dùng vẫn có thể tự đổi lại sang Optional trước khi nhấn Add. Bỏ tick rồi tick lại
+  cùng một dòng MUST áp dụng lại đúng giá trị mặc định Required (không giữ giá trị tùy chỉnh trước
+  đó). Thao tác **Edit step** trên một node đã có trong cây (FR-008b) KHÔNG thuộc phạm vi FR-078 —
+  form Edit step vẫn hiển thị đúng Requirement Type hiện tại của step đó.
+- **FR-079 (Update 22)**: Trong cùng bảng bulk-select, khi một dòng step master vừa được tick chọn
+  (hoặc một step mới được thêm ở khu vực "Add new step"), cột **Take From** MUST mặc định là **Id**
+  của bản ghi trong `eutr_reference_types` có `Name` khớp "PO" (so khớp không phân biệt hoa/thường,
+  đã trim khoảng trắng đầu/cuối) — trừ trường hợp StepId của dòng đó có mapping trong
+  `eutr_reference_type_details`, khi đó áp dụng FR-080 thay vì default PO này. Nếu KHÔNG có reference
+  type nào tên "PO" trong `eutr_reference_types` tại thời điểm mở dialog, Take From mặc định để
+  **trống** (không tự chọn giá trị nào) thay vì báo lỗi chặn dialog — người dùng tự chọn giá trị từ
+  danh sách nạp động (FR-072). Bỏ tick rồi tick lại cùng một dòng MUST áp dụng lại đúng logic default
+  này (không giữ giá trị tùy chỉnh trước đó).
+- **FR-080 (Update 22)**: Nếu StepId của một dòng step master trong bảng "step available" có ÍT NHẤT
+  1 bản ghi ánh xạ trong `eutr_reference_type_details` (cột `StepId` khớp StepId của dòng đó), cột
+  **Take From** khi dòng vừa được tick chọn MUST mặc định theo **TypeId** của bản ghi ánh xạ đó —
+  ưu tiên cao hơn default "PO" ở FR-079. Nếu StepId có nhiều hơn 1 bản ghi ánh xạ (bảng
+  `eutr_reference_type_details` không có ràng buộc UNIQUE trên StepId), hệ thống MUST dùng bản ghi có
+  **Id nhỏ nhất** làm mặc định. Quy tắc này CHỈ áp dụng cho step master đã có sẵn StepId trong bảng
+  "step available" — KHÔNG áp dụng cho khu vực "Add new step" (step hoàn toàn mới chưa có StepId nên
+  chưa thể có mapping, luôn dùng default PO ở FR-079) và KHÔNG áp dụng cho **Edit step** (FR-008b).
 
 ### Key Entities *(include if feature involves data)*
 
@@ -1918,7 +2018,21 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   hiển thị Name và lưu Id — thay cho hằng số cứng `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` trước đây
   (xem FR-072, FR-073). Cột `TakeFrom` của `eutr_template_details` là khóa ngoại tới `Id` của bảng
   này (ràng buộc `eutr_template_details_takefrom_foreign` đã có sẵn trong
-  `docs/design/eutr/eutr_db.sql`).
+  `docs/design/eutr/eutr_db.sql`). **(Update 22)** Giá trị mặc định Take From khi tick một step
+  master trong dialog bulk-select là `Id` của bản ghi có `Name` = "PO" trong bảng này — xem FR-079,
+  Key Entity **EUTR Reference Type Detail** bên dưới cho ngoại lệ theo mapping StepId.
+- **EUTR Reference Type Detail** *(mới đưa vào phạm vi feature này ở Update 22 — bảng
+  `eutr_reference_type_details`, quản lý CRUD ở feature riêng 006-eutr-reference-types)*: Bảng ánh
+  xạ giữa một EUTR Step (`StepId`, khóa ngoại tới `eutr_steps.Id`, có thể NULL) và một EUTR Reference
+  Type (`TypeId`, khóa ngoại tới `eutr_reference_types.Id`, NOT NULL), cộng người tạo/ngày tạo/người
+  cập nhật/ngày cập nhật. Không có ràng buộc UNIQUE trên `StepId` ở tầng database — một StepId về lý
+  thuyết có thể có nhiều bản ghi ánh xạ tới nhiều TypeId khác nhau. **(Update 22)** Khi mở dialog
+  **Add Root Group**/**Add Child Step**, với mỗi step master trong danh sách "step available", hệ
+  thống MUST tra cứu bảng này theo `StepId` để xác định giá trị mặc định cho cột Take From khi dòng
+  đó được tick: nếu có ít nhất 1 bản ghi khớp, dùng `TypeId` của bản ghi có `Id` nhỏ nhất làm mặc
+  định (ưu tiên hơn default "PO"); nếu không có bản ghi nào khớp, dùng default "PO" (FR-079) — xem
+  FR-080. Bảng này KHÔNG được tra cứu cho khu vực "Add new step" (step chưa có StepId) hay cho Edit
+  step (FR-008b).
 
 ## Success Criteria *(mandatory)*
 
@@ -2094,6 +2208,16 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   với một step đã tồn tại (trong danh sách EUTR steps hoặc trong cây bước hiện tại) vào khu vực
   "Add new step" của dialog bulk-select bị chặn ngay với thông báo lỗi rõ ràng, không có step trùng
   tên nào được thêm vào danh sách "đang chờ thêm" hay vào cây bước.
+- **SC-059 (Update 22)**: 100% lượt tick chọn một step master trong dialog Add Root Group/Add Child
+  Step (hoặc thêm một step mới ở khu vực "Add new step") mặc định đúng Requirement Type = Required —
+  0% trường hợp còn mặc định Optional như trước Update 22.
+- **SC-060 (Update 22)**: 100% lượt tick chọn một step master KHÔNG có mapping trong
+  `eutr_reference_type_details` (hoặc thêm step mới ở "Add new step") mặc định đúng Take From = Id
+  của reference type Name="PO"; 100% lượt tick chọn một step master CÓ mapping mặc định đúng Take
+  From = TypeId đã ánh xạ cho StepId đó (Id nhỏ nhất nếu có nhiều mapping) — không phải default PO.
+- **SC-061 (Update 22)**: 100% lượt bỏ tick rồi tick lại cùng một dòng step master trong bảng
+  bulk-select áp dụng lại đúng giá trị mặc định (Requirement Type=Required, Take From theo FR-079/
+  FR-080) — không giữ lại giá trị tùy chỉnh mà người dùng đã đổi trước khi bỏ tick.
 
 ## Assumptions
 
@@ -2221,14 +2345,29 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
 - **(Update 10)** Icon Clone và Apply to Customer trên TemplateListPage chỉ cần hiển thị ở trạng
   thái disabled (ví dụ `disabled` prop trên IconButton), không cần xử lý onClick hay gọi API nào —
   đúng theo lựa chọn "giữ lại nhưng vô hiệu hóa" đã xác nhận.
-- **(Update 12)** Danh sách "step available" trong dialog bulk-select lấy từ cùng nguồn dữ liệu
-  EUTR steps master đã dùng cho combobox free-solo trước đây (`GetEutrStepsUseCase`, feature
-  001-eutr-steps) — không phải một API/bảng mới. Giá trị mặc định khi một dòng vừa được tick chọn:
-  Requirement Type = Optional (0), Take From = PO (0) — giữ đúng giá trị mặc định hiện hành của
-  `stepForm` (`requirementType ?? 0`, `takeFrom ?? 0`), người dùng có thể đổi lại trước khi nhấn Add.
-  Cột "Step Master" hiển thị mã step (nếu EUTR step có trường mã, ví dụ P1/P2...) kèm tên step; nếu
-  dữ liệu step hiện tại chưa có trường mã riêng, cột này hiển thị tên step (không chặn tính năng vì
-  thiếu mã).
+- **(Update 12; giá trị mặc định thay đổi ở Update 22 — xem 3 bullet Update 22 bên dưới)** Danh sách
+  "step available" trong dialog bulk-select lấy từ cùng nguồn dữ liệu EUTR steps master đã dùng cho
+  combobox free-solo trước đây (`GetEutrStepsUseCase`, feature 001-eutr-steps) — không phải một
+  API/bảng mới. ~~Giá trị mặc định khi một dòng vừa được tick chọn: Requirement Type = Optional (0),
+  Take From = PO (0) — giữ đúng giá trị mặc định hiện hành của `stepForm` (`requirementType ?? 0`,
+  `takeFrom ?? 0`)~~, người dùng có thể đổi lại trước khi nhấn Add. Cột "Step Master" hiển thị mã
+  step (nếu EUTR step có trường mã, ví dụ P1/P2...) kèm tên step; nếu dữ liệu step hiện tại chưa có
+  trường mã riêng, cột này hiển thị tên step (không chặn tính năng vì thiếu mã).
+- **(Update 22)** "PO" trong yêu cầu default Take From không còn là giá trị cứng (đã bị loại bỏ từ
+  Update 19) mà được xác định bằng cách khớp cột `Name` = "PO" (không phân biệt hoa/thường, đã trim
+  khoảng trắng) trong bảng `eutr_reference_types` tại thời điểm mở dialog — một business default dựa
+  trên quy ước đặt tên, không phải một Id cố định trong code. Nếu dữ liệu "PO" bị đổi tên/xóa qua màn
+  hình 006-eutr-reference-types, default này tự động mất tác dụng (Take From để trống) cho đến khi có
+  một reference type tên "PO" khác được tạo lại.
+- **(Update 22)** `eutr_reference_type_details` hiện chỉ có sẵn API tra cứu theo `TypeId`
+  (`GET .../by-type/{typeId}`, feature 006-eutr-reference-types) — CHƯA có API tra cứu theo `StepId`.
+  Việc bổ sung logic/endpoint tra cứu theo StepId (để lấy default Take From cho toàn bộ danh sách
+  "step available" khi mở dialog) là công việc backend mới thuộc phạm vi đợt cập nhật này, chi tiết
+  triển khai (endpoint riêng hay mở rộng repository hiện có) được quyết định ở `/speckit-plan`.
+- **(Update 22)** Vì `eutr_reference_type_details` không có ràng buộc UNIQUE trên `StepId`, quy tắc
+  tie-break "dùng bản ghi Id nhỏ nhất" khi một StepId có nhiều mapping là một default hợp lý được tài
+  liệu hóa ở đây (không phải một ràng buộc nghiệp vụ đã xác nhận từ trước) — dữ liệu thực tế được kỳ
+  vọng mỗi StepId chỉ có tối đa 1 mapping trong đa số trường hợp sử dụng.
 - **(Update 13)** Dữ liệu VendorCode hiện có trên các bản ghi `eutr_templates` bị xóa hoàn toàn khi
   bỏ cột — không backfill sang `eutr_template_references` — theo quyết định đã xác nhận. Người
   dùng cần tự apply lại vendor cho từng template (nếu cần thiết lập lại liên kết) qua màn hình

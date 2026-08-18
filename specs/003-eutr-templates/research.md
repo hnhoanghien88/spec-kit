@@ -1778,3 +1778,113 @@ this component's existing all-local-state shape, no new dependency.
 4. No change to `useStepTree.js`, `StepFormRow.jsx`, or any Edit-step (FR-008b) code path — per
    FR-076/FR-077's explicit scope, Edit step keeps its existing free-solo merge-by-name behavior
    (FR-007a) unchanged.
+
+## 39. Default Requirement Type=Required, Default Take From="PO"/`eutr_reference_type_details` Override (spec Update 22)
+
+**Decision**: Two independent default-value rules for the bulk-select table in
+`BulkAddStepsDialog.jsx` (Add Root Group/Add Child Step), plus one new backend lookup to power the
+second rule:
+
+1. **FR-078**: the Requirement Type default for a newly-ticked row (and the "Add new step" draft)
+   flips from `0` (Optional) to `1` (Required) — a one-line literal change, no new data source.
+2. **FR-079/FR-080**: the Take From default becomes a two-tier lookup — (a) if the step's `StepId`
+   has a mapping row in `eutr_reference_type_details`, use that mapping's `TypeId` (lowest `Id` if
+   more than one); otherwise (b) fall back to the `Id` of the `eutr_reference_types` row whose
+   `Name` matches "PO" (case-insensitive, trimmed); if neither resolves, leave Take From unset
+   rather than erroring. Tier (b) needs no new backend call — `TemplateBuilderPage.jsx` already
+   loads the full `referenceTypes` list (Update 19). Tier (a) needs a new backend lookup:
+   `eutr_reference_type_details` (feature 006-eutr-reference-types) only exposes a by-TypeId query
+   today (`GET .../by-type/{typeId}`), not by-StepId — so a new
+   `POST /api/eutr-reference-type-details/default-by-steps` action is added to the *existing*
+   `EutrReferenceTypeDetailsController`, taking a `long[]` of step IDs and returning a
+   `StepId → TypeId` map (only for steps that have a mapping).
+
+**Rationale**: Fetching the by-StepId map **once**, for every currently-loaded EUTR step, right
+after `TemplateBuilderPage.jsx`'s existing steps-load effect resolves — rather than fetching it once
+per dialog open, scoped to just the "available" subset — trades a slightly larger one-time payload
+for zero additional network round trips across however many times the user opens Add Root
+Group/Add Child Step in one Edit session (this dialog can reasonably be opened many times while
+building out a tree). The lowest-`Id`-wins tie-break (for the rare case a StepId has more than one
+`eutr_reference_type_details` row — the table has no UNIQUE constraint on `StepId`) is applied in
+`EutrReferenceTypeDetailsService`, not in SQL: keeping a `GROUP BY`/window-function reduction out of
+the repository query keeps the SQL identical in shape to the already-proven `GetByTypeIdAsync`
+method (plain `SELECT ... WHERE ... ORDER BY`), and keeps the tie-break rule readable/testable as an
+explicit `GroupBy(...).OrderBy(...).First()` LINQ expression in the Application layer where business
+rules already live for this feature (Principle I). Reusing the *existing*
+`EutrReferenceTypeDetailsController`/service/repository stack for the new by-StepId action — instead
+of adding it to `EutrTemplatesController` (the controller that actually consumes it) — keeps the
+`eutr_reference_type_details` table's read surface in one place (Principle II: the table's owning
+feature, 006-eutr-reference-types, owns all queries against it; 003-eutr-templates only ever calls
+in, never reaches into that table directly), mirroring how FR-072/FR-073 (Update 19) already call
+into `GET /api/eutr-reference-types` on that same feature rather than duplicating a reference-types
+query inside `EutrTemplatesController`.
+
+**Alternatives considered**:
+- Fetch the by-StepId default **per dialog open**, scoped only to the `available` steps for that
+  specific Add Root Group/Add Child Step click (fewer rows per call) — rejected: `available` changes
+  on every open (it excludes whatever the tree already contains, Update 21's FR-076), so this would
+  mean a fresh network call every single time the dialog opens, versus the chosen approach's single
+  call per Edit-page visit. With realistically small `eutr_steps` counts (tens of rows, per the
+  feature's existing Scale/Scope note), the larger one-time payload is negligible.
+- Compute the lowest-`Id` tie-break in SQL (e.g. a correlated subquery or `ROW_NUMBER()` window
+  function per `StepId`) instead of in C# — rejected: adds MySQL-version-dependent SQL complexity
+  (window functions require MySQL 8+; unconfirmed whether this deployment's target version supports
+  them cleanly alongside Dapper's existing plain-SQL style used throughout this repository) for a
+  business rule that reads more clearly as three lines of LINQ; the row count per request (bounded
+  by the number of EUTR steps, expected to be small per Scale/Scope) makes server-side grouping
+  unnecessary for performance.
+- Resolve "PO" server-side too (e.g. a dedicated `GET .../by-name/PO` endpoint or a query parameter
+  on the existing reference-types endpoint) instead of a client-side `Array.find` over the
+  already-loaded `referenceTypes` list — rejected: `TemplateBuilderPage.jsx` already has the full,
+  unfiltered `eutr_reference_types` list in memory (Update 19) specifically to build the TakeFrom
+  combobox options; adding a second backend call to find one row already present in that same array
+  would be a redundant round trip for a lookup that's a single `Array.find` client-side.
+- Put the new by-StepId endpoint on `EutrTemplatesController` instead of
+  `EutrReferenceTypeDetailsController`, since 003-eutr-templates is the only current caller —
+  rejected: `eutr_reference_type_details` is a table owned by feature 006, and every other
+  read/write action against it already lives on `EutrReferenceTypeDetailsController`; splitting one
+  query for this table onto a different feature's controller would fragment that table's read
+  surface across two controllers for no benefit, and would make the existing
+  `EutrReferenceTypes.ReadOne` policy check (already applied consistently to every action on that
+  controller) inconsistent to reason about.
+- Seed/backfill a guaranteed "PO" row in `eutr_reference_types` as part of this update, so the
+  Name-match default can never silently resolve to nothing — rejected (deferred, not in scope):
+  `eutr_reference_types` is a freely-managed CRUD table owned by feature 006 with no confirmed seed
+  data today (verified — no `INSERT INTO eutr_reference_types` script exists anywhere in the repo);
+  seeding data into another feature's table is outside this update's mandate. The spec's own
+  documented fallback (blank Take From, not an error, when no "PO" row exists) already covers this
+  case without a seed/migration.
+
+**Implementation**:
+1. **Backend** — `IEutrReferenceTypeDetailsRepository.cs`/`EutrReferenceTypeDetailsRepository.cs`
+   MODIFY: add `GetByStepIdsAsync(IEnumerable<long> stepIds, ct)`, a plain `SELECT ... WHERE
+   d.StepId IN @stepIds ORDER BY d.StepId, d.Id ASC` returning unreduced
+   `EutrReferenceTypeDetailsResponseDto` rows (mirrors `GetByTypeIdAsync`'s exact shape, just
+   filtered on the other column). `IEutrReferenceTypeDetailsService.cs`/
+   `EutrReferenceTypeDetailsService.cs` MODIFY: add `GetDefaultTypeIdByStepIdsAsync(stepIds, ct)` —
+   calls the repository method, then `.Where(d => d.StepId.HasValue).GroupBy(d =>
+   d.StepId!.Value).ToDictionary(g => g.Key, g => g.OrderBy(d => d.Id).First().TypeId)`.
+   `EutrReferenceTypeDetailsController.cs` MODIFY: add `POST default-by-steps` (`[Authorize(Policy =
+   "EutrReferenceTypes.ReadOne")]`, same policy as the sibling `by-type/{typeId}` action), body
+   `long[] stepIds`, returns the dictionary wrapped in the standard `ApiResponse<T>`. No new
+   entity/DTO/table/migration.
+2. **Frontend — new API surface**: `eutrReferenceTypeDetailsApi.js` MODIFY (add
+   `getDefaultByStepIds`), `IEutrReferenceTypeDetailsRepository.js` MODIFY (add the interface
+   method), `RestEutrReferenceTypeDetailsRepository.js` MODIFY (add the implementation, returning
+   the raw map — no domain-entity wrapping, since this is a lookup dictionary not a list of
+   records), `GetDefaultByStepIdsEutrReferenceTypeDetailsUseCase.js` NEW (same one-file-per-operation
+   convention as this folder's 4 existing use cases).
+3. **`TemplateBuilderPage.jsx`** MODIFY: new `defaultTakeFromByStepId` state + mount effect (keyed
+   on `steps`, calls the new use case with every loaded step's `id`); new `defaultTakeFromId`
+   `useMemo` (finds the "PO"-named row in the already-loaded `referenceTypes`); both passed as new
+   props to `<BulkAddStepsDialog>`.
+4. **`BulkAddStepsDialog.jsx`** MODIFY: `DEFAULT_ROW_CONFIG` constant replaced by a
+   `getDefaultRowConfig(stepId, defaultTakeFromByStepId, defaultTakeFromId)` function
+   (`requirementType: 1`, `takeFrom: defaultTakeFromByStepId[stepId] ?? defaultTakeFromId`), used by
+   `toggleRow`, `toggleAll`, and the "Add new step" draft's initial state. `toggleRow` already
+   unconditionally recomputes a row's config on every tick (never preserves a prior value across an
+   untick/retick), so this substitution alone satisfies the spec's "retick re-applies the default"
+   acceptance scenario with no additional logic.
+5. No change to `REQUIREMENT_TYPES`/`TAKE_FROM_OPTIONS`/`utils/helpers.js`, `useStepTree.js`,
+   `StepFormRow.jsx`, `StepTree.jsx`, or Edit step (`FR-008b`) — this update only changes which
+   value is *pre-selected* in the bulk-select dialog, not the option lists or any other flow.

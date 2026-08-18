@@ -220,3 +220,78 @@ EutrSynchronizeDataController.TestPurchaseMissing (GET test-purchase-missing)
             -> skip (log) if the group has no resolvable recipient emails
        -> return EutrPurchaseMissingSummaryDto
 ```
+
+## User Story 3 — Existing entities reused, read-only (added 2026-08-17 — research.md R18/R19)
+
+### `EutrTemplates` (local, `eutr_templates` table — existing, feature 003-eutr-templates)
+
+Read-only via the new `IEutrTemplatesRepository.GetEligibleForDynamicsSyncAsync(ct)` (research.md
+R18) — `WHERE IsDeleted = 0 AND IsHide = 0 AND Status = 1`. Fields used: `Id` (to join
+`eutr_template_references.TemplateId`), `Code` (ERP push `Code`, and the identifier the delete action
+targets), `Name` (ERP push `Name`).
+
+### `EutrTemplateReferences` (local, `eutr_template_references` table — existing, feature
+003-eutr-templates "Apply to Customer/Vendor")
+
+Read-only via the new `IEutrTemplateReferencesRepository.GetActiveByTemplateIdsAsync(templateIds,
+asOfDate, ct)` (research.md R19) — `WHERE TemplateId IN @templateIds AND FromDate <= @asOfDate AND
+ToDate >= @asOfDate`, one call for all eligible templates' `Id`s at once. Fields used: `TemplateId`
+(join key back to the eligible-templates list), `VendorCode` (ERP push `VendorCode`). This query's
+own SQL/return type are unaffected by the 2026-08-17 left-join correction — the left join itself is
+performed in the service, in C#, against this method's unchanged (inner-join-shaped) result (research.md
+R24).
+
+### `RSVNEutrTemplates` (D365 entity model, outbound — existing, currently unused elsewhere)
+
+`ComplianceSys.Domain/Dynamics/RSVNEutrTemplates.cs` — unchanged, `ModelType = 17`,
+`EntityName = "RSVNEutrTemplates"`. Used as the outbound POST payload for Phase 2 (research.md R20):
+`new RSVNEutrTemplates { Code = template.Code, Name = template.Name, VendorCode = mapping.VendorCode
+}` for a template with an active mapping, or `VendorCode = string.Empty` for a template with none
+(research.md R24, corrected 2026-08-17) — `Note`/`IsDefault` left `null`, and the type's `ModelType`/
+`EntityName`/`FilterableFields` metadata members are already `[JsonIgnore]`d, so serializing the
+object directly produces exactly the requested `{Code, Name, VendorCode}` shape (plus two harmless
+`null` fields).
+
+## User Story 3 — Outbound-only external record (not read back, not stored locally)
+
+### ERP `RSVNEutrTemplates` record (D365-side, write-only from this feature's perspective)
+
+Identified in D365 by `Code`. Phase 1 removes it (if present) via the `deleteTemplate` bound action;
+Phase 2 recreates it — one record per currently active Vendor mapping, or exactly one record with a
+blank Vendor Code when the template has no currently active mapping (left join, research.md R24,
+corrected 2026-08-17) — via a plain POST to the `RSVNEutrTemplates` entity. This feature never reads
+it back; there is no local representation of its post-push state beyond the call counts in the
+response DTO.
+
+## User Story 3 — New DTO (response shape only, no new table)
+
+### `EutrSynchronizeTemplatesSummaryDto` (new — `ComplianceSys.Application/Dtos/Response/`)
+
+Returned by the sync endpoint so the caller can tell what happened without checking logs or the ERP
+directly (spec FR-029 / SC-012).
+
+| Field | Type | Meaning |
+|---|---|---|
+| `TemplatesEligible` | int | Count of local templates matching IsDeleted=0/IsHide=0/Status=1 this run |
+| `DeleteCallsSent` | int | Phase 1 `deleteTemplate` calls successfully sent (one per eligible template, until any failure stops the run) |
+| `PushCallsSent` | int | Phase 2 create calls successfully sent — one per eligible template's currently active Vendor mapping, plus one per eligible template with zero active mappings (blank Vendor Code, left join — research.md R24, corrected 2026-08-17) — until any failure stops the run |
+| `Success` | bool | `false` if the run stopped early due to a D365 call failure in either phase |
+| `Message` | string | Human-readable summary (e.g. counts, or the error that stopped the run) |
+
+## User Story 3 — Sequence (updated 2026-08-17 — research.md R18–R24)
+
+```
+EutrSynchronizeDataController.TestSynchronizeTemplates (GET test-synchronize-templates)
+  -> IEutrSynchronizeDataService.SyncTemplatesToDynamicsAsync(ct)
+       -> IEutrTemplatesRepository.GetEligibleForDynamicsSyncAsync(ct)               // FR-024, R18
+       -> Phase 1 — for each eligible template (in order, all of them before Phase 2 starts):
+            -> IDynamicService.PostAsync(deleteTemplate URL, { code }, ct)           // FR-025, R20
+            -> any failure -> stop run, Success=false, return summary                // R21
+       -> IEutrTemplateReferencesRepository.GetActiveByTemplateIdsAsync(eligible Ids, today, ct)  // FR-026, R19
+       -> build Lookup<TemplateId, mapping> from the result (unchanged, inner-join shaped)         // R24
+       -> Phase 2 — for each eligible template (left join, R24):
+            -> has 1+ active mapping(s) -> for each: IDynamicService.PostAsync(RSVNEutrTemplates URL, { Code, Name, VendorCode }, ct)   // FR-027, R20
+            -> has 0 active mappings -> IDynamicService.PostAsync(RSVNEutrTemplates URL, { Code, Name, VendorCode="" }, ct)             // FR-028, R24
+            -> any failure -> stop run, Success=false, return summary                // R21
+       -> return EutrSynchronizeTemplatesSummaryDto
+```

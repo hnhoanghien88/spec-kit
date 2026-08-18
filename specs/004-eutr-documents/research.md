@@ -1987,3 +1987,50 @@ Phase 0 — chốt các quyết định kỹ thuật. Các điểm nghiệp vụ
   rõ ràng hơn "input chỉ dùng khi sửa") — bị loại, trùng lặp không cần thiết logic đã đúng và đã qua
   thực tế sử dụng ở Add; rủi ro 2 nơi lệch quy tắc (ví dụ sửa giới hạn 1 chip ở một nơi mà quên nơi
   kia) trong tương lai.
+
+## Quyết định 68 — Lưu Invoice number trên `eutr_documents.Invoice` (1 dòng/1 document), KHÔNG trên `eutr_references` (spec Update 23, FR-057/FR-059)
+
+- **Decision**: Thêm 1 cột mới **`Invoice`** trực tiếp trên `eutr_documents` (migration
+  `20_add_invoice_to_eutr_documents.sql`), ghi/đọc trực tiếp trên chính bản ghi document đang xử lý —
+  KHÔNG thêm cột nào trên `eutr_references`, không có bước đồng bộ/đối chiếu nhiều dòng nào.
+- **Rationale**: Đây là **quyết định đảo ngược trực tiếp từ phản hồi người dùng** — bản nháp spec đầu
+  tiên của Update 23 định lưu Invoice trên `eutr_references` (mỗi dòng một bản sao giống `RefValue`,
+  cần quy tắc "lấy theo `Id` nhỏ nhất" giống Step ở FR-032, và một bước đồng bộ giống
+  `UpdateReferenceStepAsync`/Quyết định 65-66 khi Save). Ngay sau khi bản spec đó được viết, người dùng
+  yêu cầu: "không lưu Invoice vào bảng eutr_references, chuyển sang lưu vào bảng eutr_documents, cột
+  Invoice" — trước khi bất kỳ bước `/speckit-plan`/implementation nào chạm tới phương án cũ. Về mặt kỹ
+  thuật, `eutr_documents` vốn đã là bảng 1-dòng-1-document (giống `Name`/`ValidFrom`/`ValidTo`), trong
+  khi `eutr_references` có thể có N dòng cho cùng 1 document (ví dụ Type = "PO" khớp nhiều `StepId`,
+  hoặc Type khác "PO" có nhiều chip Value) — lưu trên `eutr_documents` loại bỏ hoàn toàn nhu cầu chọn
+  "dòng nào là giá trị hiện tại" và nhu cầu giữ N dòng đồng bộ cùng 1 giá trị Invoice.
+- **Alternatives considered**: (a) **Phương án ban đầu** (lưu trên `eutr_references`, ghi cùng
+  `RefValue` trên mỗi dòng tạo ra trong lượt Upload, đọc theo `Id` nhỏ nhất ở Edit, đồng bộ theo mẫu
+  Quyết định 65 khi Save) — bị loại trực tiếp theo yêu cầu người dùng; đánh giá lại sau khi loại cũng
+  cho thấy nó phức tạp hơn không cần thiết cho một giá trị vốn có ngữ nghĩa "1 document = 1 số
+  Invoice", không phải "N tham chiếu/document" như `RefValue` (PO/Vendor codes) hay `StepId`;
+  (b) Bảng phụ mới `eutr_document_invoices` (1-1 với `eutr_documents`) — bị loại, over-engineering cho
+  một cột đơn giá trị string, không có lý do tách bảng khi `eutr_documents` đã là đúng granularity.
+- **Hệ quả dây chuyền**: Vì lưu trên `eutr_documents`, cột `Invoice` tự động có mặt trên
+  `EutrDocumentsResponseDto` (kế thừa entity) mà không cần sửa DTO response hay
+  `EutrReferencesRepository`/`AttachStepAndConditionInfoAsync` (khác Step name/Type/Conditions — luôn
+  cần JOIN `eutr_references` mới nạp được); Update 24 (cột Invoice trên danh sách) vì vậy **0 round-
+  trip HTTP mới**, chỉ cần đọc `row.invoice` đã có sẵn trên mỗi row.
+
+## Quyết định 69 — Không thêm FluentValidation bắt buộc `Invoice` khi Type = "Invoice"; chặn hoàn toàn ở client (spec Update 23, FR-056)
+
+- **Decision**: `EutrDocumentsRequestDtoValidator` KHÔNG thêm rule nào cho `Invoice` (kể cả rule có
+  điều kiện theo Type). Yêu cầu "Invoice number bắt buộc khi Type = Invoice" chỉ được enforce ở
+  frontend (`invoiceValid`/`canSubmit` trong `EutrDocumentsFormDialog.jsx` vô hiệu hóa nút Upload/Save).
+- **Rationale**: Đây là nguyên tắc **nhất quán đã áp dụng xuyên suốt feature này** cho mọi ràng buộc
+  "bắt buộc theo điều kiện UI" khác — Step bắt buộc khi Type khác "PO" (FR-017), ≥1 chip Value bắt buộc
+  (FR-017), `ValidFrom <= ValidTo` (FR-016, Update 19), ≥1 chip còn lại khi Save trong Edit (FR-054,
+  Update 22) — **không một ràng buộc nào trong số này** có FluentValidation rule tương ứng ở backend;
+  tất cả đều chỉ chặn ở nút bấm. Thêm rule backend riêng cho Invoice sẽ phá vỡ tính nhất quán đó mà
+  không có lý do nghiệp vụ mới (Invoice number không phải dữ liệu nhạy cảm/toàn vẹn tham chiếu như
+  `RefType`/`StepId` — sai lệch chỉ ảnh hưởng đúng 1 document, tự sửa được qua Edit).
+- **Alternatives considered**: Thêm `RuleFor(x => x.Invoice).NotEmpty().When(...)` theo `RefType`/Type
+  đang chọn — bị loại vì `EutrDocumentsRequestDto`/`EutrDocumentsRequestDtoValidator` (dùng bởi
+  `PUT {id}`) không có field `RefType`/Type nào để điều kiện hóa rule (Type là thuộc tính của
+  `eutr_references`, không phải `eutr_documents`) — sẽ cần round-trip đọc lại Type hiện tại của
+  document ngay trong validator, vi phạm nguyên tắc validator không side-effect/không I/O của
+  FluentValidation trong codebase này.

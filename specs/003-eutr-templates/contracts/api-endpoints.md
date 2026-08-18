@@ -1042,3 +1042,53 @@ see `specs/006-eutr-reference-types/contracts/eutr-reference-types-api.md` Secti
   `EutrReferenceTypes.ReadAll` would get a 403 when `TemplateBuilderPage.jsx` tries to load the
   TakeFrom combobox — confirm the role/menu seeding includes `EutrReferenceTypes.ReadAll` for
   EUTR Templates users, or request a policy grant if not.
+
+## StepId → TakeFrom Default Lookup (new, Update 22, 2026-08-17)
+
+Powers spec FR-080: when a step master row in the Add Root Group/Add Child Step bulk-select dialog
+is ticked, its Take From default MUST come from any existing `eutr_reference_type_details` mapping
+for that StepId (lowest `Id` if more than one), instead of the general "PO" default (FR-079). No
+by-StepId lookup existed before this update — feature 006-eutr-reference-types' existing
+`EutrReferenceTypeDetailsController` only exposed a by-TypeId lookup (`GET .../by-type/{typeId}`,
+documented in `specs/006-eutr-reference-types/contracts/eutr-reference-types-api.md`). This adds one
+new action to that same controller.
+
+```
+POST api/eutr-reference-type-details/default-by-steps
+```
+
+**Request Body** (`long[]`):
+```json
+[5, 8, 12]
+```
+
+**Response** (`ApiResponse<Dictionary<long, long>>`) — a `StepId → TypeId` map, present only for
+StepIds that have at least one `eutr_reference_type_details` mapping row (lowest `Id` wins when a
+StepId has more than one):
+```json
+{
+  "success": true,
+  "message": "Get default take-from mapping successfully",
+  "data": { "8": 3 }
+}
+```
+In this example, StepId 5 and 12 have no mapping (absent from `data` — the frontend falls back to
+the "PO" default for them); StepId 8 defaults to TypeId 3.
+
+**Notes**:
+- Called once from `TemplateBuilderPage.jsx`, after the existing steps-load effect resolves, with
+  every currently-loaded EUTR step's `id` (not just the "available" subset for one dialog open) —
+  avoids re-fetching on every Add Root Group/Add Child Step click.
+- The lowest-`Id`-per-StepId reduction (FR-080's tie-break rule) happens server-side in
+  `EutrReferenceTypeDetailsService.GetDefaultTypeIdByStepIdsAsync`, not in SQL and not on the
+  frontend — the repository method (`GetByStepIdsAsync`) returns every matching row unreduced.
+- Reuses the `EutrReferenceTypeDetailsResponseDto` shape internally (existing DTO, not a new one) —
+  only the final controller response shape (`Dictionary<long, long>`) is new.
+- Authorized under `EutrReferenceTypes.ReadOne` — the same policy the sibling `by-type/{typeId}`
+  action already uses, for consistency within this controller. **Open dependency to verify during
+  implementation, same shape as the TakeFrom-options note above**: confirm EUTR Templates users
+  (menu `eutr-templates`) are also granted `EutrReferenceTypes.ReadOne`, since this endpoint is now
+  called from `TemplateBuilderPage.jsx`, not just from the `eutr-reference-types` screens.
+- The "PO" half of the default (FR-079) needs no new endpoint — the frontend already loads the full
+  `eutr_reference_types` list via `GET /api/eutr-reference-types` (see section above) and finds the
+  row where `Name` matches "PO" (case-insensitive, trimmed) client-side.
