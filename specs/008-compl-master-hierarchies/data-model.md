@@ -5,7 +5,7 @@
 | Cột | Kiểu | Ràng buộc | Ghi chú |
 |---|---|---|---|
 | `Id` | `bigint` | PK, `AUTO_INCREMENT` | Khoá thay thế (surrogate) — dùng để định danh 1 dòng cụ thể cho các thao tác move/delete. |
-| `MasterCode` | `varchar(50)` | `NOT NULL` | Giá trị `Code` của Compliance Master (đúng như picker trả về — xem research.md mục 3). |
+| `MasterCode` | `varchar(50)` | `NOT NULL`, `UNIQUE` | Giá trị `Code` của Compliance Master (đúng như picker trả về — xem research.md mục 3). **UNIQUE 1 cột** (cập nhật 2026-08-18, xem research.md mục 12): 1 `MasterCode` chỉ được tồn tại ở đúng 1 vị trí trong toàn bộ cây (root HOẶC con của đúng 1 parent), không được xuất hiện ở nhiều nhánh. |
 | `ParentCode` | `varchar(50)` | `NOT NULL DEFAULT ''` | `''` khi là Root; ngược lại là `MasterCode` của node cha. Dùng chuỗi rỗng (không dùng `NULL`) để ràng buộc UNIQUE hoạt động đúng trên MySQL. |
 | `DisplayOrder` | `int` | `NOT NULL DEFAULT 0` | Thứ tự trong nhóm anh em (cùng `ParentCode`), bắt đầu từ 0. |
 | `CreatedDate`/`CreatedBy`/`UpdatedDate`/`UpdatedBy` | theo `BaseEntity` | | Audit chuẩn, set server-side từ `HttpContext.Items["UserEmail"]`. |
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS `compl_master_hierarchies` (
   `UpdatedDate` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `UpdatedBy` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`Id`),
-  UNIQUE KEY `uq_compl_master_hierarchy` (`MasterCode`, `ParentCode`),
+  UNIQUE KEY `uq_compl_master_hierarchy` (`MasterCode`),
   KEY `idx_compl_master_hierarchy_parent` (`ParentCode`)
 ) ENGINE=InnoDB;
 ```
@@ -31,13 +31,19 @@ CREATE TABLE IF NOT EXISTS `compl_master_hierarchies` (
 cùng cách xử lý đã áp dụng cho `EutrTemplateReferences.VendorCode` (không FK tới D365) — chấp nhận
 không ràng buộc FK ở DB, xác thực sự tồn tại của `MasterCode` (nếu cần) ở Application layer.
 
-**Ràng buộc UNIQUE `(MasterCode, ParentCode)`** implement đồng thời 2 quy tắc nghiệp vụ đã chốt ở
-Clarify:
-- FR-011 — không trùng Root (2 dòng `(A, '')` là vi phạm UNIQUE).
-- FR-013 — không trùng sibling (2 dòng cùng `MasterCode` + cùng `ParentCode` là vi phạm UNIQUE).
+**Ràng buộc UNIQUE `(MasterCode)`** (cập nhật 2026-08-18 — trước đó là UNIQUE ghép `(MasterCode,
+ParentCode)`, xem research.md mục 12 cho lý do đổi): implement đồng thời TOÀN BỘ các quy tắc chống
+trùng lặp đã chốt, vì `MasterCode` giờ chỉ được xuất hiện ĐÚNG 1 lần trong cả bảng, bất kể `ParentCode`:
+- FR-011 — không trùng Root, và không được thêm làm Root nếu đã tồn tại ở bất kỳ vị trí nào khác
+  trong cây (kể cả làm con ở nhánh khác).
+- FR-012/FR-013 — không trùng sibling, không tạo vòng lặp tổ tiên, và không được thêm làm con nếu đã
+  tồn tại ở bất kỳ vị trí nào khác trong cây (kể cả làm Root hoặc con của 1 parent không liên quan).
 
-Service layer vẫn kiểm tra trước khi insert (qua `ExistsAsync`) để trả lỗi rõ ràng theo từng mã, thay
-vì để lỗi UNIQUE constraint (MySQL 1062) rơi xuống tận DB rồi mới bắt exception.
+Service layer vẫn kiểm tra trước khi insert (nạp toàn bộ bảng, xem mục "Quy tắc nghiệp vụ" bên dưới)
+để trả lỗi rõ ràng theo từng mã và theo từng lý do cụ thể (root/sibling/circular/elsewhere), thay vì
+để lỗi UNIQUE constraint (MySQL 1062) rơi xuống tận DB rồi mới bắt exception. Ràng buộc UNIQUE ở DB là
+lớp phòng thủ thứ 2 (chặn race-condition giữa 2 request đồng thời), không phải nguồn thông báo lỗi
+chính cho người dùng.
 
 ## Domain Entity (backend): `ComplMasterHierarchy`
 
@@ -131,25 +137,38 @@ Validator (`FluentValidation`, kiểm tra hình dạng — không kiểm tra ngh
 
 1. **`GetTreeAsync()`** → `repository.GetAllWithMasterInfoAsync()`, trả nguyên danh sách phẳng; dựng
    cây là việc của frontend (xem Key Entities — cây thực chất là DAG theo khoá tự nhiên).
-2. **`AddRootsAsync(masterCodes, userEmail)`**:
+2. **`AddRootsAsync(masterCodes, userEmail)`** (cập nhật 2026-08-18 — xem research.md mục 12):
+   - Nạp toàn bộ bảng 1 lần (`GetAllWithMasterInfoAsync`) TRƯỚC vòng lặp (thay vì gọi `ExistsAsync`
+     riêng cho từng mã như bản cũ) → dựng `existingCodes` (mọi `MasterCode` đang có trong cây, bất kể
+     `ParentCode`) và `existingRootCodes` (tập con — chỉ những dòng `ParentCode == ""`).
    - Với từng `code` (theo đúng thứ tự trong mảng đầu vào):
-     - Nếu `ExistsAsync(code, "")` → thêm lỗi "`{code}` is already a root." vào danh sách lỗi, bỏ qua
-       code này (không rollback các code khác đã hợp lệ — theo Edge Case đã ghi trong spec).
+     - Nếu `code ∈ existingRootCodes` → lỗi "`{code}` is already a root." (FR-011, trường hợp cũ).
+     - Ngược lại, nếu `code ∈ existingCodes` → lỗi mới "`{code}` already exists elsewhere in the
+       hierarchy." (FR-011 mở rộng — mã đã tồn tại làm con ở đâu đó trong cây, xem research.md mục 12
+       cho bối cảnh bug đã sửa).
      - Ngược lại: `DisplayOrder = GetMaxDisplayOrderAsync("") + 1 + (số root đã thêm thành công trong
-       cùng lượt gọi này)`, insert.
+       cùng lượt gọi này)`, insert, rồi thêm `code` vào cả `existingCodes` và `existingRootCodes`
+       trong bộ nhớ (phát hiện trùng lặp ngay trong cùng 1 lượt Add nhiều mã, không phải round-trip DB
+       mới thấy).
    - Trả về danh sách dòng đã tạo thành công + danh sách lỗi theo từng mã (nếu có) → controller trả
      `207`-kiểu-nội-dung qua `ApiResponse<T>` với cả `data` và `message` liệt kê mã bị từ chối (chi
      tiết response shape xem `contracts/`).
-3. **`AddChildrenAsync(parentCode, masterCodes, userEmail)`**:
+3. **`AddChildrenAsync(parentCode, masterCodes, userEmail)`** (cập nhật 2026-08-18 — xem research.md
+   mục 12):
    - Nạp toàn bộ bảng 1 lần (`GetAllWithMasterInfoAsync`), dựng `Dictionary<string, HashSet<string>>`
-     (`code → tập parentCode của mọi dòng có MasterCode = code`).
+     (`code → tập parentCode của mọi dòng có MasterCode = code`), VÀ `existingCodes` (mọi `MasterCode`
+     đang có trong cây — tái dùng cùng `allRows` đã tải, không tải bảng lần 2).
    - Tính `ancestors(parentCode)` bằng BFS/DFS trên đồ thị trên (xem research.md mục 2).
-   - Với từng `code` cần thêm:
-     - Nếu `code == parentCode` hoặc `code ∈ ancestors(parentCode) ∪ {parentCode}` → lỗi "Adding
-       `{code}` here would create a circular relationship." (FR-012).
-     - Nếu đã tồn tại dòng `(code, parentCode)` → lỗi "`{code}` is already a child of `{parentCode}`."
-       (FR-013).
-     - Ngược lại: `DisplayOrder` kế tiếp trong nhóm `ParentCode = parentCode`, insert.
+   - Với từng `code` cần thêm, kiểm tra theo thứ tự (dừng ở điều kiện đầu tiên khớp):
+     1. Nếu `code == parentCode` hoặc `code ∈ ancestors(parentCode) ∪ {parentCode}` → lỗi "Adding
+        `{code}` here would create a circular relationship." (FR-012).
+     2. Nếu đã tồn tại dòng `(code, parentCode)` → lỗi "`{code}` is already a child of `{parentCode}`."
+        (FR-013, trường hợp cũ).
+     3. Nếu `code ∈ existingCodes` (đã tồn tại ở 1 nhánh khác, không phải 2 trường hợp trên) → lỗi
+        mới "`{code}` already exists elsewhere in the hierarchy." (FR-013 mở rộng — chặn lỗi trùng
+        lặp toàn cây tương tự A2-04, xem research.md mục 12).
+     4. Ngược lại: `DisplayOrder` kế tiếp trong nhóm `ParentCode = parentCode`, insert, rồi thêm
+        `code` vào cả `existingChildren` và `existingCodes` trong bộ nhớ.
 4. **`MoveAsync(id, direction, userEmail)`**: lấy dòng theo `id`, lấy toàn bộ sibling (cùng
    `ParentCode`) sắp theo `DisplayOrder`, tìm sibling liền kề theo hướng, hoán đổi `DisplayOrder` của
    2 dòng (update cả 2). Không làm gì nếu đã ở đầu/cuối.

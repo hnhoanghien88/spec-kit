@@ -75,6 +75,13 @@ Per spec.md FR-012–FR-014, the alert email shows two values that are **not** e
 
 Both are computed inline in `ComplNotificationService.SendMailAndNotificationForSalesOrderMissing`'s anonymous email-row projection (research.md R8) — no entity or DTO change.
 
+## Alert read-back deduplication and column drop (2026-08-18, not persisted)
+
+Per spec.md FR-008/FR-012, the read-back step in `SendSalesOrderAlertAsync` now deduplicates the rows it reads from `compl_so_missing` by `MasterCode`, `Code`, `MappedRefTypeCode`, `MappedInputValue` (`DistinctBy`, first-occurrence-wins, research.md R11) before mapping to `ComplSoMissingResponseDto` and passing them into `SendMailAndNotificationForSalesOrderMissing`. This is a read-time, in-memory operation only:
+
+- `compl_so_missing` itself is unaffected — it still stores one row per (sales order, MISSING item) exactly as before (FR-006/FR-007 unchanged); the dedup never deletes or merges rows in the table.
+- `ComplSoMissing`/`ComplSoMissingResponseDto` still declare `SalesId` as a column/property, unchanged — it is simply excluded from the `complianceList` anonymous projection and `customHeaders` dictionary that drive the HTML email table and the Excel export (research.md R8–R11), so the alert's displayed layout goes from 14 columns to 13. `compliance.SalesId` remains available and is still used, unchanged, by the per-recipient in-app notification message text built later in the same method.
+
 ## Excel attachment (2026-08-10, transient, not persisted)
 
 Per spec.md FR-015–FR-017, every sent alert email carries one additional Excel attachment. It is **not** a new entity, table, or file stored anywhere — it is a `byte[]` generated in memory from the same `complianceList`/`customHeaders` used for the HTML email body (research.md R9/R10), wrapped in a `MemoryStream` and attached to the outgoing email, then disposed once the email is sent. Its file name (`compl-sales-order-missing-<yyyyMMddHHmmss>.xlsx`) is derived from the send-time timestamp, not stored as a column anywhere.

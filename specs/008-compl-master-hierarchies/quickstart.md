@@ -3,7 +3,11 @@
 ## Chuẩn bị
 
 1. Áp dụng migration `compliance-sys-api/src/ComplianceSys.Infrastructure/Sqls/Migration/16_create_compl_master_hierarchies.sql`
-   lên database dev (tạo bảng `compl_master_hierarchies`).
+   lên database dev (tạo bảng `compl_master_hierarchies`), sau đó áp dụng
+   `21_unique_mastercode_compl_master_hierarchies.sql` (2026-08-18, bug fix — đổi UNIQUE KEY sang chỉ
+   `MasterCode`, xem research.md mục 12). Nếu DB dev đang có dữ liệu trùng `MasterCode` ở nhiều dòng
+   (bug đã báo cáo), phải xoá bớt cho còn đúng 1 dòng/mã TRƯỚC khi chạy migration 21, nếu không
+   `ALTER TABLE ... ADD UNIQUE` sẽ báo lỗi 1062 (duplicate entry).
 2. Đảm bảo `compl_masters` đã có ít nhất 3-4 bản ghi (dùng màn `compliance-master` hiện có để tạo
    nếu cần) — cần đa dạng Code để test root/child/reject.
 3. Chạy backend (`dotnet run` trong `ComplianceSys.Api`) và frontend (`npm run dev` trong
@@ -22,6 +26,10 @@
   nối nếu đã có root trước đó).
 - Thử **Add root** lại với 1 master đã là root → popup vẫn cho check, nhưng sau khi bấm Add, hệ
   thống báo lỗi rõ ràng cho đúng mã đó, không thêm trùng (FR-011/SC-002).
+- **(2026-08-18, bug fix)** Thử **Add root** với 1 master ĐANG LÀ CON ở đâu đó trong cây (không phải
+  root) → **Kỳ vọng**: bị từ chối với lý do "already exists elsewhere in the hierarchy" — KHÔNG được
+  thêm làm root thứ 2 (đây chính là kịch bản gây bug dữ liệu trùng vị trí đã báo cáo; trước fix, thao
+  tác này thành công sai).
 
 ### 1b. Search theo Code/Name trong popup (FR-025-027)
 
@@ -44,6 +52,11 @@
   ông/bà — tổ tiên xa hơn) → sau khi bấm Add, hệ thống từ chối kèm thông báo vòng lặp (FR-012).
 - Cố tình check lại 1 master đã là con trực tiếp của node cha đang chọn → bị từ chối trùng sibling
   (FR-013).
+- **(2026-08-18, bug fix)** Tạo 2 root khác nhau (A, B). Add child 1 master M dưới A. Chọn root B,
+  bấm **Add child**, cố tình check lại chính master M (đã là con của A, không liên quan tới B — không
+  phải ancestor, không phải sibling hiện tại của B) → **Kỳ vọng**: bị từ chối với lý do "already
+  exists elsewhere in the hierarchy" — KHÔNG được thêm M làm con của B (đây chính là kịch bản tương tự
+  A2-04 đã báo cáo; trước fix, thao tác này thành công sai và tạo ra 1 master ở 2 vị trí).
 
 ### 3. Reorder & Delete (User Story 3)
 
@@ -52,6 +65,11 @@
 - Chọn node đầu/cuối trong nhóm anh em, bấm mũi tên hướng ra ngoài → không có gì thay đổi (no-op).
 - Chọn 1 node có con, bấm xoá → hộp thoại xác nhận hiện đúng số lượng descendant sẽ bị xoá cùng →
   xác nhận → node + toàn bộ descendant biến mất khỏi cây (SC-005).
+- Chọn 1 node KHÔNG có con (leaf), bấm xoá → **Kỳ vọng (sửa 2026-08-18, follow-up)**: hộp thoại xác
+  nhận VẪN hiện ra ("Are you sure you want to delete node ...?", nút "Delete") — chỉ khác popup của
+  node có con ở chỗ KHÔNG có câu cảnh báo số lượng descendant; bấm xác nhận thì node mới bị xoá. (Lượt
+  sửa đầu tiên trong ngày 2026-08-18 từng kết luận sai là "không hiện popup" cho trường hợp này — đã
+  được người dùng chỉnh lại và code đã sửa theo, xem research.md mục 13.)
 - Bấm **expand all**/**collapse all** → toàn bộ cây mở/đóng đồng loạt.
 
 ### 4. View condition (User Story 4)

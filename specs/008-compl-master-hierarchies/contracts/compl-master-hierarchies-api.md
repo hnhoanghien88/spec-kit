@@ -47,6 +47,14 @@ TẤT CẢ mã đều bị từ chối:
 }
 ```
 
+**Cập nhật 2026-08-18 (bug fix, xem research.md mục 12)**: kiểm tra trùng lặp cho "Add root" giờ quét
+TOÀN BỘ cây, không chỉ danh sách root hiện có. Nếu mã đã tồn tại làm CON ở một nhánh nào đó, lỗi trả
+về là:
+
+```json
+{ "masterCode": "MAS-0003", "reason": "MAS-0003 already exists elsewhere in the hierarchy." }
+```
+
 ## `POST api/compl-master-hierarchies/{parentCode}/children`
 
 `{parentCode}` là `MasterCode` của node cha đang chọn trên cây (URL-encode nếu có ký tự đặc biệt).
@@ -71,6 +79,14 @@ TẤT CẢ mã đều bị từ chối:
   },
   "message": "1 of 3 masters added as child"
 }
+```
+
+**Cập nhật 2026-08-18 (bug fix, xem research.md mục 12)**: kiểm tra trùng lặp cho "Add child" giờ
+cũng quét TOÀN BỘ cây (không chỉ ancestor-chain + con trực tiếp của parent). Nếu mã đã tồn tại ở một
+nhánh KHÁC — không phải ancestor, không phải con hiện tại của parent này — lỗi trả về là:
+
+```json
+{ "masterCode": "MAS-0009", "reason": "MAS-0009 already exists elsewhere in the hierarchy." }
 ```
 
 ## `PUT api/compl-master-hierarchies/{id}/move`

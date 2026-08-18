@@ -36,15 +36,21 @@ làm rõ ở `/speckit-clarify`:
   sẽ vi phạm chính UNIQUE này (`(A, '')` không thể xuất hiện 2 lần).
 - FR-013 (không trùng sibling): 2 dòng cùng `MasterCode` + cùng `ParentCode` cũng vi phạm UNIQUE này.
 
-**Hệ quả cần lưu ý (không phải lỗi, là hệ quả tất yếu của thiết kế khoá tự nhiên đã được xác nhận ở
+**CẬP NHẬT (2026-08-18, bug fix — xem mục 12)**: Đoạn "mọi `MasterCode` có thể xuất hiện ở nhiều nhánh
+khác nhau" bên dưới đây đã bị REVERT sau khi phát hiện lỗi trùng lặp dữ liệu trong test. Quy tắc mới:
+1 `MasterCode` chỉ được tồn tại ở ĐÚNG 1 vị trí trong toàn bộ cây (xem mục 12 để biết quyết định và lý
+do đầy đủ). Đoạn mô tả gốc bên dưới được GIỮ NGUYÊN nguyên văn cho mục đích lịch sử/đối chiếu, nhưng
+KHÔNG còn là hành vi hiện tại.
+
+~~**Hệ quả cần lưu ý (không phải lỗi, là hệ quả tất yếu của thiết kế khoá tự nhiên đã được xác nhận ở
 Clarify)**: vì một `MasterCode` có thể xuất hiện ở nhiều nhánh khác nhau (nhiều dòng, khác
 `ParentCode`), và các con của nó được tra theo `ParentCode = MasterCode đó` (không phải theo dòng cụ
-thể), nên **mọi lần xuất hiện của cùng một `MasterCode` sẽ hiển thị chung một tập con** (shared
+thể), nên mọi lần xuất hiện của cùng một `MasterCode` sẽ hiển thị chung một tập con (shared
 subtree — giống một DAG hơn là cây thuần). Xoá 1 lần xuất hiện sẽ xoá luôn tập con dùng chung đó,
 ảnh hưởng tới các lần xuất hiện khác của cùng mã. Đây là hệ quả trực tiếp của yêu cầu gốc ("Chill thì
 lấy cột MasterCode của Root lưu làm ParentCode" + cho phép tái sử dụng 1 master ở nhiều nhánh, đã xác
 nhận ở Clarify) — không cần quay lại `/speckit-clarify`, chỉ cần ghi nhận rõ trong `data-model.md` và
-cảnh báo khi xoá (đếm & liệt kê descendants trước khi xoá, theo FR-014/User Story 3).
+cảnh báo khi xoá (đếm & liệt kê descendants trước khi xoá, theo FR-014/User Story 3).~~
 
 **Thuật toán kiểm tra vòng lặp tổ tiên (FR-012)**: định nghĩa "ancestors(C)" = hợp của `ParentCode`
 của MỌI dòng có `MasterCode = C` (bỏ qua `''`), cộng đệ quy ancestors của từng parent code đó. Khi
@@ -254,3 +260,90 @@ dong co field nay), doi frontend (`handleViewCondition` trong `ComplMasterHierar
 sang dung `node.masterId` thay vi `node.id`; neu `masterId` null (Compliance Master goc da bi xoa)
 thi bo qua goi API va hien empty state ngay (khong goi API voi id rong) - xem data-model.md muc
 "Sua loi".
+
+## 12. Bug fix (2026-08-18): kiểm tra trùng lặp phải quét TOÀN BỘ cây, không chỉ roots/ancestor-chain
+
+**Bối cảnh — 2 lỗi nghiêm trọng phát hiện khi test**:
+1. `AddRootsAsync` chỉ gọi `_repository.ExistsAsync(code, "")` — tức chỉ so khớp với các dòng có
+   `ParentCode = ''` (root hiện có). Một `MasterCode` đã tồn tại làm CON ở đâu đó trong cây vẫn được
+   chấp nhận thêm làm ROOT mới → 1 master xuất hiện đồng thời ở 2 vị trí (root + con) → đúng lỗi
+   "dữ liệu cây bị trùng lặp" người dùng báo cáo.
+2. `AddChildrenAsync` chỉ kiểm tra `forbidden` (ancestors của `parentCode` cộng chính `parentCode` —
+   chặn vòng lặp trực tiếp, FR-012) và `existingChildren` (con trực tiếp của `parentCode` — chặn
+   trùng sibling, FR-013 cũ). KHÔNG kiểm tra các dòng có cùng `MasterCode` nằm ở nhánh khác, không
+   liên quan (không phải ancestor, không cùng parent) → thêm được 1 master lần thứ 2 ở nhánh khác.
+
+**Quyết định**: Đảo ngược thiết kế DAG-chia-sẻ-nhánh đã ghi ở mục 2 — áp dụng quy tắc **1 `MasterCode`
+chỉ được tồn tại ở ĐÚNG 1 vị trí trong toàn bộ `compl_master_hierarchies`** tại mọi thời điểm, thay vì
+cho phép xuất hiện ở nhiều nhánh. Áp dụng ở 2 tầng phòng thủ:
+
+- **Application layer** (chính, sinh ra thông báo lỗi rõ ràng theo từng mã — FR-013 mới):
+  - `AddRootsAsync`: đổi từ gọi `ExistsAsync` lặp lại từng mã (N round-trip DB) sang tải TOÀN BỘ bảng
+    1 lần qua `GetAllWithMasterInfoAsync` (giống pattern đã dùng ở `AddChildrenAsync`), dựng
+    `existingCodes` (mọi `MasterCode` đang có, bất kể `ParentCode`) và `existingRootCodes` (tập con —
+    chỉ những dòng có `ParentCode = ''`). Với từng `code` cần thêm: nếu ∈ `existingRootCodes` → lỗi
+    "already a root"; else nếu ∈ `existingCodes` → lỗi mới "already exists elsewhere in the
+    hierarchy"; else thêm, đồng thời cập nhật cả 2 tập hợp trong bộ nhớ (để phát hiện trùng lặp NGAY
+    TRONG cùng 1 lượt Add nhiều mã).
+  - `AddChildrenAsync`: giữ nguyên 2 bước kiểm tra cũ (circular qua `forbidden`, sibling trùng qua
+    `existingChildren`) làm 2 bước đầu (thông báo lỗi cụ thể hơn), rồi THÊM bước thứ 3: dựng
+    `existingCodes = allRows.Select(r => r.MasterCode).ToHashSet()` (đã có sẵn `allRows` từ bước tính
+    `parentsByCode`, không cần tải bảng lần 2) — nếu `code` ∈ `existingCodes` nhưng chưa bị 2 bước đầu
+    chặn (nghĩa là nằm ở 1 nhánh khác, không phải ancestor, không phải sibling hiện tại) → lỗi mới
+    "already exists elsewhere in the hierarchy". Cập nhật `existingCodes`/`existingChildren` sau mỗi
+    lần thêm thành công trong cùng vòng lặp (giống cách `existingChildren.Add(code)` đã làm).
+  - Xoá method `ExistsAsync(masterCode, parentCode)` khỏi `IComplMasterHierarchyRepository`/
+    `ComplMasterHierarchyRepository` sau khi không còn nơi nào gọi tới (đã xác minh bằng
+    `grep -rn "ExistsAsync"` — chỉ 1 nơi gọi, tại `AddRootsAsync` cũ).
+
+- **Database layer** (phòng thủ thứ 2, chặn cả race-condition giữa 2 request đồng thời mà tầng
+  Application không thấy nhau): đổi `UNIQUE KEY uq_compl_master_hierarchy (MasterCode, ParentCode)`
+  thành `UNIQUE KEY uq_compl_master_hierarchy (MasterCode)` (bỏ `ParentCode` khỏi khoá) trong cả
+  `Sqls/Tables/compl_master_hierarchies.sql` (fresh-install) và 1 migration mới
+  `21_unique_mastercode_compl_master_hierarchies.sql` (áp dụng cho DB đã tồn tại — chạy `ALTER TABLE`
+  DROP INDEX cũ rồi ADD UNIQUE mới; an toàn vì người dùng đã tự xoá dữ liệu trùng để test tiếp, xem
+  Input feature). UNIQUE 1 cột duy nhất giờ tự động bao trọn cả 2 trường hợp cũ (không trùng root,
+  không trùng sibling) LẪN trường hợp mới (không trùng ở nhánh khác) — không cần giữ khoá ghép nữa.
+
+**Alternatives considered**: Chỉ sửa ở Application layer, giữ nguyên UNIQUE ghép `(MasterCode,
+ParentCode)` — bị loại vì đây chính là nguyên nhân gốc cho phép bug xảy ra: kể cả khi Service layer có
+sót 1 trường hợp (bug tương tự trong tương lai), DB vẫn chấp nhận insert trùng nếu khác `ParentCode`.
+Đổi UNIQUE 1 cột là "chốt chặn cuối" đúng tinh thần defense-in-depth, chi phí thấp (không có FK phụ
+thuộc cột này, xem mục data-model.md "Không có FK tới compl_masters"). Dùng recursive SQL/trigger để
+kiểm tra tại DB — bị loại vì lặp lại lý do đã nêu ở mục 1 (business rule nên ở Application layer, dữ
+liệu nhỏ nên duyệt in-memory đơn giản hơn).
+
+**Ảnh hưởng tới mục 2 (DAG chia sẻ nhánh)**: toàn bộ mô tả "shared subtree"/DAG ở mục 2 không còn
+đúng — mỗi `MasterCode` giờ chỉ có ĐÚNG 1 dòng, nên cây thực sự là 1 cây thuần (tree), không phải DAG
+nữa. `buildTree`/`getDescendantIds` ở `data-model.md` (mục "Frontend — cấu trúc cây") không cần đổi
+logic (vẫn đúng với cây thuần, vì đó là trường hợp con của DAG-chia-sẻ), nhưng phần diễn giải
+"chia sẻ giữa mọi lần xuất hiện" trong comment/doc nên được coi là lịch sử, không phải hành vi hiện tại
+(xem đánh dấu strikethrough ở mục 2).
+
+## 13. Bug fix (2026-08-18, follow-up): Delete PHẢI luôn hiện confirm popup, không chỉ khi có con
+
+**Bối cảnh**: Báo cáo test ban đầu (mục "Update input 2026-08-18, bug fix" trong spec.md) ghi nhận
+"Không khớp kỳ vọng có popup xác nhận cho mọi trường hợp xóa. Popup xác nhận CHỈ xuất hiện khi node có
+con". Lượt xử lý đầu tiên (cùng ngày) đọc nhầm đây là "không phải bug" — kết luận rằng code hiện tại
+(`ComplMasterHierarchiesPage.jsx`, `handleDeleteClick`: chỉ `setDeleteConfirmOpen(true)` khi
+`descendantCount > 0`, ngược lại gọi `doDelete()` ngay) đã đúng thiết kế, chỉ sửa lại câu chữ
+spec.md/tasks.md cho khớp. **Đã sửa lại**: đây THỰC SỰ là 1 gap — người dùng xác nhận muốn confirm
+popup cho MỌI lần xóa (kể cả node không có con), và thông báo "sẽ xóa N node con" chỉ là phần NỐI
+THÊM vào popup xác nhận sẵn có khi node có con, không phải điều kiện để có/không có popup.
+
+**Quyết định**: Sửa `handleDeleteClick` trong `ComplMasterHierarchiesPage.jsx` — bỏ nhánh
+`if (descendantCount > 0) { ... } else { doDelete() }`, luôn gọi `setDeleteConfirmOpen(true)`. Sửa
+`ConfirmDialog` (`title`/`content`/`labelConfirm`) để render động theo `descendantCount`: có con →
+giữ nguyên message cũ ("Node ... has N descendant node(s). Deleting it will also delete all of
+them.", nút "Delete all"); không có con → message chung ("Are you sure you want to delete node
+...?"), nút "Delete". `doDelete` (gọi `removeNode`/đóng dialog) giữ nguyên logic, không đổi.
+
+**Vì sao KHÔNG cần đổi FR-015 layer backend**: `DeleteWithDescendantsAsync` ở backend không có khái
+niệm "confirm" — xác nhận là hành vi UI thuần tuý phía client trước khi gọi API xoá. Không có
+API/DTO/service nào bị ảnh hưởng bởi lần sửa này.
+
+**Bài học ghi nhận (để tránh lặp lại)**: Khi 1 báo cáo test dùng cụm "không khớp kỳ vọng" mà không rõ
+kỳ vọng đó đúng hay sai, KHÔNG nên mặc định code hiện tại là đúng chỉ vì nó nhất quán nội bộ (FR-015
+gốc + code gốc đều nói "chỉ confirm khi có con") — cần hỏi lại hoặc chờ xác nhận rõ ràng từ người báo
+cáo trước khi kết luận "not a bug", đặc biệt khi báo cáo đó nằm chung nhóm với 2 lỗi nghiêm trọng khác
+đã được xác nhận là bug thật.

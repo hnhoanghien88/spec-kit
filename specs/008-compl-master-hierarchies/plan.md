@@ -43,6 +43,29 @@ nguyên vẹn `GetConditionsByMasterIdUseCase` + component `ConditionsView` đã
 mỗi dòng cây), `onClick` gọi `event.stopPropagation()` trước khi mở dialog để không vô tình
 select/deselect node (FR-029) — xem research.md mục 11.
 
+**Update (2026-08-18 — bug fix, FR-011–013 mở rộng)**: 2 lỗi nghiêm trọng phát hiện khi test — (1)
+`AddRootsAsync` chỉ kiểm tra trùng trong danh sách root hiện có (`ExistsAsync(code, "")`), không quét
+toàn cây, nên 1 master đã là con ở nhánh nào đó vẫn được thêm làm root mới (dữ liệu trùng vị trí); (2)
+`AddChildrenAsync` chỉ chặn được vòng lặp trực tiếp (ancestor-chain, FR-012) và trùng sibling
+(FR-013 cũ), không chặn được trùng lặp ở 1 nhánh khác không liên quan. **Sửa**: đảo ngược thiết kế
+"DAG chia sẻ nhánh" ban đầu (research.md mục 2 cũ) — áp dụng quy tắc 1 `MasterCode` chỉ tồn tại ĐÚNG 1
+vị trí trong toàn bộ cây, kiểm tra 2 tầng: (a) Application layer — `AddRootsAsync`/`AddChildrenAsync`
+nạp toàn bộ bảng 1 lần, so khớp với TOÀN BỘ `MasterCode` hiện có (không chỉ roots/ancestor-chain/direct
+children), trả lỗi cụ thể theo từng lý do; (b) Database layer — đổi UNIQUE KEY từ ghép
+`(MasterCode, ParentCode)` sang `(MasterCode)` (migration mới `21_unique_mastercode_compl_master_hierarchies.sql`),
+làm chốt chặn cuối chống race-condition. Xoá `IComplMasterHierarchyRepository.ExistsAsync` (không còn
+nơi nào gọi sau khi sửa `AddRootsAsync`) — xem research.md mục 12 cho quyết định đầy đủ.
+
+**Update (2026-08-18, follow-up — sửa lại kết luận về delete confirmation)**: Lượt xử lý đầu tiên của
+mục báo cáo thứ 3 (popup xác nhận xoá) kết luận SAI là "không phải bug". Người dùng xác nhận đây THỰC
+SỰ là 1 gap: `handleDeleteClick` trong `ComplMasterHierarchiesPage.jsx` phải LUÔN mở `ConfirmDialog`
+cho mọi lần xoá (kể cả node không có con) — trước đó code gọi `doDelete()` thẳng, bỏ qua popup, khi
+`descendantCount === 0`. Đã sửa: bỏ nhánh điều kiện trong `handleDeleteClick`, luôn
+`setDeleteConfirmOpen(true)`; `ConfirmDialog` render `title`/`content`/`labelConfirm` động theo
+`descendantCount` — thông báo "sẽ xóa N node con" chỉ NỐI THÊM vào popup xác nhận sẵn có, không phải
+điều kiện bật/tắt popup. Backend không đổi (xác nhận là hành vi UI thuần tuý). Xem research.md mục 13
+cho quyết định đầy đủ và bài học rút ra.
+
 ## Technical Context
 
 **Language/Version**: C# 12 / .NET 8 (`compliance-sys-api`); JavaScript (ES modules), React 18 + Vite
@@ -85,6 +108,11 @@ mục 10) — không lọc client-side trên trang đã tải.
 - Validate vòng lặp tổ tiên (FR-012) và trùng lặp (FR-011/FR-013) thực hiện ở Application layer
   (in-memory graph traversal trên toàn bộ bảng đã tải), không dùng recursive SQL CTE (xem
   research.md mục 1-2).
+- **(2026-08-18)** Kiểm tra trùng lặp cho CẢ Add root LẪN Add child PHẢI quét toàn bộ
+  `compl_master_hierarchies`, không chỉ danh sách root hiện có (Add root) hay ancestor-chain/con trực
+  tiếp của parent (Add child) — 1 `MasterCode` chỉ được tồn tại đúng 1 vị trí trong toàn cây tại mọi
+  thời điểm (đảo ngược quyết định "DAG chia sẻ nhánh" ban đầu). Backed bởi `UNIQUE KEY (MasterCode)`
+  ở DB làm chốt chặn thứ 2 (xem research.md mục 12, data-model.md).
 - Kéo-thả (FR-022–024) PHẢI persist ngay lập tức từng lần thả (giống mọi hành động khác của feature
   này — FR-017/024), KHÔNG dùng model "sửa state cục bộ + nút Save riêng" của `TemplateBuilderPage.jsx`
   — đây là điểm khác biệt duy nhất có chủ đích so với reference pattern gốc (xem research.md mục 9).
@@ -174,9 +202,16 @@ compliance-sys-api/src/
 │   └── DependencyInjection.cs                                           # MODIFY — đăng ký IComplMasterHierarchyRepository
 ├── ComplianceSys.Api/
 │   └── Controllers/ComplMasterHierarchyController.cs                    # NEW [Route("api/compl-master-hierarchies")], mọi action Policy="ComplianceMaster.ReadAll" — gồm PUT {id}/reorder cho kéo-thả (KHÔNG có /reparent)
-├── ComplianceSys.Infrastructure/Sqls/Tables/compl_master_hierarchies.sql          # NEW (auto-load cho fresh install)
-└── ComplianceSys.Infrastructure/Sqls/Migration/16_create_compl_master_hierarchies.sql  # NEW (áp dụng thủ công cho DB đã tồn tại)
+├── ComplianceSys.Infrastructure/Sqls/Tables/compl_master_hierarchies.sql          # MODIFY (2026-08-18) — UNIQUE KEY đổi từ (MasterCode, ParentCode) sang (MasterCode)
+├── ComplianceSys.Infrastructure/Sqls/Migration/16_create_compl_master_hierarchies.sql  # NEW (áp dụng thủ công cho DB đã tồn tại)
+└── ComplianceSys.Infrastructure/Sqls/Migration/21_unique_mastercode_compl_master_hierarchies.sql  # NEW (2026-08-18, bug fix) — DROP INDEX uq_compl_master_hierarchy cũ, ADD UNIQUE KEY mới chỉ trên MasterCode
 ```
+
+**Update (2026-08-18 — bug fix)**: `IComplMasterHierarchyRepository`/`ComplMasterHierarchyRepository`
+**MODIFY** — xoá method `ExistsAsync(masterCode, parentCode)` (không còn nơi nào gọi sau khi
+`AddRootsAsync` chuyển sang kiểm tra in-memory trên toàn bộ bảng, giống `AddChildrenAsync`).
+`ComplMasterHierarchyService.cs` **MODIFY** — mở rộng `AddRootsAsync`/`AddChildrenAsync` theo
+data-model.md mục "Quy tắc nghiệp vụ" #2-3 (bản cập nhật). Không có DTO/Controller/route mới.
 
 **Frontend — CÁC FILE MỚI**:
 
@@ -239,3 +274,17 @@ research.md mục 6). Route con tĩnh, không menu top-level mới.
 > thay đổi UI thuần tuý (thêm 1 icon action vào component render dòng cây đã có), tái sử dụng 100%
 > use case/component đọc-condition đã tồn tại từ US4, không thêm file/endpoint/bảng mới (xem
 > research.md mục 11).
+>
+> **Ghi chú thứ tư (2026-08-18, bug fix)**: Không có vi phạm hiến pháp nào phát sinh. Đây là sửa lỗi
+> nghiệp vụ (kiểm tra trùng lặp thiếu phạm vi) trong `ComplMasterHierarchyService` đã có — không thêm
+> bảng/endpoint/DTO mới, chỉ mở rộng logic 2 method hiện có (`AddRootsAsync`/`AddChildrenAsync`) và 1
+> migration ALTER cho UNIQUE KEY hiện có (xem research.md mục 12). Quyết định "1 MasterCode chỉ 1 vị
+> trí trong cây" đảo ngược 1 giả định trước đó (research.md mục 2 — "DAG chia sẻ nhánh") nhưng KHÔNG
+> phải vi phạm hiến pháp — là sửa lỗi theo báo cáo test thực tế, đã ghi rõ trong spec.md (Clarifications
+> session 2026-08-18) để tránh nhầm với 1 thay đổi scope tự phát.
+>
+> **Ghi chú thứ năm (2026-08-18, follow-up)**: Không có vi phạm hiến pháp nào phát sinh. Sửa lại 1 kết
+> luận sai của chính phiên làm việc trước đó trong session này — mục báo cáo thứ 3 (popup xác nhận
+> xoá) ban đầu bị đọc nhầm thành "không phải bug"; người dùng xác nhận đây là 1 gap thật, cần luôn hiện
+> `ConfirmDialog` cho mọi lần xoá. Chỉ sửa 1 file frontend (`ComplMasterHierarchiesPage.jsx`), không
+> đổi backend/API/DTO/bảng nào (xem research.md mục 13).
