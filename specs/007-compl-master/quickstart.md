@@ -1,4 +1,4 @@
-# Quickstart: Validate Compliance Master Alert Type
+# Quickstart: Validate Compliance Master Alert Type & Delete Fix
 
 ## Prerequisites
 
@@ -76,3 +76,41 @@
 - Save flow for a master with no changes to Alert type (i.e., user never touches it) still submits `alertType` and does not regress any existing required-field validation (Master Name, Valid From/To, Responsible for, Alert for, Description, at least one condition).
 - Sorting, filtering, and paging the list still work as before for all other columns.
 - The "Status" column's own appearance/behavior is unchanged.
+
+## Scenario 9 — Delete a master that previously failed (User Story 4)
+
+Prerequisites: DB migration `26_fix_compl_master_delete_soft_delete.sql` applied; logged in as a user with `ComplianceMaster.Delete` permission.
+
+1. Navigate to the Compliance Master list (e.g. `compliance-master?page=1&page-size=50`).
+2. Find `MAS-01104` (or, if not available in this environment, any master with Status "Missing" that already has at least one linked/mapped compliance — see `research.md` R12 for how to identify one).
+3. Trigger delete on that row and confirm.
+
+**Expected**: The delete succeeds (success toast, no error). The master no longer appears in the list on reload (search/filter for its code to confirm). Repeat search after a hard refresh to confirm it doesn't reappear.
+
+## Scenario 10 — Delete a master with no linked data still works
+
+1. Find (or create and leave un-mapped) a Compliance Master with Status "Missing" and zero linked compliances.
+2. Delete it and confirm.
+
+**Expected**: Still succeeds, same as before this fix — this scenario guards against the fix accidentally breaking the already-working case.
+
+## Scenario 11 — Bulk delete including a previously-failing master
+
+1. In the list, multi-select several masters, including at least one in the state from Scenario 9 and at least one plain master.
+2. Use the bulk-delete action and confirm.
+
+**Expected**: All selected masters are deleted successfully; none remain in the list on reload.
+
+## Scenario 12 — Deleting a non-existent master still 404s
+
+1. Using an API client (or by deleting the same master id twice in quick succession / in two tabs), call `DELETE api/compliance-master/{id}` for an id that does not exist (or was already deleted).
+
+**Expected**: `404 Not Found` with a clear message — unchanged from before this fix (see `contracts/compl-master-delete.md`).
+
+## Regression check (User Story 4)
+
+- A soft-deleted master is no longer returned by the paged list (`POST api/compliance-master/get-all`) or the list's `TotalCount`/badge.
+- A soft-deleted master no longer triggers "missing compliance" alert notifications.
+- `GET api/compliance-master/get-by-id/{id}` for a soft-deleted master's id still resolves (unchanged behavior, see `research.md` R14) — this is intentional, not a regression.
+- Deleting/bulk-deleting masters that were already working before this fix (no linked data) continues to work exactly as before.
+- No existing `compl_references`, `compl_master_conditions`, or `compl_master_group_email` rows are removed by a master delete — they simply become orphaned-but-inert once their parent master is soft-deleted, exactly as the equivalent `compl_compliances` soft-delete already behaves for its own linked data.

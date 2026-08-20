@@ -139,6 +139,92 @@ and missing-compliance alert generation for a sales order. See spec.md User Stor
 
 ---
 
+## Follow-up: User Story 5 (2026-08-20) — `BomStatus` column on `compl_summary_so`
+
+Requested change: `ViewCompliancesSummaryService.GetAndSaveSummarySo` (the only writer of
+`compl_summary_so`, User Story 3) should record, on each saved row, whether that sales order's
+summary was computed via the no-BOM fallback (User Story 3's `BuildSalesLineOpenMaterialFallbackAsync`)
+or from real BOM data. See spec.md User Story 5 / FR-013–FR-015 / SC-008, plan.md Summary/Technical
+Context/Constitution Check ("Update 2026-08-20"), research.md R7, data-model.md `ComplSummarySo`,
+contracts/sales-line-fallback.md ("Added 2026-08-20"), quickstart.md "Additional validation
+(2026-08-20, User Story 5)".
+
+- [X] T016 [P] [US5] Add migration `compliance-sys-api/src/ComplianceSys.Infrastructure/Sqls/Migration/25_add_bomstatus_to_compl_summary_so.sql`: `ALTER TABLE compl_summary_so ADD COLUMN BomStatus VARCHAR(50) NULL AFTER TotalCompliances;`, prefaced with a Vietnamese comment header citing this feature/update, following the exact style of `13_add_status_to_eutr_templates.sql` / `20_add_invoice_to_eutr_documents.sql`. ALSO add the same column to the baseline snapshot `compliance-sys-api/src/ComplianceSys.Infrastructure/Sqls/Tables/compl_summary_so.sql` (`BomStatus VARCHAR(50)` alongside `TotalCompliances`) — `DatabaseInitializer.InitTables()` executes every file under `Sqls/Tables/` verbatim when bootstrapping a brand-new database, so this snapshot must also carry the new column (research.md R7 "Correction"). Do not backfill that snapshot's other, pre-existing missing columns (`TotalOverdue`, `MissingMasterIds`, `OverdueMasterIds`, `ResponsibleEmails`, `AlertEmails`) — out of scope for this feature.
+  - Done: both files updated as specified.
+
+- [X] T017 [P] [US5] Add `public string? BomStatus { get; set; }` to `ComplSummarySo` in `compliance-sys-api/src/ComplianceSys.Domain/Entities/ComplSummarySo.cs`, placed alongside the other nullable string fields (e.g. next to `AlertEmails`). No `[Column(...)]` attribute needed — the property name already matches the new column name (Dapper convention, docs/database/conventions.md).
+  - Done.
+
+- [X] T018 [US5] In `ViewCompliancesSummaryService.GetAndSaveSummarySo` (`compliance-sys-api/src/ComplianceSys.Application/Services/ViewCompliances/ViewCompliancesSummaryService.cs`): immediately after `var salesLineOpenMaterials = await _dynamicsDataService.GetSalesLineOpenMaterialFromDynamics(salesOrders[i].SalesId);` (before the existing fallback `if`), capture `var bomStatus = salesLineOpenMaterials.Any() ? null : "No BOM";`. Set `BomStatus = bomStatus` on the `newSummarySO` object literal (insert path) and `exist.BomStatus = bomStatus;` alongside the other `exist.*` assignments (update path, immediately before `exist.UpdatedDate = DateTime.UtcNow;`). Do not change where `bomStatus` is computed relative to the fallback call — it must reflect the *primary* lookup's emptiness (FR-014/FR-015), not whether the fallback itself found data. Depends on: T017 (entity property must exist to compile).
+  - Done: `bomStatus` captured right after the primary lookup, before the fallback overwrites `salesLineOpenMaterials`; set on both `newSummarySO` and `exist`.
+
+- [X] T019 [US5] Run `dotnet build compliance-sys-api/src/ComplianceSys.Application/ComplianceSys.Application.csproj` and `dotnet build compliance-sys-api/src/ComplianceSys.Domain/ComplianceSys.Domain.csproj`, confirm 0 errors. Apply migration T016 to a reachable dev database, then perform the manual validation from quickstart.md "Additional validation (2026-08-20, User Story 5 — `BomStatus`)": trigger `GetAndSaveSummarySo` for (a) a sales order with no BOM yet but with order lines — confirm its saved `compl_summary_so` row has `BomStatus = 'No BOM'`; (b) a sales order that already has BOM data — confirm `BomStatus` is `NULL`; (c) re-run for the sales order from (a) after its BOM has since been created — confirm `BomStatus` reverts to `NULL`. No existing unit test file covers `ViewCompliancesSummaryService` (plan.md Technical Context "Testing"), so this manual pass is the primary validation. Depends on: T016, T018.
+  - `dotnet build` for both `ComplianceSys.Domain` and `ComplianceSys.Application` — 0 errors (pre-existing nullable-reference warnings only, unrelated to this change).
+  - Manual DB validation against a live/reachable Dynamics + MySQL dev environment was not run in this session (no reachable credentials) — same caveat as T010's original quickstart validation. The migration and code change are ready to apply; someone with dev-environment access should run the quickstart.md steps before deploying.
+
+**Checkpoint**: `compl_summary_so.BomStatus` correctly flags every sales order processed by the summary job, self-correcting on each run — no other behavior of this feature changes.
+
+---
+
+## Follow-up: User Story 5, second writer (2026-08-20) — `GetViewCompliancesAsync`'s background save
+
+User asked to verify ("kiểm tra") every function carrying the no-BOM fallback logic to confirm all
+of them that save to `compl_summary_so` also update `BomStatus`. That check found a second,
+previously-missed writer: `ViewCompliancesService.GetViewCompliancesAsync` (User Story 1's "get-all"
+lookup) enqueues a Hangfire background job calling `ComplSummarySoService.SaveSummarySo`, which does
+its own independent insert/update into `compl_summary_so` — separate from `GetAndSaveSummarySo`'s
+(T018) — and had no `BomStatus` logic. `TransformSoAsync`, `GetViewCompliancesForDownloadAsync`, and
+`GetViewCompliancesForSendAlertAsync` were checked and confirmed to not persist to `compl_summary_so`
+at all, so none of them need this change. See spec.md FR-016 / SC-009 / User Story 1 Acceptance
+Scenario 4, research.md R8, data-model.md `ComplSummarySo`, contracts/sales-line-fallback.md
+"Added 2026-08-20 (second writer, FR-016)".
+
+- [X] T020 [US5] Add `string? bomStatus = null` parameter to `SaveSummarySo` in `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Services/IComplSummarySoService.cs`, placed before the existing `CancellationToken ct = default` parameter.
+  - Done.
+
+- [X] T021 [P] [US5] In `compliance-sys-api/src/ComplianceSys.Application/Services/ComplSummarySoService.cs`, update `SaveSummarySo`'s signature to match T020, and set `BomStatus = bomStatus` on both the insert path (`newSummarySO` object literal) and the update-existing path (`exist.BomStatus = bomStatus;`, alongside the other `exist.*` assignments). Depends on: T020.
+  - Done.
+
+- [X] T022 [US5] In `ViewCompliancesService.GetViewCompliancesAsync` (`compliance-sys-api/src/ComplianceSys.Application/Services/ViewCompliancesService.cs`): declare `string? bomStatus = null;` near the method's other local declarations; immediately after `salesLineOpenMaterials = await _dynamicsDataService.GetSalesLineOpenMaterialFromDynamics(so.ReferenceValue);` (before the existing fallback `if`), set `bomStatus = salesLineOpenMaterials.Any() ? null : "No BOM";`; pass `bomStatus` as the new argument in the existing `BackgroundJob.Enqueue<IComplSummarySoService>(service => service.SaveSummarySo(so.ReferenceValue, tran, deliveryDate, bomStatus, ct))` call. Depends on: T020, T021.
+  - Done.
+
+- [X] T023 [US5] Run `dotnet build compliance-sys-api/src/ComplianceSys.Application/ComplianceSys.Application.csproj`, confirm 0 errors. Confirm no other caller of `IComplSummarySoService.SaveSummarySo` exists (grep `SaveSummarySo` across `src/` and `tests/`) that would need updating. Depends on: T020, T021, T022.
+  - Build: 0 errors (pre-existing nullable-reference warnings only). `dotnet build` of `ComplianceSys.Api` hit the same pre-existing dev-instance file-lock copy failure noted in T001 (unrelated to this change — no compile errors, only `MSB3021`/`MSB3027` output-copy errors because a running dev instance holds the DLLs locked).
+  - Grep confirmed exactly one call site (`ViewCompliancesService.cs:174-176`, updated in T022) plus one now-updated commented-out reference at line 172; no test file references `SaveSummarySo`.
+  - Manual DB validation (quickstart.md "Additional validation (2026-08-20, second writer...)") not run in this session — same reachable-environment caveat as T019/T010.
+
+**Checkpoint**: Both writers of `compl_summary_so` (`GetAndSaveSummarySo` and `GetViewCompliancesAsync`'s background save) now set `BomStatus` independently and consistently — no other function that saves to this table remains unaccounted for.
+
+---
+
+## Follow-up: User Story 6 (2026-08-20) — BOM column on the All Compliances list screen
+
+Requested change: surface the saved `BomStatus` (User Story 5) as a new "BOM" column on the All
+Compliances list screen for Sale Order (`compliance-view?ref-type=11&page=1&page-size=50`),
+positioned immediately after "Invoice date" and before "Status": "Missing" when `BomStatus = "No
+BOM"`, blank otherwise. This is the feature's first frontend-visible change. See spec.md User Story
+6 / FR-017–FR-020 / SC-010, plan.md Summary/Technical Context/Constitution Check/Project Structure
+("Update 2026-08-20, User Story 6"), research.md R9, data-model.md `RSVNSalesOrderOpenInvoiceCogs`,
+contracts/sales-line-fallback.md "Contract addition: GET api/view-compliances/get-dynamics (Get365)".
+
+- [X] T024 [P] [US6] Add `public string? BomStatus { get; set; }` to `RSVNSalesOrderOpenInvoiceCogs` in `compliance-sys-api/src/ComplianceSys.Domain/Dynamics/RSVNSalesOrderOpenInvoiceCogs.cs`, alongside the other enriched-at-request-time fields (`TotalCompliances`, `TotalMissing`, etc.).
+  - Done.
+
+- [X] T025 [US6] In `ViewCompliancesController.Get365`'s existing per-row enrichment loop (`compliance-sys-api/src/ComplianceSys.Api/Controllers/ViewCompliancesController.cs`, ~line 109-128): in the `if (summary != null)` branch, add `so.BomStatus = summary.BomStatus;` alongside the other `so.Total*`/`so.*Emails` assignments. Do not add anything to the `else` branch — `so.BomStatus` stays at its default `null` there, matching FR-020. Depends on: T024.
+  - Done.
+
+- [X] T026 [P] [US6] In `compliance-client/src/presentation/pages/compliance-view/hooks/useAllCompliancesColumnsSaleOrder.jsx`: add a new `GridColDef` to the `columns` array immediately after the `invoiceDate` block and before the `statusForUi` block — `field: "bomStatus"`, `headerName: "BOM"`, `width: 90`, `filterable: false`, `renderCell` returning a `Typography` showing `"Missing"` when `params.value === "No BOM"`, empty string otherwise (research.md R9 has the exact snippet). Also add `bomStatus: true` to `defaultColumnVisibility` alongside `invoiceDate`. Do not edit the sibling, unrouted `compliance-view/index.jsx` — confirm via `RouteResolver.jsx` that `index_new.jsx` is the routed component (research.md R9 "File-routing correction").
+  - Done.
+
+- [X] T027 [US6] Run `dotnet build compliance-sys-api/src/ComplianceSys.Domain/ComplianceSys.Domain.csproj` and `dotnet build compliance-sys-api/src/ComplianceSys.Api/ComplianceSys.Api.csproj` (or `ComplianceSys.Application` if the Api project's dev-instance file lock — T001/T019's known issue — is active), confirm 0 compile errors. Perform the manual validation from quickstart.md "Additional validation (2026-08-20, User Story 6 — BOM column on the list screen)": open the list screen, confirm the "BOM" column appears in the right position, shows "Missing" for a sales order with saved `BomStatus = 'No BOM'`, and is blank for one with `BomStatus IS NULL`. Depends on: T024, T025, T026.
+  - Backend build: `ComplianceSys.Domain` — 0 errors. `ComplianceSys.Api` hit the same pre-existing dev-instance file-lock output-copy failure as T001/T019 (`MSB3021`/`MSB3027`, not a compile error) — confirmed via `grep -i "error CS"` on the build output that there are zero actual C# compile errors. `ComplianceSys.Application` (unaffected by this task's files, re-checked for regressions) — 0 errors.
+  - Frontend: ran `npx eslint` on the modified file. 2 pre-existing `no-unused-vars` errors remain (`isOverdue` in the untouched `statusForUi` block, `totalMissing` in the untouched `actions` block) — neither is in the new `bomStatus` column code, which is lint-clean. A full `npm run build` was not run in this session.
+  - Manual browser validation against a live app + reachable dev database was not run in this session (no reachable environment) — same caveat as T019/T010's quickstart validation.
+
+**Checkpoint**: The BOM column is visible on the Sale Order list screen and correctly reflects each row's saved `BomStatus` — the feature's saved backend signal (User Stories 3/5, 1/6) is now visible to end users, closing the loop from "detect no BOM" (User Stories 1-4) → "save it" (User Story 5/second writer) → "show it" (User Story 6).
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -147,6 +233,21 @@ and missing-compliance alert generation for a sales order. See spec.md User Stor
 - **Foundational (Phase 2)**: Empty — nothing blocks Phase 3.
 - **User Story 1 (Phase 3)**: Depends on Setup completion (T001) only.
 - **Polish (Final Phase)**: Depends on User Story 1 completion (T009, T010).
+- **User Story 5 follow-up (T016–T019)**: Independent of User Stories 1–4's task chain (different
+  files: entity + migration + `ViewCompliancesSummaryService`, none of which User Stories 1–4 touch
+  except reusing `BuildSalesLineOpenMaterialFallbackAsync` — already complete). Can start immediately;
+  T016/T017 are parallel, T018 depends on T017, T019 depends on T016 and T018.
+- **User Story 5, second writer (T020–T023)**: Depends on T017 (`ComplSummarySo.BomStatus` must exist
+  to compile). Independent of T018/T019 (different files: `IComplSummarySoService.cs`,
+  `ComplSummarySoService.cs`, `ViewCompliancesService.cs`) — can run in parallel with the T018/T019
+  pair once T017 is done. T020 → T021 (interface signature before implementation) → T022 (depends on
+  both) → T023 (validation, depends on all three).
+- **User Story 6, BOM column (T024–T027)**: Independent of every other task in this feature (reads
+  `compl_summary_so.BomStatus` at request time — does not depend on T016-T023 having run first,
+  though it obviously needs the column and its writers to exist for the value to be meaningful at
+  runtime). T024 (backend DTO) and T026 (frontend column) can run in parallel — different projects,
+  no shared file. T025 depends on T024 (needs the new property to compile). T027 depends on T024,
+  T025, T026.
 
 ### Task-Level Dependencies (within US1)
 
@@ -198,3 +299,18 @@ Task: "Add unit tests for BuildSalesLineOpenMaterialFallbackAsync in compliance-
 - Commit after each task or logical group, per repository convention.
 - New code comments must be in Vietnamese, matching the surrounding file's existing style
   (Constitution Principle IV) — no UI labels are involved since this feature has no frontend surface.
+- T016–T019 (User Story 5) are the only tasks in this feature that touch persisted schema
+  (`compl_summary_so`) — apply the migration (T016) to every environment **before** deploying the
+  code change (T018). `ComplSummarySoService`'s Dapper-based insert/update writes every mapped
+  property by column name, so if `BomStatus` is added to the entity while the DB column does not yet
+  exist, every save to `compl_summary_so` on that environment (not just this feature's new field)
+  will fail with an "unknown column" SQL error until the migration is applied — this is a hard
+  ordering requirement, not just a preference.
+- T020–T023 (second writer) exist because `compl_summary_so` turned out to have two independent
+  writers, not one — always check for every persister of a table before assuming a single write path
+  is the whole picture, especially when a fire-and-forget background job (`BackgroundJob.Enqueue`)
+  is involved, since those are easy to miss by only reading a method's direct, synchronous calls.
+- T024–T027 (User Story 6) is the only frontend work in this feature. Two files with the same name
+  exist in `compliance-view/` (`index.jsx` and `index_new.jsx`) — only `index_new.jsx` is routed
+  (confirmed via `RouteResolver.jsx`, research.md R9); do not edit `index.jsx` by mistake. The column
+  hook itself (`useAllCompliancesColumnsSaleOrder.jsx`) is unambiguous — only one such file exists.

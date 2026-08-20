@@ -143,6 +143,13 @@ rule is not violated in spirit — this repo already carries two precedented exc
 (`compl_so_missing`, `eutr_purchase_missing`) for exactly this class of table (fully-replaced-every-run
 synchronization snapshots), and this feature's tables are the same class.
 
+**Correction (2026-08-20)**: The "cleared and fully repopulated every run" decision above still holds
+for `ComplSyncSalesLine`/`DeleteAllAsync`. It no longer holds for `ComplSyncVariantAttributes`: per an
+explicit follow-up request, its repository's `DeleteAllAsync` was replaced with
+`DeleteByProductConfigAsync(productCode, configId, ct)`, scoping deletion to the exact combination
+about to be re-inserted rather than the whole table — see spec.md's "Variant Attribute Store Deletion
+Scope" update and tasks.md's matching post-implementation correction (T039-T041).
+
 **Alternatives considered**: Inherit `BaseEntity` for audit columns — rejected as inconsistent with the
 two closest precedents for this exact table shape, and not required by the spec (no requirement to
 know who/when triggered a given row — the summary DTO response already answers "did this run succeed

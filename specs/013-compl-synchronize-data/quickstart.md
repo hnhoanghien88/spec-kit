@@ -112,10 +112,12 @@ data, since it always re-derives its input from the table Phase 1 just fully rep
 
 ## 9. Confirm idempotency (SC-006)
 
-Re-run step 3 immediately with no changes to D365 data in between. Expected: both
-`compl_sync_sales_line` and `compl_sync_variant_attributes` end up with the same row counts and
-content as after the first run — not doubled — since both tables are cleared before being repopulated
-each run (FR-008/FR-012).
+Re-run step 3 immediately with no changes to D365 data in between. Expected: `compl_sync_sales_line`
+ends up with the same row count and content as after the first run — not doubled — since it is cleared
+before being repopulated each run (FR-008). `compl_sync_variant_attributes` should likewise show the
+same content for every combination processed this run — not doubled — since each combination's rows
+are deleted immediately before that combination's fresh rows are inserted (FR-012, scoped per
+`ProductCode`+`ConfigId` rather than a whole-table clear as of the 2026-08-20 update; see spec.md).
 
 ## 10. Confirm failure handling (Edge Cases)
 

@@ -1,10 +1,14 @@
 # Phase 1 Data Model: All Compliances Sales-Line Fallback for Missing BOM
 
-No new persisted storage or database schema is introduced by this feature — all entities below are
-existing Dynamics 365 F&O OData-backed Domain models (`compliance-sys-api/src/ComplianceSys.Domain/Dynamics/`)
-already present in the codebase. This feature adds a new *fallback construction path* that produces
-records of an existing shape (t1) from data read out of two other existing shapes (t2, t3); it does
-not add or change any entity's fields.
+Originally, no new persisted storage or database schema was introduced by this feature — all
+entities below (t1–t3) are existing Dynamics 365 F&O OData-backed Domain models
+(`compliance-sys-api/src/ComplianceSys.Domain/Dynamics/`) already present in the codebase. This
+feature added a new *fallback construction path* that produces records of an existing shape (t1)
+from data read out of two other existing shapes (t2, t3); it did not add or change any of their
+fields.
+
+**Update (2026-08-20, User Story 5)**: one persisted entity does gain a new field — see
+`ComplSummarySo` below.
 
 ## Entities
 
@@ -64,6 +68,20 @@ pairs present across all t2 rows for the sales order: filter
 | `ProductRange` | string | yes → t1 `ProductRange` |
 | (all other fields) | — | no |
 
+### `ComplSummarySo` (Compliance Summary; persisted, `compl_summary_so` table)
+
+Existing entity (`compliance-sys-api/src/ComplianceSys.Domain/Entities/ComplSummarySo.cs`), written
+by **two independent paths**: `ViewCompliancesSummaryService.GetAndSaveSummarySo` (User Story 3, the
+nightly/on-demand summary job) and `ComplSummarySoService.SaveSummarySo` (called via a background job
+enqueued from `ViewCompliancesService.GetViewCompliancesAsync`, User Story 1's "get-all" lookup —
+found 2026-08-20 while verifying this feature's coverage, R8). This update adds one new
+column/property, set by both writers.
+
+| Field | Type | Change (this feature) |
+|---|---|---|
+| `BomStatus` | `string?` | **New.** Set to literal `"No BOM"` by whichever writer is running, when *that writer's own* BOM-based sales-line lookup (`GetSalesLineOpenMaterialFromDynamics`) returns zero records for that sales order — the same condition that already triggers the fallback (R1/FR-011, R8/FR-016); left `null` otherwise. Applies on both insert (new saved record) and update (existing saved record) paths in both writers, so a record previously marked `"No BOM"` reverts to `null` once the sales order's BOM is created and either writer reprocesses it (FR-013–FR-016). The two writers do not coordinate — each independently overwrites the field with its own lookup's result (spec.md Edge Cases). |
+| *(all other existing fields)* | — | unchanged |
+
 ## Relationships
 
 - One t2 row (one sales order line) produces exactly one t1 row (1:1) — unlike the BOM-based path,
@@ -81,3 +99,29 @@ pairs present across all t2 rows for the sales order: filter
   behavior is identical to today's "no data" case (FR-009) — this is not an error condition.
 - No state transitions apply; this is a read-only, per-request data composition, not a stored
   entity with a lifecycle.
+- `ComplSummarySo.BomStatus` (new) does have a simple two-state lifecycle driven entirely by the
+  BOM-based lookup's emptiness at save time: `"No BOM"` ↔ `null`, re-evaluated and overwritten every
+  time either writer (`GetAndSaveSummarySo` or `SaveSummarySo`) processes that sales order — no
+  independent state is preserved across runs or between the two writers (see research.md R7, R8).
+
+### `RSVNSalesOrderOpenInvoiceCogs` (Get365 list-screen response row; not persisted)
+
+Existing Domain model (`compliance-sys-api/src/ComplianceSys.Domain/Dynamics/RSVNSalesOrderOpenInvoiceCogs.cs`),
+returned by `ViewCompliancesController.Get365` for the All Compliances Sale Order list screen
+(`ref-type=11`). Already carries several fields copied in from `compl_summary_so` at request time
+(`TotalCompliances`, `TotalMissing`, `TotalApplied`, `TotalOverdue`, `ResponsibleEmails`,
+`AlertEmails`) — not stored on this row itself, just enriched onto it per-request by `Get365`
+(R9). This update adds one more such enriched field.
+
+| Field | Type | Change (this feature) |
+|---|---|---|
+| `BomStatus` | `string?` | **New.** Copied from the matched `compl_summary_so` row's `BomStatus` (same match-by-`SalesId` the other enriched fields already use) when a match exists; left `null` when no matching summary row is found for that sales order (User Story 6, FR-018/FR-020). Read by the frontend's new "BOM" column (R9) — not itself persisted anywhere. |
+| *(all other fields)* | — | unchanged |
+
+## Schema Change
+
+- `compl_summary_so` gains one nullable `VARCHAR` column, `BomStatus`, added via migration
+  `Sqls/Migration/25_add_bomstatus_to_compl_summary_so.sql` (for already-existing databases) **and**
+  a matching edit to the baseline snapshot `Sqls/Tables/compl_summary_so.sql` (so a brand-new
+  database, bootstrapped by `DatabaseInitializer.InitTables()`, also gets the column — research.md
+  R7). No other table is changed.

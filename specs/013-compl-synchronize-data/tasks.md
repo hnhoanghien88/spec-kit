@@ -580,6 +580,57 @@ the codebase to catch up), and following up on a live-data discovery the user ma
 
 ---
 
+## Post-implementation correction: scope `compl_sync_variant_attributes` deletion to the combination being inserted (spec.md 2026-08-20 update)
+
+**Goal**: Per explicit follow-up request ("khi chạy sẽ không xóa toàn bộ bảng
+compl_sync_variant_attributes, chỉ xóa theo ProductCode, ConfigId cần insert dữ liệu" — stop clearing
+the entire `compl_sync_variant_attributes` table on each run; only delete rows matching the exact
+Product Code + Config ID about to be (re-)inserted), replace Phase 2's single whole-table
+`DeleteAllAsync` (T020/T022) with a per-combination scoped delete issued immediately before each
+combination's insert — see spec.md FR-012/FR-014 and data-model.md's updated Business Rules/Sequence.
+
+- [X] T039 [US2] Replace `DeleteAllAsync` with
+  `Task DeleteByProductConfigAsync(string productCode, string configId, CancellationToken ct = default)`
+  in `IComplSyncVariantAttributesRepository`
+  (`compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IComplSyncVariantAttributesRepository.cs`)
+  and its implementation in
+  `compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/ComplSyncVariantAttributesRepository.cs`
+  — parameterized `DELETE FROM compl_sync_variant_attributes WHERE ProductCode = @ProductCode AND
+  ConfigId = @ConfigId`, not the prior unconditional `DELETE FROM compl_sync_variant_attributes`.
+
+- [X] T040 [US2] In `RunAsync` (`ComplSynchronizeDataService.cs`, depends on T039): removed the
+  Phase-2-start whole-table `_complSyncVariantAttributesRepository.DeleteAllAsync(ct)` call. Inside the
+  per-combination `foreach` loop, only when `FetchVariantAttributesAsync` returns one or more rows, call
+  `_complSyncVariantAttributesRepository.DeleteByProductConfigAsync(productCode, configId, ct)`
+  immediately before `InsertManyAsync(rows, ct)` — both wrapped in the same try/catch that already stops
+  the run and reports `Success = false` on failure (FR-017), consistent with how every other Phase 2
+  D365/DB call is already handled. When the lookup returns zero rows, neither delete nor insert is
+  issued (FR-014) — any rows already stored locally for that combination from an earlier run are left
+  untouched.
+
+- [X] T041 [P] [US2] Update `ComplSynchronizeDataServiceTests.cs` (depends on T040): replaced every
+  mocked/verified `DeleteAllAsync()` call on `IComplSyncVariantAttributesRepository` with
+  `DeleteByProductConfigAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())`;
+  added a test asserting `DeleteByProductConfigAsync` is called with the exact `(ProductCode, ConfigId)`
+  of a combination whose lookup returns data, and a test asserting it is **not** called at all for a
+  combination whose lookup returns no data (covering the updated FR-014 behavior — no delete without an
+  insert). The Phase-ordering `MockSequence` test (originally spanning `DeleteAllAsync` (Phase 1) →
+  `GetDistinctProductConfigCombinationsAsync` → `DeleteAllAsync` (Phase 2)) was adjusted to sequence
+  `GetDistinctProductConfigCombinationsAsync` → the first combination's `DeleteByProductConfigAsync`/
+  `InsertManyAsync` instead, since there is no longer a single Phase-2-start deletion call to anchor on.
+  *(`dotnet build ComplianceSys.sln`: 0 `error CS*` — the only build errors are the known pre-existing
+  MSB3027/MSB3021 DLL-copy-lock errors from a locally-running dev server instance (same as T034), not
+  compile errors. `dotnet test`: 16 tests in `ComplSynchronizeDataServiceTests.cs` pass (14 prior + 2
+  new for this change). Full suite: 141 passed, 3 failed — 1 is the pre-existing unrelated
+  `MappingConfigurationTests` failure noted in T001; the other 2
+  (`RunAsync_ShouldFetchAllSalesLinePages_WhenDataSpansMultiplePages`,
+  `RunAsync_ShouldStopProcessing_AtTestSafetyLimit`) are a pre-existing, unrelated mismatch between
+  `TestSafetyMaxSalesLineRecordsPerRun`'s current value (`100000`, for real runs) and those two tests'
+  assertions (still expecting the `10` from T027) — present before this change, not touched by it, and
+  out of scope for this Variant-Attribute-deletion-scope update.)*
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies

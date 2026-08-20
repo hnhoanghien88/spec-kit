@@ -53,6 +53,12 @@ public class ComplSoMissingResponseDto : ComplSoMissing   // or a standalone cla
 
     public List<GroupEmailsDto>? RespGroups => string.IsNullOrWhiteSpace(ResponsibleGroupsJson)
         ? new List<GroupEmailsDto>() : JsonConvert.DeserializeObject<List<GroupEmailsDto>>(ResponsibleGroupsJson);
+
+    // Cap nhat 2026-08-20 (spec.md FR-008/FR-019, research.md R13): danh sach cac sales order code
+    // rieng biet da gop lai khi doc-back deduplicate theo MasterCode/Code/Type/Product, noi lai
+    // thanh 1 chuoi "SO1, SO2" de hien thi o cot Sales order (cuoi cung) trong email/Excel. Khac
+    // voi SalesId (van la 1 gia tri dai dien duy nhat, dung cho noi dung thong bao in-app khong doi).
+    public string? CombinedSalesIds { get; set; }
 }
 ```
 
@@ -85,3 +91,14 @@ Per spec.md FR-008/FR-012, the read-back step in `SendSalesOrderAlertAsync` now 
 ## Excel attachment (2026-08-10, transient, not persisted)
 
 Per spec.md FR-015–FR-017, every sent alert email carries one additional Excel attachment. It is **not** a new entity, table, or file stored anywhere — it is a `byte[]` generated in memory from the same `complianceList`/`customHeaders` used for the HTML email body (research.md R9/R10), wrapped in a `MemoryStream` and attached to the outgoing email, then disposed once the email is sent. Its file name (`compl-sales-order-missing-<yyyyMMddHHmmss>.xlsx`) is derived from the send-time timestamp, not stored as a column anywhere.
+
+## Excel row highlighting (2026-08-20, display-only, not persisted)
+
+Per spec.md FR-018, each row in the Excel attachment whose (already-computed, per row above) `Status` display value is `"Expired"` gets a yellow cell-fill background across its full row range (research.md R12), matching the yellow highlight the email body already applies to the same rows (`Helper.cs:244`). This is a rendering property of the generated workbook only — it is derived from the same computed `Status` value described above ("Status (display)"), never written to `compl_so_missing`, and does not change which rows are included, their order, or their cell values.
+
+## Sales order column, re-added and combined (2026-08-20, display-only, not persisted)
+
+Per spec.md FR-008/FR-012/FR-019, the alert-building read-back in `SendSalesOrderAlertAsync` now groups (rather than merely deduplicates) `compl_so_missing` rows by `MasterCode`, `Code`, `MappedRefTypeCode`, `MappedInputValue` (research.md R13). Each resulting `ComplSoMissingResponseDto` carries a new `CombinedSalesIds` property (`string?`) — the distinct `SalesId` values from every row in that group, joined as `"SO1, SO2"` — which is shown as the last ("Sales order") column in both the email body and the Excel attachment. This is a display-only value:
+
+- `compl_so_missing` itself is unaffected — it still stores one row per (sales order, MISSING item) exactly as before (FR-006/FR-007 unchanged); grouping never merges or deletes rows in the table.
+- `ComplSoMissingResponseDto.SalesId` (inherited from `ComplSoMissing`) is unchanged in meaning — it remains the single sales order code of the group's first underlying row, and continues to be the value used, unchanged, by the per-recipient in-app notification message text built later in `SendMailAndNotificationForSalesOrderMissing`. `CombinedSalesIds` is a separate, additive property used only by the `complianceList`/`customHeaders`-driven email table and Excel export (research.md R8–R13).

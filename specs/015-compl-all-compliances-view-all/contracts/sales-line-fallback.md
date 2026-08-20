@@ -132,6 +132,100 @@ Same fallback method again in both, no new backend logic — both services alrea
 `IViewCompliancesTransformService` injected. This closes out every user-reachable/scheduled-job
 caller of `GetSalesLineOpenMaterialFromDynamics` except the diagnostic-only `ViewCompliancesService.Test`.
 
+**Added 2026-08-20 (User Story 5, FR-013–FR-015)** — `ViewCompliancesSummaryService.GetAndSaveSummarySo`
+also now sets a new field on the record it saves, `BomStatus` (see
+[data-model.md](../data-model.md#complsummaryso-compliance-summary-persisted-compl_summary_so-table)
+and [research.md R7](../research.md#r7--bomstatus-column-on-compl_summary_so-2026-08-20-update-user-story-5)):
+
+```csharp
+var salesLineOpenMaterials = await _dynamicsDataService.GetSalesLineOpenMaterialFromDynamics(salesOrders[i].SalesId);
+var bomStatus = salesLineOpenMaterials.Any() ? null : "No BOM";
+if (!salesLineOpenMaterials.Any())
+{
+    salesLineOpenMaterials = await _transformService.BuildSalesLineOpenMaterialFallbackAsync(salesOrders[i].SalesId);
+}
+var tran = await _transformService.TransformSoToRequestForSql(salesLineOpenMaterials, salesOrders[i].CustAccount);
+// ...
+newSummarySO.BomStatus = bomStatus;   // insert path
+// ...
+exist.BomStatus = bomStatus;          // update path
+```
+
+`bomStatus` is captured from the *primary* lookup's emptiness (before the fallback runs), matching
+FR-014/FR-015's trigger condition exactly — it does not depend on whether the fallback itself found
+any sales-order-line rows (FR-009's "fallback also empty" edge case still yields `"No BOM"`, per
+spec.md Edge Cases). Both the insert (`newSummarySO`) and update-existing (`exist`) branches set it,
+so a previously-`"No BOM"` record is overwritten back to `null` once the sales order's BOM exists.
+**Correction (2026-08-20)**: `GetAndSaveSummarySo` is not the *only* writer of `compl_summary_so` —
+see the next entry, found by explicitly auditing every fallback-carrying function for whether it also
+persists there (`TransformSoAsync`, `GetViewCompliancesForDownloadAsync`, and
+`GetViewCompliancesForSendAlertAsync` were checked and confirmed to persist nothing).
+
+**Added 2026-08-20 (second writer, FR-016)** — `ViewCompliancesService.GetViewCompliancesAsync`
+(the "get-all" lookup itself, User Story 1) also persists to `compl_summary_so`, indirectly via a
+Hangfire background job it enqueues after building its response
+([ViewCompliancesService.cs:169-177](../../../compliance-sys-api/src/ComplianceSys.Application/Services/ViewCompliancesService.cs#L169-L177)),
+which runs `ComplSummarySoService.SaveSummarySo`
+([ComplSummarySoService.cs:29](../../../compliance-sys-api/src/ComplianceSys.Application/Services/ComplSummarySoService.cs#L29)) —
+a second, independent insert/update into the same table:
+
+```csharp
+// IComplSummarySoService (interface change — new optional parameter, source-compatible with the
+// one existing caller):
+Task<bool> SaveSummarySo(string salesOrder, IEnumerable<ViewCompliancesRequest> tran,
+    DateTime? deliveryDate, string? bomStatus = null, CancellationToken ct = default);
+
+// ViewCompliancesService.GetViewCompliancesAsync — compute bomStatus right after the primary
+// (pre-fallback) lookup, same rule as GetAndSaveSummarySo:
+salesLineOpenMaterials = await _dynamicsDataService.GetSalesLineOpenMaterialFromDynamics(so.ReferenceValue);
+bomStatus = salesLineOpenMaterials.Any() ? null : "No BOM";
+if (!salesLineOpenMaterials.Any())
+{
+    salesLineOpenMaterials = await _transformService.BuildSalesLineOpenMaterialFallbackAsync(so.ReferenceValue);
+}
+// ...
+BackgroundJob.Enqueue<IComplSummarySoService>(service =>
+    service.SaveSummarySo(so.ReferenceValue, tran, deliveryDate, bomStatus, ct)
+);
+
+// ComplSummarySoService.SaveSummarySo — sets BomStatus on both its insert and update-existing paths,
+// mirroring GetAndSaveSummarySo:
+newSummarySO.BomStatus = bomStatus;   // insert path
+exist.BomStatus = bomStatus;          // update path
+```
+
+This writer computes `bomStatus` independently from its own fresh BOM-based lookup — it does not
+read or depend on `GetAndSaveSummarySo`'s most recent saved value, and vice versa (spec.md Edge
+Cases: last write wins when both run close together for the same sales order, same as every other
+field they both save).
+
+## Contract addition: `GET api/view-compliances/get-dynamics` (Get365) — BOM column (2026-08-20, User Story 6)
+
+Endpoint already exists (`ViewCompliancesController.Get365`,
+[ViewCompliancesController.cs:60](../../../compliance-sys-api/src/ComplianceSys.Api/Controllers/ViewCompliancesController.cs#L60)),
+consumed by the All Compliances list screen for Sale Order
+(`compliance-view?ref-type=11&page=1&page-size=50`, `useAllCompliancesData.js` → `allCompliancesApi.get365Paging`).
+This feature does not change its route, request shape, or auth policy — only adds one field to the
+response row shape for `ref-type=11` (`RSVNSalesOrderOpenInvoiceCogs`) and reads it in the frontend.
+
+**Response field addition**: `BomStatus` (`string?`), enriched per-row the same way
+`TotalCompliances`/`TotalMissing`/etc. already are — copied from the matched `compl_summary_so` row
+(matched by `SalesId == SalesOrder`), `null` when no match exists (data-model.md
+`RSVNSalesOrderOpenInvoiceCogs`, research.md R9). No other reference type's response row shape
+changes — `BomStatus` is sales-order-specific.
+
+**Frontend contract**: `useAllCompliancesColumnsSaleOrder` (the column-definition hook selected for
+`ref-type=11` by `useAllCompliancesColumnsByType`) gains one `GridColDef` (`field: "bomStatus"`,
+`headerName: "BOM"`) positioned between the existing `invoiceDate` and `statusForUi` columns,
+rendering `"Missing"` when `row.bomStatus === "No BOM"`, blank otherwise (research.md R9 for the
+exact code). No other component changes; `index_new.jsx` (the routed page — see research.md R9's
+"File-routing correction") needs no change since it already renders whatever `useAllCompliancesColumnsByType`
+returns.
+
+**Breaking-change note**: purely additive response field; no existing consumer of `Get365` reads or
+depends on the absence of a `BomStatus` field, so this cannot break any existing caller (SC-010) —
+folded into the overall breaking-change assessment below.
+
 ## Breaking-change assessment
 
 - No change to the HTTP request/response contract of `get-all` — purely an internal data-source
@@ -140,3 +234,12 @@ caller of `GetSalesLineOpenMaterialFromDynamics` except the diagnostic-only `Vie
 - The only externally observable difference: sales orders that previously returned an empty
   compliance result solely because their BOM had not been created will now return results derived
   from their order lines instead (SC-001). This is the intended fix, not a regression.
+- **2026-08-20**: `compl_summary_so` gains a new nullable column (`BomStatus`) — additive schema
+  change, no existing column is renamed/removed/retyped, so it does not break any existing reader of
+  that table (SC-008).
+- **2026-08-20 (second writer)**: `IComplSummarySoService.SaveSummarySo` gains a new optional
+  parameter with a safe default (`bomStatus = null`) — its one existing caller
+  (`GetViewCompliancesAsync`) is updated to pass a value, but the signature change itself is
+  source-compatible with any hypothetical caller that omits it (SC-009).
+- **2026-08-20 (User Story 6)**: `Get365`'s response row gains one additive field (`BomStatus`); the
+  frontend gains one additive grid column. Neither removes, renames, or retypes anything existing.

@@ -1,4 +1,4 @@
-# Research: Compliance Master Alert Type
+# Research: Compliance Master Alert Type & Delete Fix
 
 ## R1. Where AlertType lives today
 
@@ -99,3 +99,57 @@ Plan: follow this repo's established DB-change convention — a new numbered fil
 **Rationale**: Avoids duplicating the same contract information across two documents within one merged spec.
 
 **Alternatives considered**: A separate contracts file for the list — rejected as redundant.
+
+---
+
+## User Story 4 (delete fix) research
+
+## R12. Root cause of the delete failure (reproduced with `MAS-01104`)
+
+**Decision**: `ComplMasterController.Delete`/`BulkDelete` call `ComplMasterService.DeleteAsync`/`DeleteMultiAsync`, which are **not overridden** in `ComplMasterService.cs` — so both fall through to the generic `BaseService<ComplMaster, long, ComplMasterRequest>.DeleteAsync`/`DeleteMultiAsync` (`Services/BaseService.cs`). That generic path issues a real, physical `DELETE FROM compl_masters WHERE Id = @id` through the injected `IRepository<ComplMaster, long>` (a correctly-typed `DapperRepository<ComplMaster, long>` resolved via the open-generic registration in `ComplianceSys.Infrastructure/DependencyInjection.cs:28`).
+
+`compl_references` (`Sqls/Tables/compl_references.sql`) declares `CONSTRAINT fk_compl_references_master FOREIGN KEY (MasterId) REFERENCES compl_masters(Id) ON DELETE RESTRICT`. Any master that still has one or more `compl_references` rows pointing to it (i.e. it has ever had a compliance item mapped/referenced to it — this is also what makes its list "Status" computable as `OK` or `Missing` at all, per `compl_sp_get_compl_master_paging.sql`) cannot be hard-deleted; MySQL raises a foreign-key constraint violation. `ComplMasterController.Delete`'s generic `catch (Exception ex)` swallows this into a 500 `"Failed to delete Compliance master."` — the exact unexplained failure reported.
+
+`MAS-01104` (`compl_masters.Id = 1179`, confirmed in `Sqls/Migration/24_fix_compl_master_missing_status_stale_references.sql`, which already investigated this same record for an unrelated Status-calculation bug) is a `ComplType=1` "product test" master that already had one compliance mapped to it via `compl_references` when the delete was attempted — so it hit this FK exactly, even though the list still showed it with Status `Missing` (eligible for delete under the current UI gate, `row.status === 'Missing'` in `compliance-master/index.jsx`).
+
+**Rationale**: Verified by reading `BaseService.cs` (no `DeleteAsync`/`DeleteMultiAsync` overrides used unless the derived service defines one — confirmed `ComplMasterService.cs` defines none), the FK constraint text in `compl_references.sql`, and the migration 24 comment block that independently confirms `MAS-01104`/`Id=1179` had an active `compl_references` row at the time it was investigated.
+
+**Alternatives considered**: A mistyped generic base (`ComplMasterRepository : DapperRepository<ComplCompliances, long>` in `ComplMasterRepository.cs:12`) was investigated as a possible cause — ruled out. `ComplMasterRepository` only implements the hand-written `IComplMasterRepository` interface (custom stored-procedure methods), which is registered/injected separately from `IRepository<ComplMaster, long>` (the open-generic registration used by `BaseService`). The mistyped base class is dead/inherited-but-unused code and does not affect the delete path — it is a separate, pre-existing smell not in scope for this fix.
+
+## R13. Fix pattern: soft delete, mirroring the sibling `compl_compliances` feature
+
+**Decision**: `compl_masters.IsDelete` (`byte`, default `0`) already exists in the schema and is **already read** by `compl_sp_get_compl_master_by_id.sql` (`WHEN c.IsDelete = 1 THEN 'expired'` in its status CASE expression) — but nothing in the C# application code ever sets it to `1` for a master. This is the same shape as `compl_compliances.IsDelete`, which the sibling feature already uses for exactly this purpose: `ComplCompliancesService.DeleteAsync` is overridden to delegate to `ComplCompliancesMutationService.DeleteAsync`, which (in a transaction) loads the entity, sets `IsDelete = 1` and `ValidTo = DateTime.UtcNow`, calls `_repository.UpdateAsync(existing, ct)` (an `UPDATE`, never a hard `DELETE`), and records a history entry — completely sidestepping any FK-RESTRICT issue because the row is never physically removed.
+
+This feature applies the identical pattern to `ComplMaster`: override `DeleteAsync`/add `DeleteMultiAsync` in `ComplMasterService.cs` to delegate to new methods on `IComplMasterCommandService`/`ComplMasterCommandService.cs` (which already holds the `IRepository<ComplMaster, long>` and `IUnitOfWork` this needs, alongside `IComplMasterSideEffectService.AddHistoryAsync` for the audit trail, matching `AddAsync`'s existing use of the same side-effect service). Each sets `IsDelete = 1` via `UpdateAsync` instead of a hard delete.
+
+**Rationale**: Per Constitution Principle II (Reference-Pattern Reuse), a working sibling feature in the same codebase (`compl_compliances`) already solved this exact problem (a `ComplType`-linked row that can't always be hard-deleted) with a soft-delete convention the schema for `compl_masters` was clearly already prepared for (`IsDelete` column, and the by-id procedure's dormant `'expired'` status branch) but never wired up. This is not a new design decision so much as finishing an already-half-built mechanism, and it fully satisfies spec FR-011/FR-014 (deletion completes successfully; related data is never left partially cleaned up — nothing is removed, so nothing can be partially removed).
+
+**Alternatives considered**:
+- *Cascade-delete the blocking `compl_references` rows first, then hard-delete the master* — rejected: `compl_references` rows are real evidence a compliance was mapped to this master; silently deleting that link on master-delete is a bigger, riskier behavior change than the spec asked for, and contradicts the "linked data must not be lost without being able to explain why" tone of spec FR-012/FR-014. Soft delete preserves that history for free.
+- *Block deletion up front with an explanatory message whenever `compl_references` rows exist* — rejected as the primary fix (though it remains available as a fallback shape for FR-012's "communicate the specific reason" requirement in genuinely-blocked cases, see R14): this would mean `MAS-01104` — and every other master with any mapped compliance — could *never* be deleted via the UI, which contradicts the plain reading of the bug report ("the delete function is broken and should work"), and does not reuse the sibling pattern that already solves this.
+
+## R14. Read paths must exclude soft-deleted masters
+
+**Decision**: None of the master read stored procedures currently filter on the master's own `IsDelete` flag — confirmed by grep: `compl_sp_get_compl_master_paging.sql`, `..._paging_count.sql`, and `compl_sp_get_compl_master_missing_for_alert.sql` only check `cc.IsDelete = 0` (the *joined compliance's* delete flag, via `compl_compliances cc`), never `cd.IsDelete`/`md.IsDelete` (the *master's own* flag). `compl_sp_get_compl_master_by_id.sql` selects `c.IsDelete` and even branches on it for its status label, but does not exclude the row from being returned by `Id`. Once delete actually sets `ComplMaster.IsDelete = 1` (R13), these procedures must be updated so a soft-deleted master (a) no longer appears in the list/paging results and their `TotalCount`, and (b) no longer appears in the "missing" alert-notification query — otherwise the delete would "succeed" from the user's point of view but the master would keep showing up everywhere, which fails spec FR-011 ("no longer appears in the list on the next load").
+
+`GetMasterByIdAsync`/`compl_sp_get_compl_master_by_id` intentionally keeps returning the row even when `IsDelete = 1` (it already has a dormant `'expired'`-style status branch for this) — this is left as-is since nothing in spec User Story 4 calls for changing single-record lookup behavior, and changing it risks breaking any other caller (e.g. history/audit views) that may legitimately need to resolve an already-deleted master by id.
+
+**Rationale**: Matches the same DB-change convention already used for this feature's Alert type work (`research.md` R4): a new numbered file in `Sqls/Migration/` redefining the affected procedures, with checked-in `Sqls/Procedures/*.sql` reference copies refreshed alongside. Follows the precedent set by `Sqls/Migration/24_fix_compl_master_missing_status_stale_references.sql`, which already redefined these exact same paging/count/missing-alert procedures for a related Status-correctness reason.
+
+**Alternatives considered**: Filtering `IsDelete` in the C#/Dapper layer after the stored procedure call instead of in SQL — rejected: the paging procedure also computes `TotalCount`/pagination server-side; filtering after the fact would desync the returned page from the reported total, the same class of bug migration 24 already had to fix once for a different filter.
+
+## R15. Bulk delete must get the same fix
+
+**Decision**: `ComplMasterController.BulkDelete` calls `_complMasterService.DeleteMultiAsync(ids, ct)`, which — like single delete (R12) — is not overridden anywhere in the `ComplMaster` command chain, so it falls through to `BaseService.DeleteMultiAsync`. That generic method looks for a `DeleteManyAsync` method on the repository via reflection, and otherwise loops calling `_repository.DeleteAsync(id, ct)` per id — the same hard-delete path as single delete, so it is subject to the identical FK-RESTRICT failure for any master in the batch that has `compl_references` rows. `IComplMasterCommandService`/`ComplMasterCommandService` gains a `DeleteMultiAsync(IEnumerable<long> ids, string userEmail, CancellationToken ct)` that soft-deletes each id the same way as the new single-delete method (transactionally), and `ComplMasterService.DeleteMultiAsync` is overridden to delegate to it — satisfying spec FR-015.
+
+**Rationale**: Spec FR-015 explicitly requires bulk-delete to meet the same reliability bar; leaving it on the generic hard-delete path while only fixing single delete would leave the identical bug reachable from the list's multi-select delete action.
+
+**Alternatives considered**: Reusing the new single-delete method in a loop from the controller/service instead of a dedicated batch method — rejected in favor of one transaction covering the whole batch (matching how `BaseService.DeleteMultiAsync` already treats the batch as one transaction today), so a partial-batch failure can't leave some masters deleted and others not without a clear outcome.
+
+## R16. `MAS-01104` is representative, not special-cased
+
+**Decision**: The fix (R13/R14/R15) is applied to the general `DeleteAsync`/`DeleteMultiAsync` code path and the general read procedures — nothing keys off `MAS-01104`'s id or code specifically. This directly satisfies spec FR-013 ("the fix must address the underlying condition ... not just the specific `MAS-01104` record") and SC-007.
+
+**Rationale**: Migration 24 already set a precedent of a one-off, record-specific `UPDATE` for `MAS-01104` when the true root cause of *that* bug (Status miscalculation) was data corruption limited to one row. This bug is different: the failure is a structural gap in the generic delete path that reproduces for *any* master with linked reference data, of which `MAS-01104` is simply the first one an admin happened to hit — so a general code fix is correct here, not a data patch.
+
+**Alternatives considered**: None — a record-specific patch would not fix the reported defect (deletion would still fail for other affected masters), failing FR-013/SC-007 outright.

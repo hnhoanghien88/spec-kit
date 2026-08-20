@@ -17,8 +17,12 @@ ProductCode+ConfigId combinations from that stored data and, for each one, pulls
 Attribute data (`ProductVariantAttributes`, endpoint `product-variant-attributes`) into a second new
 table, `compl_sync_variant_attributes`. This clones the shape of the existing
 `011-eutr-synchronize-data` feature (`EutrSynchronizeDataController` / `EutrSynchronizeDataService`)
-— same "test-" GET action naming, same page-until-short-page loop, same clear-then-repopulate local
-store pattern, same self-describing summary-DTO response.
+— same "test-" GET action naming, same page-until-short-page loop, same self-describing summary-DTO
+response. **Updated 2026-08-20**: only `compl_sync_sales_line` still uses the clear-then-repopulate
+local store pattern; `compl_sync_variant_attributes` now uses a per-combination
+delete-by-(ProductCode,ConfigId)-then-insert pattern instead of a full-table clear, so combinations
+outside the current run's scope keep their previously synced rows (see spec.md's 2026-08-20
+`/speckit-specify` update note).
 
 ## Technical Context
 
@@ -51,9 +55,11 @@ once, in memory, rather than once per Sales Line row, for the same reason `SendP
 
 **Constraints**: Must reuse the existing `IDynamicService`/`DynamicsParameterManager` D365 client and
 `IComplDynamicsService.GetDynRefePagedAsync` reference-lookup mechanism rather than introducing a new
-HTTP client; must follow the clear-then-repopulate pattern already established by `compl_so_missing`
-(009) and `eutr_purchase_missing` (011) for both new tables (confirmed via `/speckit-specify`
-clarification, spec.md).
+HTTP client; `compl_sync_sales_line` must follow the clear-then-repopulate pattern already established
+by `compl_so_missing` (009) and `eutr_purchase_missing` (011) (confirmed via `/speckit-specify`
+clarification, spec.md). `compl_sync_variant_attributes` instead must scope its deletion to the exact
+Product Code + Config ID combination about to be re-inserted — no full-table clear (per the 2026-08-20
+`/speckit-specify` update, spec.md).
 
 **Scale/Scope**: One new controller (1 action), one new Application service (1 method, 2 internal
 phases), two new repositories, two new entities/tables, one new summary DTO, additive changes to the

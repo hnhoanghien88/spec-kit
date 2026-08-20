@@ -182,3 +182,62 @@ Separately, in `SendMailAndNotificationForSalesOrderMissing`'s `complianceList` 
 - Changing `ComplSoMissingRepository.GetAllAsync()`'s SQL to `SELECT DISTINCT ...` — rejected: plain SQL `DISTINCT` only collapses rows that are identical across *every* selected column, and this table's other columns (e.g. `SalesId`, `Description`, `AlertGroupsJson`) are expected to still vary per underlying sales order even when the four dedup-key columns match; a `GROUP BY` with per-column aggregate picks would be needed instead, which is more SQL complexity for the same one-line LINQ result, and would also require deciding a tie-break rule in SQL rather than in the already-reviewed C# service code.
 - Deduplicating inside `SendMailAndNotificationForSalesOrderMissing` (on `compliances`) instead of at the `SendSalesOrderAlertAsync` read-back call site — rejected: `SendMailAndNotificationForSalesOrderMissing` is also usable in principle as a general-purpose sender for any `IEnumerable<ComplSoMissingResponseDto>`; keeping the dedup at the one call site that reads from `compl_so_missing` (FR-008's "read back... deduplicated") keeps the method itself a pure "given rows, send an alert" helper, matching its existing shape.
 - Removing `SalesId` from `ComplSoMissingResponseDto`/the entity entirely — rejected: `compl_so_missing` still stores and is keyed on `SalesId` per FR-006/FR-007 (unchanged), and the per-recipient notification message still displays it; only the alert's displayed columns (email/Excel) drop it.
+
+## R12. Highlighting Expired rows yellow in the Excel attachment (2026-08-20)
+
+**Decision**: In `BuildSalesOrderMissingExcelAttachment` (`ComplNotificationService.cs:427-464`, research.md R9), after writing a data row's cell values, check that row's already-computed `Status` value (the same `Status` property already present on each `complianceList` item per R8, computed via `ComputeSalesOrderMissingStatus`) and, when it equals `"Expired"`, apply a yellow fill to the whole row's cell range — matching the email body's existing yellow highlight from `Helper.GenerateHtmlTableValidTo` (`Helper.cs:244`, `background-color: #fff59d`):
+```csharp
+int row = 2;
+foreach (var item in complianceList)
+{
+    int col = 1;
+    foreach (var key in customHeaders.Keys)
+    {
+        var raw = propsByKey[key]?.GetValue(item)?.ToString() ?? string.Empty;
+        sheet.Cell(row, col).Value = key == "ResponsibleEmails" ? raw.Replace("<br/>", "\n") : raw;
+        col++;
+    }
+
+    var status = propsByKey.TryGetValue("Status", out var statusProp) ? statusProp?.GetValue(item)?.ToString() : null;
+    if (status == "Expired")
+    {
+        sheet.Range(row, 1, row, customHeaders.Count).Style.Fill.BackgroundColor = XLColor.FromHtml("#fff59d");
+    }
+
+    row++;
+}
+```
+`XLColor.FromHtml("#fff59d")` reuses the exact same hex value already hardcoded in `Helper.cs:244` for the email row, so the two representations always show the identical shade of yellow, not merely a visually-similar one.
+
+**Rationale**: Reading `Status` off the already-materialized `complianceList` item (rather than re-deriving it from `Code`/`ValidTo` a second time) reuses the single computation already performed once per row for the email projection (research.md R8), so the Excel highlight can never disagree with the email highlight or with the displayed `Status` cell value in the same row — all three read from the same computed value. Applying `Style.Fill.BackgroundColor` to a `sheet.Range(row, 1, row, columnCount)` follows the exact ClosedXML row-highlight pattern already established elsewhere in this codebase (`ComplComplianceImportService.cs:951-954`, `errorRowRange.Style.Fill.BackgroundColor = XLColor.Red`), so no new highlighting technique is introduced — only a different color and a different trigger condition (`Status == "Expired"` instead of "import error").
+
+**Alternatives considered**:
+- Re-deriving expiry from `ValidTo < DateTime.Today` directly inside the Excel helper (mirroring `Helper.cs:244`'s own condition, rather than reading the already-computed `Status` cell) — rejected: `BuildSalesOrderMissingExcelAttachment` receives `List<dynamic>`/reflection-driven column access already keyed by `customHeaders`, so reading the existing `Status` value via the same `propsByKey` lookup already used for every other column is simpler and guarantees the highlight and the `Status` text cell can never drift apart (e.g. if `ComputeSalesOrderMissingStatus`'s rule ever changes in `ComplNotificationService.cs:399-407`, the Excel highlight picks up the change automatically since it reads the same computed value, not a re-implemented copy of the rule).
+- Extracting `#fff59d` into a shared named constant used by both `Helper.cs:244` and the new Excel helper — considered, but out of scope: `Helper.cs:244`'s color is not currently a named constant (it is inline in that file), and introducing one there is a larger refactor than this update's minimal-diff scope requires; the new Excel code instead duplicates the same literal hex value as a comment-documented match, which keeps the diff small while still guaranteeing the two colors are visually identical today.
+- Highlighting only the `Status` cell instead of the whole row — rejected: the email body's existing highlight (`Helper.cs:244`) colors the entire `<tr>`, not a single `<td>`; matching that whole-row treatment in Excel keeps the two representations visually consistent, per spec.md's explicit "same yellow background color used for Expired rows in the email body" requirement (FR-018).
+
+## R13. Re-adding a combined Sales order column (2026-08-20)
+
+**Decision**: In `SendSalesOrderAlertAsync` (`ComplNotificationService.cs:173-224`), change the read-back step's `.DistinctBy(...)` to `.GroupBy(r => new { r.MasterCode, r.Code, r.MappedRefTypeCode, r.MappedInputValue })`, and for each group build one `ComplSoMissingResponseDto` from the group's first item (unchanged field-by-field mapping, `SalesId = first.SalesId` as before) plus one new property, `CombinedSalesIds`, set to `string.Join(", ", group.Select(x => x.SalesId).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct())`:
+```csharp
+var alertCompliances = (await _complSoMissingRepository.GetAllAsync())?
+    .GroupBy(r => new { r.MasterCode, r.Code, r.MappedRefTypeCode, r.MappedInputValue })
+    .Select(g =>
+    {
+        var first = g.First();
+        return new ComplSoMissingResponseDto
+        {
+            /* ... unchanged field-by-field mapping from `first`, exactly as today ... */
+            SalesId = first.SalesId,
+            CombinedSalesIds = string.Join(", ", g.Select(x => x.SalesId).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct())
+        };
+    }).ToList() ?? [];
+```
+Add `public string? CombinedSalesIds { get; set; }` to `ComplSoMissingResponseDto` (`Dtos/Response/ComplSoMissingResponseDto.cs`) as a new plain settable property (not JSON-parsed like `AlertGroups`/`RespGroups`). In `SendMailAndNotificationForSalesOrderMissing`'s `complianceList` projection and `customHeaders` dictionary (research.md R8/R11), add `SalesOrder = c.CombinedSalesIds` and `{ "SalesOrder", "Sales order" }` as the **last** entries, so `Helper.GenerateHtmlTableValidTo` and `BuildSalesOrderMissingExcelAttachment` (both driven by `customHeaders.Keys` iteration order, per R8/R9) render it as the final column in both the email table and the Excel attachment.
+
+**Rationale**: `GroupBy` is a minimal, one-line change from the existing `DistinctBy` (same key selector, same LINQ family) — it keeps every member of a duplicate-key group available (`DistinctBy` discards all but the first), which FR-008/FR-019 now require to build the combined Sales order value. Keeping `SalesId` itself unchanged (still `first.SalesId`, a single value) preserves the per-recipient in-app notification message text later in the same method (`$"Sales order {compliance.SalesId} is missing this compliance..."`, `ComplNotificationService.cs:999/1003`) exactly as it behaves today — the user's request scoped this update to "bảng nội dung email và file excel" (the email table and the Excel file), not the notification text, matching the same scoping precedent already established by the 2026-08-18 update's Assumptions. Adding a new `CombinedSalesIds` property (rather than repurposing `SalesId` for the combined value) avoids any ambiguity about which meaning `SalesId` carries elsewhere in the DTO/entity family (`ComplSoMissing.SalesId` remains a single stored sales order code, per data-model.md, unaffected by this change). Placing the new column last in both `complianceList` and `customHeaders` satisfies FR-012's "Sales order MUST be the last column" by construction, since both renderers iterate `customHeaders.Keys`/`.Values` in dictionary insertion order (an established, already-relied-upon behavior — see R8/R9).
+
+**Alternatives considered**:
+- Keeping `.DistinctBy(...)` and issuing a second, separate query/grouping over the same `GetAllAsync()` result just to compute the combined Sales order list — rejected: doing both in one `GroupBy` pass avoids reading/iterating the repository result twice for what is fundamentally the same grouping operation.
+- Overwriting `ComplSoMissingResponseDto.SalesId` with the combined string instead of adding a new property — rejected: `SalesId` is a single sales order's code by definition on the base `ComplSoMissing` entity/DTO family (data-model.md), and the per-recipient notification message (`ComplNotificationService.cs:999/1003`) already reads it as a single value; overloading its meaning would silently change that message's text for any group with more than one contributing sales order, which is out of scope for this update per the user's request.
+- Computing `CombinedSalesIds` as a `List<string>` property instead of a pre-joined `string` — rejected: every other display-only computed value on this DTO/projection path (`Status`, `DaysRemaining`, `ResponsibleEmails`) is already a pre-formatted string ready for direct cell/HTML-table insertion (R8); keeping `CombinedSalesIds` consistent with that shape avoids a special case in the `complianceList` projection or the Excel/HTML renderers, both of which already expect string-typed cell values via reflection (R9).

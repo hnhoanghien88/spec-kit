@@ -109,11 +109,17 @@ design — see research.md R9.**
 | `AttributeValueName` | varchar(150), NOT NULL | from D365 `AttributeValueName`; empty string when unavailable |
 | `CreatedDate` | datetime, NOT NULL | set to `DateTime.UtcNow` at insert time |
 
-**Business rules**: The table is fully cleared (`DELETE FROM compl_sync_variant_attributes`, no
-`WHERE`) at the start of Phase 2 (FR-012), before any combination is looked up. One row is inserted per
-attribute record returned by a combination's lookup (a single Product+Config combination's D365 result
-can itself contain multiple attribute rows — one per `AttributeType`); a combination whose lookup
-returns no data contributes zero rows and is not treated as an error (FR-014).
+**Business rules (updated 2026-08-20 — see spec.md's "Variant Attribute Store Deletion Scope" update)**:
+The table is **no longer** fully cleared at the start of Phase 2. Instead, for each distinct
+Product+Config combination whose lookup (FR-011) returns data, immediately before inserting that
+combination's rows the table is scoped-deleted for that exact `(ProductCode, ConfigId)` pair only
+(`DELETE FROM compl_sync_variant_attributes WHERE ProductCode = @ProductCode AND ConfigId = @ConfigId`,
+FR-012), then the newly retrieved rows are inserted. One row is inserted per attribute record returned
+by a combination's lookup (a single Product+Config combination's D365 result can itself contain
+multiple attribute rows — one per `AttributeType`); a combination whose lookup returns no data
+contributes zero rows, triggers no delete, and is not treated as an error (FR-014) — any rows already
+stored for that combination from an earlier run are left as-is. Combinations outside the current run's
+distinct Product+Config set are never touched.
 
 ## New response DTO (response shape only)
 
@@ -151,11 +157,13 @@ ComplSynchronizeDataController.TestComplSynchronizeData (GET test-compl-synchron
             -> IComplSyncSalesLineRepository.InsertManyAsync(...)                    // FR-003..FR-006
        -- Phase 2 (only after Phase 1 fully completes, FR-009) --
        -> IComplSyncSalesLineRepository.GetDistinctProductConfigCombinationsAsync(ct) // FR-009/FR-010, R7
-       -> IComplSyncVariantAttributesRepository.DeleteAllAsync(ct)                   // FR-012
        -> for each distinct (ProductCode, ConfigId):
             -> raw D365 query against ProductVariantAttributes (product-variant-attributes),
                filter "ProductCode eq '{code}' and ConfigId eq '{configId}'"          // FR-011, R5
-            -> IComplSyncVariantAttributesRepository.InsertManyAsync(...) if any rows returned // FR-013/FR-014
+            -> if any rows returned:
+                 -> IComplSyncVariantAttributesRepository.DeleteByProductConfigAsync(productCode, configId, ct) // FR-012 (2026-08-20 update — scoped, not whole-table)
+                 -> IComplSyncVariantAttributesRepository.InsertManyAsync(...)         // FR-013
+               else: no delete, no insert — combination left untouched                 // FR-014
        -> return ComplSynchronizeDataSummaryDto
 ```
 

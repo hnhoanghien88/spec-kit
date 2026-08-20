@@ -56,6 +56,44 @@ Expected new/updated cases (see [contracts/sales-line-fallback.md](contracts/sal
    `RSVNSalesLineOpenInvoiceCogs`. Confirm the response is empty, matching today's existing
    "no data" behavior (Acceptance Scenario 6 / FR-009).
 
+## Additional validation (2026-08-20, User Story 5 — `BomStatus`)
+
+Prerequisite: migration `Sqls/Migration/25_add_bomstatus_to_compl_summary_so.sql` has been applied
+to the target database (adds `compl_summary_so.BomStatus`).
+
+1. Trigger the compliance-summary job (`GetAndSaveSummarySo`, e.g. via its Hangfire trigger or
+   directly) for a sales order with no BOM yet but with order lines (same sales order used above).
+2. Query `compl_summary_so` for that sales order. Confirm `BomStatus = 'No BOM'`.
+3. Repeat for a sales order that already has BOM data. Confirm its saved row's `BomStatus` is `NULL`
+   (or unchanged from before this feature, if it never had the fallback triggered).
+4. If BOM data is subsequently created for the sales order from step 1–2 and the job is re-run,
+   confirm its saved row's `BomStatus` reverts to `NULL` (FR-015, Acceptance Scenario 3).
+
+## Additional validation (2026-08-20, second writer — `GetViewCompliancesAsync`'s background save, FR-016)
+
+5. Call `POST api/view-compliances/get-all` (as in the main manual validation above, step 1) for a
+   sales order with no BOM yet but with order lines. This enqueues a background job
+   (`ComplSummarySoService.SaveSummarySo`) independently of the summary job above.
+6. After the background job completes (check Hangfire dashboard/logs, or allow a few seconds), query
+   `compl_summary_so` for that sales order. Confirm `BomStatus = 'No BOM'` — set by this path, not by
+   the summary job in step 1–2 above.
+7. Repeat with a sales order that already has BOM data via the same `get-all` call. Confirm its saved
+   row's `BomStatus` is `NULL`.
+
+## Additional validation (2026-08-20, User Story 6 — BOM column on the list screen)
+
+Prerequisite: at least one sales order in `compl_summary_so` with `BomStatus = 'No BOM'` and at least
+one with `BomStatus IS NULL` (e.g. from the validations above), both also present in Dynamics
+`RSVNSalesOrderOpenInvoiceCogs` (so they appear on the list screen's underlying data source).
+
+1. Open `compliance-view?ref-type=11&page=1&page-size=50` in the browser (or call
+   `GET api/view-compliances/get-dynamics?refType=11&page=1&pageSize=50` directly).
+2. Confirm a "BOM" column is visible immediately after "Invoice date" and before "Status".
+3. Find the row for the sales order with `BomStatus = 'No BOM'`. Confirm its BOM column shows
+   "Missing".
+4. Find the row for the sales order with `BomStatus IS NULL` (or one with no `compl_summary_so`
+   record at all). Confirm its BOM column is blank.
+
 ## Expected outcome
 
 - Sales orders without a BOM yet, but with order lines, now surface compliance results instead of
@@ -64,3 +102,9 @@ Expected new/updated cases (see [contracts/sales-line-fallback.md](contracts/sal
 - `InterSalesId`, `ProductType`, and `ProductRange` on fallback-derived rows match the mapping in
   [data-model.md](data-model.md) and [research.md R5](research.md#r5--field-mapping-t2-sales-order-line--t1-sales-line-open-material-per-fr-004fr-007)
   (SC-003, SC-004).
+- Saved compliance summaries (`compl_summary_so`) correctly flag which sales orders were computed
+  via the fallback: `BomStatus = 'No BOM'` if and only if the job's BOM-based lookup returned zero
+  records for that sales order (SC-008) — true for both writers, the summary job and the "get-all"
+  lookup's own background save (SC-009).
+- The All Compliances list screen for Sale Order shows a "BOM" column that surfaces this saved value
+  at a glance — "Missing" for `BomStatus = 'No BOM'`, blank otherwise (SC-010).
