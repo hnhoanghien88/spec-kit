@@ -46,6 +46,11 @@
 
 6. **Verify the empty-run case** (FR-010): temporarily point at an environment/sales-order set where every open sales order is fully compliant (or verify by inspection that step 3's table is empty after a run), and confirm no email/notification was produced for that run.
 
+7. **Verify the check-date sentinel fallback** (2026-08-21, FR-020/FR-021, SC-010): pick an open sales order with no delivery date recorded (or the `1900-01-01` placeholder) that has at least one compliance master whose validity window has already started as of today — e.g. SO006831 with masters MAS-01021/MAS-01081 from the original bug report.
+   - Open that sales order on the compliance screen (`compliance-view-so?ref-type=11&codes=<SO code>&check-date=<today>`) and confirm the relevant master(s) do **not** show as missing.
+   - Trigger step 2's alert endpoint and re-run step 3's query filtered to that sales order (`WHERE SalesId = '<SO code>'`); confirm no row is stored for that master combination — matching what the screen shows.
+   - As a regression check, pick a different open sales order that has a genuine (non-placeholder) delivery date and at least one currently missing master; confirm it is still correctly stored as missing after this update, unchanged from before.
+
 ## Expected outcomes (ties back to spec.md Success Criteria)
 
 - SC-001: every sales order returned in step 1 appears exactly once, evaluated, in the run's logs (`Log.Information`/`Log.Error` per sales order, per research.md R6) — none silently skipped.

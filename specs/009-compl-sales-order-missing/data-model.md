@@ -102,3 +102,12 @@ Per spec.md FR-008/FR-012/FR-019, the alert-building read-back in `SendSalesOrde
 
 - `compl_so_missing` itself is unaffected — it still stores one row per (sales order, MISSING item) exactly as before (FR-006/FR-007 unchanged); grouping never merges or deletes rows in the table.
 - `ComplSoMissingResponseDto.SalesId` (inherited from `ComplSoMissing`) is unchanged in meaning — it remains the single sales order code of the group's first underlying row, and continues to be the value used, unchanged, by the per-recipient in-app notification message text built later in `SendMailAndNotificationForSalesOrderMissing`. `CombinedSalesIds` is a separate, additive property used only by the `complianceList`/`customHeaders`-driven email table and Excel export (research.md R8–R13).
+
+## Check-date sentinel fallback (2026-08-21, not a new column — fixes what `ValidFrom`/`ValidTo` are compared against)
+
+Per spec.md FR-020/FR-021, `Open Sales Order.DeliveryDate` (the `ComplDynReferenceResponseDto`/`RSVNSalesOrderOpenInvoiceCogs` field passed as `deliveryDate` into `IViewCompliancesService.GetViewCompliancesAsync`) may legitimately be the source ERP's `1900-01-01` "no delivery date recorded" sentinel for an open sales order that has not yet been scheduled. This is not a new field or a new state on `ComplSoMissing`/`ComplSoMissingResponseDto` — it changes only what date value `p_check_date` receives inside `sp_load_compl_by_conditions` when evaluating a given master's `ValidFrom`/`ValidTo` window (research.md R14):
+
+- When `DeliveryDate` is absent or equals `1900-01-01`, the check date used is today's date (`DateTime.UtcNow`), matching the fallback the compliance screen's frontend already applies for the same field.
+- When `DeliveryDate` is a genuine, non-sentinel date, it is used unchanged, exactly as before this update.
+
+Every row this feature still writes to `compl_so_missing` (`Status == "MISSING"` per FR-005) is unaffected in shape — only which rows a given sales order's lookup returns as MISSING in the first place can change, since that determination now uses the same check date the compliance screen would use for the same sales order on the same day.
