@@ -111,3 +111,7 @@ Per spec.md FR-020/FR-021, `Open Sales Order.DeliveryDate` (the `ComplDynReferen
 - When `DeliveryDate` is a genuine, non-sentinel date, it is used unchanged, exactly as before this update.
 
 Every row this feature still writes to `compl_so_missing` (`Status == "MISSING"` per FR-005) is unaffected in shape — only which rows a given sales order's lookup returns as MISSING in the first place can change, since that determination now uses the same check date the compliance screen would use for the same sales order on the same day.
+
+## Excel header row styling (2026-08-21, display-only, not persisted)
+
+Per spec.md FR-022, the Excel attachment's header row (row 1, the column titles written from `customHeaders.Values`) now carries a `#C18C75` fill, bold font, and thin cell borders (research.md R15), matching the shaded, bold, bordered header row `Helper.GenerateHtmlTableValidTo` already renders for the email body's `<th>` row. This is purely a rendering property of the generated workbook — it does not add, remove, or reorder any column, does not change any cell value, and is not written to `compl_so_missing` or any DTO.

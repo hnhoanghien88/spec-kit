@@ -43,6 +43,7 @@
    - **(2026-08-18; revised 2026-08-20)** If step 3's `compl_so_missing` snapshot has two or more rows sharing the same `MasterCode`, `Code`, `MappedRefTypeCode`, `MappedInputValue` combination (e.g. two different sales orders missing the same compliance item), confirm they appear as exactly one row in both the email body and the Excel attachment (FR-008, SC-007).
    - **(2026-08-20)** For each row shown as Status = "Expired" in the email body (highlighted yellow there already), open the Excel attachment and confirm that same row is also highlighted with the same yellow background; confirm rows with Status "Missing" or "Valid" have no yellow highlight in either the email or the attachment (FR-018, SC-008).
    - **(2026-08-20, Sales order column)** Confirm the last column in both the email body and the Excel attachment is "Sales order". For a row built from the deduplicated combination in the prior check (two or more underlying sales orders), confirm that column shows every distinct contributing sales order code combined into one cell, e.g. "SO1, SO2" (FR-019, SC-009). For a row that came from only one underlying sales order, confirm the column shows just that one code with no separator.
+   - **(2026-08-21, header styling)** Open the Excel attachment and compare its header row (row 1) to the email body's header row: confirm both have the same shaded background color, bold header text, and cell borders — not a plain/unstyled header row in the attachment (FR-022, SC-011).
 
 6. **Verify the empty-run case** (FR-010): temporarily point at an environment/sales-order set where every open sales order is fully compliant (or verify by inspection that step 3's table is empty after a run), and confirm no email/notification was produced for that run.
 
@@ -62,3 +63,4 @@
 - SC-007: step 5's dedup check shows each distinct Master code/Code/Type/Product combination appearing exactly once, with no Sales order column, in both the email and the Excel attachment.
 - SC-008: step 5's Excel-highlight check shows the same set of rows highlighted yellow in the attachment as are shown Expired in the email — none missing, none extra.
 - SC-009: step 5's Sales order column check shows every distinct contributing sales order code present exactly once per row, with no missing or duplicated codes.
+- SC-011: step 5's header-styling check shows the Excel attachment's header row visually matching the email body's header row (background color, bold text, borders).
