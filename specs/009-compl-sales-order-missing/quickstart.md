@@ -52,6 +52,18 @@
    - Trigger step 2's alert endpoint and re-run step 3's query filtered to that sales order (`WHERE SalesId = '<SO code>'`); confirm no row is stored for that master combination — matching what the screen shows.
    - As a regression check, pick a different open sales order that has a genuine (non-placeholder) delivery date and at least one currently missing master; confirm it is still correctly stored as missing after this update, unchanged from before.
 
+8. **Verify the diagnostic without-Sales-order trigger** (2026-08-31, FR-023/FR-024, SC-012; see [contracts/test-sales-order-alert-without-salesid.md](./contracts/test-sales-order-alert-without-salesid.md)):
+   ```http
+   GET /api/notification/test-sales-order-alert-without-salesId
+   ```
+   Expected: `200 OK` with `succeeded: true`, and `compl_so_missing` refreshed exactly as step 2/3 already verify (same shared refresh logic).
+   - Check the mailbox for the resulting email: confirm the table shows exactly 13 columns, in the same order as step 5's list, but with **no "Sales order" column at all** (not present, not shown blank).
+   - Open the accompanying `.xlsx` attachment (same `compl-sales-order-missing-<yyyyMMddHHmmss>` naming pattern as step 5) and confirm it also has exactly 13 columns, matching the email body record-for-record, with no Sales order column.
+   - Confirm Status/Days remaining values, Expired-row yellow highlighting, and the Excel header's shaded/bold/bordered styling all still behave exactly as verified in step 5 for `test-sales-order-alert` — unaffected by the missing column.
+   - Confirm the email's title (subject line and the heading shown above the table in the body) reads "Missing compliance Information" — not "Sales orders with missing compliance" (FR-025, SC-013).
+   - Re-run step 2 (`test-sales-order-alert`) afterward and confirm its email/Excel still show the full 14-column layout with the Sales order column present, and its title still reads "Sales orders with missing compliance" — this new endpoint does not alter the existing trigger's output.
+   - If `compl_so_missing` is empty after the refresh, confirm no email/notification/attachment is produced for this trigger either (same FR-010 rule).
+
 ## Expected outcomes (ties back to spec.md Success Criteria)
 
 - SC-001: every sales order returned in step 1 appears exactly once, evaluated, in the run's logs (`Log.Information`/`Log.Error` per sales order, per research.md R6) — none silently skipped.
@@ -64,3 +76,5 @@
 - SC-008: step 5's Excel-highlight check shows the same set of rows highlighted yellow in the attachment as are shown Expired in the email — none missing, none extra.
 - SC-009: step 5's Sales order column check shows every distinct contributing sales order code present exactly once per row, with no missing or duplicated codes.
 - SC-011: step 5's header-styling check shows the Excel attachment's header row visually matching the email body's header row (background color, bold text, borders).
+- SC-012: step 8 shows the diagnostic trigger's email and Excel attachment both containing exactly 13 columns (no Sales order column, blank or otherwise), with every other column's value matching what `test-sales-order-alert` would show for the same data.
+- SC-013: step 8's title check shows the diagnostic trigger's alert titled "Missing compliance Information", while `test-sales-order-alert` continues to show "Sales orders with missing compliance".

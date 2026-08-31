@@ -289,3 +289,57 @@ This mirrors the email header's existing appearance, produced by `Helper.Generat
 - Styling each header cell individually in the existing `for` loop (`sheet.Cell(1, col + 1).Style...` per iteration) instead of one `sheet.Range(...)` call after the loop — rejected: a single range-level style call is fewer statements, matches how R12 already treats a header/data row as one styled unit rather than per-cell, and ClosedXML applies range styles to every cell in the range identically either way.
 - Extracting `"#C18C75"` into a shared constant referenced by both `Helper.cs:934`'s call site and the new Excel styling call — considered, but out of scope for the same reason R12 already gave for `#fff59d`: the color is not currently a named constant anywhere in the codebase, and introducing one is a larger refactor than this minimal-diff update requires.
 - Leaving the header unstyled and only adding a bold font (skipping the background fill and border) — rejected: the user's report (spec.md's 2026-08-21 Input update, with side-by-side screenshots) explicitly shows the Excel header lacking the shaded background the email header has, not just the bold weight, so the fix must cover fill, font weight, and border to actually resolve the reported mismatch.
+
+## R16. A second diagnostic trigger whose alert omits the Sales order column entirely (2026-08-31)
+
+**Decision**: Add a new manually-triggerable entry point, `GET /api/notification/test-sales-order-alert-without-salesId` → `IComplNotificationService.SendSalesOrderAlertWithoutSalesIdAsync()`, that performs the exact same refresh (`RefreshSalesOrderMissingComplianceAsync`, unchanged) and the exact same read-back/group-by-dedup step (research.md R11/R13) as `SendSalesOrderAlertAsync`, then calls the already-existing `SendMailAndNotificationForSalesOrderMissing` with one new trailing optional parameter, `includeSalesOrderColumn: false`:
+```csharp
+public async Task SendSalesOrderAlertWithoutSalesIdAsync()
+{
+    try
+    {
+        var alertCompliances = await BuildCurrentSalesOrderAlertComplianceListAsync();
+        if (!alertCompliances.Any())
+        {
+            NotifyJobSuccess("sent_alert_sales_order", "SendSalesOrderAlertWithoutSalesIdAsync", hadContent: false, "No sales order missing compliances found for alert");
+            return;
+        }
+
+        await SendMailAndNotificationForSalesOrderMissing(alertCompliances, null, SendAlertType.AutoSendAlert, includeSalesOrderColumn: false);
+        NotifyJobSuccess("sent_alert_sales_order", "SendSalesOrderAlertWithoutSalesIdAsync", hadContent: true, $"{alertCompliances.Count} sales-order missing compliance(s) alerted");
+    }
+    catch (Exception ex)
+    {
+        Log.Error(ex, "Error in SendSalesOrderAlertWithoutSalesIdAsync");
+        throw;
+    }
+}
+```
+The read-back/dedup block already inside `SendSalesOrderAlertAsync` (`ComplNotificationService.cs:208-246`, the `RefreshSalesOrderMissingComplianceAsync()` call plus the `GetAllAsync()` → `GroupBy` → `Select` → `alertCompliances` chain) is extracted, unchanged line-for-line, into a new private helper `BuildCurrentSalesOrderAlertComplianceListAsync()` returning `Task<List<ComplSoMissingResponseDto>>`, called by both `SendSalesOrderAlertAsync` and the new method — so the two triggers can never disagree on which records are current or how they are grouped.
+
+Inside `SendMailAndNotificationForSalesOrderMissing` (`ComplNotificationService.cs:901-903`), add one new optional parameter, `bool includeSalesOrderColumn = true` (default preserves today's behavior for the existing trigger and any other caller), and make the single `customHeaders` entry that adds the Sales order column conditional on it:
+```csharp
+var customHeaders = new Dictionary<string, string>
+{
+    { "MasterCode", "Master code" },
+    // ... the other 11 entries, unchanged ...
+    { "MappedRefTypeName", "Product name" },
+};
+if (includeSalesOrderColumn)
+{
+    customHeaders.Add("SalesOrder", "Sales order");
+}
+```
+**Correction (2026-08-31, verified against a live send)**: The initial version of this decision assumed the `complianceList` anonymous projection could keep `SalesOrder = c.CombinedSalesIds` unconditionally and that omitting the `customHeaders` entry alone would be enough to drop the column from both representations. A live test proved this wrong for the email body: `BuildSalesOrderMissingExcelAttachment` (research.md R9/R11) does only iterate `customHeaders.Keys`, so the Excel attachment correctly dropped the column — but `Helper.GenerateHtmlTableValidTo` (research.md R8, `Helper.cs:184-198`) does not purely filter by `customHeaders`: after building the ordered column list from `customHeaders.Keys`, it appends **every remaining property of the item that wasn't already added** (`foreach (var p in allProps) { if (!properties.Contains(p)) properties.Add(p); }`), rendering it with its raw C# property name as the header (`headerTitle = prop.Name` when `customHeaders` has no matching key). Since `SalesOrder` still existed as a property on the anonymous type, it reappeared in the email table as a column literally titled "SalesOrder" — visible in a live send even though the Excel attachment and the email title were both already correct.
+
+**Corrected decision**: `Helper.GenerateHtmlTableValidTo` is a shared helper also called by three unrelated flows in the same file (`ComplNotificationService.cs:605,610,862` — `SendMailAndNotification`/`SendMailAndNotificationForMaster`), so its leftover-property-append behavior is left untouched (Constitution Principle III — do not modify shared logic other flows may depend on). Instead, `complianceList` itself is built via two separate anonymous-type projections gated on `includeSalesOrderColumn`: the `true` branch (unchanged, includes `SalesOrder = c.CombinedSalesIds` as before) and a new `false` branch with the identical 13 fields but no `SalesOrder` property at all, so there is no leftover property for `GenerateHtmlTableValidTo` to append. The `customHeaders` entry is still conditionally added (research.md R13's mechanism), which still governs `BuildSalesOrderMissingExcelAttachment`'s column set and would also govern `GenerateHtmlTableValidTo`'s labeling of the column if the property existed — but the property's own absence is now what makes the column disappear from the email body, not the dictionary entry alone.
+
+**Rationale**: `BuildSalesOrderMissingExcelAttachment` (research.md R9/R11) already derives its entire column set — which properties to read, in what order, under what header text — purely from `customHeaders.Keys`/`.Values` via reflection; it never assumes a fixed/hardcoded column list, so omitting one dictionary entry is sufficient, on its own, to drop that column from the Excel attachment (FR-024) — no change needed there. For the email body, since `Helper.GenerateHtmlTableValidTo` cannot be changed without risking the three other alert flows that share it, the fix has to happen one layer up, at the shape of the object being rendered — which is exactly what the two-branch projection does, with no change to `ComplSoMissingResponseDto`, `ComplSoMissing`, the repository, `RefreshSalesOrderMissingComplianceAsync`, or the Excel file-naming pattern (FR-016, unaffected). Extracting the read-back/dedup block into a shared helper avoids duplicating ~35 lines of `GroupBy`/projection logic that must stay identical between the two triggers per spec.md User Story 3 Acceptance Scenario 1 (FR-023's "identical refresh-and-notify process") — that part of the original decision still holds; only the `complianceList` projection needed correcting.
+
+**Alternatives considered**:
+- Duplicating `SendSalesOrderAlertAsync`'s full body into a second method instead of extracting a shared helper — rejected: the two methods would then need to be kept in sync by hand every time the read-back/dedup logic changes (as it already has three times: R11, R13, and any future update), risking silent divergence; extracting a helper makes that impossible by construction.
+- Building a second, separate overload of the entire `SendMailAndNotificationForSalesOrderMissing` method (full recipient resolution, Excel generation, notification persistence duplicated) just to get a `complianceList` without `SalesOrder` — rejected: only the ~13-line anonymous projection needs two shapes (see Corrected decision above); duplicating the whole method for that would far exceed the actual scope of the difference.
+- Reusing the existing `sendAlerType` parameter (e.g. introducing a new `SendAlertType` enum value meaning "without Sales order") to signal the column omission — rejected: `sendAlerType` is a cross-cutting concept already used elsewhere (`ManualSendAlertAsync`, `SendMailAndNotificationForMaster`, etc.) to distinguish manual vs. automatic recipient-resolution rules; overloading it to also control a column-layout detail specific to this one alert type would conflate two unrelated concerns and affect call sites that have nothing to do with this feature.
+- Making `includeSalesOrderColumn` apply to the Excel file name as well (e.g. a different suffix) — rejected: spec.md's Assumptions state the Excel naming pattern (FR-016) is unaffected by this update; only the column set changes.
+
+**Addendum (2026-08-31, without-Sales-order alert title, FR-025)**: Since the diagnostic trigger's alert no longer carries any sales order information, its title must not reuse the existing "Sales orders with missing compliance" wording. Inside `SendMailAndNotificationForSalesOrderMissing`, immediately before the two existing call sites that hardcode that title string (`Helper.GenerateHtmlTableValidTo(...)`'s second argument and `BuildEmailTitle(...)`'s argument), a local `string alertTitle = includeSalesOrderColumn ? "Sales orders with missing compliance" : "Missing compliance Information";` is computed and passed to both call sites instead of the literal string. This reuses the same `includeSalesOrderColumn` parameter R16 already introduced — no new parameter, no new method — and keeps the title and the column-omission decision from ever disagreeing (a caller cannot get one without the other). The Excel worksheet's own internal tab name (`workbook.Worksheets.Add("Sales orders missing compliance")` inside `BuildSalesOrderMissingExcelAttachment`) is out of scope for this addendum — the user's request named only "tiêu đề email" (the email title), not the workbook's internal sheet name, which is not user-visible the way the email subject/heading is.
