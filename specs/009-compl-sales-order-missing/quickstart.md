@@ -64,6 +64,11 @@
    - Re-run step 2 (`test-sales-order-alert`) afterward and confirm its email/Excel still show the full 14-column layout with the Sales order column present, and its title still reads "Sales orders with missing compliance" — this new endpoint does not alter the existing trigger's output.
    - If `compl_so_missing` is empty after the refresh, confirm no email/notification/attachment is produced for this trigger either (same FR-010 rule).
 
+9. **Verify per-trigger recipient-group exclusion** (2026-09-03, FR-026/FR-027/FR-028, SC-014/SC-015): pick a current `compl_so_missing` snapshot whose records resolve at least one email in both the Responsible emails group and the Alert emails group (distinct groups, per research.md R4), so both groups are non-empty for this check.
+   - Re-run step 2 (`test-sales-order-alert`) and inspect the sent email's To/Cc headers: confirm every Responsible emails group address is present (To), and confirm **no** Alert emails group address appears in either the To or Cc line (FR-026, SC-014). Confirm the email's content (columns, computed values, highlighting, title) is unchanged from step 5.
+   - Re-run step 8 (`test-sales-order-alert-without-salesId`) and inspect the sent email's To/Cc headers: confirm every Alert emails group address is present, and confirm **no** Responsible emails group address appears in either the To or Cc line (FR-027, SC-015). Confirm the Responsible emails *column* inside the email table/Excel attachment still shows each row's responsible emails as data, unchanged — only the addressing is affected (FR-028).
+   - If in-app notifications are reachable (`compl_notifications` table or the notification bell), confirm the same exclusion holds there too for each trigger's own run: no notification row is created for an address belonging to the trigger's excluded group.
+
 ## Expected outcomes (ties back to spec.md Success Criteria)
 
 - SC-001: every sales order returned in step 1 appears exactly once, evaluated, in the run's logs (`Log.Information`/`Log.Error` per sales order, per research.md R6) — none silently skipped.
@@ -78,3 +83,5 @@
 - SC-011: step 5's header-styling check shows the Excel attachment's header row visually matching the email body's header row (background color, bold text, borders).
 - SC-012: step 8 shows the diagnostic trigger's email and Excel attachment both containing exactly 13 columns (no Sales order column, blank or otherwise), with every other column's value matching what `test-sales-order-alert` would show for the same data.
 - SC-013: step 8's title check shows the diagnostic trigger's alert titled "Missing compliance Information", while `test-sales-order-alert` continues to show "Sales orders with missing compliance".
+- SC-014: step 9's `test-sales-order-alert` check shows zero Alert emails group addresses in the sent email's To/Cc or the in-app notification recipients, while Responsible emails group addresses continue to receive it.
+- SC-015: step 9's `test-sales-order-alert-without-salesId` check shows zero Responsible emails group addresses in the sent email's To/Cc or the in-app notification recipients, while Alert emails group addresses continue to receive it.

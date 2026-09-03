@@ -343,3 +343,58 @@ if (includeSalesOrderColumn)
 - Making `includeSalesOrderColumn` apply to the Excel file name as well (e.g. a different suffix) — rejected: spec.md's Assumptions state the Excel naming pattern (FR-016) is unaffected by this update; only the column set changes.
 
 **Addendum (2026-08-31, without-Sales-order alert title, FR-025)**: Since the diagnostic trigger's alert no longer carries any sales order information, its title must not reuse the existing "Sales orders with missing compliance" wording. Inside `SendMailAndNotificationForSalesOrderMissing`, immediately before the two existing call sites that hardcode that title string (`Helper.GenerateHtmlTableValidTo(...)`'s second argument and `BuildEmailTitle(...)`'s argument), a local `string alertTitle = includeSalesOrderColumn ? "Sales orders with missing compliance" : "Missing compliance Information";` is computed and passed to both call sites instead of the literal string. This reuses the same `includeSalesOrderColumn` parameter R16 already introduced — no new parameter, no new method — and keeps the title and the column-omission decision from ever disagreeing (a caller cannot get one without the other). The Excel worksheet's own internal tab name (`workbook.Worksheets.Add("Sales orders missing compliance")` inside `BuildSalesOrderMissingExcelAttachment`) is out of scope for this addendum — the user's request named only "tiêu đề email" (the email title), not the workbook's internal sheet name, which is not user-visible the way the email subject/heading is.
+
+## R17. Excluding one recipient group per trigger from `SendMailAndNotificationForSalesOrderMissing` (2026-09-03)
+
+**Decision**: Add two trailing optional boolean parameters, `includeResponsibleEmails = true, includeAlertEmails = true`, to `SendMailAndNotificationForSalesOrderMissing` (`ComplNotificationService.cs:941-944`), and gate the two existing recipient-list assignments on them:
+```csharp
+public async Task SendMailAndNotificationForSalesOrderMissing(
+    IEnumerable<ComplSoMissingResponseDto> compliances, string? userEmail, SendAlertType sendAlerType,
+    List<string>? additionEmails = null, string? additionMessage = null, string uri = "/compliance-management",
+    bool includeSalesOrderColumn = true, bool includeResponsibleEmails = true, bool includeAlertEmails = true)
+{
+    // ... unchanged: complianceList/customHeaders projection, htmlTable, emailTitle/emailContent ...
+
+    var responsibleEmails = compliances
+        .SelectMany(c => c.RespGroups ?? [])
+        .SelectMany(g => g.Emails ?? [])
+        .Distinct()
+        .ToList();
+
+    var alertEmails = compliances
+        .SelectMany(c => c.AlertGroups ?? [])
+        .SelectMany(g => g.Emails ?? [])
+        .Distinct()
+        .ToList();
+
+    List<string> allEmailList = [];
+    if (additionEmails is { Count: > 0 })
+    {
+        allEmailList.AddRange(additionEmails);
+    }
+    if (includeResponsibleEmails)
+    {
+        allEmailList.AddRange(responsibleEmails);
+    }
+
+    var ccEmailList = includeAlertEmails
+        ? alertEmails
+            .Select(e => e.Trim())
+            .Where(e => !string.IsNullOrWhiteSpace(e))
+            .Distinct()
+            .ToList()
+        : new List<string>();
+
+    // ... unchanged: allRecipientEmails/ccRecipientEmails join, allEmailList.AddRange(ccEmailList),
+    // the !allEmailList.Any() empty-recipient guard, attachments, mailAlert.SendMailV2, and the
+    // finalRecipientEmails/notifications loop, all still built from the same allEmailList ...
+}
+```
+`responsibleEmails` and `alertEmails` themselves are still always computed (both groups are still resolved per current record, unchanged from research.md R4), so a future caller that needs both values for some other purpose is unaffected; only whether each list feeds into `allEmailList`/`ccEmailList` — and therefore into the mail's To/Cc lines and the in-app `finalRecipientEmails` notification loop, both already sourced from `allEmailList` (lines 1113, 1116) — is now conditional. At the two existing call sites: `SendSalesOrderAlertAsync` (`ComplNotificationService.cs:267`) changes from `SendMailAndNotificationForSalesOrderMissing(alertCompliances, null, SendAlertType.AutoSendAlert)` to `SendMailAndNotificationForSalesOrderMissing(alertCompliances, null, SendAlertType.AutoSendAlert, includeAlertEmails: false)` — excludes the Alert emails group (FR-026), Responsible emails group unaffected. `SendSalesOrderAlertWithoutSalesIdAsync` (`ComplNotificationService.cs:295`) changes from `..., includeSalesOrderColumn: false)` to `..., includeSalesOrderColumn: false, includeResponsibleEmails: false)` — excludes the Responsible emails group (FR-027), Alert emails group unaffected.
+
+**Rationale**: Both groups already funnel through the same two local lists (`allEmailList` for To, `ccEmailList` for Cc) that also feed the in-app notification loop (`finalRecipientEmails = allEmailList.Distinct().ToList()`, line 1113, itself built from `allEmailList.AddRange(ccEmailList)` at line 1055) — so gating those two lines is sufficient, on its own, to exclude a group from *both* the email and the in-app notification for that trigger's send (FR-026/FR-027/FR-028), with no separate change needed for the notification path. This follows the exact same "one shared method, caller-controlled boolean parameter" shape `includeSalesOrderColumn` already established for the previous (2026-08-31) per-trigger divergence (research.md R16), keeping the two triggers on one implementation rather than forking a second copy of the method. The existing `if (!allEmailList.Any())` guard (line 1060) already handles the case where excluding a group leaves no recipients at all (spec.md Edge Cases) — no new guard needed.
+
+**Alternatives considered**:
+- A single enum parameter (e.g. `SalesOrderAlertRecipientMode { Both, ExcludeResponsible, ExcludeAlert }`) instead of two independent booleans — rejected: the two exclusions are per-trigger constants, never combined or toggled together at runtime by any caller; two independently-defaulted booleans are simpler to read at each call site (`includeAlertEmails: false` is self-explanatory) and match the existing `includeSalesOrderColumn` precedent's style.
+- Filtering `allRecipientEmails`/`ccRecipientEmails` after the fact (e.g. removing the excluded group's addresses from the already-joined strings) instead of gating the list-building step — rejected: `responsibleEmails` and `alertEmails` could overlap with `additionEmails` or with each other for some records (both are `Distinct()`-ed independently, not against each other), so post-hoc string filtering risks accidentally dropping an address that also legitimately belongs via `additionEmails`; gating at the source list avoids that ambiguity entirely.
+- Passing separate `bool sendToResponsible`/`bool sendToAlert` all the way from the two controller actions down through the two `SendSalesOrderAlertAsync`/`SendSalesOrderAlertWithoutSalesIdAsync` methods as their own parameters — rejected: per spec.md, which group is excluded is a fixed, per-trigger constant (FR-026/FR-027), not something a caller of the manual test endpoints chooses at request time; hardcoding the boolean at each of the two existing internal call sites (as `includeSalesOrderColumn: false` already does for the column omission) is simpler and matches the no-request-parameters shape both `[HttpGet]` actions already have.
