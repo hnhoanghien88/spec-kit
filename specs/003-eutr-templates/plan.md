@@ -1299,6 +1299,116 @@ section):
 
 See research.md Section 39 for the full rationale and alternatives considered.
 
+### Update 2026-09-07 (Update 23) — D365 Sync Gated Behind Approve (push) / Request Change (delete)
+
+**Backend-only.** No new endpoint, no new request/response shape, no new DB column/table, no
+frontend change at all — `ApproveAsync`/`RequestChangeAsync` keep their exact existing signatures
+(`(long id, string userEmail, CancellationToken ct)`) and the controller's existing try/catch
+(`KeyNotFoundException` → 404, `ValidationException` → 400) already covers the new failure mode, so
+`EutrTemplatesController.cs` needs zero changes. This adds two small, reusable methods to
+`EutrSynchronizeDataService` (011-eutr-synchronize-data) — extracted verbatim from its own
+`SyncTemplatesToDynamicsAsync` — and calls them from `EutrTemplatesService.ApproveAsync`/
+`RequestChangeAsync` *before* their existing transaction, so a D365 failure blocks the local
+Status/version change exactly as decided (`AskUserQuestion`, 2026-09-07 — "chặn lại").
+
+#### Extract 2 reusable D365 calls in `EutrSynchronizeDataService` (011-eutr-synchronize-data)
+
+- **`ComplianceSys.Application/Interfaces/Services/IEutrSynchronizeDataService.cs`** MODIFY — add:
+  - `Task DeleteTemplateFromDynamicsAsync(string code, CancellationToken ct = default);`
+  - `Task PushTemplateToDynamicsAsync(long templateId, string code, string name, CancellationToken ct = default);`
+- **`ComplianceSys.Application/Services/EutrSynchronizeDataService.cs`** MODIFY:
+  - Add a private `GetDynamicsApiUrl()` helper (`_configuration["Dynamics:ApiUrl"]?.TrimEnd('/') ??
+    throw new InvalidOperationException(...)`) — the exact expression already inlined twice in
+    `SyncTemplatesToDynamicsAsync`; extracting it avoids a third copy.
+  - Add `DeleteTemplateFromDynamicsAsync(code, ct)`: builds `deleteUrl` (same
+    `.../RSVNEutrTemplates/Microsoft.Dynamics.DataEntities.deleteTemplate?cross-company=true` string)
+    and calls `await _dynamicService.PostAsync(deleteUrl, new DeleteTemplateRequest { code = code },
+    ct);` — the exact existing `DeleteTemplateRequest` nested class, unchanged, just called from a
+    new public entry point instead of only from inside the Phase 1 `foreach`.
+  - Add `PushTemplateToDynamicsAsync(templateId, code, name, ct)`: builds `createUrl` (same
+    `.../RSVNEutrTemplates?cross-company=true` string), calls
+    `_eutrTemplateReferencesRepository.GetActiveByTemplateIdsAsync(new[] { templateId },
+    DateTime.UtcNow.Date, ct)` (existing method, already accepts an `IEnumerable<long>` — a
+    single-element array needs no new repository overload), then reuses the exact existing Phase-2
+    body: 0 active mappings → one `PostAsync(createUrl, new RSVNEutrTemplates { Code, Name,
+    VendorCode = "" }, ct)`; ≥1 active mapping → one `PostAsync` per mapping with that mapping's
+    `VendorCode`.
+  - **Refactor Phase 1 only (DRY, not behavior change)**: `SyncTemplatesToDynamicsAsync`'s own
+    Phase 1 `foreach` is rewritten to call `await DeleteTemplateFromDynamicsAsync(template.Code,
+    ct)` instead of duplicating the `PostAsync`/URL-building inline — one implementation, two call
+    sites (this method's own batch loop, and `EutrTemplatesService.RequestChangeAsync`). This is a
+    safe 1:1 swap: Phase 1 already made exactly one delete call per template, so extracting it
+    changes no query/call count.
+  - **Phase 2 is deliberately NOT refactored to call `PushTemplateToDynamicsAsync`** — corrected
+    during `/speckit-implement` after this exact refactor broke 2 existing unit tests
+    (`SyncTemplatesToDynamicsAsync_ShouldProcessEveryEligibleTemplateAndMapping_WhenNoFailure`,
+    `SyncTemplatesToDynamicsAsync_ShouldStopRun_WhenPushCallThrows`). Root cause: Phase 2's existing
+    design fetches active mappings for **all** eligible templates in a single batched
+    `GetActiveByTemplateIdsAsync(eligibleTemplates.Select(t => t.Id), ...)` call, then groups
+    locally in C# (`ToLookup`) — a single query regardless of template count. `
+    PushTemplateToDynamicsAsync` (built for the single-template Approve caller) calls
+    `GetActiveByTemplateIdsAsync(new[] { templateId }, ...)` itself; calling it once per template
+    from inside Phase 2's own loop would silently turn that one batched query into an N+1 query
+    pattern for the batch job specifically — a real performance regression at this feature's stated
+    scale ("hundreds of templates"), not just a test-mock artifact (the test failures were the
+    symptom that surfaced it). Phase 2's `foreach` therefore keeps its original inline
+    `_dynamicService.PostAsync(createUrl, ...)` calls, sharing only the `createUrl`-building line via
+    the new `GetDynamicsApiUrl()` helper — `PushTemplateToDynamicsAsync` is reused exclusively by
+    `EutrTemplatesService.ApproveAsync` (Phase 91), where a single-template query is correct by
+    construction (no batching to lose). See research.md §40's Correction note for the full account.
+  - Exceptions from both new methods propagate to the caller unchanged (no summary-DTO wrapping,
+    unlike this service's other public methods) — deliberate, since the two new callers
+    (`EutrTemplatesService.ApproveAsync`/`RequestChangeAsync`) need a real exception to trigger their
+    own block-and-report-error behavior, not a `{ Success = false }` summary object.
+
+#### `EutrTemplatesService` calls the new methods before committing Approve/Request change
+
+- **`ComplianceSys.Application/Services/EutrTemplatesService.cs`** MODIFY:
+  - Constructor gains `IEutrSynchronizeDataService synchronizeDataService` (stored as
+    `_synchronizeDataService`) — a same-layer, Application-to-Application-interface dependency (no
+    new layer crossed; no circular reference, since `EutrSynchronizeDataService` depends on
+    `IEutrTemplatesRepository`/`IEutrTemplateReferencesRepository`, never on
+    `IEutrTemplatesService`).
+  - `ApproveAsync(id, userEmail, ct)` — after loading `existing` and validating `Status == Draft`,
+    but **before** `_unitOfWork.BeginTransactionAsync(...)`: `try { await
+    _synchronizeDataService.PushTemplateToDynamicsAsync(existing.Id, existing.Code, existing.Name,
+    ct); } catch (Exception ex) { Log.Error(ex, "...ApproveAsync - Loi dong bo D365 truoc khi
+    Approve..."); throw new ValidationException(new[] { new ValidationFailure(nameof(existing.Status),
+    $"Failed to sync template with D365: {ex.Message}") }); }` — on success, the existing
+    `BeginTransactionAsync`/`SetStatusAsync`/`CommitAsync` body runs unchanged (FR-083); on failure,
+    the method returns via the thrown `ValidationException` before any DB write, so `Status` stays
+    `Draft` exactly as before the call (FR-084) — the controller's existing `catch (ValidationException
+    ex) → 400` maps this without any controller change.
+  - `RequestChangeAsync(id, userEmail, ct)` — after loading `existing` and validating `Status ==
+    Approved`, but **before** `_unitOfWork.BeginTransactionAsync(...)`: the same try/catch shape,
+    calling `await _synchronizeDataService.DeleteTemplateFromDynamicsAsync(existing.Code, ct);` — on
+    success, the existing new-row/`CopyDetailTreeAsync`/`CopyReferencesAsync`/`SetIsHideAsync`/
+    `CommitAsync` body runs unchanged (FR-081); on failure, no new row is ever inserted and the old
+    row's `IsHide`/`Status`/`VersionId` are all untouched (FR-082).
+  - No change to `AddAsync`, `UpdateAsync`, `CloneAsync`, `SetDefaultAsync` — this update only touches
+    the two Approve/Request-change entry points (FR-085: Approve's push needs no delete-first step,
+    since Draft is only reachable via Create/Clone — never pushed — or via Request change, which just
+    deleted).
+- **`ComplianceSys.Application/DependencyInjection.cs`** — **NO CHANGE**: `IEutrSynchronizeDataService`
+  is already registered (011-eutr-synchronize-data); constructor injection resolves the new
+  `EutrTemplatesService` dependency automatically, same as every other existing interface dependency
+  in this constructor.
+- **`ComplianceSys.Api/Controllers/EutrTemplatesController.cs`** — **NO CHANGE** (verified): the
+  `Approve`/`RequestChange` actions' existing `catch (ValidationException ex) → 400 BadRequest` already
+  covers the new D365-failure path with no code change (FR-086 — reusing 011's existing contract, not
+  introducing a new one).
+- **`compliance-sys-api/tests/ComplianceSysApi.UnitTests/Services/`** — flagged for
+  `/speckit-tasks`: add unit tests for the two new `EutrSynchronizeDataService` methods (mocking
+  `IDynamicService`/`IEutrTemplateReferencesRepository`, modeled on the existing
+  `EutrSynchronizeDataServiceTests.cs` coverage of `SyncTemplatesToDynamicsAsync`'s Phase 1/Phase 2),
+  and new tests for `EutrTemplatesService.ApproveAsync`/`RequestChangeAsync` covering the
+  D365-success-then-commit and D365-failure-then-no-commit paths (no existing test file for this
+  service today — first tests added here, per Principle II's shape once one exists).
+
+See research.md Section 40 for the full rationale (why extract from `EutrSynchronizeDataService`
+instead of duplicating the D365 calls in `EutrTemplatesService`, and why the D365 call must run
+before `BeginTransactionAsync` rather than inside it).
+
 ## Technical Context
 
 **Language/Version**: .NET 8 (backend), JavaScript/React 18 + Vite 7 (frontend)
@@ -1567,6 +1677,25 @@ with how Update 7/13/19 each flagged a cross-policy dependency rather than guess
 data): whether `eutr-templates` menu users already hold the reused `EutrReferenceTypes.ReadOne`
 policy this new endpoint requires.
 
+**Post-design re-check (2026-09-07 update 23)**: All principles still PASS. The two new D365 calls
+stay in the Application layer end to end — `EutrSynchronizeDataService` (already the Application-layer
+owner of every D365 write in this codebase, 011-eutr-synchronize-data) exposes them, and
+`EutrTemplatesService` (also Application layer) calls them via the interface — no controller touches
+D365 directly, no business logic leaks into `EutrTemplatesController.cs` (Principle I). This is
+reference-pattern reuse in the strongest sense (Principle II): the delete/push HTTP calls, URL
+construction, and request DTOs (`DeleteTemplateRequest`, `RSVNEutrTemplates`) are the exact same code
+`SyncTemplatesToDynamicsAsync` already ships, extracted into two methods so both the existing batch
+job and the two new per-record callers share one implementation — not a second, parallel D365
+integration. No new backend endpoint, DTO, DB column, or authorization policy is introduced
+(Principle III — reuse existing backend to the point of reusing another feature's already-implemented
+service, not just its patterns). No frontend change and no new route/menu entry (Principle V
+unaffected — `ApproveEutrTemplatesUseCase`/`RequestChangeEutrTemplatesUseCase` and their toolbar
+buttons are unchanged; only the server-side behavior behind the same two endpoints changed). The one
+new cross-feature dependency (`EutrTemplatesService` now depends on `IEutrSynchronizeDataService`) is
+one-directional and does not close a cycle (verified: `EutrSynchronizeDataService` depends only on
+`IEutrTemplatesRepository`/`IEutrTemplateReferencesRepository`, never on `IEutrTemplatesService`). No
+new dependency package.
+
 ## Project Structure
 
 ### Documentation (this feature)
@@ -1623,18 +1752,20 @@ compliance-sys-api/src/
 │   │   │   ├── IEutrTemplatesExportService.cs    # NEW
 │   │   │   ├── IEutrTemplateReferencesService.cs # NEW (Update 13)
 │   │   │   ├── IEutrTemplateReferencesImportService.cs # NEW (Update 14) — ImportFromExcelAsync(templateId, stream, userEmail, ct)
-│   │   │   └── IEutrTemplateReferencesExportService.cs # NEW (Update 14) — ExportToExcelAsync(templateId, ct)
+│   │   │   ├── IEutrTemplateReferencesExportService.cs # NEW (Update 14) — ExportToExcelAsync(templateId, ct)
+│   │   │   └── IEutrSynchronizeDataService.cs    # **(Update 23) MODIFY — cross-feature file, owned by 011-eutr-synchronize-data** — add DeleteTemplateFromDynamicsAsync/PushTemplateToDynamicsAsync signatures
 │   │   └── Repositories/
 │   │       ├── IEutrTemplatesRepository.cs       # MODIFY — add ReplaceDetailsAsync (in-place update) + ResolveOrCreateStepsByNameAsync (free-solo step auto-create); (Update 7) add ResolveAlertGroupIdByNameAsync (Import lookup, exact match, no auto-create); (Update 13) MODIFY — ClearIsDefaultForVendorAsync(vendorCode, excludeId) → ClearGlobalDefaultAsync(excludeId); (Update 16) MODIFY — add CopyDetailTreeAsync(sourceTemplateId, newTemplateId, ct) (extracted from Clone's re-index logic, now shared with RequestChangeAsync) + SetStatusAsync(id, status, userEmail, ct); (Update 18) MODIFY — add SetIsDefaultAsync(id, isDefault, userEmail, ct) (single-column IsDefault update, same shape as SetStatusAsync)
 │   │       └── IEutrTemplateReferencesRepository.cs # NEW (Update 13) — GetByTemplateIdAsync, HasOverlapAsync (same-template-same-vendor); (Update 15) MODIFY — add CopyReferencesAsync(sourceTemplateId, newTemplateId, ct)
 │   ├── Services/
-│   │   ├── EutrTemplatesService.cs               # MODIFY — conditional versioning (24h threshold) in UpdateAsync; resolve/auto-create free-solo step names before saving details (AddAsync + both UpdateAsync branches); (Update 13) MODIFY — remove D365 vendor-name resolution block from GetPagedAsync + IComplDynamicsService ctor dependency; AddAsync/UpdateAsync (3 call sites) switch ClearIsDefaultForVendorAsync → ClearGlobalDefaultAsync; (Update 15) MODIFY — constructor gains IEutrTemplateReferencesRepository dependency; UpdateAsync's ≥24h branch calls CopyReferencesAsync(id, newId, ct) after BulkInsertDetailsAsync (FR-049); add CloneAsync(sourceId, dto, userEmail, ct) reusing BuildDetailEntitiesAsync/BulkInsertDetailsAsync + CopyReferencesAsync (FR-050 to FR-054); (Update 16) MODIFY — AddAsync/CloneAsync set Status="Draft" unconditionally; UpdateAsync DELETES the 24h-branch entirely — rejects with ValidationException when existing.Status=="Approved", else always in-place update (old <24h path, now unconditional); add ApproveAsync(id, userEmail, ct) (Draft→Approved via SetStatusAsync, no new row) and RequestChangeAsync(id, userEmail, ct) (Approved→Draft: new row VersionId+1 via CopyDetailTreeAsync + CopyReferencesAsync, old row IsHide=1 via SetStatusAsync-adjacent update); (Update 18) MODIFY — add SetDefaultAsync(id, isDefault, userEmail, ct) — no Status check (deliberately bypasses the Approved-rejects-edits gate); isDefault=true calls the existing ClearGlobalDefaultAsync(id, ct) first, then SetIsDefaultAsync; isDefault=false calls SetIsDefaultAsync directly
+│   │   ├── EutrTemplatesService.cs               # MODIFY — conditional versioning (24h threshold) in UpdateAsync; resolve/auto-create free-solo step names before saving details (AddAsync + both UpdateAsync branches); (Update 13) MODIFY — remove D365 vendor-name resolution block from GetPagedAsync + IComplDynamicsService ctor dependency; AddAsync/UpdateAsync (3 call sites) switch ClearIsDefaultForVendorAsync → ClearGlobalDefaultAsync; (Update 15) MODIFY — constructor gains IEutrTemplateReferencesRepository dependency; UpdateAsync's ≥24h branch calls CopyReferencesAsync(id, newId, ct) after BulkInsertDetailsAsync (FR-049); add CloneAsync(sourceId, dto, userEmail, ct) reusing BuildDetailEntitiesAsync/BulkInsertDetailsAsync + CopyReferencesAsync (FR-050 to FR-054); (Update 16) MODIFY — AddAsync/CloneAsync set Status="Draft" unconditionally; UpdateAsync DELETES the 24h-branch entirely — rejects with ValidationException when existing.Status=="Approved", else always in-place update (old <24h path, now unconditional); add ApproveAsync(id, userEmail, ct) (Draft→Approved via SetStatusAsync, no new row) and RequestChangeAsync(id, userEmail, ct) (Approved→Draft: new row VersionId+1 via CopyDetailTreeAsync + CopyReferencesAsync, old row IsHide=1 via SetStatusAsync-adjacent update); (Update 18) MODIFY — add SetDefaultAsync(id, isDefault, userEmail, ct) — no Status check (deliberately bypasses the Approved-rejects-edits gate); isDefault=true calls the existing ClearGlobalDefaultAsync(id, ct) first, then SetIsDefaultAsync; isDefault=false calls SetIsDefaultAsync directly; **(Update 23) MODIFY** — constructor gains `IEutrSynchronizeDataService synchronizeDataService`; `ApproveAsync` calls `_synchronizeDataService.PushTemplateToDynamicsAsync(existing.Id, existing.Code, existing.Name, ct)` BEFORE `BeginTransactionAsync`, wrapping any exception into a `ValidationException` (blocks the Status=Approved commit on D365 failure — FR-083/FR-084); `RequestChangeAsync` calls `_synchronizeDataService.DeleteTemplateFromDynamicsAsync(existing.Code, ct)` BEFORE `BeginTransactionAsync`, same wrap-and-block behavior (blocks the new-version-row commit on D365 failure — FR-081/FR-082)
 │   │   ├── EutrTemplatesImportService.cs         # NEW — Excel import; MODIFY (Update 7) — resolve AlertFor Excel cell (group Name) to Id via ResolveAlertGroupIdByNameAsync, new "Alert for group not found" error case; (Update 13) MODIFY — drop VendorCode cell (was col C), IsDefault shifts D→C
 │   │   ├── EutrTemplatesExportService.cs         # NEW — Excel export; MODIFY (Update 7) — write AlertForName instead of raw AlertFor Id; (Update 13) MODIFY — drop "Vendor code" header/cell (was col 3), AlertForName/IsDefault/VersionId shift 4/5/6→3/4/5
 │   │   ├── ComplDynamicsService.cs              # EXISTS — VendorsV3 refType already mapped
 │   │   ├── EutrTemplateReferencesService.cs     # NEW (Update 13) — AddAsync/UpdateAsync call HasOverlapAsync first (FR-036); DeleteAsync is a real hard delete (no soft-delete override)
 │   │   ├── EutrTemplateReferencesImportService.cs # NEW (Update 14) — modeled on EutrTemplatesImportService; validates TemplateCode/VendorCode/FromDate/ToDate per row, reuses EutrTemplateReferencesService.AddAsync per valid row (no duplicated validation/overlap logic)
-│   │   └── EutrTemplateReferencesExportService.cs # NEW (Update 14) — modeled on EutrTemplatesExportService; 4 columns (TemplateCode, VendorCode, FromDate, ToDate), no D365 call needed
+│   │   ├── EutrTemplateReferencesExportService.cs # NEW (Update 14) — modeled on EutrTemplatesExportService; 4 columns (TemplateCode, VendorCode, FromDate, ToDate), no D365 call needed
+│   │   └── EutrSynchronizeDataService.cs         # **(Update 23) MODIFY — cross-feature file, owned by 011-eutr-synchronize-data** — add DeleteTemplateFromDynamicsAsync(code, ct)/PushTemplateToDynamicsAsync(templateId, code, name, ct), extracted from SyncTemplatesToDynamicsAsync's own Phase 1/Phase 2 bodies (reused by both the existing batch method and the two new EutrTemplatesService callers below)
 │   ├── Mappings/
 │   │   └── EutrMappingProfile.cs                # MODIFY — add template mappings (AutoMapper copies AlertFor by name/type automatically — no profile change needed for the long? switch itself); (Update 13) MODIFY — add CreateMap<EutrTemplateReferencesRequestDto, EutrTemplateReferences>() (ignore Id/audit fields); verify VendorCode had no explicit .ForMember (removal needs no profile change)
 │   └── DependencyInjection.cs                   # MODIFY — register services + validator; (Update 13) MODIFY — register IEutrTemplateReferencesService + IValidator<EutrTemplateReferencesRequestDto>; (Update 14) MODIFY — register IEutrTemplateReferencesImportService/IEutrTemplateReferencesExportService
@@ -1768,6 +1899,13 @@ different, out-of-scope feature (`eutr-sales-orders`, spec 005) still consumes t
 no new endpoint/method/DTO. Frontend reuses `country-groups/index.jsx`'s exact `DataGrid` filter
 wiring (the pattern the user explicitly pointed at) and `useEutrTemplatesData`'s already-existing
 (previously unused by this page) `filterModel` state — no new hook, no new dependency.
+**(Update 23)**: zero new backend surface — no new endpoint, DTO, table, or policy. The only new
+code is two methods on an already-existing cross-feature service (`EutrSynchronizeDataService`,
+011-eutr-synchronize-data) extracted from its own already-shipped `SyncTemplatesToDynamicsAsync`,
+plus one new constructor dependency and ~10 lines in `EutrTemplatesService.ApproveAsync`/
+`RequestChangeAsync` each. No frontend file changes at all — this update is entirely a server-side
+precondition added to two endpoints whose request/response contracts, frontend use cases, and UI
+are all unchanged.
 
 ### Key Differences from Reference Features
 
@@ -1805,6 +1943,7 @@ wiring (the pattern the user explicitly pointed at) and `useEutrTemplatesData`'s
 | Approve / Request change (Update 16) | N/A | New `POST {id}/approve` (Draft→Approved, same row) and `POST {id}/request-change` (Approved→Draft, new version row) — toolbar buttons on TemplateListPage, gated by the existing single-row checkbox selection, each behind a `ConfirmDialog` Yes/No |
 | Edit read-only gate (Update 16) | N/A | TemplateBuilderPage becomes fully read-only (header + step tree) when the loaded template's Status is Approved; editing resumes only after Request change |
 | Set as default while Approved (Update 18) | N/A | One exception to the Update 16 read-only gate — the Set-as-default checkbox stays enabled when Approved and persists immediately via a dedicated `POST {id}/set-default` endpoint (behind a Yes/No `ConfirmDialog`), independent of the (still hidden/disabled) Save button |
+| D365 sync on Approve/Request change (Update 23) | N/A | `POST {id}/approve` now pushes that template's Code/Name + active vendor mappings to D365 (reusing 011-eutr-synchronize-data's `SyncTemplatesToDynamicsAsync` Phase 2 logic) BEFORE committing `Status=Approved`; `POST {id}/request-change` now deletes the template's D365 record by Code (reusing the same feature's Phase 1 logic) BEFORE creating the new Draft version row. Either D365 call failing blocks the local change entirely (no partial commit) — same request/response contract, no frontend change |
 
 ## Complexity Tracking
 
@@ -1818,4 +1957,11 @@ function (`reorderSiblings`) and already-installed dependencies — no new backe
 dependency, no layer crossed. **(Update 18)** note: one new endpoint + one new single-column
 repository method, deliberately scoped to carve out exactly one field (`IsDefault`) from the Update
 16 read-only gate rather than loosening that gate generally — the smallest change that satisfies the
-request without reopening Approved templates to broader edits.
+request without reopening Approved templates to broader edits. **(Update 23)** note: zero new
+endpoints/DTOs/tables — the only added complexity is one new cross-feature interface dependency
+(`EutrTemplatesService` → `IEutrSynchronizeDataService`) and two extracted methods on the
+already-existing `EutrSynchronizeDataService`, reusing that service's already-shipped D365 request
+code rather than duplicating it a second time inside `EutrTemplatesService`. The block-on-failure
+ordering (D365 call before `BeginTransactionAsync`) adds no new error-handling paradigm — it reuses
+the exact `ValidationException` → 400 mapping every other Approve/Request-change/Clone rejection in
+this controller already relies on.

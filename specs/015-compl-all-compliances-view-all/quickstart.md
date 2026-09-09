@@ -94,6 +94,22 @@ one with `BomStatus IS NULL` (e.g. from the validations above), both also presen
 4. Find the row for the sales order with `BomStatus IS NULL` (or one with no `compl_summary_so`
    record at all). Confirm its BOM column is blank.
 
+## Additional validation (2026-09-07, User Story 7 — capped Status percentage when BOM is missing)
+
+Prerequisite: at least one sales order in `compl_summary_so` with `BomStatus = 'No BOM'` and a known
+`TotalApplied`/`TotalCompliances` (e.g. from the User Story 6 validation above, or `SO007370` if
+present in your environment).
+
+1. Open `compliance-view?ref-type=11&page=1&page-size=50` in the browser.
+2. Find a row whose "BOM" column shows "Missing". Note its tooltip values (hover the Status bar):
+   Compliance (total), Applied.
+3. Confirm the displayed Status percentage equals `round(Applied / Compliance * 30)`, and is never
+   above 30% — e.g. for `SO007370` with 12 total compliances: 12 applied → 30%, 4 applied → 10%.
+4. Find a row whose "BOM" column is blank (real BOM data). Confirm its Status percentage is still
+   `round(Applied / Compliance * 100)` as before this update, and can reach 100%.
+5. If a row's total compliance count is 0 and its BOM column shows "Missing", confirm its Status
+   percentage shows 0%.
+
 ## Expected outcome
 
 - Sales orders without a BOM yet, but with order lines, now surface compliance results instead of
@@ -108,3 +124,6 @@ one with `BomStatus IS NULL` (e.g. from the validations above), both also presen
   lookup's own background save (SC-009).
 - The All Compliances list screen for Sale Order shows a "BOM" column that surfaces this saved value
   at a glance — "Missing" for `BomStatus = 'No BOM'`, blank otherwise (SC-010).
+- On the same screen, a row whose BOM column shows "Missing" never displays a Status percentage above
+  30%, scaled by that row's own applied/total ratio; rows with real BOM data are unaffected and can
+  still reach 100% (SC-011–SC-013).

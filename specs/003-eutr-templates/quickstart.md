@@ -332,6 +332,36 @@ transaction) was verified by code review and a clean `dotnet build` (0 `error CS
 3. With exactly 1 Draft row selected: **Expected** only Approve is enabled
 4. With exactly 1 Approved row selected: **Expected** only Request change is enabled
 
+**3'e. D365 sync gated behind Approve/Request change (FR-081 to FR-086, Update 23)**
+
+Prerequisite: a reachable D365 sandbox configured under `Dynamics:ApiUrl` (same environment
+011-eutr-synchronize-data's own `test-synchronize-templates` quickstart scenario uses).
+
+1. Create a new Draft template, apply 2 vendor mappings to it via ApplyCustomerPage (Scenario 17)
+   with today's date inside both mappings' effective range
+2. Tick its row on `TemplateListPage`, click **Approve**, then **Yes**
+3. **Expected**: list refreshes, row's Status Chip shows "Approved" (same as Scenario 3'b)
+4. **Verify in D365**: exactly 2 `RSVNEutrTemplates` records now exist for this template's `Code` —
+   one per vendor mapping, each with `Code`/`Name` matching this template and `VendorCode` matching
+   that mapping — pushed BEFORE the `Status=1` write completed (confirms FR-083)
+5. Tick the now-Approved row, click **Request change**, then **Yes**
+6. **Expected**: list refreshes, showing the new Draft version row (same as Scenario 3'c)
+7. **Verify in D365**: the `RSVNEutrTemplates` record(s) for this template's `Code` are gone —
+   `deleteTemplate` was called for this Code before the new Draft row was created (confirms FR-081)
+8. Repeat step 1 with a template that has NO vendor mapping applied; Approve it; **Verify in D365**:
+   exactly 1 `RSVNEutrTemplates` record exists for its Code with `VendorCode = ""` (confirms FR-083's
+   zero-active-mapping fallback, mirroring 011's own Acceptance Scenario 6)
+9. **D365-failure check** (requires temporarily pointing `Dynamics:ApiUrl` at an unreachable host, or
+   stopping the D365 sandbox): tick a Draft template, click **Approve**, then **Yes**; **Expected**:
+   an error snackbar appears (not the success snackbar), and **verify in DB** the row's `Status` is
+   still `0` (Draft) — no partial commit occurred (confirms FR-084). Repeat on an Approved template
+   with **Request change**; **Expected**: same error snackbar, and **verify in DB** no new row was
+   created and the original row's `Status`/`VersionId`/`IsHide` are unchanged (confirms FR-082).
+   Restore `Dynamics:ApiUrl` before continuing with other scenarios.
+10. **API check**: confirm `EutrTemplatesController.cs` required no code changes for this scenario —
+    the 400 responses in step 9 come from the same `catch (ValidationException ex) → BadRequest(...)`
+    block Scenario 3'b/3'c's existing rejection responses already use (no new response shape).
+
 **Outcome (2026-07-21, `/speckit-implement`)**: **Verified via a direct SQL smoke test against the
 live dev DB** (`compliance_sys_db_260601`), not through the full HTTP+UI stack — no interactive
 browser session available, and the dev API's `[Authorize]` requires a JWT (validated against
@@ -1262,3 +1292,15 @@ EUTR step (e.g. "Certificate check") to a DIFFERENT reference type (e.g. "Upload
 - [ ] Sort arrows and column-visibility toggles did NOT appear on any column as a side effect of
       Update 20 — only filter was added, matching the request's literal scope (Update 20, FR-021b
       still deferred for sort/column-visibility)
+- [ ] Confirming **Approve** pushes exactly one D365 `RSVNEutrTemplates` record per currently-active
+      vendor mapping of that template (or exactly one with `VendorCode = ""` if none are active)
+      BEFORE `Status` becomes `1` (Approved) (Update 23, FR-083)
+- [ ] Confirming **Request change** calls D365 `deleteTemplate` for that template's Code BEFORE the
+      new Draft version row is created (Update 23, FR-081)
+- [ ] If the D365 push call fails during Approve, `Status` stays `0` (Draft), no other data changes,
+      and the user sees an error instead of the success snackbar (Update 23, FR-084)
+- [ ] If the D365 delete call fails during Request change, no new row is created and the Approved
+      row's `Status`/`VersionId`/`IsHide` are unchanged (Update 23, FR-082)
+- [ ] `EutrTemplatesController.cs`'s `Approve`/`RequestChange` actions required NO code changes for
+      Update 23 — the D365-failure 400 reuses the existing `ValidationException` → `BadRequest`
+      mapping (Update 23, FR-086)

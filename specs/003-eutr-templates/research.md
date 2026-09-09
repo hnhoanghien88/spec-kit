@@ -1888,3 +1888,133 @@ query inside `EutrTemplatesController`.
 5. No change to `REQUIREMENT_TYPES`/`TAKE_FROM_OPTIONS`/`utils/helpers.js`, `useStepTree.js`,
    `StepFormRow.jsx`, `StepTree.jsx`, or Edit step (`FR-008b`) — this update only changes which
    value is *pre-selected* in the bulk-select dialog, not the option lists or any other flow.
+
+## 40. D365 Sync Gated Behind Approve (push) / Request Change (delete) — Reuse, Not Reinvent, 011's `SyncTemplatesToDynamicsAsync` (spec Update 23)
+
+**Decision**: Extract 2 public methods on `EutrSynchronizeDataService`
+(011-eutr-synchronize-data) — `DeleteTemplateFromDynamicsAsync(code, ct)` and
+`PushTemplateToDynamicsAsync(templateId, code, name, ct)` — from that service's own, already-shipped
+`SyncTemplatesToDynamicsAsync` (which does the exact same 2 things, batched across every eligible
+template). `EutrTemplatesService` gains a constructor dependency on `IEutrSynchronizeDataService` and
+calls `PushTemplateToDynamicsAsync` at the start of `ApproveAsync` and
+`DeleteTemplateFromDynamicsAsync` at the start of `RequestChangeAsync` — both calls happen **before**
+`_unitOfWork.BeginTransactionAsync(...)`, and both are wrapped in a try/catch that converts any
+exception into a `ValidationException` (the same exception type Approve/Request change already throw
+for their existing precondition checks), so a D365 failure surfaces through the controller's
+existing `catch (ValidationException ex) → 400 BadRequest` with zero controller changes.
+
+**Rationale**:
+- **Why extract from `EutrSynchronizeDataService` instead of writing new D365 calls directly inside
+  `EutrTemplatesService`**: the delete/push request shapes (`DeleteTemplateRequest`,
+  `RSVNEutrTemplates`), the D365 URLs (`.../RSVNEutrTemplates/Microsoft.Dynamics.DataEntities.
+  deleteTemplate?cross-company=true`, `.../RSVNEutrTemplates?cross-company=true`), and the
+  `Dynamics:ApiUrl` configuration key are already implemented, tested-by-usage code in
+  `EutrSynchronizeDataService` (011-eutr-synchronize-data, 2026-08-17). Re-typing them a second time
+  inside `EutrTemplatesService` would create two independent places that must be kept in sync if the
+  D365 contract ever changes (e.g. a URL path change, an added required field) — a direct violation
+  of Principle II (reference-pattern reuse) and Principle III (reuse existing backend), and the
+  strongest form of both: reusing another feature's own already-implemented integration code, not
+  just its *pattern*. Extracting 2 narrow methods (rather than exposing
+  `SyncTemplatesToDynamicsAsync` itself, which loops over ALL eligible templates and returns a batch
+  summary DTO that doesn't fit a single-record caller) keeps the reused surface exactly as small as
+  the two new call sites need.
+- **Why refactor `SyncTemplatesToDynamicsAsync`'s own Phase 1/Phase 2 loops to call the same 2
+  methods, instead of just adding them alongside the untouched original loops**: leaving the original
+  inline `PostAsync` calls in place while ALSO adding 2 near-identical extracted methods would mean 2
+  independent copies of the exact same request-building logic existed side by side in the same file —
+  worse than not extracting at all, since a future change could easily update one copy and miss the
+  other. Routing the existing batch loops through the same 2 methods (one implementation, 3 call
+  sites total: the batch's own Phase 1 loop, the batch's own Phase 2 loop, and the 2 new
+  per-record callers) mirrors this feature's own established precedent from Update 15/16
+  (`CopyDetailTreeAsync` shared between `CloneAsync` and `RequestChangeAsync` — Section 32). The
+  batch method's summary-counter increments (`DeleteCallsSent`/`PushCallsSent`) and its
+  per-phase try/catch/early-return failure reporting stay exactly where they are, wrapping the calls
+  to the extracted methods — only the innermost `_dynamicService.PostAsync(...)` line moves.
+- **Why the D365 call must run BEFORE `BeginTransactionAsync` rather than inside the transaction, or
+  after a local commit with a compensating rollback**: the confirmed failure-handling decision
+  (`AskUserQuestion`, 2026-09-07 — "chặn lại" / block) requires that a D365 failure leave ZERO local
+  trace — no Status change, no new Draft row, no `IsHide` flip. A SQL transaction cannot roll back an
+  HTTP call already sent to D365, so the only way to guarantee "either both happen or neither happens"
+  without building compensating-transaction/saga machinery (a large, unjustified complexity increase
+  for what is a single-record UI action, not a distributed batch job) is to make the *irreversible*
+  step (the D365 HTTP call) happen first, and only start the *reversible* step (a single-transaction
+  SQL write, which either fully commits or the `catch { await _unitOfWork.RollbackAsync(); throw; }`
+  block already wired around every other method in this service fully discards) once the irreversible
+  step has already succeeded. This is the same reasoning 011-eutr-synchronize-data's own Assumptions
+  document for why an ERP-side failure "stops the run and reports failure" rather than attempting a
+  partial rollback of already-sent D365 requests — this update applies that same accepted asymmetry
+  (SQL rolls back, D365 calls don't) at the single-record scale instead of the batch scale.
+- **Why `ApproveAsync`'s push needs no delete-first step (unlike the batch job's own delete-then-push
+  phases)**: `ApproveAsync` only succeeds when `existing.Status == Draft` (already-enforced
+  precondition), and a template only reaches `Draft` via `AddAsync`/`CloneAsync` (brand new — no
+  ERP-side record could exist for its Code yet) or via `RequestChangeAsync` (which, after this
+  update, always calls `DeleteTemplateFromDynamicsAsync` first). So by construction, whenever
+  `ApproveAsync` runs, either no ERP record exists for this Code, or the only one that ever did was
+  just deleted by the most recent `RequestChangeAsync` — a template can never reach `Approve` twice
+  without an intervening `RequestChange` (`ApproveAsync` itself flips `Status` away from `Draft`,
+  closing that path). No duplicate-ERP-record risk exists, so adding a delete call to `ApproveAsync`
+  would be pure unjustified overhead, not a correctness fix.
+- **Why no new DTO/response shape**: `ApproveAsync`/`RequestChangeAsync` already return
+  `EutrTemplatesResponseDto` (unchanged fields); the new D365 preconditions either succeed silently
+  (from the caller's perspective, nothing about the response shape changes) or throw before any
+  response is built. `EutrTemplatesController`'s existing `Approve`/`RequestChange` actions therefore
+  need no code changes at all — verified against the actual controller source
+  (`EutrTemplatesController.cs`, `catch (ValidationException ex) → BadRequest(...)`) before writing
+  this plan.
+
+**Alternatives considered**:
+- *Add the delete/push calls directly inside `EutrTemplatesService`, duplicating the request-building
+  code* — rejected: violates Principle II/III as described above; creates exactly the kind of
+  cross-file drift risk this feature has consistently avoided elsewhere (e.g. Update 15/16's shared
+  `CopyDetailTreeAsync`, Update 19's shared `eutr_reference_types` API).
+- *Call D365 asynchronously/fire-and-forget after committing the local Status/version change
+  ("best-effort")* — rejected by the `AskUserQuestion` decision (2026-09-07): the recommended and
+  chosen option was to block, not best-effort, specifically because this is a two-way sync feature
+  where a silent local/ERP divergence has real downstream compliance consequences (011's own User
+  Story 3 exists precisely to keep ERP Template data trustworthy).
+- *Wrap both the D365 call and the local transaction in a single outer try/catch spanning both,
+  relying on the transaction's own rollback to "undo" a D365 call that already succeeded* — not
+  meaningful: an HTTP request already sent to D365 cannot be undone by a local SQL rollback; ordering
+  the irreversible step first (as chosen) is the only ordering that actually satisfies "block on
+  failure" without inventing a distributed-transaction/compensating-action mechanism.
+- *Have `EutrTemplatesService` depend on `IDynamicService`/`IConfiguration`/
+  `IEutrTemplateReferencesRepository` directly and duplicate the URL-building itself* — rejected for
+  the same reasons as the first alternative; it would also give `EutrTemplatesService` D365-specific
+  concerns (`Dynamics:ApiUrl`, OData-flavored `PostAsync` calls) it has never previously needed,
+  widening its responsibility instead of composing with the service that already owns them.
+
+**Correction (2026-09-07, during `/speckit-implement`)**: the plan as originally written called for
+refactoring `SyncTemplatesToDynamicsAsync`'s Phase 2 `foreach` loop to also call
+`PushTemplateToDynamicsAsync` per template (mirroring Phase 1's `DeleteTemplateFromDynamicsAsync`
+refactor), for full DRY. Implementing this exactly as planned broke 2 existing, previously-passing
+unit tests (`SyncTemplatesToDynamicsAsync_ShouldProcessEveryEligibleTemplateAndMapping_WhenNoFailure`,
+`SyncTemplatesToDynamicsAsync_ShouldStopRun_WhenPushCallThrows`). Root cause: Phase 2's original
+design intentionally fetches active vendor mappings for **every** eligible template in a single
+batched `GetActiveByTemplateIdsAsync(eligibleTemplates.Select(t => t.Id), today, ct)` call, then
+groups the results locally in C# (`activeMappings.ToLookup(m => m.TemplateId)`) — exactly one query
+regardless of how many templates are eligible (research.md §R19, referenced in the method's own
+comment). `PushTemplateToDynamicsAsync`, built to serve `EutrTemplatesService.ApproveAsync`'s
+single-template case, necessarily calls `GetActiveByTemplateIdsAsync(new[] { templateId }, ...)`
+itself for that one template. Calling it once per template from inside Phase 2's own loop would
+silently convert that one batched query into an N+1 query pattern for the batch job — a genuine
+performance regression at this feature's stated scale ("hundreds of templates," per plan.md's
+Technical Context), not merely a test-mock artifact; the 2 failing tests were simply the fastest
+signal that surfaced it (their mocks return a fixed mapping set regardless of the `templateIds`
+argument, matching the real repository's per-batch-call contract, which the refactored code no
+longer honored).
+
+**Resolution**: Phase 1 keeps its refactor (`DeleteTemplateFromDynamicsAsync`, a safe 1:1 swap — Phase
+1 always made exactly one delete call per template, so no query-count change results). Phase 2's
+`foreach` loop is reverted to its original inline shape (its own batched
+`GetActiveByTemplateIdsAsync` call, `ToLookup`, and direct `_dynamicService.PostAsync(createUrl,
+...)` calls per mapping/blank-fallback) — it does NOT call `PushTemplateToDynamicsAsync`. Only the
+`createUrl`-building line is shared, via the new `GetDynamicsApiUrl()` helper.
+`PushTemplateToDynamicsAsync` remains a real, tested, reusable method — just consumed by exactly one
+caller (`EutrTemplatesService.ApproveAsync`) instead of two, since that is the only caller for which
+a single-template query is the CORRECT query shape, not a regression. All 30 existing
+`EutrSynchronizeDataServiceTests` pass unchanged after this correction (verified via `dotnet test`).
+This narrows Update 23's actual reuse claim slightly from the original plan: `DeleteTemplateFromDynamicsAsync`
+is shared by 2 callers (Phase 1 + `RequestChangeAsync`); `PushTemplateToDynamicsAsync` is written
+once but has exactly 1 caller (`ApproveAsync`) — still a legitimate extraction (isolating the D365
+request-building/`DeleteTemplateRequest`/`RSVNEutrTemplates` payload shape in one place, per
+Principle II/III), just not a 3-call-site DRY win the way Phase 1's delete method is.

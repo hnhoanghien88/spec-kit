@@ -41,5 +41,18 @@ no new request/response contract; the popup's own existing calls (`POST /api/eut
 `PUT /api/eutr-documents/{id}`, `PUT /api/eutr-documents/{id}/step`, plus the SharePoint upload
 endpoints it already wraps) are unchanged and out of scope for this feature to alter.
 
+**Component prop contract addendum (spec Update 1, FR-024/FR-025/FR-026, research.md Decision 9)**:
+`EutrDocumentsFormDialog` gains two new **optional** props, meaningful only when `mode="add"`:
+
+| Prop | Type | Effect when set | When omitted |
+|---|---|---|---|
+| `addDefaultTypeName` | `string` | Initial `Type` is the reference-type entry whose name matches (case-insensitive), instead of `null` | `Type` starts `null` (unchanged existing behavior) |
+| `addDefaultChips` | `array` | Initial `Value` chips are this array, instead of `[]` | `Value` starts `[]` (unchanged existing behavior) |
+
+Only `PurchaseOrderViewPage.jsx` passes these (`addDefaultTypeName="PO"`,
+`addDefaultChips={po ? [po] : []}`). `MapFilePage.jsx`'s existing call site passes neither, so its
+popup's reset-to-empty behavior is unchanged — this addendum does not alter any existing consumer of
+`EutrDocumentsFormDialog`.
+
 `EutrFileViewerDialog.jsx` (owner: `004-eutr-documents`) is reused for the AVAILABLE FILES "View"
 action, backed by the existing `GET /api/eutr-documents/get-file-by-idref` — unchanged.

@@ -68,6 +68,14 @@ enforces.
 - **Step "missing" status** (detail screen tree): a step is missing when no document in this PO's
   `list-po-references` result carries that step's `StepId`.
 
+## 5. Upload popup default prefill (spec Update 1, FR-024/FR-025/FR-026) — UI initial state only, not persisted
+
+No new entity or field. The Upload dialog's Type/Value default on `PurchId/View` is populated
+directly from Entity **#1** (Purchase Order, `refType=15`) — specifically the same single item
+already fetched for the page header/existence check — passed as-is into the dialog's chip list
+(`Id`/`Code`/`Name` shape, unchanged). Nothing new is read, written, or stored; see research.md
+Decision 9.
+
 ## Entity Relationship (conceptual, no new persisted relationships)
 
 ```text

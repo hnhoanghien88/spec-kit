@@ -55,10 +55,19 @@ features either — `003`/`004`/`005` were all validated this way).
    do not.
 5. Confirm AVAILABLE FILES lists the real document(s) recorded for this Purchase Order, each showing
    its mapped step.
-6. Click **Upload**, add a new document for one of the missing steps using a valid file. Confirm:
+6. Click **Upload**. Confirm the popup opens with:
    - the popup is the same Add-document dialog used in `004-eutr-documents`.
-   - after saving, AVAILABLE FILES and that step's tree indicator update immediately, without a page
-     reload.
+   - Type already set to **PO** and Value already showing this same Purchase Order's Purch id as the
+     pre-selected chip (spec Update 1, FR-024) — not empty as in `004-eutr-documents`'s standalone
+     screen or `005-eutr-sales-orders`'s Map File.
+   - Type and Value can still be changed to something else before saving (FR-025 — not locked); open
+     the popup again afterward to confirm it still defaults to PO/this Purchase Order (the change
+     was not "remembered", it always re-derives from the PO on screen).
+   Add a new document for one of the missing steps using a valid file (leaving the defaults as-is, or
+   after changing them per the check above). Confirm after saving, AVAILABLE FILES and that step's
+   tree indicator update immediately, without a page reload.
+6a. Open `/eutr/sales-orders/{SalesId}/map-file` (005) and click its own Upload button. Confirm Type
+    and Value still open empty there — the Update 1 default applies only to `PurchId/View` (FR-026).
 7. Click **Edit** on an existing document, change a field, save. Confirm the update persists and is
    reflected immediately.
 8. Navigate to `/eutr/purchase-orders/DOES-NOT-EXIST/view` (an invalid Purch id). Confirm a clear

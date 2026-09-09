@@ -39,3 +39,12 @@
 - All items pass; no [NEEDS CLARIFICATION] markers were needed — the user's request plus the existing
   005/003/004/011 specs provided enough grounding for reasonable defaults, documented in the spec's
   Assumptions section.
+
+### Update 1 (2026-09-07) — Tự điền Type/Value khi Upload ở PurchId/View
+
+- Bổ sung FR-024/FR-025/FR-026 và 2 acceptance scenario (User Story 2, #10-11) cho việc tự điền
+  Type = PO, Value = Purch Id đang xem khi nhấn Upload ở màn hình chi tiết. Không cần
+  [NEEDS CLARIFICATION] — "tự điền mặc định nhưng không khóa" là suy luận hợp lý duy nhất từ yêu cầu
+  gốc, đã ghi lại thành assumption trong spec.
+- Re-validated toàn bộ checklist: tất cả mục vẫn PASS, không phát sinh chi tiết triển khai
+  (implementation detail) hay yêu cầu không kiểm chứng được.

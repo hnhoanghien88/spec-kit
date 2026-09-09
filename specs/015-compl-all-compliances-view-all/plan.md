@@ -55,6 +55,18 @@ codebase's API already serializes PascalCase C# properties to camelCase JSON, co
 sibling field on this same row shape), displaying `"Missing"` when it equals `"No BOM"`, blank
 otherwise.
 
+**Update (2026-09-07, User Story 7 — cap the Status percentage when BOM is missing)**: on the same
+list screen, the existing `statusForUi` column's percentage bar
+(`useAllCompliancesColumnsSaleOrder.jsx`) is computed purely as `round(totalApplied / totalCompliances
+* 100)` and never looks at `row.bomStatus` — so a sales order whose BOM is missing (User Story 6) can
+read 100% even though its `totalApplied`/`totalCompliances` were computed from the coarser, no-BOM
+fallback (User Stories 1–4), not from a real material-level check. This is a pure frontend
+display-formula change, no backend/API/database change: when `row.bomStatus === "No BOM"`, the
+percentage becomes `round((totalApplied / totalCompliances) * 30)` (capped at 30, 0 when
+`totalCompliances` is 0), otherwise the existing `* 100` formula is unchanged (FR-021–FR-024). No new
+migration is needed — `TotalApplied`, `TotalCompliances`, and `BomStatus` are already computed and
+persisted correctly by User Stories 1–6; only how they're converted to a displayed percentage changes.
+
 ## Technical Context
 
 **Language/Version**: C# / .NET 8 (ASP.NET Core Web API) — `compliance-sys-api`.
@@ -112,6 +124,9 @@ to set it. One interface signature gained an optional parameter (`IComplSummaryS
 (`RSVNSalesOrderOpenInvoiceCogs.BomStatus`), one line added to `Get365`'s existing enrichment loop,
 and one new column in one existing frontend column-definition file. No new controller route, no new
 frontend page/component, no new DTO type.
+**Update (2026-09-07, User Story 7)**: one `if`-branch added inside the existing `statusForUi`
+`renderCell` in `useAllCompliancesColumnsSaleOrder.jsx` — no new file, no new column, no backend or
+database change.
 
 ## Constitution Check
 
@@ -157,6 +172,8 @@ frontend page/component, no new DTO type.
   `RouteResolver.jsx` that it renders `compliance-view/index_new.jsx` (not the sibling, unrouted
   `index.jsx` in the same folder — a naming trap worth flagging so the column change lands in the
   file that's actually live), which already calls the column hook this feature modifies.
+  **Update (2026-09-07, User Story 7)**: still N/A — same existing route, same existing column hook,
+  no new route or menu entry.
 
 Additional note for User Story 6 (frontend, Principle I/IV): this is not a new CRUD feature, so
 Principle I's domain/infrastructure/application/presentation split for *new* frontend features does
@@ -224,7 +241,7 @@ compliance-sys-api/
                 └── ViewCompliancesTransformServiceTests.cs # ADD cases for BuildSalesLineOpenMaterialFallbackAsync
 ```
 
-### Source Code — frontend (2026-08-20, User Story 6)
+### Source Code — frontend (2026-08-20, User Story 6; 2026-09-07, User Story 7)
 
 ```text
 compliance-client/
@@ -234,7 +251,7 @@ compliance-client/
             └── compliance-view/
                 ├── index_new.jsx                              # unchanged — confirmed via RouteResolver.jsx this is the routed component (NOT the unrouted sibling index.jsx)
                 └── hooks/
-                    └── useAllCompliancesColumnsSaleOrder.jsx   # MODIFY: add "BOM" GridColDef between invoiceDate and statusForUi; add bomStatus to defaultColumnVisibility
+                    └── useAllCompliancesColumnsSaleOrder.jsx   # MODIFY (2026-08-20): add "BOM" GridColDef between invoiceDate and statusForUi; add bomStatus to defaultColumnVisibility. MODIFY (2026-09-07, US7): statusForUi's percent calc reads row.bomStatus and multiplies by 30 instead of 100 when it is "No BOM"
 ```
 
 **Structure Decision**: Backend-only change within the existing `compliance-sys-api` Clean
@@ -252,6 +269,9 @@ beyond the migration. **Update (2026-08-20, User Story 6)**: this feature's firs
 one existing frontend file (`useAllCompliancesColumnsSaleOrder.jsx`) gains one column, and two
 existing backend files (`RSVNSalesOrderOpenInvoiceCogs.cs`, `ViewCompliancesController.cs`) carry the
 new field out to that column. Still no new file on either side, and no new project/layer.
+**Update (2026-09-07, User Story 7)**: the smallest change in this feature so far — one existing
+frontend file (`useAllCompliancesColumnsSaleOrder.jsx`) gets its existing percent formula branched on
+`row.bomStatus`. No backend file, no migration, no new file at all.
 
 ## Complexity Tracking
 

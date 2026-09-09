@@ -867,12 +867,22 @@ source's Status.)*
 
 ---
 
-## 11. Approve / Request Change (new, Update 16)
+## 11. Approve / Request Change (new, Update 16; D365 sync added Update 23)
 
 Both endpoints take **no request body** — they are pure state-transition actions on the template
 identified by `{id}`. Both reuse the `EutrTemplates.Update` policy (no new policy family) and the
 same try/catch → 404/400 mapping already used by every other `{id}`-scoped action on this
 controller.
+
+**(Update 23)** Both endpoints now ALSO call D365 (reusing 011-eutr-synchronize-data's
+`SyncTemplatesToDynamicsAsync` request shapes, extracted into
+`EutrSynchronizeDataService.DeleteTemplateFromDynamicsAsync`/`PushTemplateToDynamicsAsync`) BEFORE
+committing their local Status/version change. If that D365 call fails, the endpoint returns 400 with
+a "Failed to sync template with D365: ..." message and makes NO local data change at all — Status,
+VersionId, and every other field on the template stay exactly as they were before the request. This
+is a new **third** possible 400 case for both endpoints (alongside the existing wrong-Status
+rejection below) — same response shape, no new HTTP status code, no request/response contract
+change.
 
 ### 11.1 Approve
 
@@ -895,11 +905,23 @@ POST api/eutr-templates/{id}/approve
 { "success": false, "message": "Only a Draft template can be Approved." }
 ```
 
+**Response — rejected** (400, **new Update 23** — D365 push failed):
+```json
+{ "success": false, "message": "Failed to sync template with D365: <underlying error>" }
+```
+
 **Response — not found** (404): same shape as Section 10.
 
 **Behavior**:
 - Loads the template; if `Status != 0` (Draft), rejects with a validation error (400) — no data
   changes.
+- **(Update 23)** Pushes this template's own data to D365 BEFORE anything else: resolves its
+  currently-active vendor mappings (`eutr_template_references`, `FromDate ≤ today ≤ ToDate`), then
+  POSTs one `RSVNEutrTemplates` record (`Code`, `Name`, that mapping's `VendorCode`) per active
+  mapping, or exactly one record with `VendorCode = ""` if none are active — the exact same request
+  shape 011-eutr-synchronize-data's `SyncTemplatesToDynamicsAsync` sends for this template in its own
+  batch run, just scoped to this one `TemplateId`. If ANY of these D365 calls fails, the endpoint
+  returns 400 immediately and `Status` stays `0` (Draft) — the step below never runs.
 - Otherwise, updates ONLY `Status = 1` (Approved) (+ `UpdatedBy`/`UpdatedDate`) on the same row via
   `SetStatusAsync` — `Id`, `VersionId`, `CreatedDate`, `eutr_template_details`, and
   `eutr_template_references` are all left untouched.
@@ -907,7 +929,8 @@ POST api/eutr-templates/{id}/approve
   only when exactly 1 row is selected via the existing bulk-delete checkbox state and that row's
   `status` is `0` (Draft)) opens a `ConfirmDialog` Yes/No; **Yes** calls this endpoint via a new
   `ApproveEutrTemplatesUseCase`, then clears the selection and refetches the list; **No** closes the
-  dialog with no request sent.
+  dialog with no request sent. **(Update 23)** No frontend change — a D365-failure 400 surfaces
+  through the exact same error-snackbar path this button's other 400 responses already use.
 
 ### 11.2 Request Change
 
@@ -931,11 +954,22 @@ Update 16 removed it, and the same `{ id, code, versionId }` shape as Clone (Sec
 { "success": false, "message": "Only an Approved template can request change." }
 ```
 
+**Response — rejected** (400, **new Update 23** — D365 delete failed):
+```json
+{ "success": false, "message": "Failed to sync template with D365: <underlying error>" }
+```
+
 **Response — not found** (404): same shape as Section 10.
 
 **Behavior**:
 - Loads the template; if `Status != 1` (Approved), rejects with a validation error (400) — no data
   changes.
+- **(Update 23)** Calls D365 to delete the ERP-side record for this template's `Code` BEFORE
+  anything else — the exact same request `SyncTemplatesToDynamicsAsync`'s Phase 1 sends for this
+  template in its own batch run (`POST .../RSVNEutrTemplates/Microsoft.Dynamics.DataEntities.
+  deleteTemplate` with `{ code }`), no existence pre-check. If this call fails, the endpoint returns
+  400 immediately and NOTHING below runs — no new row, no copy, the old row's `IsHide`/`Status`/
+  `VersionId` are all untouched (still `Approved`, still `VersionId`).
 - Otherwise, in one transaction:
   1. Inserts a new `eutr_templates` row: same `Code`/`Name`/`AlertFor`/`IsDefault` as the existing
      row (copied verbatim — this action takes no payload), `VersionId = existing.VersionId + 1`,
@@ -951,7 +985,9 @@ Update 16 removed it, and the same `{ id, code, versionId }` shape as Clone (Sec
   (enabled only when exactly 1 row is selected and that row's `status` is `1` (Approved)) opens a
   `ConfirmDialog` Yes/No; **Yes** calls this endpoint via a new `RequestChangeEutrTemplatesUseCase`,
   then clears the selection and refetches the list (the new Draft row now appears, replacing the
-  Approved one); **No** closes the dialog with no request sent.
+  Approved one); **No** closes the dialog with no request sent. **(Update 23)** No frontend change —
+  a D365-failure 400 surfaces through the exact same error-snackbar path this button's other 400
+  responses already use.
 
 ---
 

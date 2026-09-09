@@ -226,6 +226,15 @@ returns.
 depends on the absence of a `BomStatus` field, so this cannot break any existing caller (SC-010) —
 folded into the overall breaking-change assessment below.
 
+## No contract change: Status percentage cap (2026-09-07, User Story 7)
+
+Unlike every prior update in this feature, User Story 7 (research.md R10, FR-021–FR-024) adds **no**
+field, endpoint, or contract change at all. `Get365`'s response row already carries `TotalApplied`,
+`TotalCompliances`, and `BomStatus` (this section, above); the capped-percentage rule is applied
+entirely inside `useAllCompliancesColumnsSaleOrder.jsx`'s existing `statusForUi` `renderCell`, using
+fields that column already reads. Recorded here only so this contract doc's history stays complete —
+there is no new request/response shape to document.
+
 ## Breaking-change assessment
 
 - No change to the HTTP request/response contract of `get-all` — purely an internal data-source

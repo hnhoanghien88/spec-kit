@@ -4,16 +4,17 @@
 
 **Created**: 2026-07-30
 
-**Updated**: 2026-08-20
+**Updated**: 2026-09-08
 
 **Status**: Draft
 
-**Input**: Merged from three related requests:
+**Input**: Merged from four related requests:
 1. "cập nhật tính năng compl-master, tính năng này đã xây dựng sẵn, hiện tại cần thêm 1 cột là AlertType (label: Alert type) cột này đã thêm ở bảng compl_masters. sẽ tạo 1 enum tên AlertTypeEnum (0 = All, 1 = Missing, 2 = Expired) trong helpers.js và ở Domain backend. cần chỉnh lại tính năng create ở link compliance-master/new và edit ở link compliance-master/(Id) cho hiển thị và edit thông tin AlertType, vị trí ở dưới text box Description, mặc định là 0 - All. Controller ở E:\\Working\\Eutr\\compliance-sys-api\\src\\ComplianceSys.Api\\Controllers\\ComplMasterController.cs."
 2. "hiển thị thông tin Alert type ở index compliance-master, phía sau cột Status" (display Alert type information in the compliance-master index, after the Status column)
 3. "cập nhật 007-compl-master, chức năng delete master ở compliance-master?page=1&page-size=50. bị lỗi với master MAS-01104" (the delete-master action on the Compliance Master list is broken; reported reproducing with master MAS-01104)
+4. "cập nhật 007-compl-master, màn hình ở link compliance-master/1021. khúc Individual Rule Conditions (AND only). hiện tại muốn add thêm condition là Customer, nhưng chỉ chọn được Value, NOT IN. giờ thêm logic Table. khi user chọn sẽ tạo công thức ở MASTER PREVIEW là Customer in (A, B, C...) giống product type. và kiểm tra lại logic lấy compliance sp_load_compl_by_conditions, sp_load_compl_by_conditions_count" (on the Compliance Master detail screen, in the "Individual Rule Conditions (AND only)" section, the Customer condition currently only offers "Value" and "NOT IN" logic — add "Table" logic so it can be used the same way Product Type already uses it, producing a Master Preview formula for the selected Customer values, and re-verify that `sp_load_compl_by_conditions` / `sp_load_compl_by_conditions_count` correctly evaluate Customer conditions)
 
-*(Originally specified as two separate features — `007-compl-master-alert-type` and `008-compl-master-alerttype-column` — merged into this single spec since they describe one coherent capability: the Compliance Master's Alert type, end to end. Request 3 was added later as a defect report against the same Compliance Master list/detail surface and folded into this spec at the requester's direction.)*
+*(Originally specified as two separate features — `007-compl-master-alert-type` and `008-compl-master-alerttype-column` — merged into this single spec since they describe one coherent capability: the Compliance Master's Alert type, end to end. Request 3 was added later as a defect report against the same Compliance Master list/detail surface and folded into this spec at the requester's direction. Request 4 was added later still, against the same Compliance Master detail screen's condition-builder surface, and folded into this spec at the requester's direction.)*
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -82,8 +83,31 @@ A Compliance Admin browsing the Compliance Master list (e.g. `compliance-master?
 
 ---
 
+### User Story 5 - Use Table logic for the Customer condition in Individual Rule Conditions (Priority: P1)
+
+A Compliance Admin building or editing a master's rule conditions (e.g. at `compliance-master/1021`, in the "Individual Rule Conditions (AND only)" section) needs to add a Customer condition and select multiple customers at once — the same "Table" logic already available for Product Type — instead of being limited to a single Value or a NOT IN exclusion list. Once selected, the Master Preview must show the resulting formula (e.g. "Customer IN" followed by the chosen customers), and the underlying compliance-matching logic must evaluate that condition correctly.
+
+**Why this priority**: This unblocks a condition type (Customer) from a capability (Table/multi-value matching) that already exists and works for other condition types (e.g. Product Type) today — without it, users cannot build rules that match against a list of specific customers in one condition, and are forced into workarounds (e.g. one condition per customer, or an over-broad NOT IN list).
+
+**Independent Test**: Can be fully tested by opening `compliance-master/1021` (or any master with rule conditions), adding a Customer condition inside a rule block — including a block that already has another condition using Table logic — confirming "Table" is selectable for Customer, selecting several customers, confirming the Master Preview shows the correct formula for that condition, saving, and confirming the master's compliance matching (applied/missing results) correctly reflects only the selected customers.
+
+**Acceptance Scenarios**:
+
+1. **Given** a user is editing a rule block's conditions and adds or edits a Customer condition, **When** they open the Type/logic selector for that condition, **Then** "Table" is offered as an option, the same way it already is for Product Type.
+2. **Given** a rule block already contains another condition (e.g. Product Type) using Table logic, **When** the user adds or edits a Customer condition in that same block, **Then** "Table" is still available for the Customer condition — it is not hidden or blocked just because another condition in the block already uses Table.
+3. **Given** a user selects "Table" for a Customer condition and picks multiple customers (A, B, C), **When** they view the Master Preview, **Then** the condition's formula is shown using the same presentation already used for a Product Type Table condition (the condition's operator followed by the list of selected customers) — no new or different preview format is introduced.
+4. **Given** a master saved with a Customer Table condition (e.g. matching customers A, B, C), **When** compliance records are loaded or counted for that master (via the logic backing `sp_load_compl_by_conditions` and `sp_load_compl_by_conditions_count`), **Then** only records whose Customer is one of the selected values are matched by that condition, consistent with how a Product Type Table condition is already evaluated.
+5. **Given** a rule block containing both a Product Type Table condition and a Customer Table condition (AND), **When** the master is evaluated, **Then** both conditions are enforced together and only records satisfying both are matched.
+6. **Given** a master created before this change with a Customer condition already saved as "Value" or "NOT IN", **When** it is opened or evaluated, **Then** it continues to load, display, and match exactly as before — no migration or reinterpretation of existing data is required.
+
+---
+
 ### Edge Cases
 
+- What happens when a rule block already has a Table-logic condition (of any type) and the user adds a second Table-logic condition (Customer or otherwise) to the same block? Both must be usable together — Table logic is no longer limited to at most one condition per block.
+- What happens when a Customer Table condition has only one selected value? It behaves the same as the existing single-value case already handled for other Table conditions (e.g. Product Type) — no special-casing needed.
+- What happens for a master in "Individual" mode, where some condition types are restricted to a narrower set of logic options? The Customer condition's availability of Table logic in Individual mode follows the same per-reference-type rule already governing every other condition type in that mode — Customer is not special-cased.
+- What happens when `sp_load_compl_by_conditions` / `sp_load_compl_by_conditions_count` are reviewed per this request and no defect is found? The review is a verification step; it does not by itself authorize changing the stored procedures — any actual defect found must be confirmed with the requester before a fix is made.
 - What happens when an existing Compliance Master record has no Alert type stored (e.g., data created before this feature)? It must display and be treated as "All" (value 0), everywhere it's shown (Create/Edit form and list).
 - What happens if a user leaves the Alert type field untouched on Create? It must still submit with its current value (default "All") — the field is never blank/unset.
 - What happens on Renew/Copy/Duplicate flows for a Compliance Master? The Alert type of the source master should carry over the same way other master-level fields do, unless the user changes it.
@@ -112,11 +136,18 @@ A Compliance Admin browsing the Compliance Master list (e.g. `compliance-master?
 - **FR-013**: The fix to the delete action MUST address the underlying condition that caused the failure, not just the specific `MAS-01104` record, so the same failure does not recur for other Compliance Masters in that state.
 - **FR-014**: Deleting a Compliance Master MUST NOT corrupt or orphan related data (e.g., other versions of the same master, its linked compliance/reference data) — related data is either cleanly removed as part of the deletion or the deletion is blocked, never left partially applied.
 - **FR-015**: The bulk-delete action MUST meet the same reliability and error-communication expectations as the single-record delete action (FR-011 through FR-012) for every master included in the batch.
+- **FR-016**: The Customer condition, wherever a rule condition's Type/logic can be selected (including the "Individual Rule Conditions (AND only)" section), MUST offer "Table" (multi-value) logic as an option, on the same basis Product Type already offers it.
+- **FR-017**: A rule block MUST allow more than one condition to use Table logic at the same time (e.g. a Product Type condition and a Customer condition both using Table in the same AND block) — the system MUST NOT restrict Table logic to at most one condition per block.
+- **FR-018**: When a Customer condition uses Table logic with multiple selected values, the Master Preview MUST render that condition's formula using the same presentation already used today for a Product Type Table condition — no new preview format is introduced by this change.
+- **FR-019**: The compliance-matching logic underlying `sp_load_compl_by_conditions` and `sp_load_compl_by_conditions_count` MUST be reviewed to confirm it evaluates a Customer condition using Table logic (multiple selected values) correctly and consistently with how it already evaluates a Product Type Table condition. This is a verification requirement: if the review confirms correct behavior, no stored-procedure change is required; if the review surfaces an actual defect, the defect MUST be reported and confirmed with the requester before any fix is implemented.
+- **FR-020**: Existing Compliance Masters with a Customer condition already saved as "Value" or "NOT IN" MUST continue to load, display, and evaluate exactly as before this change — enabling Table logic for Customer MUST NOT alter the meaning or evaluation of previously saved Value/NOT IN Customer conditions.
 
 ### Key Entities
 
 - **Compliance Master**: The existing record type managed by the compliance-master feature; gains one new attribute, Alert type, describing which alert condition (All, Missing, Expired) the master applies to. Shown on the Create form, the Edit form, and the list. Also the subject of the list's delete and bulk-delete actions.
 - **Alert Type**: A fixed classification with three values — All, Missing, Expired — representing the alert condition scope of a Compliance Master.
+- **Rule Condition**: A single clause within a master's rule block (e.g. Country, Customer, Product Type), consisting of a reference type, a Type/logic (All, Table, Value, or NOT IN), and, for Table/Value/NOT IN, one or more selected values. Conditions within a block combine with AND; blocks combine with OR.
+- **Condition Logic Type**: The classification of how a Rule Condition's selected values are matched — "All" (matches everything), "Table" (matches any of several selected values), "Value" (matches a single selected value), or "NOT IN" (excludes several selected values). Table and Value share the same underlying match behavior and differ only in how many values are selected.
 
 ## Success Criteria *(mandatory)*
 
@@ -130,6 +161,9 @@ A Compliance Admin browsing the Compliance Master list (e.g. `compliance-master?
 - **SC-006**: Deleting Compliance Master `MAS-01104` from the list completes successfully every time it is attempted by a user with Delete permission.
 - **SC-007**: Any other Compliance Master in the same underlying state that previously broke deletion for `MAS-01104` can also be deleted successfully — the fix is not a one-record patch.
 - **SC-008**: When a delete attempt is genuinely disallowed, 100% of the time the user is shown a specific reason at the moment of the attempt, never a generic or unexplained failure.
+- **SC-009**: Users configuring a Customer condition can select "Table" logic and choose multiple customers, 100% of the time, regardless of whether another condition in the same rule block already uses Table logic.
+- **SC-010**: For every Customer Table condition, the Master Preview formula matches the exact set of selected customers, using the same presentation already proven correct for Product Type Table conditions.
+- **SC-011**: Compliance evaluation results (applied/missing) for a master using a Customer Table condition are verified to match the selected customer list with the same accuracy already established for Product Type Table conditions — the verification finding (change needed or not) is documented as part of this work.
 
 ## Assumptions
 
@@ -142,3 +176,7 @@ A Compliance Admin browsing the Compliance Master list (e.g. `compliance-master?
 - The delete failure is reproducible via master `MAS-01104` while viewing the list at `compliance-master?page=1&page-size=50`, but the page number and page size are just where it was noticed, not the cause — the underlying condition lives on the master record itself (it already has some compliance/reference data linked to it, even though the list currently presents it as eligible for deletion), so the fix must generalize to any master in that same state.
 - "Delete" in User Story 4 refers to the existing single-record delete action already available from the Compliance Master list/detail screens, and equally to the existing bulk-delete action; no new delete entry point is being introduced.
 - Whether a master with linked compliance data should delete-and-clean-up versus be blocked up front is an implementation decision to be resolved during planning; either satisfies this spec as long as the user is never left with an unexplained failure (FR-011, FR-012).
+- The current "one Table-logic condition per rule block" restriction that blocks Customer from using Table today when another condition in the block already uses it is treated as a restriction to remove generally (FR-017), not a Customer-specific carve-out — the same relaxation applies to any combination of reference types sharing a block.
+- Per explicit confirmation from the requester, the Master Preview formula for a Customer Table condition MUST reuse the existing presentation already used for a Product Type Table condition (operator followed by the selected values); no new inline "X in (A, B, C)" single-line format is being introduced by this change, for Customer or any other type.
+- "Kiểm tra lại logic" (re-check the logic) for `sp_load_compl_by_conditions` / `sp_load_compl_by_conditions_count` is a verification task, not a standing authorization to modify these stored procedures — see FR-019.
+- Whether the Customer reference type is eligible for Table logic while a master is in "Individual" mode is governed by the same existing per-reference-type configuration (e.g. an "allow individual" setting) that already governs every other condition type in that mode; this spec does not change that mechanism, only ensures Customer is not excluded from Table logic by any Customer-specific rule outside of it.

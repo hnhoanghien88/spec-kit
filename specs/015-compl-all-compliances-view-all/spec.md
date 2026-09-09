@@ -22,6 +22,8 @@ khi salesLineOpenMaterials không có dữ liệu, do API ở GetSalesLineOpenMa
 
 **Update (2026-08-20, BOM column on the All Compliances list screen)**: "cập nhật 015-compl-all-compliances-view-all, màn hình index, hiển thị thêm cột BOM sau cột Invoice date, cột BOM lấy từ BomStatus trong compl_summary_so, theo SalesId = SalesOrder nếu No BOM hiển thị Missing, ngược lại trống" (screen: `compliance-view?ref-type=11&page=1&page-size=50`, the Sale Order All Compliances list) — the saved BOM status from User Story 5 becomes visible directly in this list screen. A new "BOM" column is added immediately after the existing "Invoice date" column, sourced from each listed sales order's saved BOM status (matched by sales order id, the same match this screen already performs to show its other saved summary counts): "Missing" when that value is "No BOM", blank otherwise. See User Story 6, FR-017–FR-020, SC-010.
 
+**Update (2026-09-07, capped Status percentage when BOM is missing)**: "cập nhật 015-compl-all-compliances-view-all màn hình index, khi BOM là trạng thái Missing, thì hàm compl_summary_so đang hiển thị là 100% do chỉ lấy những compliance thuộc product, customer, là ok. Giờ chỉnh lại, nếu missing bom thì thanh status chỉ tối đa 30% rồi dựa số compliance đủ thiếu mà tính % cho hợp lệ. ví dụ SO007370 BOM = Missing, trong đó có 12 compliance => nếu 12 đều đủ là 30/100%, nếu chỉ đủ 4 cái thì 10/100%. nếu có liên quan chỉnh stored procedures thì tạo file migration" — on the same list screen, the "Status" percentage bar for a row whose BOM column reads "Missing" currently shows 100% whenever every one of that sales order's saved (fallback-derived, no-BOM) compliances is applied, because that percentage is computed purely as saved-applied ÷ saved-total, the same formula used for a sales order with a real BOM, with no adjustment for the fact that the no-BOM fallback only ever produces coarser product/customer-level compliances (see Assumptions in the earlier updates above). This update caps the displayed percentage for any "Missing"-BOM row at 30%, scaled within that 0–30% range by the same saved-applied ÷ saved-total ratio: sales order SO007370 (BOM = Missing, 12 saved total compliances) displays 30% when all 12 are applied, and 10% when only 4 of the 12 are applied. This is a display-only change to the already-saved counts; it does not change what is counted or saved in `compl_summary_so` (User Story 7, FR-021–FR-024, SC-011–SC-013).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - See compliance results for a sales order that has no BOM yet (Priority: P1)
@@ -133,6 +135,54 @@ summary yet), confirm the column is blank.
 
 ---
 
+### User Story 7 - See a status percentage that reflects real risk for a sales order missing its BOM (Priority: P1)
+
+A Compliance Reviewer browsing the All Compliances list for Sale Order sees a "Status" percentage bar
+next to each row (driven by that row's saved applied/total compliance counts). For a row whose BOM
+column reads "Missing" (User Story 6), that bar can currently read 100% — the same full, "all clear"
+green bar shown for a sales order with real BOM data and no outstanding compliance gaps — purely
+because every one of that sales order's *reduced*, no-BOM fallback compliances happens to be satisfied.
+The reviewer has no way to tell, from the bar alone, that this 100% was computed from a much smaller,
+coarser set of compliances than a sales order with a real BOM would have, and can be misled into
+treating a sales order that still needs its BOM created as fully compliant.
+
+**Why this priority**: This is a correctness-of-display defect on the same screen and same saved data
+as User Story 6 — a reviewer scanning the list for risk can be actively misled by a green 100% bar on a
+sales order that has not actually had its material-level compliance checked yet, which is a more severe
+problem than the missing "BOM" label alone (User Story 6) already fixed.
+
+**Independent Test**: Find (or set up) a sales order whose BOM column shows "Missing" and whose saved
+compliance counts include one or more satisfied compliances. Open the All Compliances list for Sale
+Order and read that row's Status bar. Confirm the percentage shown is never above 30%, and that it is
+proportional to how many of that row's saved compliances are actually applied versus the row's saved
+total (e.g., a row with 12 saved compliances shows 30% when all 12 are applied, and 10% when only 4 are
+applied). Confirm a row whose BOM column is blank (real BOM data) is unaffected and still shows its
+percentage computed the same way as today, up to 100%.
+
+**Acceptance Scenarios**:
+
+1. **Given** a listed sales order whose BOM column reads "Missing" and whose saved total compliance
+   count is greater than zero, **When** the list renders that row's Status column, **Then** the
+   displayed percentage is computed as (that row's saved applied compliance count ÷ its saved total
+   compliance count) × 30, rounded to the nearest whole percent, and never exceeds 30%.
+2. **Given** sales order SO007370, whose BOM column reads "Missing" and whose saved total compliance
+   count is 12, **When** all 12 are saved as applied, **Then** the Status column displays 30%; **When**
+   only 4 of the 12 are saved as applied, **Then** the Status column displays 10%.
+3. **Given** a listed sales order whose BOM column reads "Missing" and whose saved total compliance
+   count is zero, **When** the list renders that row's Status column, **Then** the displayed percentage
+   is 0%, the same zero-total handling used today.
+4. **Given** a listed sales order whose BOM column is blank (its saved BOM status is not "No BOM"),
+   **When** the list renders that row's Status column, **Then** the displayed percentage is computed
+   exactly as it is today — (saved applied ÷ saved total) × 100 — unaffected by this change and able to
+   reach 100%.
+5. **Given** the change described in Scenarios 1–3, **When** the saved compliance counts
+   (`TotalApplied`/`TotalMissing`/`TotalOverdue`/`TotalCompliances`) or the saved BOM status for any
+   sales order are read from `compl_summary_so`, **Then** their stored values are unchanged from
+   whatever the existing summary writers (User Story 3/5) already compute and save — only how the
+   Status column turns those saved figures into a displayed percentage is different.
+
+---
+
 ### Edge Cases
 
 - What happens to material-level fields (Material code, Material name, Material type, Cost group id, Product group) on a fallback-derived line? They are left blank, since this data only exists once a BOM has been created for the order line; the fallback intentionally does not fabricate BOM data that does not yet exist.
@@ -144,6 +194,9 @@ summary yet), confirm the column is blank.
 - What happens when the nightly summary job (User Story 3) and the "get-all" lookup's own background save (User Story 1, FR-016) both save the same sales order around the same time, and one sees BOM data while the other does not (e.g. a BOM gets created in the window between the two)? Each writer independently overwrites the saved record's BOM status (and counts) with its own lookup's result — whichever save completes last determines the value left in `compl_summary_so`. This is the same last-write-wins behavior the two writers already had for the other saved fields (counts, emails, etc.) before this update; BOM status is not treated any differently.
 - What does the new BOM column show for a sales order listed on the All Compliances screen that has never been saved by either writer yet (no `compl_summary_so` record exists for it at all)? Blank — same as a sales order whose saved BOM status is simply not "No BOM" (User Story 6, Acceptance Scenario 3). The list screen does not trigger either writer or the BOM-based lookup itself; it only reads whatever is already saved.
 - Does opening the All Compliances list screen (User Story 6) itself trigger the no-BOM fallback logic (User Stories 1–5) for the listed sales orders? No — the list screen only reads each sales order's already-saved BOM status; it does not call the BOM-based sales-line lookup or the fallback for the sales orders it lists, so listing them causes no new writes to `compl_summary_so`.
+- What does the Status column show for a row whose BOM column is "Missing" but which has no saved compliance-summary record at all yet (User Story 6 edge case, blank BOM column)? This does not apply — a row only shows "Missing" once a saved BOM status of "No BOM" exists, which itself only exists once one of the two writers (User Story 3/5) has saved that sales order at least once; before that, the BOM column is blank and the Status column's zero-total handling (0%) already covers a row with no saved counts.
+- Is the 30% cap itself ever exceeded due to rounding (e.g., 29.6% rounding up to 30%, or an applied count exceeding total)? No — rounding to the nearest whole percent of a value already computed within the closed 0–30 range cannot round above 30, and the applied count is always less than or equal to the total count by construction of the existing saved summary figures, so the capped percentage cannot exceed 30%.
+- Does this change affect the Status percentage anywhere other than the All Compliances list screen for Sale Order (e.g., the Sales order compliance detail tab, dashboards, alerts, downloads)? No — this update is scoped to the Status column on this one list screen, the same scope User Story 6's BOM column was scoped to; no other screen or flow reads a computed "Status percentage" from these saved counts today.
 
 ## Requirements *(mandatory)*
 
@@ -169,13 +222,17 @@ summary yet), confirm the column is blank.
 - **FR-018**: For each sales order row on that list screen, System MUST populate the BOM column from that sales order's saved BOM status, matched by sales order id — the same match this screen already performs against the saved compliance-summary data to populate its other summary-derived columns.
 - **FR-019**: When a row's matched BOM status is the literal text "No BOM", System MUST display "Missing" in that row's BOM column.
 - **FR-020**: When a row's matched BOM status is not "No BOM" — including when it is blank/unset, or when the sales order has no saved compliance-summary record at all — System MUST display that row's BOM column as blank.
+- **FR-021**: On the All Compliances list screen for Sale Order, for a listed sales order whose BOM column value is "Missing" (FR-019) and whose saved total compliance count is greater than zero, System MUST compute the displayed Status percentage as (that sales order's saved applied compliance count ÷ its saved total compliance count) × 30, rounded to the nearest whole percent.
+- **FR-022**: On the same list screen, for a listed sales order whose BOM column value is "Missing" and whose saved total compliance count is zero, System MUST display 0% for that row's Status column.
+- **FR-023**: On the same list screen, for a listed sales order whose BOM column value is blank (its saved BOM status is not "No BOM"), System MUST continue to compute the displayed Status percentage exactly as today — (saved applied compliance count ÷ saved total compliance count) × 100, rounded to the nearest whole percent, or 0% when the saved total compliance count is zero — unaffected by FR-021/FR-022.
+- **FR-024**: FR-021–FR-023 MUST NOT change the saved compliance counts (`TotalApplied`, `TotalMissing`, `TotalOverdue`, `TotalCompliances`) or the saved BOM status written to `compl_summary_so` by any existing writer (User Story 3, User Story 1's background save) — they only change how those already-saved figures are converted into the displayed Status percentage on this list screen.
 
 ### Key Entities
 
 - **Sales-Line Open Material (t1)**: The existing BOM-derived record that feeds the All Compliances "get-all" lookup for a sales order. Key attributes: Sales order code, Inter-sales id, Product code, Configuration id, Material code, Country/region id, Product type, Material type, Cost group id, Area id, Material name, Product group, Sales status, Product range. This update adds a fallback path that constructs records in this same shape when the normal BOM-based source has none.
 - **Sales Order Line (t2, fallback source)**: A sales order's line record sourced from the sales-order-line reference data, filtered by sales order code. Key attributes used by this feature: Sales order code, Item, Configuration id, Area id, Country/region id, Sales status. Other attributes it carries (e.g., customer name/account, sales responsible/taker) are not used by this feature.
 - **Product Variant Info (fallback enrichment source)**: Reference data queried by Product code + Configuration id together, used only to supply the Product type and Product range values on fallback-derived lines.
-- **Compliance Summary (compl_summary_so)**: The saved per-sales-order compliance summary. Written by two independent paths that both save to the same table: the nightly/on-demand summary job (User Story 3, `GetAndSaveSummarySo`) and a background save triggered every time the "get-all" lookup runs for a sales order (User Story 1, `GetViewCompliancesAsync` → its own background save). This update adds a BOM status attribute to this record, set to "No BOM" by *either* writer when that writer's own BOM-based sales-line lookup returned zero records for the sales order, and left blank/unset otherwise — each writer computes it independently from its own lookup, not from the other writer's saved value. This attribute is also read (not written) by the All Compliances list screen (User Story 6) to populate its new "BOM" column, matched to each listed sales order by sales order id.
+- **Compliance Summary (compl_summary_so)**: The saved per-sales-order compliance summary. Written by two independent paths that both save to the same table: the nightly/on-demand summary job (User Story 3, `GetAndSaveSummarySo`) and a background save triggered every time the "get-all" lookup runs for a sales order (User Story 1, `GetViewCompliancesAsync` → its own background save). This update adds a BOM status attribute to this record, set to "No BOM" by *either* writer when that writer's own BOM-based sales-line lookup returned zero records for the sales order, and left blank/unset otherwise — each writer computes it independently from its own lookup, not from the other writer's saved value. This attribute is also read (not written) by the All Compliances list screen (User Story 6) to populate its new "BOM" column, matched to each listed sales order by sales order id, and — as of User Story 7 — the same attribute (together with the saved applied/total compliance counts, also unchanged by this update) drives whether that row's Status percentage is capped at 30% or computed up to 100%.
 
 ## Success Criteria *(mandatory)*
 
@@ -191,6 +248,9 @@ summary yet), confirm the column is blank.
 - **SC-008**: For every sales order processed by the compliance-summary job, its saved BOM status correctly identifies whether the fallback was used — 100% agreement between "saved BOM status reads No BOM" and "that sales order's BOM-based sales-line lookup returned zero records", verified across sampled runs including a sales order whose BOM was created between two job runs.
 - **SC-009**: For every sales order whose summary is saved via the "get-all" lookup's own background save (User Story 1), its saved BOM status correctly reflects that lookup's own BOM-based sales-line result — 0 such sales orders left with an incorrect or stale BOM status solely because they were only ever touched through this path and not the nightly job.
 - **SC-010**: On the All Compliances list screen for Sale Order, a reviewer can identify which listed sales orders are missing a BOM without opening any of them individually — 100% of listed rows whose saved BOM status is "No BOM" show "Missing" in the BOM column, and 0 rows show "Missing" when their saved BOM status is not "No BOM", verified across a sampled page of results.
+- **SC-011**: For every listed sales order whose BOM column shows "Missing", the displayed Status percentage never exceeds 30% — 0 such rows observed above 30%, verified across a sampled page of results spanning rows with none, some, and all of their saved compliances applied.
+- **SC-012**: For sales order SO007370 (or an equivalent sampled sales order with a "Missing" BOM column and 12 saved total compliances), the displayed Status percentage matches the worked example exactly: 30% when all 12 are applied, 10% when only 4 are applied.
+- **SC-013**: For every listed sales order whose BOM column is blank, the displayed Status percentage is unchanged from its pre-update value for the same saved counts — 0 observable difference introduced by this update for rows with real BOM data.
 
 ## Assumptions
 
@@ -208,3 +268,6 @@ summary yet), confirm the column is blank.
 - The BOM column (User Story 6) is scoped to the Sale Order reference type (`ref-type=11`) list only — the All Compliances list screen supports other reference types (e.g. Customer, Product type), but BOM status is only ever saved per sales order, so those other reference types have no equivalent value to show and are out of scope for this column.
 - The BOM column only ever reads the already-saved BOM status; it never triggers the BOM-based sales-line lookup or the fallback itself for the sales orders it lists (Edge Cases). A sales order can therefore show blank in this column even though it genuinely has no BOM, until one of the two writers (User Story 3 or User Story 1) has processed it at least once — this is the same "not yet saved" gap the rest of this screen's saved-summary columns (total/missing/applied/overdue) already have today, and this feature does not change that.
 - "Missing" is the literal display text requested for the "No BOM" case; no other saved BOM status value maps to any display text other than blank, since none was requested.
+- The 30% cap (User Story 7) is scoped to the Status percentage on the same All Compliances list screen for Sale Order that User Story 6's BOM column was added to (`ref-type=11`); no other reference type, screen, or flow (detail tab, downloads, alerts, dashboards) currently computes or displays a comparable "Status percentage" from these saved counts, so none of them are affected by or in scope for this change.
+- The percentage formula change (FR-021–FR-024) is display-only: it converts the already-saved `TotalApplied`/`TotalCompliances` figures (and the already-saved BOM status) into a percentage for this one column. It does not require any new data to be computed or saved, and does not change any stored procedure's output or the `compl_summary_so` table's schema — no database migration is needed for this specific update, unlike the earlier BOM-status update (2026-08-20) which did add a column.
+- "How many of the 12 compliances are đủ/thiếu" (satisfied/missing) in the request's example is read as the same saved applied-vs-total distinction already used for every other row's Status percentage today (`TotalApplied` and `TotalCompliances` from `compl_summary_so`), not a new or different counting rule — only the multiplier (30 instead of 100) changes for a "Missing"-BOM row.

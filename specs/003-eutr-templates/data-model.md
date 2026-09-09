@@ -92,16 +92,26 @@ approach).
   same `VersionId`, `CreatedDate` unchanged) — header fields overwritten, `eutr_template_details`
   for this `TemplateId` replaced (delete + re-insert), `IsHide` untouched, regardless of how long ago
   the row was created. No new row is ever created by a normal edit/Save.
-- **Approve (new, Update 16)**: `Status: Draft → Approved` on the SAME row — `Id`/`VersionId`/
-  `CreatedDate`/`eutr_template_details`/`eutr_template_references` all unchanged, only `Status` (+
-  `UpdatedBy`/`UpdatedDate`) is written.
-- **Request change (new, Update 16)**: `Status: Approved → Draft`, and THIS is now the only trigger
-  for a version bump: a new row is created with `VersionId + 1`, `Status = Draft`, and the SAME
-  `Name`/`AlertFor`/`IsDefault` as the row it supersedes (copied verbatim — Request change carries no
-  payload, unlike a normal edit); `eutr_template_details` and `eutr_template_references` are copied to
-  the new `TemplateId` using the exact same copy pipeline Clone (Update 15) already uses, NOT the old
-  age-based branch's rebuild-from-submitted-payload logic (see research.md §32); the old row is set
-  `IsHide = 1` and otherwise left untouched — an immutable historical snapshot of what was Approved.
+- **Approve (new, Update 16; D365 push added Update 23)**: `Status: Draft → Approved` on the SAME
+  row — `Id`/`VersionId`/`CreatedDate`/`eutr_template_details`/`eutr_template_references` all
+  unchanged, only `Status` (+ `UpdatedBy`/`UpdatedDate`) is written. **(Update 23)** Before that write
+  happens, the system pushes this template's `Code`/`Name` + each currently-active
+  `eutr_template_references` mapping's `VendorCode` (or one blank-`VendorCode` record if none are
+  active) to D365, reusing 011-eutr-synchronize-data's `SyncTemplatesToDynamicsAsync` Phase 2 request
+  shape scoped to this one `TemplateId`. If that D365 call fails, `Status` is NOT written — the row
+  stays exactly as it was before Approve was requested.
+- **Request change (new, Update 16; D365 delete added Update 23)**: `Status: Approved → Draft`, and
+  THIS is now the only trigger for a version bump: a new row is created with `VersionId + 1`, `Status
+  = Draft`, and the SAME `Name`/`AlertFor`/`IsDefault` as the row it supersedes (copied verbatim —
+  Request change carries no payload, unlike a normal edit); `eutr_template_details` and
+  `eutr_template_references` are copied to the new `TemplateId` using the exact same copy pipeline
+  Clone (Update 15) already uses, NOT the old age-based branch's rebuild-from-submitted-payload logic
+  (see research.md §32); the old row is set `IsHide = 1` and otherwise left untouched — an immutable
+  historical snapshot of what was Approved. **(Update 23)** Before any of this happens, the system
+  calls D365 to delete the ERP-side record for this template's `Code` (same request
+  `SyncTemplatesToDynamicsAsync`'s Phase 1 sends for this template in its own batch run). If that call
+  fails, NONE of the above runs — no new row, no copy, the old row's `Status`/`VersionId`/`IsHide`
+  stay exactly as they were (still Approved).
 - **Clone (new, Update 15)**: creates an entirely new, independent row — new auto-generated `Code`,
   `Name`/`AlertFor` from the Clone dialog's input, `VersionId = 1`, `IsDefault = 0` (always, never
   inherited from the source), `Status = Draft` (Update 16, always, regardless of the source's
@@ -407,19 +417,23 @@ all.~~
                 │                                 age check). Id, VersionId, CreatedDate unchanged;
                 │                                 header + details overwritten.
                 │
-                ├──[Approve, Status=Draft]──→ Same row, Status=Approved (Update 16). Id, VersionId,
-                │                                 CreatedDate, details, references all unchanged —
-                │                                 only Status (+ UpdatedBy/UpdatedDate) changes.
-                │                                 Edit/Save is now rejected server-side until
+                ├──[Approve, Status=Draft]──→ (Update 23) D365 push for THIS Code/Name/active
+                │                                 mappings FIRST — fails → 400, nothing below runs.
+                │                                 Succeeds → same row, Status=Approved (Update 16).
+                │                                 Id, VersionId, CreatedDate, details, references all
+                │                                 unchanged — only Status (+ UpdatedBy/UpdatedDate)
+                │                                 changes. Edit/Save is now rejected server-side until
                 │                                 Request change runs.
                 │
-                ├──[Request change, Status=Approved]──→ New Version, Status=Draft (Update 16)
-                │                                 (IsDeleted=0, IsHide=0, VersionId=N+1, same Code/
-                │                                 Name/AlertFor/IsDefault copied verbatim from the
-                │                                 old row; details + references copied via the same
-                │                                 pipeline Clone uses — see research.md §32).
-                │                                 Old version (Status=Approved) → IsHide=1, otherwise
-                │                                 untouched — an immutable historical snapshot.
+                ├──[Request change, Status=Approved]──→ (Update 23) D365 delete-by-Code FIRST — fails
+                │                                 → 400, nothing below runs. Succeeds → New Version,
+                │                                 Status=Draft (Update 16) (IsDeleted=0, IsHide=0,
+                │                                 VersionId=N+1, same Code/Name/AlertFor/IsDefault
+                │                                 copied verbatim from the old row; details +
+                │                                 references copied via the same pipeline Clone uses
+                │                                 — see research.md §32). Old version
+                │                                 (Status=Approved) → IsHide=1, otherwise untouched —
+                │                                 an immutable historical snapshot.
                 │
                 └──[Delete]──→ Soft Deleted (IsDeleted=1)
 ```
@@ -471,7 +485,9 @@ logic above:
 | EutrTemplates | Status | System-controlled, not user-editable via Create/Update — only changes via the dedicated Approve (Draft→Approved) and Request change (Approved→Draft) actions (Update 16) |
 | EutrTemplates Update (Update 16) | Status | Backend rejects the request with a validation error if `existing.Status == Approved` — edits are only accepted while Draft |
 | Approve request (Update 16) | Status | Backend rejects with a validation error if `existing.Status != Draft` |
+| Approve request (Update 23) | D365 push | Backend rejects with a validation error (400, "Failed to sync template with D365: ...") if the D365 push call (Code/Name + active vendor mappings) fails — checked BEFORE `Status` is written; `Status` stays `Draft` on failure (FR-083/FR-084) |
 | Request change request (Update 16) | Status | Backend rejects with a validation error if `existing.Status != Approved` |
+| Request change request (Update 23) | D365 delete | Backend rejects with a validation error (400, "Failed to sync template with D365: ...") if the D365 delete-by-Code call fails — checked BEFORE the new Draft version row is created; the Approved row's Status/VersionId/IsHide stay unchanged on failure (FR-081/FR-082) |
 | Set Default request (Update 18) | Status | NO precondition — unlike every other mutating action on this entity, `POST {id}/set-default` succeeds regardless of `Status` (Draft or Approved); this is the deliberate, sole exception to the Update 16 Approved-rejects-edits rule (FR-068) |
 | EutrTemplateDetails | StepId or StepName | Must provide `StepId` (existing eutr_steps record) OR a non-blank `StepName` (Update 6 — resolved to an existing or newly-created eutr_steps record on Save) |
 | EutrTemplateDetails | RequirementType | Must be 0 (Optional) or 1 (Required) |

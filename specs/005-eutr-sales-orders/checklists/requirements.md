@@ -362,3 +362,24 @@
   Update 21 Clarifications session and as Assumptions), and the remaining scope (nested nesting depth,
   same StepId across templates folding into one step folder, per-step filename dedup) follows directly
   from the already-specified All-tree and template-folder mechanisms (FR-130..FR-135, FR-073/FR-075).
+- **2026-09-07 (Update 22)**: Re-validated after adding FR-152..FR-160, SC-077..SC-081, and related
+  acceptance scenarios/edge cases/assumptions (the SC-077..SC-081 success criteria were added during the
+  subsequent `/speckit-plan` pass, having been missed in the initial `/speckit-specify` update — a gap
+  caught and closed before planning proceeded, not a scope change) — changes the Download button (View:
+  FR-069; Overview: FR-087) to
+  show a choice popup instead of always packaging both the **All** folder (Update 21, FR-142..FR-148)
+  and the per-template folders (Update 10/13, FR-071..FR-075) into the same zip. The two popup choices
+  are mutually exclusive: **Combined (All)** downloads only the All step-tree folder; **By Template**
+  downloads only the per-template folders — internal folder/file rules for each (naming, Mapped-only
+  filtering, empty-folder creation, duplicate-filename suffixing) are explicitly unchanged, per the
+  user's own request that "logic thư mục, file trong các folder vẫn giữ như cũ". This directly
+  supersedes FR-149's prior "always packaged together" rule, which is now marked superseded in place
+  (per this spec's established practice of editing an FR in place with a "Cập nhật từ Update N" note,
+  e.g. FR-060/FR-138 in Update 20) rather than left contradictory. No new [NEEDS CLARIFICATION] markers
+  introduced: the user explicitly delegated the exact button/option naming ("đặt tên lại cho hợp lý")
+  rather than asking a question, so **Combined (All)** / **By Template** are recorded as an explicit
+  Assumption (a naming decision, not a scope question) rather than a marker; the one point with more
+  than one reasonable reading — whether the "nothing to download" empty-check (FR-074/FR-089) should
+  evaluate both formats or only the one the user picked — is resolved as an explicit FR (FR-158:
+  evaluate only the picked format), since checking the unpicked format would block a valid download for
+  no reason a user could see on screen.

@@ -1175,3 +1175,60 @@ forest location map" survives, re-parented to the All folder's root).
 - SC-076 (the All folder addition writes nothing to `eutr_documents`/`eutr_references`/
   `eutr_purchase_attachments`/`eutr_templates`) → verify no row in any of these tables changes across
   steps 1-10 (same read-only check pattern as Update 10's SC-033).
+
+## Update 22 (2026-09-07) — Download shows a choice popup (Combined All / By Template)
+
+This update needs **no backend change at all** — `download-zip` is reused byte-for-byte (Update 21).
+It adds one new shared frontend component (`DownloadFormatDialog.jsx`) and changes both Download entry
+points (View's button, each Overview row's button) to open it before building/sending `folders`.
+
+### Fixture setup
+
+Reuse Update 21's fixture exactly (Template D as default with "Forest" > "Plantation forest location
+map" and "Sawmill"; Sales Order with saved Templates X/Y partially overlapping; one Mapped document on
+"Plantation forest location map", "Sawmill" left missing) — this update changes *when*/*which* folders
+get sent, not any folder's own content, so the same fixture exercises both formats.
+
+### Frontend verification (manual)
+
+1. Open **View** for the fixture Sales Order and click Download.
+   **Expected**: a popup appears with exactly 2 options, **Combined (All)** and **By Template**, neither
+   pre-selected; the confirm ("Download") button is disabled. No network call has fired yet (SC-077).
+2. Without selecting an option, click Cancel (or click outside the popup).
+   **Expected**: the popup closes, no file downloads, and checking the browser's network tab confirms no
+   call to `download-zip` (or any of its supporting data calls) was made (SC-080).
+3. Click Download again, select **By Template**, then confirm.
+   **Expected**: the downloaded zip's root folder contains only the per-template folders ("Template X",
+   "Template Y") — **no** `All` folder anywhere in the archive (SC-078). Each template folder's content
+   matches Update 10/13's existing rules unchanged.
+4. Click Download again, select **Combined (All)**, then confirm.
+   **Expected**: the downloaded zip's root folder contains only a single `All` folder (with the same
+   "Plantation forest location map"/"Sawmill" step structure verified in Update 21's steps 2-4) — **no**
+   `Template X`/`Template Y` folders anywhere in the archive (SC-079).
+5. Repeat steps 1-4 on the corresponding row's Download button in **Overview** for the same Sales Order.
+   **Expected**: identical popup behavior and identical zip contents per format as View (steps 1-4).
+6. With browser devtools' network tab open, repeat step 5's **By Template** pick on Overview.
+   **Expected**: no request is made for the default-template lookup (the same 2-call chain Update 21
+   added) — confirming the optimization that this fetch is skipped entirely when Combined is not chosen.
+7. Repeat step 5's **Combined (All)** pick on Overview with the network tab open.
+   **Expected**: the default-template 2-call chain *is* called, same as Update 21's unconditional
+   behavior — confirming it only runs when its output (the All folder) will actually be used.
+8. Use a Sales Order with zero Mapped documents across every saved template (Update 10/13's existing
+   empty case). Click Download, pick **By Template**, confirm.
+   **Expected**: unchanged from Update 10/13 — a clear "no documents to download" message appears and no
+   zip downloads.
+9. Same Sales Order as step 8, click Download again, pick **Combined (All)**, confirm.
+   **Expected**: the same "no documents to download" message appears (the All tree may still have valid
+   but file-less steps, per FR-150/Update 21) — no zip downloads either.
+10. Across steps 1-9, confirm no row in `eutr_documents`/`eutr_references`/`eutr_purchase_attachments`/
+    `eutr_templates` changes (same read-only check pattern as Update 10/21's SC-033/SC-076).
+
+### Success criteria mapping (Update 22)
+
+- SC-077 (Download always shows the 2-option popup before any zip is built/downloaded) → frontend
+  step 1.
+- SC-078 (By Template zip contains only template folders, never All) → frontend step 3.
+- SC-079 (Combined zip contains only the All folder, never template folders) → frontend step 4.
+- SC-080 (closing the popup without choosing triggers no download) → frontend step 2.
+- SC-081 (the popup/choice writes nothing to `eutr_documents`/`eutr_references`/
+  `eutr_purchase_attachments`/`eutr_templates`) → frontend step 10.

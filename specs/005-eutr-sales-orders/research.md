@@ -2506,3 +2506,127 @@ only cloned.
   the All folder is purely additive alongside them.
 - No change to the "no Mapped documents anywhere → show a message, don't call the endpoint" check
   (FR-074/FR-089) — it still short-circuits before any folder (including All) is built or sent.
+
+## Update 22 (2026-09-07): Download shows a choice popup (Combined All / By Template) instead of always packaging both
+
+> Covers spec FR-152..FR-160. No backend change at all — `download-zip` already treats `folders` as an
+> opaque, client-supplied list (Decision 37/69); this update only changes which subset of the
+> already-computed `templateFolders`/All-folder entries (Update 21, Decision 70) the client assembles
+> into that list, gated by a new small choice dialog. See Decisions 71-73.
+
+### Decision 71 — New `DownloadFormatDialog.jsx`, modeled on the existing `ConfirmDialog.jsx` shape, not a new dialog pattern
+
+- **Decision**: Add one new small presentation component,
+  `presentation/pages/eutr-sales-orders/components/DownloadFormatDialog.jsx`, cloning
+  `presentation/components/ConfirmDialog.jsx`'s existing `Dialog`/`DialogTitle`/`DialogContent`/
+  `DialogActions` structure and prop shape (`open`, `onClose`, `onConfirm`) — the only genuinely new
+  piece is a `RadioGroup` inside `DialogContent` with two `FormControlLabel`/`Radio` options, value
+  `'combined'` (label **"Combined (All)"**) and `'byTemplate'` (label **"By Template"**), plus one new
+  local `format` state (`useState(null)`, no option pre-selected). `DialogActions` keeps `ConfirmDialog`'s
+  existing Cancel button unchanged, and its confirm button (relabeled **"Download"**) stays `disabled`
+  until `format` is non-null, calling `onConfirm(format)` then closing. Both `ViewSalesOrderPage.jsx` and
+  `SalesOrderOverviewPage.jsx` import this one shared component — it is not duplicated per screen.
+- **Rationale**: Constitution Principle II (reference-pattern reuse) — a full repo/feature search
+  (`004-eutr-documents`, `003-eutr-templates`, `presentation/components/`) found no existing
+  "pick exactly one of two mutually exclusive options, then confirm" modal to reuse as-is (the only
+  `RadioGroup` usage anywhere in the client is an inline form field in an unrelated legacy page, not a
+  modal), but `ConfirmDialog.jsx` already establishes this codebase's lightweight two-button
+  (Cancel/Confirm) modal shape and is already reused by `CloneTemplateDialog.jsx` — cloning its structure
+  keeps the new dialog visually/behaviorally consistent with the one existing precedent instead of
+  inventing an unrelated one. A single shared component (not one per screen) avoids duplicating the
+  radio-option list/labels the spec fixes as exactly two (FR-153).
+- **Alternatives considered**:
+  - *Two separate buttons ("Download Combined" / "Download By Template") instead of a popup*: rejected —
+    contradicts the spec's explicit requirement for a single Download entry point that opens a popup
+    (FR-152), and would double the row/toolbar footprint for a choice made rarely per download.
+  - *Extend `ConfirmDialog.jsx` itself with an optional `options` prop instead of a new component*:
+    rejected — `ConfirmDialog` is a generic yes/no confirmation already reused elsewhere for unrelated
+    single-action confirmations (`CloneTemplateDialog.jsx`); overloading it with a radio-choice mode
+    specific to Download would couple an unrelated shared component to this one feature's needs.
+  - *Pre-select one option as a "recommended" default (e.g. By Template, matching pre-Update-21
+    behavior)*: rejected — the spec's own Update 22 Assumption states the popup presents both options
+    "ngang nhau" (on equal footing) with no default marked; forcing an active choice (confirm disabled
+    until one is picked) matches that intent more directly than a silently-pre-checked radio a user could
+    miss.
+
+### Decision 72 — `ViewSalesOrderPage.jsx`: Download button opens the dialog; `buildDownloadFolders` becomes format-aware, returning only the chosen folder set
+
+- **Decision**: The Download button's `onClick` (currently `handleDownload` directly, line ~1104-1114)
+  now opens `DownloadFormatDialog` (`setDownloadDialogOpen(true)`); its `onConfirm` calls the existing
+  `handleDownload`, now accepting a `format` argument. `buildDownloadFolders` (currently lines 947-962)
+  is changed from unconditionally returning `[...templateFolders, ...allFolders-or-fallback]` to a
+  format-gated return: `format === 'byTemplate' ? templateFolders : (allFolders.length > 0 ? allFolders :
+  [{ folderPath: ['All'], files: [] }])`. No new fetch is introduced by this change — `templatesData`/
+  `allChipTree`/`allChipDerivedFileMappings`/`allChipFiles` are already loaded on mount (Update 4/20)
+  regardless of which format the user eventually picks, since they also drive the always-visible
+  Template Checklist/toolbar; the dialog only changes which of the two **already-computed** sets gets
+  sent, never what gets fetched.
+- **Rationale**: Principle III/reuse — every input `buildDownloadFolders` needs already exists in state
+  by Update 21; the only change this update requires is a conditional at the point where the two
+  already-built lists are concatenated, matching the spec's explicit framing that internal folder/file
+  logic (FR-071..FR-075, FR-142..FR-148) is unchanged and only "how many/which folders get packaged"
+  changes (FR-156).
+- **Alternatives considered**:
+  - *Compute both folder sets and let the backend discard the unwanted one via a `format` field on the
+    request*: rejected — would require a backend change (a new discriminator field plus server-side
+    branching) for a decision that is entirely about what the client chooses to send; Decision 69/37
+    already established the server has and needs zero business-logic awareness of "All" vs "template".
+  - *Skip building the unchosen set entirely (e.g. don't compute `allFolders` when `format ===
+    'byTemplate'`)*: considered but not adopted — `templateFolders`/`allFolders` are cheap `useMemo`
+    derivations over already-in-memory data (Update 7/8/19/21), evaluated once per relevant dependency
+    change regardless of Download; skipping one based on a value only known after the dialog closes would
+    need to move these from `useMemo` into the click handler for a negligible client-side compute saving,
+    adding complexity FR-156 doesn't ask for.
+
+### Decision 73 — `SalesOrderOverviewPage.jsx`: single per-row dialog state; skip the default-template fetch chain entirely when the user picks By Template
+
+- **Decision**: Add one new state, `downloadDialogRow` (`{ salesId, customerCode, customerName } | null`,
+  not a per-row `Set`/`Map`) — since only one modal dialog can be meaningfully open/interacted with at a
+  time, a single value identifies which row's dialog is open without colliding with
+  `downloadingSalesIds` (Update 13's existing per-row in-flight `Set`, unaffected). Clicking a row's
+  Download `IconButton` now sets `downloadDialogRow` instead of calling `handleDownload` directly;
+  `DownloadFormatDialog`'s `onConfirm(format)` calls the existing `handleDownload(salesId, customerCode,
+  customerName, format)` (now taking a 4th argument) and clears `downloadDialogRow`. Inside
+  `handleDownload`, the format gates two things: (1) the same `templateFolders`-vs-All-entries choice as
+  View (Decision 72), applied to the handler's own inline builder; (2) — a genuine optimization Update 21
+  did not have — the on-demand default-template 2-call chain (Update 21/Decision 70's addition to this
+  handler's `Promise.all`) is only issued when `format === 'combined'`; when the user picks **By
+  Template**, that fetch is skipped entirely, since its only consumer (the All-folder entries) will not be
+  sent. The already-existing raw-purchase-attachments/by-codes/`list-po-references` calls run
+  unconditionally either way, since both formats need them (per-template folders always need them; the
+  Combined format's per-step Mapped-document union, FR-145, is built from the same `poReferenceDocs` these
+  calls already fetch).
+- **Rationale**: Principle III — `downloadingSalesIds` (per-row concurrency) and the new dialog's
+  open/closed state are orthogonal concerns (which rows are fetching vs. which row's popup is showing) and
+  keeping them as two separate, simply-typed pieces of state avoids overloading one structure to track
+  both. Skipping the default-template chain for **By Template** is a direct, low-risk performance win
+  enabled by the fact that Overview's Download (unlike View's) fetches everything on-demand at click
+  time (FR-088) rather than having it already sitting in memory — there is no equivalent saving available
+  on View, since its default-template data is already fetched on mount for the always-visible All chip
+  regardless of Download (Decision 72).
+- **Alternatives considered**:
+  - *Key dialog state by `salesId` in a `Map`/object, allowing multiple simultaneous per-row popups*:
+    rejected — a modal `Dialog` visually blocks the rest of the page while open; nothing in the spec asks
+    for multiple simultaneous open popups across rows, and a single `downloadDialogRow` value is simpler
+    and matches how a user actually interacts with one modal at a time.
+  - *Always fetch the default-template chain regardless of format, matching Update 21's unconditional
+    behavior, for consistency with View*: rejected — View's default-template data has a second consumer
+    (the always-on-screen All chip/Template Checklist) that justifies fetching it unconditionally on
+    mount; Overview's row has no such second consumer, so fetching it for a **By Template** download
+    would be pure waste with no spec requirement forcing it, and FR-158's per-format empty-check already
+    implies each format's own data need only be resolved for the format actually picked.
+
+## Updated non-goals (Update 22)
+
+- No new backend endpoint, controller, DTO, entity, table, migration, or policy — `download-zip` and its
+  request DTOs (Decision 69) are reused completely unchanged; this update is a 100% frontend change.
+- No change to the per-template or All-folder internal content rules (naming, Mapped-only filtering,
+  empty-folder creation, duplicate-filename suffixing — FR-071..FR-075, FR-142..FR-148) — only which of
+  the two already-correct folder sets gets included in a given download.
+- No change to `downloadingSalesIds` (Update 13's per-row in-flight spinner state) — the new
+  `downloadDialogRow` state is additive and orthogonal to it.
+- No persisted/remembered "last chosen format" across downloads — every Download click re-opens the
+  dialog with no option pre-selected (spec Assumption, Update 22).
+- No change to View's mount-time default-template fetch (Update 20) — it continues to fire unconditionally
+  regardless of Download, since the always-visible All chip/Template Checklist depend on it independently
+  of Download.

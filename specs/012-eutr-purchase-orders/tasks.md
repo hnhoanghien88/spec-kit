@@ -312,6 +312,27 @@ Developer B: T013 → T014 → T015 → T016 → T017 → T018 → T019 → T020
     request using the exact same pattern (T029/T030).
   - Verified via `eslint` (clean) and `vite build` (succeeds, 0 errors) after the change.
 
+## Phase 7: Spec Update 1 — Upload default Type/Value on `PurchId/View` (FR-024/FR-025/FR-026)
+
+**Goal**: On `PurchId/View` only, clicking **Upload** opens the shared Add-document popup pre-filled
+with Type = `PO` and Value = the Purchase Order currently being viewed, still fully editable. The
+Map File screen (005-eutr-sales-orders) must keep opening empty, unaffected.
+
+**Independent Test**: Open a Purchase Order's `PurchId/View` screen, click Upload — confirm Type
+shows `PO` and Value shows this PO's own Purch id pre-selected, and both can still be changed before
+saving. Then open `005-eutr-sales-orders`'s Map File screen and click its own Upload — confirm Type
+and Value still open empty there.
+
+### Implementation for Update 1
+
+- [X] T032 [P] [US2] In `compliance-client/src/presentation/pages/eutr-documents/components/EutrDocumentsFormDialog.jsx`, add two new optional props, `addDefaultTypeName` and `addDefaultChips`, consumed only inside the `mode="add"` branch of the existing `useEffect(..., [open])` init effect: after `typesList` loads, if `addDefaultTypeName` is set, resolve the matching entry by case-insensitive-trimmed name match (same comparison `isPoTypeName` uses) and `setType` to it instead of `null`; if `addDefaultChips` is set (non-empty), `setChips` to it instead of `[]`. Leave every other behavior (edit mode, `handleTypeChange`, chip removal, existing callers passing neither prop) unchanged (research.md Decision 9).
+- [X] T033 [US2] In `compliance-client/src/presentation/pages/eutr-purchase-orders/PurchaseOrderViewPage.jsx`, pass `addDefaultTypeName="PO"` and `addDefaultChips={po ? [po] : []}` to the Upload `<EutrDocumentsFormDialog mode="add" ...>` instance (the existing `po` state already fetched for the header, FR-024) — do not modify the Edit dialog instance. Depends on: T032.
+- [X] T034 [P] Confirm `compliance-client/src/presentation/pages/eutr-sales-orders/MapFilePage.jsx`'s own `<EutrDocumentsFormDialog mode="add" ...>` call site passes neither new prop, so its popup keeps opening with Type/Value empty (FR-026) — no code change expected, verification only. (Confirmed via grep: its two `EutrDocumentsFormDialog` instances at lines 1640/1654 pass neither prop — unaffected.)
+
+**Checkpoint**: Update 1 is independently testable — `PurchId/View`'s Upload defaults to PO/current-PO while Map File's Upload is unaffected. Verified via `eslint` (clean, both changed files) and `vite build` (succeeds, 0 errors) after the change. **Not run**: live click-through in a browser against a real environment (quickstart.md's new checks in "Validate the detail screen (US2)" step 6/6a) — same constraint as T024/T026.
+
+---
+
 - [X] T031 Follow-up user request: checked `011-eutr-synchronize-data`'s "purchase missing" check
   (`EutrSynchronizeDataService.SendPurchaseMissingAlertAsync`, `test-purchase-missing`) for the same
   document-loading gap. **Confirmed present, fixed.**

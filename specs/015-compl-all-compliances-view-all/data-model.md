@@ -118,6 +118,21 @@ returned by `ViewCompliancesController.Get365` for the All Compliances Sale Orde
 | `BomStatus` | `string?` | **New.** Copied from the matched `compl_summary_so` row's `BomStatus` (same match-by-`SalesId` the other enriched fields already use) when a match exists; left `null` when no matching summary row is found for that sales order (User Story 6, FR-018/FR-020). Read by the frontend's new "BOM" column (R9) — not itself persisted anywhere. |
 | *(all other fields)* | — | unchanged |
 
+### Status percentage (list-screen display value; not persisted, not a new field)
+
+**Update (2026-09-07, User Story 7)**: the "Status" column's percentage bar is a purely derived,
+client-side display value — not a field on `RSVNSalesOrderOpenInvoiceCogs`, `ComplSummarySo`, or any
+other entity — computed in `useAllCompliancesColumnsSaleOrder.jsx` from three fields already on the
+row: `totalApplied`, `totalCompliances`, and (as of this update) `bomStatus`.
+
+| Row is... | Formula | Range |
+|---|---|---|
+| `bomStatus === "No BOM"` (BOM column shows "Missing") | `round((totalApplied / totalCompliances) * 30)`, or `0` when `totalCompliances` is 0 | 0–30 |
+| otherwise | `round((totalApplied / totalCompliances) * 100)`, or `0` when `totalCompliances` is 0 (unchanged from before this update) | 0–100 |
+
+No new persisted field, no schema change (research.md R10). `totalApplied` ≤ `totalCompliances`
+always holds (research.md R11), so the capped branch can never round above 30.
+
 ## Schema Change
 
 - `compl_summary_so` gains one nullable `VARCHAR` column, `BomStatus`, added via migration

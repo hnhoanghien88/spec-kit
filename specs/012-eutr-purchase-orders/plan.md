@@ -167,3 +167,45 @@ is reused unchanged.
 ## Complexity Tracking
 
 *No Constitution Check violations — table not needed.*
+
+## Update 1 (2026-09-07) — Upload default Type/Value on `PurchId/View`
+
+**Spec delta**: FR-024/FR-025/FR-026 (spec.md Update 1). When the user clicks **Upload** on the
+`PurchId/View` detail screen only, the shared `EutrDocumentsFormDialog` (004-eutr-documents) now
+opens pre-filled with Type = `PO` and Value = the Purchase Order currently being viewed, still fully
+editable. The Map File screen (005-eutr-sales-orders) is explicitly unaffected — Decision 26 of that
+spec's "full, unrestricted popup" stays in force there.
+
+**Summary**: Purely additive frontend change, no backend/API/data-model change. Two optional props
+(`addDefaultTypeName`, `addDefaultChips`) are added to `EutrDocumentsFormDialog.jsx` — consumed only
+when `mode="add"` and only set by `PurchaseOrderViewPage.jsx`. `MapFilePage.jsx` (005) passes neither
+prop, so its existing reset-to-empty behavior on open is byte-for-byte unchanged. The default Value
+chip is not fetched separately — it reuses the same `po` reference-data object (`refType=15`, already
+loaded for the page header, shape-compatible with the chips `EutrAddValueAutocomplete` normally
+produces) already held in `PurchaseOrderViewPage.jsx` state (see research.md Decision 9).
+
+**Technical Context delta**: No change to Language/Version, Primary Dependencies, Storage, Testing,
+Target Platform, or Project Type. No new network call is introduced — the prefill source (`po` state)
+is already fetched by the existing FR-013/FR-014 existence-check call.
+
+**Constitution Check (re-evaluated)**: Still PASS on all five principles — no new backend surface
+(III), no new route/menu (V), no new local storage (I), no localization deviation (IV). Principle II
+(Reference-Pattern Reuse) is reinforced, not weakened: the change deliberately keeps `005`'s Map File
+call site untouched rather than changing the shared dialog's default behavior globally, preserving
+that spec's own explicit "no auto-lock" decision as prior, unmodified precedent.
+
+### Project Structure delta
+
+```text
+compliance-client/src/presentation/pages/
+├── eutr-documents/components/
+│   └── EutrDocumentsFormDialog.jsx     # + 2 new optional props (addDefaultTypeName, addDefaultChips),
+│                                       #   consumed only in the mode="add" init effect; no prop ->
+│                                       #   no behavior change (MapFilePage.jsx call site unaffected)
+└── eutr-purchase-orders/
+    └── PurchaseOrderViewPage.jsx       # Upload button's <EutrDocumentsFormDialog mode="add" .../>
+                                        #   now passes addDefaultTypeName="PO" and
+                                        #   addDefaultChips={po ? [po] : []} (reuses existing `po` state)
+```
+
+No files added, no files removed, no backend files touched.

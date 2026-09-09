@@ -92,3 +92,15 @@ No schema/column changes — `IsDelete` already exists with the right type and d
 | `compl_sp_get_compl_master_paging_count` | Same `AND cd.IsDelete = 0` addition, so `TotalCount` stays in sync with the paged results (per `research.md` R14's alternative-considered note — filtering after the SQL call would desync count vs. items, the same class of bug migration 24 already fixed once). |
 | `compl_sp_get_compl_master_missing_for_alert` | Same addition on its `MasterData` CTE, so a soft-deleted master stops generating "missing compliance" alert notifications. |
 | `compl_sp_get_compl_master_by_id` | **Unchanged on purpose** — keeps resolving a soft-deleted master by id (see `research.md` R14). |
+
+## Rule Condition Type selector — `blockHasTable` scoping change (User Story 5)
+
+No entity, DTO, or database schema change — `compl_master_conditions`/`compl_master_condition_values` are unchanged, and no new column, table, or enum value is introduced. This story changes one piece of **frontend-only, in-memory gating logic** in `ComplianceMasterForm.jsx`:
+
+| Before | After |
+|--------|-------|
+| `blockHasTable = block.some(c => c.id !== cond.id && c.displayType === 1)` — any other condition in the block using Table (any reference type) blocks this condition's own Table option. | `blockHasTable = block.some(c => c.id !== cond.id && c.displayType === 1 && c.modelType === cond.modelType)` — only another condition of the **same** reference type using Table blocks this condition's own Table option. |
+
+Effect: a Customer condition (`modelType` = Customer's `RefTypeId`) and a Product Type condition (`modelType` = Product Type's `RefTypeId`) can each independently select Table in the same AND block. Two Customer conditions in the same block both attempting Table remain mutually blocking, unchanged from today's behavior. See `research.md` R17-R18.
+
+No change to: `DisplayType`/`Operator` values or meaning (R17), the Master Preview formula/rendering (R19 — explicitly reused as-is per requester confirmation), the save payload shape (`:611-644`, already generic per `RefTypeId`), `ConditionsView.jsx` (already generic, no gating logic at all), or any backend entity/DTO/validator/stored-procedure (R17, R19 — verified already generic across reference types).

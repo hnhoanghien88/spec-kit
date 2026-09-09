@@ -10,6 +10,50 @@
 
 ## Clarifications
 
+### Session 2026-09-07 (Update 22) — Nút Download hiển thị popup chọn định dạng tải (Combined All / By Template) thay vì đóng gói cả hai cùng lúc
+
+- Bối cảnh: Từ Update 21 (FR-142 đến FR-151), mỗi lượt nhấn Download (View: FR-069; Overview: FR-087)
+  đóng gói đồng thời cả thư mục **All** (cây step hợp nhất theo template mặc định, FR-142 đến FR-148)
+  lẫn các thư mục con theo tên template (FR-071 đến FR-075) trong cùng 1 file zip (FR-149). Người yêu
+  cầu tính năng muốn người dùng tự chọn muốn tải theo góc nhìn nào thay vì luôn nhận cả hai: khi nhấn
+  Download, hệ thống MUST hiển thị một popup cho phép chọn đúng 1 trong 2 lựa chọn tải xuống, rồi mới
+  tạo và tải file zip tương ứng đúng lựa chọn đó — không còn đóng gói cả hai góc nhìn cùng lúc trong 1
+  lần tải như hiện tại.
+- Change: Popup lựa chọn định dạng tải MUST hiển thị đúng 2 lựa chọn (đặt tên lại cho rõ nghĩa với
+  người dùng cuối, không dùng nguyên văn "All"/"Separate" gây khó hiểu):
+  1. **Combined (All)** — tương ứng đúng nội dung/cấu trúc thư mục **All** đã đặc tả ở Update 21
+     (FR-142 đến FR-148): cây thư mục lồng nhau theo tên step của template mặc định toàn hệ thống, chỉ
+     giữ (các) step tồn tại ở Sales Order này, mỗi thư mục step chứa tài liệu "Mapped" hợp nhất qua mọi
+     template đã lưu.
+  2. **By Template** — tương ứng đúng nội dung/cấu trúc thư mục theo tên template đã có từ Update
+     10/13 (FR-071 đến FR-075): một thư mục con cho mỗi template đã lưu (tên = tên thật template), mỗi
+     thư mục chỉ chứa tài liệu "Mapped" đúng cho template đó.
+- Change: Khi người dùng chọn **Combined (All)** và xác nhận trên popup, file zip tải về MUST chỉ chứa
+  đúng 1 thư mục con **All** bên trong thư mục gốc `{SalesId}-{CustomerCode}-{CustomerName}` — KHÔNG
+  còn kèm theo bất kỳ thư mục con nào theo tên template trong cùng lượt tải này.
+- Change: Khi người dùng chọn **By Template** và xác nhận trên popup, file zip tải về MUST chỉ chứa
+  các thư mục con theo tên template (đúng tập template đã lưu của Sales Order, FR-071) — KHÔNG còn kèm
+  theo thư mục **All** trong cùng lượt tải này.
+- Change: Toàn bộ quy tắc dựng nội dung bên trong mỗi loại thư mục (tên thư mục, điều kiện Map status,
+  tạo thư mục rỗng khi không có tài liệu, hậu tố phân biệt tên file trùng, v.v. — FR-071 đến FR-075 và
+  FR-142 đến FR-148) giữ nguyên không đổi so với Update 10/13/21 — Update này chỉ thay đổi việc **có
+  bao nhiêu và loại thư mục nào** được đóng gói trong 1 lượt tải, dựa trên lựa chọn của người dùng ở
+  popup, không định nghĩa lại logic thư mục/file đã có.
+- Change: Popup lựa chọn này áp dụng đồng thời cho cả nút Download ở màn hình View (FR-069) và nút
+  Download ở mỗi dòng Overview (FR-087) — cùng 2 lựa chọn, cùng hành vi, vì Overview dùng lại nguyên cơ
+  chế đóng gói zip của View (FR-092).
+- Change: Việc kiểm tra "không có tài liệu Mapped nào để tải" (FR-074/FR-089) MUST áp dụng riêng theo
+  đúng lựa chọn đã chọn ở popup: nếu chọn Combined nhưng cây All không có bất kỳ step nào có tài liệu
+  Mapped, hoặc chọn By Template nhưng không template nào có tài liệu Mapped, hệ thống MUST hiển thị
+  thông báo không có tài liệu để tải và KHÔNG tải file zip — không phụ thuộc việc lựa chọn còn lại
+  (không được chọn) có tài liệu hay không.
+- Change: Đóng popup mà không chọn lựa chọn nào (nút Cancel/click ra ngoài popup) MUST không tạo/tải
+  bất kỳ file zip nào và không ghi/sửa/xóa bất kỳ dữ liệu nào — giữ đúng nguyên tắc chỉ đọc hiện có của
+  thao tác Download (FR-076/FR-092).
+- Change: Việc hiển thị popup và xử lý lựa chọn của người dùng KHÔNG MUST ghi/sửa/xóa bất kỳ bản ghi
+  tài liệu/tham chiếu/purchase attachment/template nào — giữ đúng nguyên tắc chỉ đọc hiện có của thao
+  tác Download.
+
 ### Session 2026-08-12 (Update 21) — Nút Download bổ sung thư mục "All" trong file zip, theo cấu trúc cây step của chế độ All
 
 - Bối cảnh: Nút Download (View: Update 10, FR-069 đến FR-076; Overview: Update 13, FR-087 đến FR-092)
@@ -858,9 +902,11 @@ name**, **Delivery date**, cột **Template** hiển thị (các) template thậ
 cứu từ bảng `eutr_purchase_attachments`), và cột **Progress** (từ Update 12) hiển thị tiến độ thật
 của chính Sales ID đó — số step Required đã có tài liệu/tổng số step Required và tỷ lệ %, tính theo
 đúng công thức mà màn hình Map File đang dùng cho Sales Order đang mở, cộng dồn qua toàn bộ template
-đã lưu của Sales ID đó. Mỗi dòng còn có nút **Download** (từ Update 13) — khi nhấn, tải xuống đúng 1
-file zip cho Sales Order của dòng đó, theo đúng cấu trúc thư mục/quy tắc tài liệu Mapped đã áp dụng
-cho nút Download ở màn hình View (Update 10), không cần điều hướng khỏi Overview.
+đã lưu của Sales ID đó. Mỗi dòng còn có nút **Download** (từ Update 13) — khi nhấn, hệ thống hiển thị
+popup cho người dùng chọn 1 trong 2 định dạng tải (**Combined (All)** hoặc **By Template**, từ Update
+22), sau đó tải xuống đúng 1 file zip cho Sales Order của dòng đó theo đúng định dạng đã chọn, dùng lại
+cấu trúc thư mục/quy tắc tài liệu Mapped đã áp dụng cho nút Download ở màn hình View (Update 10/21),
+không cần điều hướng khỏi Overview.
 
 **Why this priority**: Đây là giá trị cốt lõi và duy nhất của tính năng ở giai đoạn này — cho phép
 người dùng xem được danh sách sales order ngay khi mở màn hình; không có giá trị nào khác nếu thiếu
@@ -871,8 +917,9 @@ Customer, Customer name, Delivery date với dữ liệu thật lấy từ ngu�
 Template hiển thị đúng (các) template thật tra cứu từ `eutr_purchase_attachments` theo Sales ID
 (bao gồm trường hợp một Sales ID có nhiều template); cột Progress hiển thị đúng tiến độ thật của
 từng Sales ID, khớp với số liệu Required/completed mà Map File tính cho đúng Sales Order đó; nhấn
-nút Download ở một dòng có tài liệu Mapped xác nhận tải xuống đúng 1 file zip với cấu trúc thư mục
-giống nút Download ở View cho đúng Sales Order đó. **Từ Update 16**: khi ô tìm kiếm đang trống (lần
+nút Download ở một dòng có tài liệu Mapped xác nhận hệ thống hiển thị popup chọn định dạng tải (Update
+22), rồi sau khi chọn, tải xuống đúng 1 file zip với cấu trúc thư mục tương ứng lựa chọn đó, giống nút
+Download ở View cho đúng Sales Order đó. **Từ Update 16**: khi ô tìm kiếm đang trống (lần
 đầu mở màn hình), danh sách MUST chỉ hiển thị các Sales ID đã có Template (`TemplateCode` khác null
 trong `eutr_purchase_attachments`); khi gõ một từ khóa vào ô tìm kiếm, danh sách kết quả MUST khớp
 mọi Sales ID theo từ khóa đó bất kể đã có Template hay chưa.
@@ -912,12 +959,22 @@ mọi Sales ID theo từ khóa đó bất kể đã có Template hay chưa.
     **When** so sánh số liệu Progress ở Overview với số liệu Required/completed ở Map File/View cho
     đúng Sales ID đó, **Then** hai số liệu này khớp nhau tại cùng một thời điểm dữ liệu.
 12. **Given** một dòng có Sales Order với ít nhất 1 tài liệu "Mapped" ở một template bất kỳ, **When**
-    nhấn nút Download của dòng đó, **Then** hệ thống tải xuống đúng 1 file zip tên
-    `{SalesId}-{CustomerCode}-{CustomerName}`, chứa đúng thư mục con cho mỗi template đã lưu (tên thư
-    mục = tên thật template) và mỗi thư mục con chỉ chứa đúng các tài liệu đã "Mapped" cho template đó.
+    nhấn nút Download của dòng đó, **Then** hệ thống hiển thị popup cho chọn 1 trong 2 định dạng tải
+    (**Combined (All)** / **By Template**, Update 22) trước khi tải bất kỳ file nào.
+12a. **Given** đang ở popup của kịch bản 12, **When** người dùng chọn **By Template** và xác nhận,
+    **Then** hệ thống tải xuống đúng 1 file zip tên `{SalesId}-{CustomerCode}-{CustomerName}`, chứa
+    đúng thư mục con cho mỗi template đã lưu (tên thư mục = tên thật template) và mỗi thư mục con chỉ
+    chứa đúng các tài liệu đã "Mapped" cho template đó — KHÔNG kèm theo thư mục **All**.
+12b. **Given** đang ở popup của kịch bản 12, **When** người dùng chọn **Combined (All)** và xác nhận,
+    **Then** hệ thống tải xuống đúng 1 file zip cùng tên gốc, nhưng bên trong chỉ chứa đúng 1 thư mục
+    **All** theo cấu trúc cây step (Update 21) — KHÔNG kèm theo bất kỳ thư mục nào theo tên template.
+12c. **Given** đang ở popup của kịch bản 12, **When** người dùng đóng popup mà không chọn lựa chọn nào
+    (Cancel/click ra ngoài), **Then** không có file zip nào được tạo hay tải xuống, trạng thái dòng đó
+    không đổi.
 13. **Given** một dòng có Sales Order chưa Save PO Mapping/chưa có template nào, hoặc có template
-    nhưng không có tài liệu Mapped nào, **When** nhấn Download của dòng đó, **Then** hệ thống hiển thị
-    thông báo rõ ràng cho biết không có tài liệu để tải, không tải xuống file zip rỗng.
+    nhưng không có tài liệu Mapped nào ở lựa chọn vừa chọn trên popup, **When** nhấn Download của dòng
+    đó và xác nhận một lựa chọn, **Then** hệ thống hiển thị thông báo rõ ràng cho biết không có tài
+    liệu để tải, không tải xuống file zip rỗng.
 14. **Given** đang tải dữ liệu/đóng gói file zip cho một dòng, **When** người dùng tìm kiếm, chuyển
     trang, hoặc nhấn Download ở một dòng khác, **Then** các tương tác đó vẫn hoạt động bình thường,
     không bị chặn bởi lượt Download đang xử lý của dòng trước.
@@ -929,10 +986,10 @@ mọi Sales ID theo từ khóa đó bất kể đã có Template hay chưa.
     ghi/sửa/xóa bởi thao tác Download.
 17. **Given** một Sales Order có ít nhất 1 tài liệu "Mapped" và hệ thống có sẵn đúng 1 template mặc
     định (`IsDefault = 1`/`IsHide = 0`/`IsDeleted = 0`) chứa step tồn tại ở Sales Order đó, **When**
-    nhấn Download ở dòng Overview của Sales Order này, **Then** file zip tải về, bên cạnh các thư mục
-    con theo tên template, còn có đúng 1 thư mục **All** chứa cây thư mục lồng nhau theo tên step (cha/
-    con đúng theo cây All của màn hình View), mỗi thư mục step chỉ chứa đúng tài liệu "Mapped" của
-    step đó hợp nhất qua mọi template đã lưu.
+    nhấn Download ở dòng Overview của Sales Order này và chọn **Combined (All)** trên popup (Update
+    22), **Then** file zip tải về chỉ chứa đúng 1 thư mục **All** chứa cây thư mục lồng nhau theo tên
+    step (cha/con đúng theo cây All của màn hình View), mỗi thư mục step chỉ chứa đúng tài liệu "Mapped"
+    của step đó hợp nhất qua mọi template đã lưu — không kèm theo thư mục nào theo tên template.
 
 ---
 
@@ -1171,11 +1228,14 @@ Order, không giới hạn theo 1 template. Toàn bộ màn hình chỉ ở ch�
 PO, map/unmap tài liệu hay upload nào. Muốn thay đổi, người
 dùng nhấn nút **Edit / Map File** để chuyển sang màn hình Map File. Nút **Back** đưa người dùng quay
 lại Overview, khôi phục đúng từ khóa tìm kiếm/trang đã xem trước đó nếu người dùng mở màn hình View
-này từ một dòng đang được lọc (Update 14). Nút **Download** tải xuống một file
-zip có tên động `{SalesId}-{CustomerCode}-{CustomerName}`, bên trong chia theo thư mục con cho từng
-template đã lưu (tên thư mục = tên thật của template), mỗi thư mục con chỉ chứa các tài liệu đã
-"Mapped" đúng cho template đó; nếu không có tài liệu Mapped nào, hệ thống hiển thị thông báo rõ ràng
-thay vì tải file zip rỗng. Phần **Validation Summary** tổng hợp từ dữ liệu step thật trên toàn bộ
+này từ một dòng đang được lọc (Update 14). Nút **Download** hiển thị một popup cho người dùng chọn 1
+trong 2 định dạng tải (**Combined (All)** hoặc **By Template**, từ Update 22), sau đó tải xuống một
+file zip có tên động `{SalesId}-{CustomerCode}-{CustomerName}`: nếu chọn **By Template**, bên trong
+chia theo thư mục con cho từng template đã lưu (tên thư mục = tên thật của template), mỗi thư mục con
+chỉ chứa các tài liệu đã "Mapped" đúng cho template đó; nếu chọn **Combined (All)**, bên trong chỉ có
+đúng 1 thư mục **All** chứa cây thư mục lồng nhau theo tên step (Update 21). Nếu không có tài liệu
+Mapped nào cho đúng lựa chọn đã chọn, hệ thống hiển thị thông báo rõ ràng thay vì tải file zip rỗng.
+Phần **Validation Summary** tổng hợp từ dữ liệu step thật trên toàn bộ
 template đã lưu (áp dụng đúng quy tắc PO/Template cho từng template trước khi cộng dồn): liệt kê (các)
 PO đã chọn, số step đã đủ tài liệu, số step còn thiếu tài liệu.
 
@@ -1187,9 +1247,11 @@ danh sách (User Story 1).
 **Independent Test**: Mở View cho một Sales Order đã Save PO Mapping với một số step đã có tài liệu
 và một số step còn thiếu, xác nhận header/danh sách PO/Template Checklist/Validation Summary hiển thị
 đúng dữ liệu thật, không có control chỉnh sửa nào hoạt động; nhấn Edit/Map File xác nhận điều hướng
-đúng sang Map File của Sales Order đó; nhấn Download xác nhận tải xuống đúng 1 file zip có tên
-`{SalesId}-{CustomerCode}-{CustomerName}`, chứa đúng thư mục con cho mỗi template đã lưu (tên thư mục
-= tên thật của template) và mỗi thư mục con chỉ chứa đúng các tài liệu đã "Mapped" cho template đó.
+đúng sang Map File của Sales Order đó; nhấn Download xác nhận hệ thống hiển thị popup chọn định dạng
+tải (Update 22), sau đó tải xuống đúng 1 file zip có tên `{SalesId}-{CustomerCode}-{CustomerName}`
+tương ứng lựa chọn đã chọn — **By Template** chứa đúng thư mục con cho mỗi template đã lưu (tên thư
+mục = tên thật của template, mỗi thư mục con chỉ chứa đúng các tài liệu đã "Mapped" cho template đó),
+hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây step.
 
 **Acceptance Scenarios**:
 
@@ -1216,24 +1278,32 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
    sang màn hình Map File (route `/eutr/sales-orders/:salesId/map-file`) của đúng Sales Order đang
    xem.
 9. **Given** Sales Order đang xem có ít nhất 1 tài liệu "Mapped" ở một template bất kỳ, **When** nhấn
-   nút Download, **Then** hệ thống tải xuống đúng 1 file zip có tên
-   `{SalesId}-{CustomerCode}-{CustomerName}`, bên trong có một thư mục con cho mỗi template đã lưu
-   (tên thư mục = tên thật của template), mỗi thư mục con chỉ chứa các tài liệu "Mapped" đúng cho
-   template đó.
-9a. **Given** Sales Order có 2 template đã lưu trở lên, mỗi template có ít nhất 1 tài liệu "Mapped"
-   riêng, **When** nhấn Download, **Then** file zip có đủ số thư mục con tương ứng số template, mỗi
-   thư mục con chỉ chứa tài liệu thuộc đúng PO/template của chính nó — không lẫn tài liệu của template
-   khác.
-9b. **Given** một template đã lưu của Sales Order không có tài liệu "Mapped" nào (dù có thể có tài
-   liệu "No map"), **When** nhấn Download, **Then** thư mục con của template đó vẫn xuất hiện trong
-   file zip nhưng không có file nào bên trong.
+   nút Download, **Then** hệ thống hiển thị popup cho chọn 1 trong 2 định dạng tải (**Combined (All)**
+   / **By Template**, Update 22) trước khi tải bất kỳ file nào.
+9a. **Given** đang ở popup của kịch bản 9, **When** người dùng chọn **By Template** và xác nhận,
+   **Then** hệ thống tải xuống đúng 1 file zip có tên `{SalesId}-{CustomerCode}-{CustomerName}`, bên
+   trong có một thư mục con cho mỗi template đã lưu (tên thư mục = tên thật của template), mỗi thư mục
+   con chỉ chứa các tài liệu "Mapped" đúng cho template đó — KHÔNG kèm theo thư mục **All**.
+9a-1. **Given** Sales Order có 2 template đã lưu trở lên, mỗi template có ít nhất 1 tài liệu "Mapped"
+   riêng, **When** chọn **By Template** và tải, **Then** file zip có đủ số thư mục con tương ứng số
+   template, mỗi thư mục con chỉ chứa tài liệu thuộc đúng PO/template của chính nó — không lẫn tài liệu
+   của template khác.
+9a-2. **Given** một template đã lưu của Sales Order không có tài liệu "Mapped" nào (dù có thể có tài
+   liệu "No map"), **When** chọn **By Template** và tải, **Then** thư mục con của template đó vẫn xuất
+   hiện trong file zip nhưng không có file nào bên trong.
+9b. **Given** đang ở popup của kịch bản 9, **When** người dùng chọn **Combined (All)** và xác nhận,
+   **Then** hệ thống tải xuống đúng 1 file zip cùng tên gốc, nhưng bên trong chỉ chứa đúng 1 thư mục
+   **All** theo cấu trúc cây step (Update 21) — KHÔNG kèm theo bất kỳ thư mục nào theo tên template.
 9c. **Given** Sales Order chưa Save PO Mapping nào (chưa có template) hoặc không có tài liệu "Mapped"
-   nào ở bất kỳ template nào, **When** nhấn nút Download, **Then** nút Download vẫn ở trạng thái bấm
-   được, hệ thống hiển thị thông báo rõ ràng cho biết không có tài liệu nào để tải, và không có file
-   zip nào được tải xuống.
+   nào ở lựa chọn vừa chọn trên popup, **When** nhấn nút Download và xác nhận một lựa chọn, **Then**
+   nút Download vẫn ở trạng thái bấm được, hệ thống hiển thị thông báo rõ ràng cho biết không có tài
+   liệu nào để tải, và không có file zip nào được tải xuống.
 9d. **Given** CustomerCode hoặc CustomerName của Sales Order chứa ký tự đặc biệt/khoảng trắng, **When**
-   nhấn Download, **Then** tên file zip/thư mục gốc vẫn là một tên hợp lệ (đã sanitize), không gây lỗi
-   tải xuống hay giải nén.
+   nhấn Download và xác nhận một lựa chọn bất kỳ trên popup, **Then** tên file zip/thư mục gốc vẫn là
+   một tên hợp lệ (đã sanitize), không gây lỗi tải xuống hay giải nén.
+9e. **Given** popup chọn định dạng tải đang hiển thị, **When** người dùng đóng popup mà không chọn lựa
+   chọn nào (Cancel/click ra ngoài popup), **Then** không có file zip nào được tạo hay tải xuống, màn
+   hình View không đổi trạng thái.
 10. **Given** Validation Summary đang hiển thị, **When** xem, **Then** thông tin hiển thị đúng: (các)
     PO đã chọn, số step Required đã đủ tài liệu, số step Required còn thiếu tài liệu kèm tên các step
     thiếu.
@@ -1335,25 +1405,27 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
     kịch bản 35) — lựa chọn template cụ thể trước đó không được ghi nhớ qua các lần tải trang khác
     nhau (đúng theo FR-060, không có cơ chế lưu lựa chọn lâu dài nào được yêu cầu).
 37. **Given** một Sales Order có ít nhất 1 tài liệu "Mapped" và hệ thống có sẵn đúng 1 template mặc
-    định chứa step tồn tại ở Sales Order đó, **When** nhấn Download ở màn hình View, **Then** file zip
-    tải về, bên cạnh các thư mục con theo tên template, còn có đúng 1 thư mục **All** chứa cây thư mục
-    lồng nhau theo tên step — cấu trúc cha/con của cây này khớp đúng với cây All đang hiển thị ở
-    Template Checklist (kể cả khi người dùng đang xem một chip template khác, không phải All, tại
-    thời điểm nhấn Download).
+    định chứa step tồn tại ở Sales Order đó, **When** nhấn Download ở màn hình View và chọn **Combined
+    (All)** trên popup (Update 22), **Then** file zip tải về chỉ chứa đúng 1 thư mục **All** chứa cây
+    thư mục lồng nhau theo tên step — cấu trúc cha/con của cây này khớp đúng với cây All đang hiển thị
+    ở Template Checklist (kể cả khi người dùng đang xem một chip template khác, không phải All, tại
+    thời điểm nhấn Download) — KHÔNG kèm theo thư mục nào theo tên template.
 38. **Given** đang ở kịch bản 37, **When** xem một thư mục step cụ thể trong thư mục All của file zip,
     **Then** thư mục đó chỉ chứa đúng các tài liệu "Mapped" của step đó, hợp nhất từ mọi template đã
     lưu của Sales Order (một tài liệu Mapped ở template A cho step X và một tài liệu Mapped khác ở
     template B cũng cho step X cùng xuất hiện trong đúng 1 thư mục step X, không lặp ở nơi khác).
 39. **Given** cây All có một step không có tài liệu "Mapped" nào (ở bất kỳ template nào), **When**
-    nhấn Download, **Then** thư mục step đó vẫn xuất hiện trong thư mục All của file zip, ở trạng thái
-    rỗng — không bị bỏ qua.
+    nhấn Download và chọn **Combined (All)**, **Then** thư mục step đó vẫn xuất hiện trong thư mục All
+    của file zip, ở trạng thái rỗng — không bị bỏ qua.
 40. **Given** hệ thống chưa cấu hình template mặc định nào (hoặc sau khi lọc theo Sales Order không
-    còn step nào của template mặc định), **When** nhấn Download, **Then** file zip vẫn có đúng 1 thư
-    mục All nhưng ở trạng thái rỗng (không có thư mục step con nào) — không mất thư mục All khỏi zip,
-    không báo lỗi toàn bộ thao tác Download, các thư mục template khác vẫn đầy đủ như bình thường.
-41. **Given** Sales Order không có bất kỳ tài liệu "Mapped" nào ở mọi template, **When** nhấn Download,
-    **Then** hệ thống hiển thị đúng thông báo không có tài liệu để tải và KHÔNG tải xuống file zip —
-    kể cả khi cây All (theo template mặc định) vẫn có step hợp lệ nhưng không step nào có tài liệu.
+    còn step nào của template mặc định), **When** nhấn Download và chọn **Combined (All)**, **Then**
+    file zip vẫn có đúng 1 thư mục All nhưng ở trạng thái rỗng (không có thư mục step con nào) — không
+    báo lỗi toàn bộ thao tác Download; chọn **By Template** ở cùng Sales Order này vẫn tải đủ các thư
+    mục template như bình thường, không bị ảnh hưởng bởi việc cây All rỗng.
+41. **Given** Sales Order không có bất kỳ tài liệu "Mapped" nào ở mọi template, **When** nhấn Download
+    và xác nhận một lựa chọn bất kỳ trên popup, **Then** hệ thống hiển thị đúng thông báo không có tài
+    liệu để tải và KHÔNG tải xuống file zip — kể cả khi chọn Combined và cây All (theo template mặc
+    định) vẫn có step hợp lệ nhưng không step nào có tài liệu.
 
 ---
 
@@ -1384,6 +1456,13 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   hay hiển thị sai trạng thái của dòng khác.
 - (Update 13) Nhấn Download ở một dòng trong lúc đang tìm kiếm/lọc hoặc chuyển trang: lượt tải zip của
   dòng đó vẫn tiếp tục xử lý bình thường, không bị hủy hay lỗi chỉ vì bảng đang tải lại danh sách khác.
+- (Update 22) Người dùng nhấn Download ở một dòng, popup chọn định dạng tải hiện ra, sau đó nhấn Download
+  ở một dòng khác trước khi xác nhận lựa chọn ở popup đầu: mỗi dòng có popup/luồng lựa chọn độc lập,
+  không bị lẫn lộn lựa chọn hay kết quả tải giữa hai dòng.
+- (Update 22) Sales Order của một dòng có tài liệu "Mapped" đủ để cây All (Combined) có nội dung nhưng
+  không template nào (By Template) có tài liệu Mapped (hoặc ngược lại): thông báo "không có tài liệu để
+  tải" (nếu có) chỉ áp dụng đúng cho lựa chọn người dùng vừa chọn ở popup, không dựa vào tình trạng của
+  lựa chọn còn lại.
 - (Update 14) Người dùng tìm kiếm "SO004957" ở Overview, mở Map File hoặc View của dòng đó, không thực
   hiện thay đổi gì (hoặc có Save), rồi nhấn Back: Overview MUST hiển thị lại đúng từ khóa "SO004957"
   trong ô tìm kiếm và đúng danh sách dòng khớp — không phải danh sách đầy đủ/không lọc.
@@ -1566,10 +1645,15 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
 - Lệnh tải nội dung file cho popup View thất bại (lỗi hệ thống/API): popup hiển thị thông báo lỗi rõ
   ràng, không làm crash hay treo màn hình Map File, người dùng vẫn đóng được popup bình thường.
 - Sales Order có nhiều template đã lưu, trong đó một template có tài liệu "Mapped" còn (các) template
-  khác thì không: khi nhấn Download, file zip vẫn có đủ thư mục con cho mọi template, chỉ riêng thư
-  mục của template không có tài liệu "Mapped" là rỗng — không báo lỗi toàn bộ, không bỏ sót thư mục.
-- Sales Order chưa Save PO Mapping nào (chưa có `templatesData`) và người dùng nhấn Download: hệ thống
-  hiển thị thông báo rõ ràng không có tài liệu để tải, không tạo file zip chỉ có thư mục gốc rỗng.
+  khác thì không: khi nhấn Download và chọn **By Template**, file zip vẫn có đủ thư mục con cho mọi
+  template, chỉ riêng thư mục của template không có tài liệu "Mapped" là rỗng — không báo lỗi toàn bộ,
+  không bỏ sót thư mục.
+- Sales Order chưa Save PO Mapping nào (chưa có `templatesData`) và người dùng nhấn Download rồi xác
+  nhận một lựa chọn bất kỳ trên popup: hệ thống hiển thị thông báo rõ ràng không có tài liệu để tải,
+  không tạo file zip chỉ có thư mục gốc rỗng.
+- (Update 22) Người dùng nhấn Download nhưng đóng popup mà không chọn lựa chọn nào: không có API tạo/
+  tải file zip nào được gọi, không hiển thị thông báo lỗi/thành công nào, màn hình giữ nguyên trạng
+  thái trước khi nhấn Download.
 - Hai tài liệu "Mapped" khác nhau trong cùng một thư mục con template có cùng tên file gốc (ví dụ cùng
   tải lên một file tên "invoice.pdf" ở hai lần khác nhau): hệ thống tự động phân biệt tên file khi đóng
   gói (ví dụ thêm hậu tố) để cả hai file đều xuất hiện đầy đủ trong zip, không file nào bị ghi đè/mất.
@@ -1603,22 +1687,27 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   mặc định và tính lại cây All/tập file mở rộng, không tích lũy gọi API chồng chéo, không hiển thị dữ
   liệu của lượt trước đè lên lượt sau.
 - (Update 21) Sales Order có nhiều template đã lưu, mỗi template có tài liệu "Mapped" riêng cho cùng
-  một step (cùng `StepId`): thư mục step tương ứng trong thư mục All của file zip gộp đủ tài liệu Mapped
-  của step đó từ mọi template, không bỏ sót tài liệu của template nào, không tạo thư mục step trùng lặp.
+  một step (cùng `StepId`): khi chọn **Combined (All)**, thư mục step tương ứng trong thư mục All của
+  file zip gộp đủ tài liệu Mapped của step đó từ mọi template, không bỏ sót tài liệu của template nào,
+  không tạo thư mục step trùng lặp.
 - (Update 21) Template mặc định (dùng để dựng cây All) có một node cha bị loại (vì `StepId` không tồn
-  tại ở Sales Order) nhưng có step con vẫn tồn tại: thư mục của step con đó trong file zip MUST vẫn
-  xuất hiện, gắn lên thư mục step cha gần nhất còn tồn tại (hoặc lên thư mục All nếu không còn node cha
-  nào) — theo đúng quy tắc "nâng cấp" node đã áp dụng cho cây All ở màn hình View (FR-133).
+  tại ở Sales Order) nhưng có step con vẫn tồn tại: khi chọn **Combined (All)**, thư mục của step con
+  đó trong file zip MUST vẫn xuất hiện, gắn lên thư mục step cha gần nhất còn tồn tại (hoặc lên thư mục
+  All nếu không còn node cha nào) — theo đúng quy tắc "nâng cấp" node đã áp dụng cho cây All ở màn hình
+  View (FR-133).
 - (Update 21) Hai tài liệu "Mapped" khác nhau (thuộc hai template khác nhau) cùng cho cùng một step có
-  cùng tên file gốc: hệ thống tự động phân biệt tên file khi đóng gói vào đúng thư mục step đó trong
-  thư mục All (cùng cơ chế hậu tố đã áp dụng cho thư mục template, FR-075), không ghi đè/mất file nào.
-- (Update 21) Cùng một tài liệu "Mapped" xuất hiện cả trong thư mục template (theo FR-071/FR-072) lẫn
-  trong đúng thư mục step tương ứng của thư mục All: đây là hành vi mong đợi (thư mục All là góc nhìn bổ
-  sung theo cây step, độc lập với các thư mục theo tên template) — tài liệu xuất hiện ở cả hai nơi không
-  bị coi là trùng lặp lỗi.
+  cùng tên file gốc: khi chọn **Combined (All)**, hệ thống tự động phân biệt tên file khi đóng gói vào
+  đúng thư mục step đó trong thư mục All (cùng cơ chế hậu tố đã áp dụng cho thư mục template, FR-075),
+  không ghi đè/mất file nào.
+- (Update 22) Một tài liệu "Mapped" đủ điều kiện xuất hiện cả trong một thư mục template (FR-071/
+  FR-072) lẫn trong đúng thư mục step tương ứng của thư mục All (FR-142 đến FR-148): vì mỗi lượt
+  Download chỉ tạo đúng 1 trong 2 loại thư mục theo lựa chọn ở popup, tài liệu đó chỉ xuất hiện 1 lần
+  trong file zip của lượt tải đó (theo đúng cấu trúc của lựa chọn đã chọn) — không còn xuất hiện đồng
+  thời ở cả hai cấu trúc trong cùng 1 file zip như hành vi trước Update 22.
 - (Update 21) Hệ thống chưa cấu hình template mặc định, hoặc cây All rỗng sau khi lọc theo Sales Order:
-  file zip Download vẫn có đủ các thư mục template như trước (không bị ảnh hưởng), riêng thư mục All là
-  thư mục rỗng duy nhất — không làm thất bại toàn bộ thao tác Download.
+  nếu người dùng chọn **Combined (All)**, file zip vẫn có đúng 1 thư mục All nhưng ở trạng thái rỗng,
+  không báo lỗi toàn bộ thao tác Download; nếu người dùng chọn **By Template**, tình trạng cây All
+  không ảnh hưởng gì tới lượt tải đó vì thư mục All không được đóng gói trong lựa chọn này.
 
 ## Requirements *(mandatory)*
 
@@ -1872,7 +1961,9 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   hình Map File.
 - **FR-069**: Nút **Download** trên màn hình View MUST tải xuống một file nén (zip) chứa cấu trúc thư
   mục của tài liệu EUTR thuộc Sales Order đang xem — thay thế hoàn toàn hành vi demo/no-op hiện có
-  của FR-044.
+  của FR-044. **Cập nhật từ Update 22**: trước khi tải, hệ thống MUST hiển thị popup cho người dùng
+  chọn 1 trong 2 định dạng tải (FR-152 đến FR-160) — file zip tải về chỉ chứa đúng loại thư mục tương
+  ứng với lựa chọn đó, không còn chứa cả thư mục All lẫn các thư mục template cùng lúc như Update 21.
 - **FR-070**: Tên file zip và tên thư mục gốc bên trong file zip MUST theo định dạng động
   `{SalesId}-{CustomerCode}-{CustomerName}` của Sales Order đang xem (`SalesId`/`CustomerCode`/
   `CustomerName` lấy từ cùng dữ liệu header đã tra ở FR-036); nếu `CustomerCode`/`CustomerName` chứa
@@ -1942,7 +2033,9 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   10, FR-069 đến FR-073, FR-075): tên file/thư mục gốc `{SalesId}-{CustomerCode}-{CustomerName}` (đã
   sanitize), một thư mục con cho mỗi template đã lưu (tên = tên thật template), mỗi thư mục con chỉ
   chứa tài liệu Map status = "Mapped" đúng cho template đó (FR-055/FR-056), thư mục con rỗng nếu chưa
-  có tài liệu Mapped, và tự động phân biệt tên file trùng trong cùng thư mục con.
+  có tài liệu Mapped, và tự động phân biệt tên file trùng trong cùng thư mục con. **Cập nhật từ Update
+  22**: trước khi tải, hệ thống MUST hiển thị popup chọn định dạng tải giống hệt màn hình View (FR-152
+  đến FR-160) — file zip tải về chỉ chứa đúng loại thư mục tương ứng lựa chọn đó.
 - **FR-088**: Dữ liệu để dựng danh sách thư mục/tài liệu Mapped cho nút Download ở một dòng Overview
   MUST được tải on-demand tại thời điểm người dùng nhấn nút Download của đúng dòng đó — không bắt buộc
   tải trước cho mọi dòng đang hiển thị trên trang giống cơ chế batch của cột Template/Progress (FR-007/
@@ -2160,7 +2253,9 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
 - **FR-142**: Bên trong thư mục gốc `{SalesId}-{CustomerCode}-{CustomerName}` của file zip Download
   (View: FR-069; Overview: FR-087), hệ thống MUST bổ sung thêm đúng 1 thư mục con tên **All**, đặt
   ngang cấp với (không lồng vào trong, không thay thế) các thư mục con theo tên template hiện có
-  (FR-071).
+  (FR-071). **Cập nhật từ Update 22**: thư mục All này chỉ được đóng gói khi người dùng chọn
+  **Combined (All)** ở popup lựa chọn định dạng tải (FR-152 đến FR-154) — không còn tự động đóng gói
+  cùng lúc với các thư mục template trong mọi lượt Download như Update 21.
 - **FR-143**: Cấu trúc bên trong thư mục All MUST dựng theo đúng cây step của chế độ All: tải đúng 1
   template mặc định toàn hệ thống (`eutr_templates`, `IsDefault = 1`/`IsHide = 0`/`IsDeleted = 0`, cùng
   điều kiện FR-130), lấy cây step (`eutr_template_details`) của template đó, chỉ giữ lại (các) step có
@@ -2187,17 +2282,56 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   thống MUST tự động phân biệt tên file khi đóng gói (cùng cơ chế hậu tố số thứ tự đã áp dụng cho thư
   mục template, FR-075) — áp dụng độc lập trong phạm vi từng thư mục step, không ảnh hưởng tên file ở
   thư mục step khác hay thư mục template.
-- **FR-149**: Việc bổ sung thư mục All (FR-142 đến FR-148) MUST áp dụng đồng thời cho cả nút Download ở
-  màn hình View (FR-069) và nút Download ở mỗi dòng Overview (FR-087) — thư mục All luôn được đóng gói
-  cùng lúc với các thư mục template hiện có trong cùng 1 lượt Download, không phụ thuộc chip nào (All
+- **FR-149**: Việc bổ sung thư mục All (FR-142 đến FR-148) áp dụng đồng thời cho cả nút Download ở
+  màn hình View (FR-069) và nút Download ở mỗi dòng Overview (FR-087), không phụ thuộc chip nào (All
   hay một template cụ thể) đang được chọn ở toolbar Template Checklist của màn hình View tại thời điểm
-  nhấn Download.
-- **FR-150**: Quy tắc "không có tài liệu Mapped nào ở mọi template thì hiển thị thông báo và KHÔNG tải
-  file zip" (FR-074/FR-089) KHÔNG đổi bởi việc bổ sung thư mục All — kể cả khi cây All (theo template
-  mặc định) có step hợp lệ nhưng không step nào có tài liệu Mapped, hệ thống vẫn áp dụng đúng FR-074/
-  FR-089, không tải xuống file zip chỉ có thư mục All rỗng.
+  nhấn Download. **Cập nhật từ Update 22**: quy tắc "đóng gói cùng lúc với các thư mục template" ở trên
+  KHÔNG còn đúng — mỗi lượt Download giờ chỉ đóng gói đúng 1 trong 2 loại thư mục (All hoặc theo
+  template) tùy theo lựa chọn của người dùng ở popup (FR-152 đến FR-155), áp dụng đồng nhất cho cả View
+  và Overview.
+- **FR-150**: Quy tắc "không có tài liệu Mapped nào ở lựa chọn đang tải thì hiển thị thông báo và
+  KHÔNG tải file zip" (FR-074/FR-089) KHÔNG đổi bởi việc bổ sung thư mục All — kể cả khi cây All (theo
+  template mặc định) có step hợp lệ nhưng không step nào có tài liệu Mapped, hệ thống vẫn áp dụng đúng
+  FR-074/FR-089, không tải xuống file zip chỉ có thư mục All rỗng. **Cập nhật từ Update 22**: quy tắc
+  này nay áp dụng riêng theo đúng lựa chọn (Combined hoặc By Template) người dùng đã chọn ở popup — xem
+  FR-158.
 - **FR-151**: Việc bổ sung thư mục All KHÔNG MUST ghi/sửa/xóa bất kỳ bản ghi tài liệu/tham chiếu/purchase
   attachment/template nào — giữ đúng nguyên tắc chỉ đọc hiện có của thao tác Download (FR-076/FR-092).
+- **FR-152**: Nhấn nút Download (View: FR-069; Overview: FR-087) MUST hiển thị một popup cho người
+  dùng chọn đúng 1 trong 2 định dạng tải xuống trước khi tạo file zip — thay thế hoàn toàn hành vi tải
+  ngay lập tức cả hai góc nhìn (thư mục All và thư mục theo template) trong cùng 1 lần nhấn đã áp dụng
+  từ Update 21 (FR-149 trước khi cập nhật). **Mới từ Update 22**.
+- **FR-153**: Popup MUST hiển thị đúng 2 lựa chọn, không thêm/bớt lựa chọn nào khác:
+  1. **Combined (All)** — tương ứng nội dung/cấu trúc thư mục **All** (FR-142 đến FR-148).
+  2. **By Template** — tương ứng nội dung/cấu trúc các thư mục con theo tên template (FR-071 đến
+     FR-075).
+- **FR-154**: Khi người dùng chọn **Combined (All)** và xác nhận, hệ thống MUST tạo và tải xuống 1 file
+  zip mà bên trong thư mục gốc `{SalesId}-{CustomerCode}-{CustomerName}` (FR-070) chỉ chứa đúng 1 thư
+  mục con **All**, dựng theo đúng quy tắc đã đặc tả ở FR-142 đến FR-148 — KHÔNG kèm theo bất kỳ thư mục
+  con nào theo tên template.
+- **FR-155**: Khi người dùng chọn **By Template** và xác nhận, hệ thống MUST tạo và tải xuống 1 file
+  zip mà bên trong thư mục gốc chỉ chứa các thư mục con theo tên template, dựng theo đúng quy tắc đã
+  đặc tả ở FR-071 đến FR-075 — KHÔNG kèm theo thư mục **All**.
+- **FR-156**: Quy tắc xác định nội dung bên trong mỗi thư mục (tên thư mục, điều kiện Map status =
+  "Mapped", tạo thư mục rỗng khi không có tài liệu, hậu tố phân biệt tên file trùng) đã đặc tả ở
+  FR-071 đến FR-075 (cho By Template) và FR-142 đến FR-148 (cho Combined) KHÔNG MUST thay đổi bởi việc
+  thêm popup lựa chọn — Update này chỉ thay đổi loại thư mục nào được đóng gói trong 1 lượt tải, không
+  định nghĩa lại logic thư mục/file đã có.
+- **FR-157**: Nếu người dùng đóng popup mà không chọn lựa chọn nào (Cancel/click ra ngoài), hệ thống
+  KHÔNG MUST tạo hay tải bất kỳ file zip nào, và không thay đổi trạng thái màn hình so với trước khi
+  nhấn Download.
+- **FR-158**: Quy tắc "không có tài liệu Mapped nào thì hiển thị thông báo và KHÔNG tải file zip"
+  (FR-074/FR-089) MUST áp dụng riêng theo đúng lựa chọn đã chọn: nếu chọn Combined nhưng cây All (sau
+  khi lọc theo Sales Order, FR-143) không có bất kỳ step nào có tài liệu Mapped, hoặc chọn By Template
+  nhưng không có template nào có tài liệu Mapped, hệ thống MUST hiển thị thông báo rõ ràng và KHÔNG tải
+  file zip cho đúng lựa chọn đó — không phụ thuộc việc lựa chọn còn lại (không được chọn) có tài liệu
+  hay không.
+- **FR-159**: Popup lựa chọn định dạng tải áp dụng đồng thời cho cả nút Download ở màn hình View
+  (FR-069) và nút Download ở mỗi dòng Overview (FR-087) — cùng 2 lựa chọn, cùng hành vi tạo/tải file
+  zip tương ứng.
+- **FR-160**: Việc hiển thị popup và xử lý lựa chọn của người dùng KHÔNG MUST ghi/sửa/xóa bất kỳ bản
+  ghi tài liệu/tham chiếu/purchase attachment/template nào — giữ đúng nguyên tắc chỉ đọc hiện có của
+  thao tác Download (FR-076/FR-092).
 
 ### Key Entities *(include if feature involves data)*
 
@@ -2221,11 +2355,14 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   (Purchase Attachment, Template/chi tiết template, tài liệu thật qua `eutr_references`) thành cấu trúc
   thư mục (mỗi template 1 thư mục con, chỉ chứa tài liệu "Mapped") và tải xuống 1 file zip — dùng đúng
   quy tắc/nguồn dữ liệu đã áp dụng cho nút Download của View (Update 10). Không tạo/sửa/xóa bản ghi nào.
-  **Cập nhật từ Update 21**: bên cạnh các thư mục theo tên template, file zip nay có thêm đúng 1 thư mục
-  **All**, chứa cây thư mục lồng nhau theo tên step (dựng từ template mặc định toàn hệ thống, chỉ giữ
-  step tồn tại ở Sales Order này — cùng logic cây All của màn hình View, FR-130 đến FR-133), mỗi thư
-  mục step chỉ chứa tài liệu "Mapped" hợp nhất qua mọi template cho đúng step đó (FR-142 đến FR-151).
-  Vẫn không tạo/sửa/xóa bản ghi nào.
+  **Cập nhật từ Update 21**: bên cạnh các thư mục theo tên template, file zip có thể có thêm đúng 1 thư
+  mục **All**, chứa cây thư mục lồng nhau theo tên step (dựng từ template mặc định toàn hệ thống, chỉ
+  giữ step tồn tại ở Sales Order này — cùng logic cây All của màn hình View, FR-130 đến FR-133), mỗi
+  thư mục step chỉ chứa tài liệu "Mapped" hợp nhất qua mọi template cho đúng step đó (FR-142 đến
+  FR-151). **Cập nhật từ Update 22**: nhấn Download nay trước tiên hiển thị 1 popup cho người dùng chọn
+  đúng 1 trong 2 định dạng tải — **Combined (All)** (chỉ tải thư mục All) hoặc **By Template** (chỉ tải
+  các thư mục theo tên template) — file zip tải về chỉ chứa đúng loại thư mục tương ứng lựa chọn đó,
+  không còn chứa cả hai loại thư mục cùng lúc (FR-152 đến FR-160). Vẫn không tạo/sửa/xóa bản ghi nào.
 - **Purchase Order** (dữ liệu tham chiếu từ D365, reference type = 16, chỉ đọc): PO thuộc về một
   Sales Order xác định qua trường `InterCompanyOriginalSalesId` = Sales ID; mỗi PO có sẵn (các)
   thông tin định danh và một template gắn kèm từ D365. Dữ liệu này KHÔNG được tạo/sửa/xóa từ hệ
@@ -2523,6 +2660,16 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
 - **SC-076**: 0% lượt bổ sung thư mục All làm thay đổi bất kỳ bản ghi nào ở `eutr_documents`,
   `eutr_references`, `eutr_purchase_attachments`, hay `eutr_templates` — kiểm chứng bằng việc xác nhận
   dữ liệu các bảng này không đổi trước và sau khi dùng nút Download.
+- **SC-077**: 100% lượt nhấn Download (ở View hoặc ở một dòng Overview) hiển thị đúng popup với 2 lựa
+  chọn (Combined (All) / By Template) trước khi bất kỳ file zip nào được tạo hay tải xuống.
+- **SC-078**: 100% file zip tải về khi chọn **By Template** chỉ chứa các thư mục theo tên template —
+  0% lượt chứa thêm thư mục All trong cùng file zip đó.
+- **SC-079**: 100% file zip tải về khi chọn **Combined (All)** chỉ chứa đúng 1 thư mục All — 0% lượt
+  chứa thêm bất kỳ thư mục nào theo tên template trong cùng file zip đó.
+- **SC-080**: 100% lượt đóng popup mà không chọn lựa chọn nào (Cancel/click ra ngoài) không tạo/tải bất
+  kỳ file zip nào — 0% lượt gọi API tải zip phát sinh từ hành động đóng popup này.
+- **SC-081**: 0% lượt hiển thị popup hoặc xử lý lựa chọn của người dùng làm thay đổi bất kỳ bản ghi nào
+  ở `eutr_documents`, `eutr_references`, `eutr_purchase_attachments`, hay `eutr_templates`.
 
 ## Assumptions
 
@@ -2778,14 +2925,28 @@ và một số step còn thiếu, xác nhận header/danh sách PO/Template Chec
   `StepId`/tải template mặc định đã đặc tả cho màn hình View (FR-130 đến FR-133) — không định nghĩa một
   công thức hay lượt tải riêng cho Download; nếu cơ chế đó thay đổi ở màn hình View trong một cập nhật
   sau, thư mục All của file zip cũng cần cập nhật theo để tiếp tục khớp nhau.
-- (Update 21) Thư mục All là một góc nhìn bổ sung, độc lập với các thư mục theo tên template đã có
-  (FR-071/FR-087) — cùng một tài liệu "Mapped" có thể xuất hiện cả trong thư mục template của nó lẫn
-  trong đúng thư mục step tương ứng của thư mục All; đây không phải trùng lặp lỗi mà là kỳ vọng của
-  người yêu cầu tính năng (xem ví dụ cấu trúc ở phần làm rõ Update 21).
-- (Update 21) Việc bổ sung thư mục All áp dụng cho file zip bất kể chip nào (All hay một template cụ
-  thể) đang được chọn ở toolbar Template Checklist của màn hình View tại thời điểm nhấn Download — nút
-  Download luôn đóng gói đầy đủ mọi thư mục (template + All) trong cùng 1 lượt tải, giống nguyên tắc
-  hiện có là Download không phụ thuộc lựa chọn hiển thị hiện tại trên toolbar (FR-139).
+- (Update 21, điều chỉnh ở Update 22) Thư mục All là một góc nhìn bổ sung, độc lập về nội dung/cấu trúc
+  với các thư mục theo tên template đã có (FR-071/FR-087) — cùng một tài liệu "Mapped" *có thể* xuất
+  hiện trong cả hai cấu trúc nếu tải riêng từng loại, nhưng từ Update 22, một lượt Download chỉ tạo
+  đúng 1 trong 2 cấu trúc đó (theo lựa chọn ở popup), nên trong thực tế 1 file zip không còn chứa đồng
+  thời cả hai loại thư mục.
+- (Update 21, điều chỉnh ở Update 22) Việc bổ sung thư mục All áp dụng cho file zip bất kể chip nào
+  (All hay một template cụ thể) đang được chọn ở toolbar Template Checklist của màn hình View tại thời
+  điểm nhấn Download — nút Download vẫn không phụ thuộc lựa chọn hiển thị hiện tại trên toolbar
+  (FR-139), nhưng từ Update 22 chỉ đóng gói đúng loại thư mục (template hoặc All) tương ứng lựa chọn
+  người dùng chọn ở popup, không còn đóng gói đầy đủ cả hai loại trong cùng 1 lượt tải.
+- (Update 22) Tên hiển thị 2 lựa chọn trên popup — **Combined (All)** và **By Template** — là quyết
+  định đặt tên cho rõ nghĩa với người dùng cuối, theo đúng yêu cầu "đặt tên lại cho hợp lý" của người
+  yêu cầu tính năng, thay vì dùng nguyên văn gợi ý ban đầu ("Combine template"/"Separate template") hay
+  thuật ngữ nội bộ ("All"/"template"); nhãn chữ chính xác là quyết định UI ở giai đoạn plan, miễn giữ
+  đúng ý nghĩa: một lựa chọn tải gộp theo cây step (All), một lựa chọn tải tách theo từng template.
+- (Update 22) Popup chỉ có đúng 2 lựa chọn loại trừ lẫn nhau (chọn 1 trong 2) — không hỗ trợ chọn cả
+  hai cùng lúc trong 1 lần tải, không hỗ trợ ghi nhớ lựa chọn trước đó cho lần nhấn Download tiếp theo
+  (mỗi lần nhấn Download đều hiển thị lại popup với 2 lựa chọn ngang nhau, không có lựa chọn mặc định
+  được đánh dấu sẵn khác biệt).
+- (Update 22) Cơ chế kỹ thuật cụ thể để hiển thị popup (loại UI component: dialog/modal) và giữ trạng
+  thái lựa chọn theo từng dòng Overview (để không lẫn giữa các dòng đang xử lý đồng thời) là quyết định
+  kỹ thuật ở giai đoạn plan, không thuộc phạm vi đặc tả nghiệp vụ ở đây.
 - (Update 21) Cơ chế kỹ thuật cụ thể để dựng cây thư mục lồng nhau bên trong file nén (ví dụ đường dẫn
   entry dạng `All/Forest/Plantation forest location map/File A`) là quyết định kỹ thuật ở giai đoạn
   plan, không thuộc phạm vi đặc tả nghiệp vụ ở đây — yêu cầu duy nhất là kết quả giải nén thể hiện đúng

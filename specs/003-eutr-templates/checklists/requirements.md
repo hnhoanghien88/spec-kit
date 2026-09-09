@@ -2,7 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-07-02
-**Updated**: 2026-08-17 (Update 22)
+**Updated**: 2026-09-07 (Update 23)
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -814,3 +814,83 @@
   regressions, no newly-failing items). The new by-StepId lookup requirement is stated at the
   business-rule level (FR-080) without prescribing an endpoint shape, keeping the spec
   implementation-agnostic per this checklist's Content Quality criteria.
+
+### Update 2026-09-07 (Update 23) — D365 Sync Triggered by Approve (push) / Request Change (delete)
+
+- **Input**: "cập nhật 003-eutr-templates khi user nhấn Request change, chạy xóa template trên D365
+  dựa theo TemplateCode, tham khảo hàm `SyncTemplatesToDynamicsAsync` (`await
+  _dynamicService.PostAsync(deleteUrl, new DeleteTemplateRequest { code = template.Code }, ct);`) ở
+  011-eutr-synchronize-data. Khi user approve, đồng bộ dữ liệu template đó lên D365 dựa theo hàm trên
+  ở khúc `var activeMappingsByTemplateId = activeMappings.ToLookup(m => m.TemplateId); foreach (var
+  template in eligibleTemplates)`."
+- **Pre-write code audit**: read the actual `SyncTemplatesToDynamicsAsync` implementation in
+  `compliance-sys-api/src/ComplianceSys.Application/Services/EutrSynchronizeDataService.cs` (011) to
+  confirm the exact delete request shape (`DeleteTemplateRequest { code }` posted to
+  `.../RSVNEutrTemplates/Microsoft.Dynamics.DataEntities.deleteTemplate`) and the exact push/Phase-2
+  shape (`activeMappingsByTemplateId` lookup, one `RSVNEutrTemplates { Code, Name, VendorCode }` push
+  per active mapping, or one push with `VendorCode = string.Empty` when a template has zero active
+  mappings) that this update's new FRs reuse rather than reinvent.
+- **One scope question asked back to the user before writing this update (answered via
+  AskUserQuestion)**: if the new D365 call (delete on Request change / push on Approve) fails, should
+  the local Status change still be applied ("best-effort", D365 failure surfaced as a secondary
+  warning) or blocked entirely (local Status/version change not applied at all until the D365 call
+  succeeds)? → **answered: block** — call D365 first, only commit the local Status/version change if
+  it succeeds; on failure, no local change is made and the user sees an error.
+- **Change: FR-060 (Request change) gains a precondition** — **FR-081**, **FR-082** added: confirming
+  Request change MUST first call D365 to delete the template's existing ERP-side record by Code
+  (reusing `SyncTemplatesToDynamicsAsync`'s exact delete request), and only create the new Draft
+  version row (FR-060) if that call succeeds; on failure, no new row is created, Status/VersionId/
+  IsHide remain unchanged, and the user sees an error instead of the FR-060 success snackbar.
+- **Change: FR-059 (Approve) gains a precondition** — **FR-083**, **FR-084** added: confirming
+  Approve MUST first push that template's own data to D365 — one record (Code, Name, VendorCode) per
+  currently-active vendor mapping in `eutr_template_references`, or one record with a blank Vendor
+  Code if none are active — reusing `SyncTemplatesToDynamicsAsync`'s exact Phase 2 push logic scoped
+  to this single TemplateId; only if every push call succeeds does the system commit
+  Status=Approved (FR-059); on any push failure, Status stays Draft, no other data changes, and the
+  user sees an error instead of the FR-059 success snackbar. Already-sent successful pushes before a
+  mid-batch failure are not retracted (no D365-side rollback), consistent with 011's own
+  no-automatic-rollback failure convention.
+- **New: FR-085, FR-086 added** — FR-085 documents why Approve's push does not need its own
+  delete-first step (Approve is only reachable from Draft, and Draft is only reached via
+  Create/Clone — no prior D365 record — or via Request change, which already deleted the old D365
+  record in FR-081), so no duplicate ERP-side record risk exists across repeated Draft↔Approved
+  cycles. FR-086 confirms both new D365 calls reuse 011's existing Dynamics configuration/call
+  mechanism (`Dynamics:ApiUrl`, `IDynamicService`, JSON payload, `?cross-company=true`) rather than
+  introducing a new external contract.
+- User Story 8 (Approve) intro rewritten to describe the push-then-commit sequence and its failure
+  behavior; 3 new acceptance scenarios (7-9) added (multi-mapping push success, zero-mapping
+  blank-VendorCode push success, mid-batch push failure blocks the Status change). User Story 9
+  (Request change) intro rewritten similarly; 2 new acceptance scenarios (7-8) added (delete-then-
+  version-bump success, delete failure blocks the version bump).
+- Edge Cases: 4 new bullets added — Approve's push still fires even if the template has never been
+  pushed before (no existence pre-check, matching `SyncTemplatesToDynamicsAsync`'s own
+  delete-every-eligible-template-unconditionally behavior); Request change's delete still fires even
+  if D365 currently holds no record for that Code (same no-existence-pre-check assumption); the
+  Draft/Approved state-machine argument for why Approve's push never risks a duplicate ERP record
+  without its own delete-first step (FR-085); and the no-rollback-of-already-sent-D365-calls behavior
+  on a mid-batch push failure.
+- Key Entities: EUTR Template updated with a cross-reference to the new FR-081 through FR-086
+  behavior and to 011-eutr-synchronize-data's ERP Template Record entity (the D365-side record these
+  new calls read/write, not modified or duplicated by this update).
+- Success Criteria: SC-062, SC-063 added (100% of Approve confirmations push the correct D365
+  record(s) before committing Status=Approved, 0% commit Status=Approved on any push failure; 100% of
+  Request change confirmations call D365 delete before creating the new Draft row, 0% create that row
+  when the delete call fails).
+- Assumptions: 6 new bullets added — both new D365 calls reuse 011's existing code/contract with no
+  new external dependency; the existing 011 manual batch endpoint (`test-synchronize-templates`)
+  remains unchanged and independent, now complemented by this per-record, action-triggered path;
+  the Draft/Approved state-machine reasoning for why Approve's push needs no delete-first step;
+  "that template's data" on Approve means exactly the TemplateId/row the user selected, not another
+  version of the same Code; and the block-on-failure design decision resolved via `AskUserQuestion`
+  on 2026-09-07, contrasted with 011's own batch-level failure handling (which lets already-sent
+  requests stand and simply stops processing further items, since a background batch job has no
+  local Status change to gate).
+- No [NEEDS CLARIFICATION] markers were embedded in the spec — the one scope question above was
+  resolved interactively via AskUserQuestion before writing, consistent with this spec's established
+  "resolve via question, not marker" pattern (Update 10/11/12/13/14/15/16/17/18).
+- Spec Quality Checklist re-validated against the updated spec: all 16/16 items remain passing (no
+  regressions, no newly-failing items). The new FRs describe D365 calls at the business/contract
+  level (which endpoint, what payload fields, when it fires, what happens on failure) by
+  cross-referencing the already-implemented 011-eutr-synchronize-data service, consistent with this
+  spec's existing convention of naming database tables/D365 entities as business-domain references
+  rather than leaking new implementation detail.

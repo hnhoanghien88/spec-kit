@@ -225,6 +225,32 @@ contracts/sales-line-fallback.md "Contract addition: GET api/view-compliances/ge
 
 ---
 
+## Follow-up: User Story 7 (2026-09-07) — capped Status percentage when BOM is missing
+
+Requested change: on the same All Compliances list screen for Sale Order, the "Status" percentage bar
+for a row whose BOM column reads "Missing" (User Story 6) currently reads 100% whenever every one of
+that sales order's saved (fallback-derived) compliances is applied — because the bar's formula
+(`round(totalApplied / totalCompliances * 100)`, in `statusForUi`) never looks at `bomStatus`. Cap it
+at 30% for such rows, scaled by the same applied/total ratio: e.g. `SO007370` (BOM = Missing, 12 saved
+compliances) shows 30% when all 12 are applied, 10% when only 4 are applied. Pure frontend
+display-formula change — no backend, API, or database change. See spec.md User Story 7 /
+FR-021–FR-024 / SC-011–SC-013, plan.md Summary/Technical Context/Constitution Check/Project Structure
+("Update 2026-09-07, User Story 7"), research.md R10–R11, data-model.md "Status percentage",
+quickstart.md "Additional validation (2026-09-07, User Story 7)".
+
+- [X] T028 [US7] In `compliance-client/src/presentation/pages/compliance-view/hooks/useAllCompliancesColumnsSaleOrder.jsx`, inside the `statusForUi` column's `renderCell`, change the `percent` calculation from `const percent = totalCompliances ? Math.round((totalApplied / totalCompliances) * 100) : 0;` to branch on `row.bomStatus === "No BOM"` — multiply by `30` instead of `100` for a "Missing"-BOM row (research.md R10 has the exact snippet), keeping `0` for a zero-`totalCompliances` row either way. Do not change the tooltip contents or the `LinearProgress` `color` prop (`percent === 100 ? 'success' : 'warning'` already renders `warning` for any capped value, since it can never reach exactly 100 — research.md R11). Do not edit the sibling, unrouted `compliance-view/index.jsx`.
+  - Done: destructured `bomStatus` from `row`, added `isMissingBom = bomStatus === "No BOM"`, `percent` now multiplies by `isMissingBom ? 30 : 100`. No other line in the block changed.
+
+- [X] T029 [US7] Run `npx eslint` on the modified file (matching T026/T027's check) and confirm no new lint errors. Perform the manual validation from quickstart.md "Additional validation (2026-09-07, User Story 7 — capped Status percentage when BOM is missing)": open the list screen, find a row whose BOM column shows "Missing", confirm its Status percentage is `round(Applied / Compliance * 30)` and never exceeds 30% (using the row's own tooltip values); confirm a row whose BOM column is blank still computes up to 100% as before; confirm a "Missing"-BOM row with 0 total compliances shows 0%. Depends on: T028.
+  - eslint: same 2 pre-existing `no-unused-vars` errors as T027 (`isOverdue` in this same block, `totalMissing` in the untouched `actions` block) — neither in the new/changed lines, which are lint-clean.
+  - Manual browser validation against a live app + reachable dev database was not run in this session (no reachable environment) — same caveat as T010/T019/T023/T027's quickstart validation. Formula was verified by hand against the worked example: `SO007370`-style row with `totalCompliances=12`: `totalApplied=12` → `round(12/12*30)=30`; `totalApplied=4` → `round(4/12*30)=10`, matching spec.md User Story 7 Acceptance Scenario 2 exactly. A non-"Missing" row with the same counts still computes `round(12/12*100)=100` / `round(4/12*100)=33`, unaffected.
+
+**Checkpoint**: A "Missing"-BOM row's Status bar can never misrepresent a no-BOM sales order as fully
+compliant — it is capped at 30% and still proportional to how many of its (coarser) saved compliances
+are applied; every other row's Status bar is unchanged.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -248,6 +274,10 @@ contracts/sales-line-fallback.md "Contract addition: GET api/view-compliances/ge
   runtime). T024 (backend DTO) and T026 (frontend column) can run in parallel — different projects,
   no shared file. T025 depends on T024 (needs the new property to compile). T027 depends on T024,
   T025, T026.
+- **User Story 7, capped Status percentage (T028–T029)**: Depends on T026 (`bomStatus` must already
+  be read by the file — it is, as of User Story 6) being complete; otherwise independent of every
+  other task (single file, no backend/database involvement). T028 → T029 (implementation before its
+  validation).
 
 ### Task-Level Dependencies (within US1)
 
@@ -314,3 +344,7 @@ Task: "Add unit tests for BuildSalesLineOpenMaterialFallbackAsync in compliance-
   exist in `compliance-view/` (`index.jsx` and `index_new.jsx`) — only `index_new.jsx` is routed
   (confirmed via `RouteResolver.jsx`, research.md R9); do not edit `index.jsx` by mistake. The column
   hook itself (`useAllCompliancesColumnsSaleOrder.jsx`) is unambiguous — only one such file exists.
+- T028–T029 (User Story 7) is the smallest change in this feature: one `if`-branch inside a formula
+  that already exists, in a file already touched by User Story 6 (T026). No backend file, no
+  migration, no new field — `totalApplied`, `totalCompliances`, and `bomStatus` are all already on
+  the row.

@@ -255,3 +255,65 @@ frontend mapping. Rejected — every other status-like column on this screen (`s
 `statusForUi`) already does its display mapping in the frontend column definition from a raw backend
 value, so mapping `"No BOM"` → `"Missing"` in `renderCell` is the established, consistent place for
 this kind of decision, not the backend (Principle II).
+
+## R10 — Capped Status percentage for a "Missing"-BOM row (2026-09-07 update, User Story 7, FR-021–FR-024)
+
+**Decision**: In `useAllCompliancesColumnsSaleOrder.jsx`'s `statusForUi` column (the `LinearProgress`
+bar), change:
+
+```js
+const percent = totalCompliances
+  ? Math.round((totalApplied / totalCompliances) * 100)
+  : 0;
+```
+
+to branch on the row's already-available `bomStatus` field (the same raw value R9's "BOM" column
+already reads):
+
+```js
+const isMissingBom = row.bomStatus === "No BOM";
+const percent = totalCompliances
+  ? Math.round((totalApplied / totalCompliances) * (isMissingBom ? 30 : 100))
+  : 0;
+```
+
+No other part of the column (tooltip contents, `LinearProgress` `color` prop, which already reads
+`percent === 100 ? 'success' : 'warning'`) needs to change — a capped row can never compute to
+exactly 100 (R11), so it always renders `warning`, correctly signalling "not fully verified" for a
+no-BOM row even at its 30% ceiling.
+
+**Rationale**: `totalApplied`/`totalCompliances`/`bomStatus` are already present on every row today —
+`bomStatus` was added to this exact row shape by User Story 6 (R9) and is already read by the
+sibling "BOM" column in the same file. No new field, API call, or backend change is needed; this is
+the smallest possible fix at the one place (this `renderCell`) that already owns the percent
+calculation, consistent with Principle II (extend the existing pattern in place rather than adding a
+new computed field upstream).
+
+**Alternatives considered**:
+- *Computing the capped percentage on the backend* (a new `StatusPercent`/`DisplayPercent` field on
+  `RSVNSalesOrderOpenInvoiceCogs`, set by `Get365` alongside `BomStatus`). Rejected — the percentage
+  is presentation logic derived from two counts that are already both present on the row; introducing
+  a backend-computed derived field for what the frontend already computes from data it has would
+  duplicate the calculation across two layers for no benefit (Principle III: no new
+  infrastructure/field where an existing in-place formula already covers the case), and every other
+  status-like value on this row (`salesStatus`'s mapping, `bomStatus`'s "Missing" mapping) is likewise
+  resolved to display text on the frontend, not the backend.
+- *Adding a floor instead of/alongside the 30% cap* (e.g. always showing at least some minimum
+  percentage for a no-BOM row even at 0 applied). Rejected — not requested; the worked example (12
+  applied → 30%, 4 applied → 10%) is a pure linear scale from 0–30 with no floor, and FR-022 explicitly
+  keeps 0% for a zero-total row, matching today's existing zero-total behavior.
+
+## R11 — Why the cap can never round above 30 (2026-09-07 update, User Story 7)
+
+**Decision/Fact**: `totalApplied` is always `≤ totalCompliances` in the saved summary (both are
+non-negative counts derived from the same `sp_load_compl_by_conditions_count` result,
+`TotalCompliances = TotalMissing + TotalApplied + TotalOverdue`, so `TotalApplied` can only shrink the
+ratio, never exceed it). Therefore `(totalApplied / totalCompliances) * 30` is always within `[0, 30]`,
+and `Math.round` of a value already `≤ 30` cannot produce `31` or higher.
+
+**Rationale**: Recorded here (rather than left implicit) because spec.md's Edge Cases explicitly asks
+whether rounding could push the capped value above 30 — this confirms it cannot, given how the
+underlying counts are already constrained upstream (R7/R8, `ComplSummarySoService.SaveSummarySo` /
+`ViewCompliancesSummaryService.GetAndSaveSummarySo`), so no additional `Math.min(30, ...)` clamp is
+needed defensively, though adding one costs nothing and may be included for clarity/future-proofing
+at implementation time.

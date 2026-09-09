@@ -1218,3 +1218,62 @@ regardless of this call's outcome.
   `allChipFiles`, already populated by Update 20's mount-time auto-load.
 - No change to per-template folder naming, Mapped-file scoping, empty-folder, or filename-dedup rules
   (FR-071..FR-075) — the All folder is purely additive alongside them.
+
+## Update 22 (2026-09-07): Download shows a choice popup — `folders` becomes format-gated, no entity/DTO change
+
+> Covers spec FR-152..FR-160. No new entity, no new table, no migration, no new endpoint, no request DTO
+> change at all — `EutrDownloadZipRequestDto`/`EutrDownloadZipFolderDto`/`EutrDownloadZipFileDto` (Update
+> 21) are reused byte-for-byte. This update is entirely a client-side change to which subset of the
+> already-modeled `folders` entries gets assembled and sent. See research.md Decisions 71-73.
+
+### New client-side state: `DownloadFormatDialog.jsx` (shared, `ViewSalesOrderPage.jsx`/`SalesOrderOverviewPage.jsx`)
+
+```
+format: 'combined' | 'byTemplate' | null      // local to the dialog, useState(null) — no pre-selection
+```
+
+`ViewSalesOrderPage.jsx` adds `downloadDialogOpen: boolean` (`useState(false)`).
+`SalesOrderOverviewPage.jsx` adds `downloadDialogRow: { salesId, customerCode, customerName } | null`
+(`useState(null)`) — a single value, not a per-row `Set`/`Map`, since only one modal can be
+meaningfully open/interacted with at a time; independent of the existing `downloadingSalesIds` `Set`
+(Update 13, per-row in-flight spinner state, unchanged).
+
+### Updated request: `folders` becomes format-gated (both screens)
+
+| Chosen format | `folders` payload sent |
+|---|---|
+| `'byTemplate'` | `templateFolders` only (Update 10/13 — one entry per saved template) — **no** entries from `allFolderEntries` |
+| `'combined'` | `allFolderEntries` only (Update 21 — one entry per All-tree node, or the single `{ folderPath: ['All'], files: [] }` fallback per FR-147) — **no** `templateFolders` entries |
+
+The request envelope (`EutrDownloadZipRequestDto`) and per-folder/per-file shape
+(`EutrDownloadZipFolderDto`/`EutrDownloadZipFileDto`) are unchanged from Update 21 — only which array of
+already-modeled entries populates `Folders` differs per format. The "no Mapped documents anywhere for
+this format → show a message, skip the call" check (FR-074/FR-089, now format-scoped per FR-158) still
+runs before `Folders` is assembled, same as Update 10/21.
+
+### `SalesOrderOverviewPage.jsx` — conditional default-template fetch (new optimization)
+
+```
+if (format === 'combined') {
+  [templatesResponse, poReferencesResponse, defaultTemplateResult] = await Promise.all([...])  // Update 21 shape, unchanged
+} else {
+  [templatesResponse, poReferencesResponse] = await Promise.all([...])   // format === 'byTemplate':
+}                                                                          //  loadDefaultTemplateForRow
+                                                                           //  is not called at all
+```
+
+When the user picks **By Template**, `loadDefaultTemplateForRow` (Update 21's on-demand 2-call default-
+template chain) is skipped entirely rather than fetched-and-discarded — its only consumer
+(`allFolderEntries`) will not be sent. `ViewSalesOrderPage.jsx` has no equivalent conditional fetch: its
+default-template data (`allChipTree`/`allChipDerivedFileMappings`/`allChipFiles`) is already loaded on
+mount (Update 20) for the always-visible All chip/Template Checklist, independent of Download.
+
+### Non-goals confirmed (Update 22)
+
+- No new backend endpoint/policy/entity/table/migration/DTO field — `download-zip` and every request DTO
+  (Update 21) are reused exactly as-is.
+- No change to per-template or All-folder naming, Mapped-file scoping, empty-folder, or filename-dedup
+  rules (FR-071..FR-075, FR-142..FR-148) — only which already-correct set is included per download.
+- No persisted "last chosen format" — `format` resets to `null` every time the dialog reopens.
+- No change to `downloadingSalesIds` (Update 13) or to View's mount-time default-template auto-load
+  (Update 20) — both are unaffected by this update.

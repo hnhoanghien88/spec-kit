@@ -2809,3 +2809,124 @@ T382, T383 in parallel
 T388, T389, T390, T391, T392, T393, T394, T395 in parallel (once T377-T387 are done)
 T396 sequentially (end-to-end)
 ```
+
+---
+
+## Update 2026-09-07 (Update 23) — D365 Sync Gated Behind Approve (push) / Request Change (delete)
+
+**Input**: "cập nhật 003-eutr-templates khi user nhấn Request change, chạy xóa template trên D365 dựa
+theo TemplateCode, tham khảo hàm `SyncTemplatesToDynamicsAsync` (`await _dynamicService.PostAsync(
+deleteUrl, new DeleteTemplateRequest { code = template.Code }, ct);`) ở 011-eutr-synchronize-data.
+Khi user approve, đồng bộ dữ liệu template đó lên D365 dựa theo hàm trên ở khúc
+`var activeMappingsByTemplateId = activeMappings.ToLookup(m => m.TemplateId); foreach (var template
+in eligibleTemplates)`." Backend-only — no new endpoint, DTO, DB column, or frontend change; extracts
+2 reusable methods from the already-shipped `EutrSynchronizeDataService.SyncTemplatesToDynamicsAsync`
+(011-eutr-synchronize-data) and calls them from `EutrTemplatesService.ApproveAsync`/
+`RequestChangeAsync` before their existing local transaction, blocking the local Status/version
+change entirely when the D365 call fails (per `AskUserQuestion`, 2026-09-07 — "chặn lại"). See
+research.md §40 and plan.md's "Update 2026-09-07 (Update 23)" section for full rationale.
+
+## Phase 90: Backend — Extract D365 Delete/Push Methods (cross-feature, 011-eutr-synchronize-data) (US8, US9, FR-081, FR-083, FR-086)
+
+**Purpose**: Extract the delete-by-Code and push-by-TemplateId D365 calls already implemented inside `EutrSynchronizeDataService.SyncTemplatesToDynamicsAsync` (011-eutr-synchronize-data) into 2 standalone public methods, so both that existing batch job and the 2 new per-record callers (Phase 91) share one implementation instead of duplicating D365 request-building code
+
+- [X] T397 [P] In compliance-sys-api/src/ComplianceSys.Application/Interfaces/Services/IEutrSynchronizeDataService.cs, add `Task DeleteTemplateFromDynamicsAsync(string code, CancellationToken ct = default);` and `Task PushTemplateToDynamicsAsync(long templateId, string code, string name, CancellationToken ct = default);`, each with a Vietnamese comment (matching this interface's existing comment style) noting they are reused by `EutrTemplatesService.ApproveAsync`/`RequestChangeAsync` (003-eutr-templates, Update 23) in addition to this file's own `SyncTemplatesToDynamicsAsync` (FR-081, FR-083, FR-086). **Done** — added exactly as specified.
+- [X] T398 In compliance-sys-api/src/ComplianceSys.Application/Services/EutrSynchronizeDataService.cs, add a private `string GetDynamicsApiUrl()` helper: `return _configuration["Dynamics:ApiUrl"]?.TrimEnd('/') ?? throw new InvalidOperationException("Dynamics:ApiUrl is not configured");` — the exact expression currently duplicated inline twice inside `SyncTemplatesToDynamicsAsync` (depends on T397) (FR-086). **Done** — added exactly as specified, placed right after the existing `DeleteTemplateRequest` nested class.
+- [X] T399 [P] In the same file, implement `public async Task DeleteTemplateFromDynamicsAsync(string code, CancellationToken ct = default)`: `var apiUrl = GetDynamicsApiUrl(); var deleteUrl = $"{apiUrl}/data/RSVNEutrTemplates/Microsoft.Dynamics.DataEntities.deleteTemplate?cross-company=true"; await _dynamicService.PostAsync(deleteUrl, new DeleteTemplateRequest { code = code }, ct);` — reuses the existing private `DeleteTemplateRequest` nested class verbatim, no exception handling inside this method (exceptions propagate to the caller, unlike this service's other public methods, since both callers of this method need a real exception, not a `{ Success = false }` summary) (depends on T398) (FR-081). **Done** — implemented exactly as specified.
+- [X] T400 [P] In the same file, implement `public async Task PushTemplateToDynamicsAsync(long templateId, string code, string name, CancellationToken ct = default)`: `var apiUrl = GetDynamicsApiUrl(); var createUrl = $"{apiUrl}/data/RSVNEutrTemplates?cross-company=true"; var activeMappings = (await _eutrTemplateReferencesRepository.GetActiveByTemplateIdsAsync(new[] { templateId }, DateTime.UtcNow.Date, ct)).ToList();` then: if `activeMappings.Count == 0`, `await _dynamicService.PostAsync(createUrl, new RSVNEutrTemplates { Code = code, Name = name, VendorCode = string.Empty }, ct);`; otherwise `foreach (var mapping in activeMappings) await _dynamicService.PostAsync(createUrl, new RSVNEutrTemplates { Code = code, Name = name, VendorCode = mapping.VendorCode }, ct);` — same no-try/catch, exceptions-propagate shape as T399 (depends on T398) (FR-083). **Done** — implemented exactly as specified.
+- [X] T401 In the same file, refactor `SyncTemplatesToDynamicsAsync`'s Phase 1 `foreach (var template in eligibleTemplates)` loop: replace the inline `await _dynamicService.PostAsync(deleteUrl, new DeleteTemplateRequest { code = template.Code }, ct);` with `await DeleteTemplateFromDynamicsAsync(template.Code, ct);` — keep the surrounding try/catch, `summary.DeleteCallsSent++`, and error-logging/early-return exactly as they are today (this is a 1:1 swap — Phase 1 already calls once per template, so counting behavior is unchanged) (depends on T399) (FR-086). **Done** — implemented exactly as specified; the shared `apiUrl`/`deleteUrl`/`createUrl` local-variable block at the top of `SyncTemplatesToDynamicsAsync` was removed for the delete side (now built inside `DeleteTemplateFromDynamicsAsync` itself).
+- [X] T402 **Revised during implementation** — the task as originally written (refactor Phase 2's `foreach` to call `PushTemplateToDynamicsAsync` per template, mirroring T401) broke 2 existing tests (`SyncTemplatesToDynamicsAsync_ShouldProcessEveryEligibleTemplateAndMapping_WhenNoFailure`, `SyncTemplatesToDynamicsAsync_ShouldStopRun_WhenPushCallThrows`). **Root cause**: Phase 2 fetches active mappings for ALL eligible templates in ONE batched `GetActiveByTemplateIdsAsync` call (research.md §R19); `PushTemplateToDynamicsAsync` (built for the single-template Approve caller) calls that same repository method with just one templateId — calling it per-template from inside Phase 2's own loop would turn 1 batched query into an N+1 query pattern for the batch job, a genuine performance regression at this feature's "hundreds of templates" scale, not just a test-mock artifact. **Fix applied**: reverted Phase 2's `foreach` to its original inline shape (its own batched query + `ToLookup` + direct `_dynamicService.PostAsync(createUrl, ...)` calls per mapping/blank-fallback) — it does NOT call `PushTemplateToDynamicsAsync`. Only the `createUrl`-building line is now shared via `GetDynamicsApiUrl()` (T398). `PushTemplateToDynamicsAsync` remains a real, tested method — used by exactly 1 caller (`EutrTemplatesService.ApproveAsync`, Phase 91) instead of 2, since a single-template query is the correct shape there (no batching to lose). Documented as a Correction in research.md §40 and plan.md's Update 23 section. **Verified — actually run**: `dotnet test` on `EutrSynchronizeDataServiceTests` → all 30 pre-existing tests pass with this reverted version (0 failures, confirmed below in T403).
+- [X] T403 [P] Run `dotnet test` (or the project's existing test runner) against `compliance-sys-api/tests/ComplianceSysApi.UnitTests/Services/EutrSynchronizeDataServiceTests.cs` — confirm all existing `SyncTemplatesToDynamicsAsync_*` tests still pass unchanged after T401/T402 (depends on T401, T402). **Verified — actually run**: `dotnet test tests/ComplianceSysApi.UnitTests/ComplianceSysApi.UnitTests.csproj --filter "FullyQualifiedName~EutrSynchronizeDataServiceTests"` → `Passed! Failed: 0, Passed: 30, Skipped: 0, Total: 30` (after T402's correction; the pre-correction refactor had 2 failures, both fixed by the revert).
+- [X] T404 [P] Add 2 new focused unit tests to `EutrSynchronizeDataServiceTests.cs`, matching this file's existing `MethodName_ShouldXxx_WhenYyy` naming convention: `DeleteTemplateFromDynamicsAsync_ShouldPostToDeleteUrl_WithGivenCode` and `PushTemplateToDynamicsAsync_ShouldPushBlankVendorCode_WhenNoActiveMappings` (depends on T399, T400). **Done, plus 3 extra tests beyond the minimum spec** — added the 2 specified tests, plus `PushTemplateToDynamicsAsync_ShouldPushOncePerMapping_WhenMultipleActiveMappingsExist` (FR-027 for the single-template method) and 2 exception-propagation tests (`DeleteTemplateFromDynamicsAsync_ShouldPropagateException_WhenD365CallFails`, `PushTemplateToDynamicsAsync_ShouldPropagateException_WhenD365CallFails`) confirming the "no try/catch, exceptions propagate" contract T399/T400 rely on (FR-081/FR-083's block-on-failure design needs this to hold). **Verified — actually run**: `dotnet test` → all 35 tests pass (30 existing + 5 new), 0 failures.
+
+**Checkpoint**: `EutrSynchronizeDataService` exposes 2 reusable D365 methods; its own `SyncTemplatesToDynamicsAsync` batch job calls them internally with no observable behavior change against its existing test suite
+
+---
+
+## Phase 91: Backend — Wire EutrTemplatesService Approve/Request Change to the New D365 Calls (US8, US9, FR-081 to FR-085)
+
+**Purpose**: Make `ApproveAsync`/`RequestChangeAsync` call the new D365 methods (Phase 90) before their existing local transaction, blocking the local Status/version change entirely when the D365 call fails
+
+- [X] T405 In compliance-sys-api/src/ComplianceSys.Application/Services/EutrTemplatesService.cs, add `private readonly IEutrSynchronizeDataService _synchronizeDataService;` field, add `IEutrSynchronizeDataService synchronizeDataService` as a new constructor parameter, and assign `_synchronizeDataService = synchronizeDataService;` in the constructor body (alongside the existing `_templateReferencesRepository` assignment) (FR-081, FR-083). **Done** — added exactly as specified.
+- [X] T406 In the same file, modify `ApproveAsync(long id, string userEmail, CancellationToken ct = default)`: immediately after the existing `if (existing.Status != (byte)TemplateStatusEnum.Draft) throw ...;` check and BEFORE `await _unitOfWork.BeginTransactionAsync(...)`, add: `try { await _synchronizeDataService.PushTemplateToDynamicsAsync(existing.Id, existing.Code, existing.Name, ct); } catch (Exception ex) { Log.Error(ex, "EutrTemplatesService.ApproveAsync - Loi dong bo D365 truoc khi Approve (Code {Code}, Id={Id})", existing.Code, id); throw new ValidationException(new[] { new FluentValidation.Results.ValidationFailure(nameof(existing.Status), $"Failed to sync template with D365: {ex.Message}") }); }` — the existing `BeginTransactionAsync`/`SetStatusAsync`/`CommitAsync` body below is otherwise unchanged (depends on T405) (FR-083, FR-084). **Done** — implemented exactly as specified.
+- [X] T407 In the same file, modify `RequestChangeAsync(long id, string userEmail, CancellationToken ct = default)`: immediately after the existing `if (existing.Status != (byte)TemplateStatusEnum.Approved) throw ...;` check and BEFORE `await _unitOfWork.BeginTransactionAsync(...)`, add the same try/catch shape as T406, calling `await _synchronizeDataService.DeleteTemplateFromDynamicsAsync(existing.Code, ct);` instead — the existing new-row-insert/`CopyDetailTreeAsync`/`CopyReferencesAsync`/`SetIsHideAsync`/`CommitAsync` body below is otherwise unchanged (depends on T405) (FR-081, FR-082). **Done** — implemented exactly as specified.
+- [X] T408 [P] Verify (no code change expected) `compliance-sys-api/src/ComplianceSys.Application/DependencyInjection.cs`: confirm `IEutrSynchronizeDataService`/`EutrSynchronizeDataService` is already registered (from 011-eutr-synchronize-data) so constructor injection resolves T405's new `EutrTemplatesService` dependency automatically with no DI change needed (FR-086). **Verified — actually checked**: `grep` confirmed `services.AddScoped<IEutrSynchronizeDataService, EutrSynchronizeDataService>();` (line 83) and `services.AddScoped<IEutrTemplatesService, EutrTemplatesService>();` (line 73) both already exist in `DependencyInjection.cs` — no change made.
+- [X] T409 [P] Verify (no code change expected) `compliance-sys-api/src/ComplianceSys.Api/Controllers/EutrTemplatesController.cs`: confirm the existing `Approve`/`RequestChange` actions' `catch (ValidationException ex) => BadRequest(...)` already covers the new D365-failure `ValidationException` from T406/T407 with zero controller changes (FR-086). **Verified — actually checked**: read both action methods directly — `Approve` and `RequestChange` each already have `catch (KeyNotFoundException ex) => NotFound(...)` and `catch (ValidationException ex) => BadRequest(...)`, unchanged; no controller edit was made.
+
+**Checkpoint**: Approve pushes to D365 before committing `Status=Approved`; Request change deletes from D365 before creating the new Draft version row; either D365 failure leaves the template's local data completely unchanged
+
+---
+
+## Phase 92: Validation — Update 23 (D365 Sync Gated Behind Approve/Request Change)
+
+**Purpose**: End-to-end validation that FR-081 to FR-086 all work correctly — D365 call ordering, block-on-failure semantics, and zero regression to the existing Approve/Request change/`SyncTemplatesToDynamicsAsync` behavior
+
+- [X] T410 [P] Verify FR-083 (Approve pushes before commit): trace T406's code path — confirm `PushTemplateToDynamicsAsync` is called and awaited to completion strictly before `_unitOfWork.BeginTransactionAsync(...)` begins, so no DB write of any kind has occurred yet when the D365 call is in flight (quickstart.md Scenario 3'e, steps 1-4). **Verified via direct code read** of the implemented `ApproveAsync`: the `try { await _synchronizeDataService.PushTemplateToDynamicsAsync(...) }` block (lines 199-208) sits between the `Status != Draft` precondition check and the `try { await _unitOfWork.BeginTransactionAsync(...) }` block (line 212) — the push is fully awaited and must succeed before execution can reach the transaction.
+- [X] T411 [P] Verify FR-084 (D365 push failure blocks Approve): confirm T406's catch block throws `ValidationException` BEFORE `BeginTransactionAsync`, so `SetStatusAsync` is structurally unreachable on that path — `Status` cannot have been written when this exception is thrown (quickstart.md Scenario 3'e, step 9). **Verified via direct code read**: the `catch (Exception ex)` block at line 203 logs and `throw`s a new `ValidationException` immediately — there is no code path from inside that catch block to `BeginTransactionAsync`/`SetStatusAsync`, confirmed by the method's linear top-to-bottom structure (no `goto`/loop back).
+- [X] T412 [P] Verify FR-081 (Request change deletes before commit): trace T407's code path — confirm `DeleteTemplateFromDynamicsAsync` is called and awaited to completion strictly before `_unitOfWork.BeginTransactionAsync(...)` begins (quickstart.md Scenario 3'e, steps 5-7). **Verified via direct code read** of the implemented `RequestChangeAsync`: the `try { await _synchronizeDataService.DeleteTemplateFromDynamicsAsync(...) }` block (lines 248-257) sits between the `Status != Approved` precondition check and the `try { await _unitOfWork.BeginTransactionAsync(...) }` block (line 261).
+- [X] T413 [P] Verify FR-082 (D365 delete failure blocks Request change): confirm T407's catch block throws BEFORE `BeginTransactionAsync`, so the new-row insert/`CopyDetailTreeAsync`/`CopyReferencesAsync`/`SetIsHideAsync` sequence is structurally unreachable on that path (quickstart.md Scenario 3'e, step 9). **Verified via direct code read**: same shape as T411 — the `catch (Exception ex)` block at line 252 throws immediately, before the new-row-insert transaction block begins; the entity-building/copy/hide logic (lines 263+) is structurally unreachable from inside that catch.
+- [X] T414 [P] Verify FR-085 (Approve's push needs no delete-first step): confirm by tracing the `Status` state machine — `ApproveAsync` only runs past its precondition when `existing.Status == Draft` (FR-058, unchanged), and `Draft` is only reachable via `AddAsync`/`CloneAsync` (no prior D365 record for that Code) or via `RequestChangeAsync` (T407, which always deletes first) — so no code path lets `ApproveAsync` run against a Code that still has a stale D365 record. **Verified via code review**: confirmed `AddAsync`/`CloneAsync` (unchanged by this update) both set `Status = Draft` unconditionally on brand-new rows (no D365 record could exist yet for their freshly-generated Code), and `RequestChangeAsync` (T407) unconditionally deletes the D365 record for `existing.Code` before creating its new Draft row — no other code path sets `Status = Draft`. `ApproveAsync`'s own precondition (`Status != Draft` rejects) plus `Status` becoming `Approved` immediately after a successful Approve (no intervening path back to Draft except Request change) closes the loop.
+- [X] T415 [P] Verify FR-086 (no new D365 contract, no controller change): confirm via diff review that T397-T407 touch only `IEutrSynchronizeDataService.cs`, `EutrSynchronizeDataService.cs`, and `EutrTemplatesService.cs` — zero changes to `EutrTemplatesController.cs`, zero new DTOs, zero new DB columns/tables, zero new authorization policies (matches T408/T409's verification). **Verified — actually run**: `git status --short` in `compliance-sys-api` shows exactly 3 modified source files (`IEutrSynchronizeDataService.cs`, `EutrSynchronizeDataService.cs`, `EutrTemplatesService.cs`) plus 1 modified test file (`EutrSynchronizeDataServiceTests.cs`) — no controller, DTO, migration, or policy-config file appears in the diff.
+- [X] T416 [P] Verify no frontend regression: confirm via repo-wide search that `ApproveEutrTemplatesUseCase.js`, `RequestChangeEutrTemplatesUseCase.js`, `RestEutrTemplatesRepository.js`, `eutrTemplatesApi.js`, and `TemplateListPage.jsx` are untouched by this update — the Approve/Request change buttons' existing error-snackbar path (used for the pre-existing wrong-Status 400) is the same path that now also surfaces a D365-failure 400, with no new frontend code needed. **Verified — actually run**: `git status --short` in `compliance-client` shows 2 modified files, both unrelated dev-certificate files (`certs/_wildcard.local.com-key.pem`, `certs/_wildcard.local.com.pem`, pre-existing local artifacts unrelated to this session's work) — zero `eutr-templates`-related frontend files appear in the diff, confirming no frontend code was touched.
+- [X] T417 Run backend build (`dotnet build`) and the full `ComplianceSysApi.UnitTests` suite (including T403's regression check and T404's 2 new tests), then a manual click-through of quickstart.md Scenario 3'e end-to-end against a live dev server/backend/seeded MySQL database/reachable D365 sandbox (depends on T410, T411, T412, T413, T414, T415, T416). **Partially done** — `dotnet build src/ComplianceSys.Infrastructure/ComplianceSys.Infrastructure.csproj` (pulls in Application + Domain, the layers this update touches) → `Build succeeded`, 0 errors; the full-solution `dotnet build src/ComplianceSys.Api/...` showed only pre-existing `MSB3026`/`MSB3021` file-copy-lock errors against a running `ComplianceSys.Api` process (0 `error CS` compiler errors), the same environment limitation recorded by T381 (Update 22). Full unit test suite (`dotnet test tests/ComplianceSysApi.UnitTests/...`) → `Failed: 3, Passed: 151, Total: 154`; all 3 failures (`ComplSynchronizeDataServiceTests.RunAsync_ShouldFetchAllSalesLinePages_WhenDataSpansMultiplePages`, `RunAsync_ShouldStopProcessing_AtTestSafetyLimit`, `MappingConfigurationTests.ApplicationMappingProfiles_ShouldBeValid`) are confirmed **pre-existing and unrelated** — none belong to `EutrSynchronizeDataServiceTests` (the file this update actually modified), none reference `EutrTemplates`/`EutrSynchronizeDataService`/`RSVNEutrTemplates`, and `git status --short` confirms this update never touched `ComplSynchronizeDataService.cs`, `EutrMappingProfile.cs`, or any `EutrDocuments`-related file (the mapping failure's own error names `EutrDocuments`/`StepNames`/`RefType` as unmapped, a different feature entirely). The scoped `EutrSynchronizeDataServiceTests` filter (T403/T404) passes 35/35 with 0 failures. **Not run**: the manual browser click-through of quickstart.md Scenario 3'e (including the D365-unreachable failure check, which requires temporarily pointing `Dynamics:ApiUrl` at an unreachable host) — requires a live dev server, backend API, seeded MySQL database, and a reachable D365 sandbox, none of which are available in this non-interactive session. Full interactive validation is the recommended next step before considering this update production-ready — same limitation recorded by every prior update in this tasks.md (Update 12/T208 through Update 22/T396).
+
+**Checkpoint**: All Update 23 checks pass at the level achievable in this non-interactive session (code-path tracing confirming the D365-call-before-commit ordering on both actions, plus a clean backend build/unit-test run standing in for a live click-through where no dev server, running backend, seeded database, or D365 sandbox were available). **Recommended before sign-off**: manually run quickstart.md Scenario 3'e end-to-end, including the D365-unreachable failure check (step 9), against a real D365 sandbox to close the gap between "verified by code-path tracing" and "verified end-to-end against live D365."
+
+---
+
+## Update 23 Dependencies
+
+### Phase Dependencies
+
+- **Phase 90 (Backend — extract D365 methods)**: No dependency on Phases 1-89 — additive to the
+  existing, already-shipped `EutrSynchronizeDataService` from feature 011-eutr-synchronize-data.
+  T397→T398 (interface signatures before the helper/implementations that satisfy them); T398→T399,
+  T398→T400 (helper before each implementation, T399/T400 can run in parallel — different methods,
+  same file, no shared mutable state); T399→T401 (delete method before its call site is refactored to
+  use it); T400→T402 (push method before its call site is refactored); T401 and T402 both feed T403
+  (regression check needs both refactors done); T404 (new unit tests) depends on T399/T400 directly
+  (can be authored as soon as the methods exist, independent of T401-T403).
+- **Phase 91 (Backend — wire EutrTemplatesService)**: Depends on Phase 90 (T399, T400 — the methods
+  being called must exist). T405 (constructor dependency) before T406/T407 (the two methods that use
+  it); T406 and T407 touch different methods in the same file and can be authored in parallel once
+  T405 lands. T408/T409 are verification-only (no code change expected) and can run any time after
+  T405-T407.
+- **Phase 92 (Validation)**: Depends on Phase 90 (T397-T404) and Phase 91 (T405-T409) — T410-T416
+  verify different facets of the same change and can run in parallel; T417 depends on all seven.
+
+### Execution Order
+
+```
+T397 (Phase 90) ── T398 ──┬── T399 ── T401 ──┐
+                          │                   ├── T403
+                          └── T400 ── T402 ──┘
+                              │        │
+                              └── T404 ┘ (parallel, depends on T399/T400 only)
+                                        │
+                                     T405 (Phase 91)
+                                        │
+                              ┌── T406 ─┴─ T407 ──┐
+                              │                     │
+                           T408, T409 (verify, [P], any time after T405-T407)
+                                        │
+                    T410-T416 (Phase 92, [P]) ── T417 (E2E)
+```
+
+### Parallel Opportunities
+
+```
+# Phase 90 — the two extracted methods touch the same file but different method bodies, no
+# incomplete-task dependency between them once the shared T398 helper exists:
+T399, T400 in parallel
+
+# Phase 90 — new unit tests can be authored as soon as the methods under test exist:
+T404 in parallel with T401, T402, T403
+
+# Phase 91 — the two call sites are different methods in the same file:
+T406, T407 in parallel (after T405)
+T408, T409 in parallel (verification-only, any time after T405-T407)
+
+# Phase 92 — all 7 verification tasks [P] except the final E2E:
+T410, T411, T412, T413, T414, T415, T416 in parallel (once T397-T409 are done)
+T417 sequentially (end-to-end)
+```

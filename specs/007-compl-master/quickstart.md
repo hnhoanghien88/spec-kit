@@ -114,3 +114,54 @@ Prerequisites: DB migration `26_fix_compl_master_delete_soft_delete.sql` applied
 - `GET api/compliance-master/get-by-id/{id}` for a soft-deleted master's id still resolves (unchanged behavior, see `research.md` R14) — this is intentional, not a regression.
 - Deleting/bulk-deleting masters that were already working before this fix (no linked data) continues to work exactly as before.
 - No existing `compl_references`, `compl_master_conditions`, or `compl_master_group_email` rows are removed by a master delete — they simply become orphaned-but-inert once their parent master is soft-deleted, exactly as the equivalent `compl_compliances` soft-delete already behaves for its own linked data.
+
+## Scenario 13 — Select Table logic for a Customer condition (User Story 5)
+
+Prerequisites: logged in as a user with `ComplianceMaster.Update` permission; a master (e.g. `compliance-master/1021`, or any editable master) with at least one rule block under "Individual Rule Conditions (AND only)" or "CONDITIONS".
+
+1. Open the master's detail screen and locate a rule block.
+2. Add (or edit) a Customer condition in that block.
+3. Open its Type selector.
+
+**Expected**: "Table" is offered as an option, the same as it already is for Product Type.
+
+## Scenario 14 — Table logic for Customer alongside another condition already using Table
+
+1. In the same or another rule block, add a Product Type condition and set its Type to "Table"; select two or more product types.
+2. In the same block, add (or edit) a Customer condition.
+3. Open the Customer condition's Type selector.
+
+**Expected**: "Table" is still offered for the Customer condition — it is not removed just because the Product Type condition in the same block already uses Table (this is the exact scenario the original request was blocked on).
+
+4. Select "Table" for the Customer condition and pick 3+ customers (e.g. A, B, C).
+
+**Expected**: No error; the selected customers accumulate in the condition's value list the same way Product Type's Table values do.
+
+## Scenario 15 — Master Preview shows the Customer Table formula
+
+1. With the Customer Table condition from Scenario 14 configured (customers A, B, C), view the "MASTER PREVIEW" panel on the same screen.
+
+**Expected**: The Customer condition renders using the same presentation already used for the Product Type Table condition above it (or any existing Product Type Table condition elsewhere) — a header line (`Customer IN`) followed by one bulleted line per selected customer (`- code - name`). No different/new format appears for Customer specifically.
+
+## Scenario 16 — Save and verify compliance evaluation reflects the Customer Table condition
+
+1. Save the master from Scenario 14/15 (with both the Product Type Table condition and the Customer Table condition in the same AND block).
+2. Reopen the master and confirm both conditions, their Type ("Table"), and their selected values persisted exactly as configured.
+3. Using the app's normal compliance-loading flow for this master (the screen/report that lists applied/missing compliance records for a master, backed by `sp_load_compl_by_conditions`/`sp_load_compl_by_conditions_count`), confirm: only records whose Customer is one of the selected customers (A, B, C) **and** whose Product Type is one of the selected product types are matched by this block.
+4. Pick a record with a Customer NOT in the selected list (but a matching Product Type) and confirm it is correctly excluded.
+
+**Expected**: Matching results respect the Customer Table condition's selected values with the same accuracy already established for the Product Type Table condition — no unexplained inclusions/exclusions.
+
+## Scenario 17 — Existing Value/NOT IN Customer conditions are unaffected
+
+1. Open a master that already has a Customer condition saved as "Value" (single customer) or "NOT IN" (exclusion list) from before this change.
+
+**Expected**: It still loads, displays, and evaluates exactly as before — its Type selector still offers Value/NOT IN (and now also Table, per Scenario 13), but its already-saved configuration and behavior are unchanged until a user deliberately edits it.
+
+## Regression check (User Story 5)
+
+- A rule block with only one Table-logic condition (any single reference type) continues to behave exactly as before — no change to the single-Table-condition case.
+- Two conditions of the **same** reference type in one block still cannot both use Table simultaneously (unchanged edge case, see `research.md` R18) — only cross-type combinations are newly allowed.
+- Individual mode's existing Type-selector restrictions (`isDisabledByIndividual`/`isRestrictedByIndividual`) behave exactly as before for every reference type, Customer included — this fix does not touch Individual-mode gating.
+- Product Type's own Table behavior (selection, Master Preview rendering, save/reload, compliance matching) is completely unchanged.
+- `ConditionsView.jsx` (the read-only "View Conditions" list dialog) renders a saved Customer Table condition without any code change, since it was already generic per reference type.

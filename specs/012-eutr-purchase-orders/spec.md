@@ -8,6 +8,24 @@
 
 **Input**: User description: "chức năng mới eutr-purchase-orders. màn hình hiển thị dữ liệu từ API reference với type = 15, các cột hiển thị. Purch id, Vendor code, Vendor name, Template, Progress, Action [View]. Progress dựa vào Template (003-eutr-templates) để lấy ra các step rồi kiểm tra với 004-eutr-documents để biết step nào có tài liệu, missing. Bấm vào View thì vào màn hình PurchId/View. màn hình giống link eutr/sales-orders/SO004813/map-file ở 005-eutr-sales-orders. nhưng bỏ phần Step 1 choose Purchase order, rồi chỗ hiển thị thông tin Sales ID, Customer thì đổi thành thông tin Purch id, bỏ thông tin seelcted POs"
 
+## Clarifications
+
+### Session 2026-09-07 (Update 1)
+
+- Input: Cập nhật 012-eutr-purchase-orders. Trong màn hình chi tiết (`PurchId/View`), khi người dùng
+  nhấn nút Upload, popup Add tài liệu (dùng chung với 004-eutr-documents) hiện đang mở với trường
+  **Type** trống (`null`) và trường **Value** trống (`[]`) — giống hệt cách popup mở ở màn hình Map
+  File của 005-eutr-sales-orders (không tự điền, theo đúng quyết định Decision 26 của spec đó).
+- Change: Riêng ở màn hình `PurchId/View` của 012-eutr-purchase-orders, khi nhấn Upload, popup Add
+  tài liệu MUST tự điền sẵn: trường **Type** = `PO`, trường **Value** = chính Purch Id đang xem
+  (dòng Purchase Order tương ứng lấy từ nguồn tham chiếu type = 15). Người dùng vẫn có thể đổi Type
+  và/hoặc Value sang giá trị khác sau khi popup mở (không khóa/disable hai trường này) — tự điền chỉ
+  nhằm giảm thao tác lặp lại cho tình huống phổ biến nhất (đính tài liệu cho đúng PO đang xem).
+- Change: Việc tự điền chỉ áp dụng khi nhấn Upload từ màn hình `PurchId/View` (012-eutr-purchase-orders).
+  Hành vi Upload ở màn hình Map File (005-eutr-sales-orders) giữ nguyên như cũ — KHÔNG tự điền Type/Value
+  — vì Decision 26 của 005-eutr-sales-orders coi đây là quyết định riêng của luồng đó, không bị thay đổi
+  bởi cập nhật này.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Xem danh sách EUTR Purchase Orders (Priority: P1)
@@ -114,6 +132,13 @@ trạng thái của step đó trong cây được cập nhật ngay mà không c
 9. **Given** Purchase Order đang xem chưa có Template nào gắn, **When** mở màn hình chi tiết, **Then**
    hệ thống hiển thị trạng thái rõ ràng cho biết chưa có Template (không hiển thị cây thư mục rỗng gây
    hiểu nhầm là đã đầy đủ).
+10. **Given** đang ở màn hình chi tiết của một Purchase Order (`PurchId/View`), **When** nhấn nút
+    **Upload**, **Then** popup Add tài liệu mở ra với trường Type đã tự điền sẵn giá trị **PO** và
+    trường Value đã tự điền sẵn chính Purch Id đang xem — người dùng không cần tự chọn lại hai trường
+    này để đính tài liệu cho đúng PO đang xem.
+11. **Given** popup Add tài liệu đã mở với Type = PO và Value = Purch Id đang xem (đã tự điền), **When**
+    người dùng đổi Type và/hoặc Value sang giá trị khác trước khi lưu, **Then** hệ thống chấp nhận giá
+    trị mới do người dùng chọn (hai trường không bị khóa).
 
 ---
 
@@ -217,6 +242,14 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
 - **FR-023**: Sau khi Upload hoặc Edit thành công, khu vực AVAILABLE FILES và trạng thái của (các)
   step liên quan trong cây template MUST được làm mới (refetch) ngay theo dữ liệu thật mới nhất,
   không yêu cầu người dùng tải lại toàn bộ trang.
+- **FR-024**: Riêng tại màn hình chi tiết (`PurchId/View`), khi nhấn nút **Upload**, popup Add tài
+  liệu MUST tự điền sẵn trường **Type** = `PO` và trường **Value** = chính Purch Id đang xem (không
+  mở trống như mặc định gốc của popup dùng chung ở 004-eutr-documents).
+- **FR-025**: Trường Type và Value đã tự điền theo FR-024 MUST vẫn cho phép người dùng chỉnh sửa/đổi
+  giá trị khác trước khi lưu — không khóa (disable) hai trường này.
+- **FR-026**: Việc tự điền theo FR-024/FR-025 CHỈ áp dụng cho nút Upload ở màn hình `PurchId/View`
+  của 012-eutr-purchase-orders; hành vi Upload ở màn hình Map File (005-eutr-sales-orders) MUST giữ
+  nguyên như hiện tại (không tự điền Type/Value).
 
 ### Key Entities *(include if feature involves data)*
 
@@ -273,3 +306,7 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
   cập nhật riêng sau này.
 - Phân quyền truy cập màn hình này tuân theo đúng cơ chế phân quyền chung đã áp dụng cho các màn hình
   EUTR khác trong hệ thống, không yêu cầu quyền mới.
+- "Tự điền mặc định" (FR-024) được hiểu là chỉ đặt giá trị khởi tạo ban đầu cho Type/Value khi popup
+  Add mở ra từ nút Upload của `PurchId/View`, không phải khóa cứng giá trị — người dùng vẫn có toàn
+  quyền đổi sang Type/Value khác trước khi lưu, giữ đúng nguyên tắc "popup đầy đủ, không giới hạn"
+  mà 005-eutr-sales-orders (Decision 26) đã chọn cho chính popup dùng chung này.

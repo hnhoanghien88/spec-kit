@@ -4679,3 +4679,205 @@ orphans/merged Mapped files matching quickstart.md's Update 21 fixture; (2) conf
 default template configured still downloads successfully with an empty All folder; (3) confirm the
 existing "nothing to download" message/behavior is unchanged when a Sales Order has zero Mapped documents
 anywhere.
+
+---
+
+## Phase 65: Frontend — New `DownloadFormatDialog` Component (Update 22)
+
+**Purpose**: Add the one new UI piece this update needs — a shared choice popup with exactly 2
+mutually-exclusive options, no option pre-selected — spec FR-152..FR-153/FR-157. Modeled on the existing
+`ConfirmDialog.jsx` shape (Constitution Principle II); no new dependency, no backend change.
+
+- [X] T345 [P] Create
+  `compliance-client/src/presentation/pages/eutr-sales-orders/components/DownloadFormatDialog.jsx`:
+  clone `presentation/components/ConfirmDialog.jsx`'s `Dialog`/`DialogTitle`/`DialogContent`/
+  `DialogActions` structure and `{ open, onClose, onConfirm }` prop shape; add a local `format` state
+  (`useState(null)`, resets to `null` on both Cancel and confirm — no persisted "last choice", spec
+  Assumption); render a `RadioGroup` with exactly 2 `FormControlLabel`/`Radio` options, value `'combined'`
+  labeled **"Combined (All)"** and value `'byTemplate'` labeled **"By Template"** (spec FR-153,
+  research.md Decision 71); the confirm button (labeled "Download") is `disabled` until `format` is
+  non-null (spec FR-157) and calls `onConfirm(format)` before resetting; Cancel/backdrop-click call
+  `onClose()` and reset `format` to `null` without calling `onConfirm` (spec FR-157/FR-160 — no
+  read/write of any kind).
+  *(Done — implemented exactly as specified.)*
+
+**Checkpoint**: `DownloadFormatDialog` renders standalone with 2 unselected options and a disabled
+confirm button — ready to be wired into both Download entry points.
+
+---
+
+## Phase 66: Frontend — Wire View's Download Button Through the Dialog (Update 22)
+
+**Purpose**: Make View's Download button open the popup first, and make `buildDownloadFolders`/
+`handleDownload` format-aware so the zip contains only the chosen folder set — spec FR-152, FR-154,
+FR-155, FR-156, FR-158, FR-159. No new fetch (`templatesData`/`allChipTree`/`allChipDerivedFileMappings`/
+`allChipFiles` are already loaded on mount regardless of Download, Update 4/20).
+
+- [X] T346 [US5] In `ViewSalesOrderPage.jsx`: import `DownloadFormatDialog` (T345); add
+  `const [downloadDialogOpen, setDownloadDialogOpen] = useState(false)`; change `buildDownloadFolders`
+  to accept a `format` argument and return `format === 'byTemplate' ? templateFolders : (allFolders.length
+  > 0 ? allFolders : [{ folderPath: ['All'], files: [] }])` (never concatenating both); change
+  `handleDownload` to accept and thread through the same `format` argument into `buildDownloadFolders(format)`
+  (depends on T345, research.md Decision 72).
+  *(Done.)*
+- [X] T347 [US5] In the same file: change the Download `Button`'s `onClick` from `handleDownload` to
+  `() => setDownloadDialogOpen(true)`; render `<DownloadFormatDialog open={downloadDialogOpen}
+  onClose={() => setDownloadDialogOpen(false)} onConfirm={(format) => { setDownloadDialogOpen(false);
+  handleDownload(format); }} />` alongside the existing `EutrFileViewerDialog`/`CustomSnackbar` renders
+  near the end of the component's JSX (depends on T346).
+  *(Done.)*
+- [X] T348 [US5] Guardrail: confirm the existing "every folder's files list is empty → show a message,
+  skip the network call" check (spec FR-074/FR-158, `hasAnyFile`) still runs correctly against
+  whichever single-format `folders` array `buildDownloadFolders(format)` now returns — i.e. picking
+  Combined on a Sales Order whose All tree has no Mapped documents shows the message even if the
+  (unsent) By-Template folders would have had files, and vice versa (depends on T346).
+  *(Verified — `handleDownload`'s `const folders = buildDownloadFolders(format); const hasAnyFile =
+  folders.some(f => f.files.length > 0);` was not restructured, it now simply evaluates against
+  whichever single-format array `buildDownloadFolders` returns; confirmed by inspection this correctly
+  gates on the chosen format alone, no code change needed beyond T346.)*
+
+**Checkpoint**: Clicking Download on View opens the popup; picking **By Template** downloads a zip with
+only per-template folders; picking **Combined (All)** downloads a zip with only the All folder; closing
+without choosing downloads nothing.
+
+---
+
+## Phase 67: Frontend — Wire Overview's Download Button Through the Dialog (Update 22)
+
+**Purpose**: Same popup-gated behavior for each Overview row's Download, plus a genuine optimization
+Update 21 did not have: skip the on-demand default-template 2-call fetch entirely when the user picks
+By Template — spec FR-152, FR-154, FR-155, FR-158, FR-159. Per-row dialog state is a single value
+(`downloadDialogRow`), independent of the existing per-row `downloadingSalesIds` `Set` (Update 13).
+
+- [X] T349 [US1] In `SalesOrderOverviewPage.jsx`: import `DownloadFormatDialog` (T345); add
+  `const [downloadDialogRow, setDownloadDialogRow] = useState(null)` (shape `{ salesId, customerCode,
+  customerName } | null`); change `handleDownload` to accept a 4th `format` argument (depends on T345).
+  *(Done.)*
+- [X] T350 [US1] In the same `handleDownload`: change the `Promise.all` call so the 3rd entry is
+  `format === 'combined' ? fetchDefaultTemplateForZip().catch(() => null) : Promise.resolve(null)` —
+  when `format === 'byTemplate'`, `fetchDefaultTemplateForZip` is never invoked at all (no network call),
+  and `defaultTemplate` naturally resolves to `null`; change the final `folders` assembly from
+  `[...templateFolders, ...(allFolderEntries.length > 0 ? allFolderEntries : [...])]` to
+  `format === 'byTemplate' ? templateFolders : (allFolderEntries.length > 0 ? allFolderEntries :
+  [{ folderPath: ['All'], files: [] }])` (depends on T349, research.md Decision 73).
+  *(Done.)*
+- [X] T351 [US1] In the same file: change the Download `IconButton`'s `onClick` from
+  `handleDownload(row.code, row.custAccount, row.name)` to `() => setDownloadDialogRow({ salesId:
+  row.code, customerCode: row.custAccount, customerName: row.name })`; render
+  `<DownloadFormatDialog open={!!downloadDialogRow} onClose={() => setDownloadDialogRow(null)}
+  onConfirm={(format) => { const row = downloadDialogRow; setDownloadDialogRow(null); if (row)
+  handleDownload(row.salesId, row.customerCode, row.customerName, format); }} />` alongside the existing
+  `CustomSnackbar` render (depends on T349, T350).
+  *(Done.)*
+- [X] T352 [US1] Guardrail: confirm `downloadingSalesIds` (Update 13's per-row in-flight spinner `Set`)
+  is unaffected by `downloadDialogRow` — a row's spinner still shows only between `handleDownload`'s
+  start/`finally`, independent of which row's dialog is (or was) open; confirm opening one row's dialog
+  while another row's Download is in flight does not cross-contaminate either row's state (depends on
+  T351).
+  *(Verified by inspection — `downloadingSalesIds` is only ever read/written inside `handleDownload`
+  (unchanged Update 13 logic) and its own JSX check (`downloadingSalesIds.has(row.code || row.id)`,
+  unchanged); `downloadDialogRow` is a completely separate `useState` never referenced by either. Since
+  `downloadDialogRow` holds only one row's identity at a time and `setDownloadDialogRow(null)` runs
+  synchronously in `onConfirm` before `handleDownload` is invoked, two different rows' dialogs/downloads
+  cannot read or clear each other's state.)*
+
+**Checkpoint**: Clicking Download on any Overview row opens the popup; picking **By Template** downloads
+that row's per-template-only zip with zero extra network calls; picking **Combined (All)** downloads
+that row's All-only zip (with the default-template fetch actually firing); multiple rows' popups/
+in-flight downloads never collide.
+
+---
+
+## Phase 68: Polish & Cross-Cutting Concerns (Update 22)
+
+**Purpose**: Final validation for the Update 22 changes; no new functionality.
+
+- [ ] T353 [P] Run the frontend manual verification steps in `specs/005-eutr-sales-orders/quickstart.md`
+  "Update 22" section (steps 1-10: popup shows 2 unselected options with disabled confirm, Cancel
+  triggers no call, By Template zip has no All folder, Combined zip has no template folders, Overview
+  matches View per format, the default-template fetch is actually skipped for By Template and actually
+  fires for Combined, "nothing to download" still applies per-format, zero writes to any table) (depends
+  on T345-T352).
+  *(NOT run — requires a browser session against a live, D365-connected backend with a real fixture
+  Sales Order/default-template/saved-templates setup, unavailable in this environment (same constraint
+  as every prior update's live-verification task, e.g. T335/T342 in Update 21). As a proxy check:
+  `npx vite build --mode production` succeeded, producing a new `DownloadFormatDialog` chunk and updated
+  `ViewSalesOrderPage`/`SalesOrderOverviewPage` chunks with 0 build errors. A human with browser/D365
+  access must complete quickstart.md's Update 22 steps before sign-off.)*
+- [X] T354 [P] Review new/changed lines in `DownloadFormatDialog.jsx`, `ViewSalesOrderPage.jsx`, and
+  `SalesOrderOverviewPage.jsx` to confirm added comments are Vietnamese, matching each file's own
+  existing comment style, per Constitution Principle IV; confirm the only new English UI text is the
+  dialog's title/2 option labels/confirm button (spec Assumption, Update 22) and that no other
+  label/snackbar text changed (depends on T345-T352).
+  *(Verified: every new comment in all 3 files is Vietnamese, unaccented ASCII, matching each file's
+  existing comment style. New English UI text is exactly: dialog title "Choose download format", option
+  labels "Combined (All)"/"By Template", confirm button "Download" (same label already used by the
+  existing Download buttons) — no other existing label, snackbar message, or tooltip text was changed.)*
+- [X] T355 Confirm zero backend file was touched, and that `download-zip`'s request/response contract
+  (`EutrDownloadZipRequestDto`/`EutrDownloadZipFolderDto`/`EutrDownloadZipFileDto`,
+  `DownloadEutrSalesOrderZipUseCase.js`, `eutrDocumentsApi.js`, `IEutrDocumentsRepository.js`,
+  `RestEutrDocumentsRepository.js`) and `utils/treeUtils.js` (`flatToTree`/`filterFlatListByStepIds`/
+  `flattenTreeToFolderEntries`) are all byte-for-byte unchanged — this update only changes which
+  already-computed entries get assembled into `folders`, in 2 already-existing page files plus 1 new
+  small component file (depends on T345-T352).
+  *(Verified — `git status` inside `compliance-sys-api/` shows no file related to this feature touched
+  (only pre-existing, unrelated changes to `EutrSynchronizeDataService`/`EutrTemplatesService`, not part
+  of this update); `git status` inside `compliance-client/` shows exactly `ViewSalesOrderPage.jsx`,
+  `SalesOrderOverviewPage.jsx` modified plus 1 new `components/` directory — none of the 5 named
+  download-chain files or `utils/treeUtils.js` appear in the diff.)*
+
+**Checkpoint**: Update 22 code complete, compiles (`vite build` clean), and lint-clean (0 new ESLint
+problems — the only 2 errors reported on `ViewSalesOrderPage.jsx` are the same pre-existing,
+Update-22-unrelated `no-unused-vars` on `canSubmit`/`isMapped` already noted since Phase 56/57;
+`SalesOrderOverviewPage.jsx` and the new `DownloadFormatDialog.jsx` report 0 problems). Live-backend
+verification (T353) remains for a human with a running `compliance-client`/browser session, consistent
+with every prior update's live-verification task in this feature.
+
+---
+
+## Update 22 Dependencies
+
+### Phase Dependencies
+
+- **Phase 65**: T345 has no dependency — new, standalone component file.
+- **Phase 66** (View): depends on Phase 65. T346 depends on T345; T347 depends on T346; T348 depends on
+  T346.
+- **Phase 67** (Overview): depends on Phase 65. T349 depends on T345; T350 depends on T349; T351 depends
+  on T349, T350; T352 depends on T351.
+- **Phase 68** (Polish): depends on Phase 66 and Phase 67 being complete.
+
+### Parallel Opportunities
+
+- T345 (new component) has no dependency and can start immediately.
+- Phase 66 (View) and Phase 67 (Overview) touch different files and can be done in parallel once T345
+  exists.
+- T353, T354 (Polish) are independent verification passes and can run in parallel; T355 is a quick
+  review best done last.
+
+### Implementation Strategy
+
+1. Complete Phase 65 (T345) — the new shared dialog component.
+2. Complete Phase 66 (T346-T348) and Phase 67 (T349-T352) — wire both Download entry points, in
+   parallel if desired.
+3. Complete Phase 68 (polish/validation) — full quickstart.md "Update 22" pass, specifically confirming
+   the two formats never mix in one zip and that Overview's fetch-skip optimization actually skips the
+   network call (SC-077..SC-081).
+
+### Status (2026-09-07)
+
+Phases 65-68 done in code (T345-T352, T354, T355 all `[X]`). `compliance-client`'s production build
+(`npx vite build --mode production`) succeeded, producing a new `DownloadFormatDialog` chunk and updated
+`ViewSalesOrderPage`/`SalesOrderOverviewPage` chunks; `npx eslint` on all 3 changed/new frontend files
+reports the same 2 pre-existing, unrelated `no-unused-vars` errors already noted since Phase 56/57
+(`canSubmit`, `isMapped` in `ViewSalesOrderPage.jsx`) — zero new problems, and zero problems at all in
+`SalesOrderOverviewPage.jsx`/`DownloadFormatDialog.jsx`. Zero backend file touched, confirmed via
+`git status` inside `compliance-sys-api/`. The one live-data verification task (T353) is **NOT run**:
+this environment has no live, D365/SharePoint-connected `compliance-sys-api` process or browser session
+available (same constraint as every prior update's live-verification task in this feature). Before
+sign-off, a human with backend/D365 access should complete quickstart.md's Update 22 steps: (1) confirm
+Download on both View and an Overview row shows the 2-option popup with no pre-selection and a disabled
+confirm button; (2) confirm picking **By Template** downloads a zip with only per-template folders, and
+picking **Combined (All)** downloads a zip with only the All folder, for the same Sales Order; (3) using
+the browser's network tab, confirm the default-template 2-call fetch is skipped entirely on Overview when
+By Template is picked, and does fire when Combined is picked; (4) confirm closing the popup via
+Cancel/backdrop-click triggers no network call and no download.

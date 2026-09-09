@@ -153,3 +153,58 @@ This feature applies the identical pattern to `ComplMaster`: override `DeleteAsy
 **Rationale**: Migration 24 already set a precedent of a one-off, record-specific `UPDATE` for `MAS-01104` when the true root cause of *that* bug (Status miscalculation) was data corruption limited to one row. This bug is different: the failure is a structural gap in the generic delete path that reproduces for *any* master with linked reference data, of which `MAS-01104` is simply the first one an admin happened to hit — so a general code fix is correct here, not a data patch.
 
 **Alternatives considered**: None — a record-specific patch would not fix the reported defect (deletion would still fail for other affected masters), failing FR-013/SC-007 outright.
+
+---
+
+## User Story 5 (Customer Table logic) research
+
+## R17. Root cause: `blockHasTable` is a frontend-only, per-block cap — not a Customer-specific restriction
+
+**Decision**: The Type/logic selector for a rule condition (`compliance-client/src/presentation/pages/compliance-master/components/ComplianceMasterForm.jsx:1397-1509`) is fully generic across reference types — it is driven by `objectTypes` (fetched from `GET api/common/object-types`, backed by the `compl_reference_types` table) with no `RefTypeId`/`Code`-specific branch anywhere. "Table" (`displayType = 1`), "Value" (`2`), and "NOT IN" (`3`) all render the same `<ReferenceObjectAutocomplete>` widget in single- or multi-add mode (:1574-1643), and Customer (`RefTypeId = 2`) already flows through the identical fetch pipeline (`useReferenceObjects.js` → `GetReferenceDataUseCase` → `GET /dynamics/reference-data`) that Product Type (`RefTypeId = 5`) uses today. The only thing currently narrowing Customer's options to Value/NOT IN is `blockHasTable` (:1397-1400):
+
+```js
+const blockHasTable = block.some(c => c.id !== cond.id && c.displayType === 1);
+```
+
+— a rule that caps Table logic to **at most one condition per AND block**, regardless of which reference type holds it. When a Product Type condition in a block already has Table selected, any other condition subsequently added to that same block (Customer included) has "Table" removed from its own Type menu (:1456, :1478). This exactly matches the reported symptom ("hiện tại chỉ chọn được Value, NOT IN"). Confirmed via the entity comment `ComplMasterCondition.cs:15` (`// 0: All, 1: Table, 2: Value` — `3: NOT IN` is used consistently in code but undocumented in the comment) and the DTO default `ComplMasterConditionDto.cs:15` (`DisplayType = 1 // Default to Table`) — neither restricts by `RefTypeId`.
+
+**Rationale**: Confirmed by reading the full Type-selector branch (:1382-1509) end-to-end — the only two identifiers that ever gate which menu items appear are `isDisabledByIndividual`/`isRestrictedByIndividual` (both keyed off `masterInfo.isIndividual` + the reference type's own `allowIndividual` flag, unrelated to Table specifically) and `blockHasTable` (keyed off sibling conditions in the same block, not reference type).
+
+**Alternatives considered**: Searching for a Customer-specific hard-coded restriction (e.g. `RefTypeId === 2` or `Code === 'CUSTOMER'` branch) anywhere in the condition-builder UI — none found in `ComplianceMasterForm.jsx`, `ConditionsView.jsx`, `ReferenceObjectAutocomplete.jsx`, or `useReferenceObjects.js`. Customer is not special-cased today; it is simply the type the requester happened to hit the generic one-Table-per-block cap with.
+
+## R18. The fix: relax `blockHasTable` to allow one Table condition per reference type, not one per block
+
+**Decision**: Change `blockHasTable` from "does any other condition in this block already use Table" to "does any other condition in this block, **of the same reference type**, already use Table" — i.e. scope the existing one-Table-per-(block, type) intent (if any was ever intended) down to a no-op for cross-type combinations, while still preventing two conditions of the *same* type both claiming Table redundantly in one block (an edge case with no clear meaning today; conservatively kept blocked to avoid changing behavior nobody asked to change). Concretely:
+
+```js
+const blockHasTable = block.some(
+  c => c.id !== cond.id && c.displayType === 1 && c.modelType === cond.modelType
+);
+```
+
+This is the minimal edit that unblocks Product Type + Customer (different `modelType`) using Table simultaneously in one AND block (spec FR-017, User Story 5 Acceptance Scenario 2/5), while leaving every other existing behavior — including the two Individual-mode branches that also read `blockHasTable` (:1456, :1478) — mechanically unchanged (they still receive a boolean with the same meaning for the same-type case, and now correctly `false` for the cross-type case they previously wrongly blocked).
+
+**Rationale**: Directly satisfies FR-017 ("MUST NOT restrict Table logic to at most one condition per block") with the smallest possible behavior change, and matches the spec's explicit assumption that this relaxation applies generally (any two reference types), not as a Customer-only carve-out.
+
+**Alternatives considered**: Removing `blockHasTable` entirely (always allow Table regardless of what else is in the block) — rejected: this would also permit two *same-type* conditions in one block both using Table, which is a different, larger behavior change than what was requested or verified against the backend/SQL matching semantics (each condition row is still matched independently in `sp_load_compl_by_conditions`'s STEP 3, so two same-type Table conditions ANDed together would each independently need to match, which is very likely never useful and not something to newly enable speculatively). Keeping the per-type scoping preserves today's within-type behavior exactly and only widens the cross-type case, which is the one actually requested.
+
+## R19. Master Preview and `sp_load_compl_by_conditions`/`sp_load_compl_by_conditions_count` need no changes — confirmed generic
+
+**Decision**: Two things were reviewed end-to-end and found already correct for a Customer Table condition, requiring no code change:
+
+1. **Master Preview** (`ComplianceMasterForm.jsx` `MasterPreview` memo :326-352 and the rendered panel :1856-1966): both branches key off `objectType.name`/`condition.displayType`/`condition.referenceObject`, never off `RefTypeId`/`Code`. A Customer condition with `displayType = 1` and `referenceObject = [A, B, C]` renders exactly the same way a Product Type Table condition with three values does today — one header line (`Customer IN`) plus one bullet per value (`- code - name`). Per direct confirmation from the requester (2026-09-08), this existing presentation is what User Story 5 should produce — no new "single inline line" format is introduced.
+2. **`sp_load_compl_by_conditions` / `sp_load_compl_by_conditions_count`** (`compliance-sys-api/src/ComplianceSys.Infrastructure/Sqls/Procedures/`, 1113 and 918 lines respectively, MySQL): STEP 1/1b parses the input JSON into an EAV table keyed by `FieldCode` (`CUSTOMER`, `PRODUCT_TYPE`, `COUNTRY`, …) — Customer and Product Type are pivoted identically. STEP 3's core matching join (`cmcv.RefTypeValue = eav.FieldValue OR cmcv.RefTypeValue = 'ALL' OR (COUNTRY-group case)`) joins against `compl_master_condition_values` with no row-count/`DisplayType` branch at all — a condition with one selected value ("Value") and a condition with many ("Table") are matched by the exact same `INNER JOIN`, differing only in how many rows happen to be in `compl_master_condition_values` for that `ConditionId`. The only reference-type-specific special case anywhere in STEP 3 is the `crt.Code = 'COUNTRY'` group-match branch, which does not apply to Customer. Every later step (STEP 4-21: AND/OR block counting, references/compliance resolution, `ConditionsJson` building) is likewise keyed generically off `crt.Code`, with Customer and Product Type wired through identically at each one (`compliance-sys-api/.../Sqls/Procedures/sp_load_compl_by_conditions.sql:928-940` etc.).
+
+**This satisfies the spec's FR-019 verification requirement as a documented finding: no defect was found, so no stored-procedure change is authorized or needed.**
+
+**Rationale**: Read both procedures in full and traced the EAV pivot → matching join → block-counting → result-assembly pipeline for the `CUSTOMER` and `PRODUCT_TYPE` field codes specifically, confirming no branch distinguishes them beyond the data itself. This is consistent with the schema design (`compl_master_condition_values` has no column recording whether a condition was configured as "Value" or "Table" — that distinction is purely a UI/DTO-level default, not persisted state the SQL could even branch on if it wanted to).
+
+**Alternatives considered**: None — this is a verification finding, not a design choice. Per this project's established convention that a "kiểm tra"/review request is read-only unless a genuine defect is confirmed with the requester, and no defect was found, no SQL alternative was evaluated.
+
+## R20. Live-value caveat carried forward (not part of this fix, verify at implementation time)
+
+**Decision**: `compl_reference_types.AllowIndividual` for the `CUSTOMER` row gates whether Customer reaches the Table-eligible branch at all while `masterInfo.isIndividual` is true (via `isRestrictedByIndividual`/`isDisabledByIndividual`, :1387-1400) — this is pre-existing, admin-configurable behavior (`specs/006-eutr-reference-types`) untouched by this fix. The only checked-in seed file (`Sqls/Tables/compl_reference_types.sql:20-29`) seeds `AllowIndividual = 1` for every row including `CUSTOMER`, which — if still true live — would force Customer to "All only" in Individual mode, contradicting the premise that Customer already offers Value/NOT IN there today. This implies the live value is already `0` for `CUSTOMER`, but per this repo's established practice (R4: checked-in `.sql` can be stale vs. live), the implementer should confirm the live value (e.g. via the Reference Types admin screen) before/at implementation time rather than assume it. This is a verification note, not a code change this feature makes.
+
+**Rationale**: Flagging a pre-existing data-configuration dependency the fix's correctness relies on, without expanding this feature's scope to include changing it — R17/R18's `blockHasTable` fix is orthogonal to and independent of whatever this value currently is.
+
+**Alternatives considered**: None — out of scope to change; documented for implementation-time verification only.

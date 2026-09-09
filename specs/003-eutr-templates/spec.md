@@ -622,6 +622,42 @@
   theo đúng pattern đã thiết lập của spec này (ví dụ Update 12, 15, 19) cho các quyết định ít rủi
   ro/dễ đảo ngược.
 
+### Session 2026-09-07 (Update 23) — Đồng bộ D365 khi Approve (push) / Request change (xóa)
+
+- Input: "cập nhật 003-eutr-templates khi user nhấn Request change, chạy xóa template trên D365 dựa
+  theo TemplateCode, tham khảo hàm `SyncTemplatesToDynamicsAsync` (`await _dynamicService.PostAsync(
+  deleteUrl, new DeleteTemplateRequest { code = template.Code }, ct);`) ở 011-eutr-synchronize-data.
+  Khi user approve, đồng bộ dữ liệu template đó lên D365 dựa theo hàm trên ở khúc
+  `var activeMappingsByTemplateId = activeMappings.ToLookup(m => m.TemplateId); foreach (var template
+  in eligibleTemplates)`."
+- Q: Khi xác nhận Approve hoặc Request change, nếu lệnh gọi D365 (xóa theo TemplateCode / đẩy dữ liệu
+  template) bị lỗi (mất mạng, D365 trả lỗi), hệ thống nên xử lý thay đổi Status cục bộ như thế nào? →
+  A: **Chặn lại** — gọi D365 TRƯỚC khi đổi Status/tạo version cục bộ; nếu D365 lỗi, KHÔNG áp dụng bất
+  kỳ thay đổi cục bộ nào (Status, VersionId, dòng mới, cờ IsHide đều giữ nguyên như trước khi nhấn
+  Yes), hiển thị lỗi cho người dùng, để dữ liệu local và D365 không bao giờ lệch nhau.
+- Change: Xác nhận **Request change** (FR-060) MUST gọi D365 xóa bản ghi ERP-side hiện có của template
+  đó theo **Code** — tái sử dụng nguyên request/endpoint đã có trong
+  `EutrSynchronizeDataService.SyncTemplatesToDynamicsAsync` (011-eutr-synchronize-data, User Story 3):
+  `POST {Dynamics:ApiUrl}/data/RSVNEutrTemplates/Microsoft.Dynamics.DataEntities.deleteTemplate` với
+  body `{ code: Code }` — TRƯỚC khi thực hiện tạo dòng Draft mới/sao chép step tree+mapping/ẩn dòng
+  Approved cũ của FR-060. Xem FR-081, FR-082.
+- Change: Xác nhận **Approve** (FR-059) MUST đồng bộ (push) dữ liệu của CHÍNH template vừa Approve lên
+  D365 — tra cứu các mapping vendor đang hiệu lực hôm nay (FromDate ≤ hôm nay ≤ ToDate) trong
+  `eutr_template_references` của TemplateId đó, rồi push đúng 1 bản ghi/mapping (Code, Name,
+  VendorCode) qua `POST {Dynamics:ApiUrl}/data/RSVNEutrTemplates`, hoặc đúng 1 bản ghi với VendorCode
+  rỗng nếu template không có mapping nào đang hiệu lực — tái sử dụng đúng logic của Phase 2 trong
+  `SyncTemplatesToDynamicsAsync` (đoạn `activeMappingsByTemplateId`/`foreach (var template in
+  eligibleTemplates)`) nhưng chỉ áp dụng cho 1 TemplateId (template vừa Approve) thay vì quét toàn bộ
+  danh sách eligible. Xem FR-083, FR-084.
+- Change: Cả 2 lệnh gọi D365 mới này MUST chạy TRƯỚC khi commit thay đổi cục bộ (đổi Status, tạo dòng
+  Draft mới) — chỉ khi toàn bộ lệnh gọi D365 cần thiết cho hành động đó thành công, hệ thống mới thực
+  sự cập nhật Status/tạo dòng mới trên `eutr_templates`; nếu bất kỳ lệnh gọi nào thất bại, hành động
+  dừng lại ngay, KHÔNG đổi Status, KHÔNG tạo dòng mới, và người dùng thấy thông báo lỗi thay vì
+  snackbar thành công. Xem FR-081 đến FR-086.
+- No [NEEDS CLARIFICATION] markers được nhúng vào spec — câu hỏi duy nhất ở trên đã được giải quyết
+  bằng `AskUserQuestion` trước khi viết, theo đúng pattern "resolve via question, not marker" đã thiết
+  lập của spec này (Update 9/10/11/13/14/15/16/17/18).
+
 ### User Story 1 - Xem danh sách EUTR Templates (Priority: P1)
 
 Người dùng vào mục **EUTR system > EUTR templates** từ thanh điều hướng trái và thấy màn hình
@@ -1087,9 +1123,13 @@ riêng, cây bước và mapping vendor giống hệt template nguồn.
 
 Người dùng chọn (tick checkbox) đúng 1 template đang ở Status **Draft** trong TemplateListPage, sau
 đó nhấn nút **Approve** trên toolbar (cạnh nút Create Template). Hệ thống hiển thị hộp thoại xác
-nhận Yes/No. Khi chọn Yes, hệ thống cập nhật Status của dòng đó thành **Approved** ngay lập tức
-(không tạo dòng mới, không đổi VersionId); danh sách tự làm mới để hiển thị Chip Status mới. Khi
-chọn No, hộp thoại đóng lại và không có gì thay đổi. Sau khi Approved, template chuyển sang chế độ
+nhận Yes/No. Khi chọn Yes, hệ thống trước tiên đồng bộ (push) dữ liệu của template đó (Code, Name,
+và VendorCode của từng mapping vendor đang hiệu lực hôm nay — hoặc 1 bản ghi VendorCode rỗng nếu
+không có mapping nào) lên D365 (Update 23, xem FR-081 đến FR-086); chỉ khi toàn bộ lệnh gọi D365 đó
+thành công, hệ thống mới cập nhật Status của dòng thành **Approved** ngay lập tức (không tạo dòng
+mới, không đổi VersionId); danh sách tự làm mới để hiển thị Chip Status mới. Nếu D365 lỗi, Status
+KHÔNG đổi và người dùng thấy thông báo lỗi thay vì snackbar thành công. Khi chọn No, hộp thoại đóng
+lại và không có gì thay đổi (không gọi D365). Sau khi Approved, template chuyển sang chế độ
 read-only trên TemplateBuilderPage — muốn chỉnh sửa tiếp phải dùng Request change (xem User Story
 9).
 
@@ -1120,6 +1160,19 @@ thành Approved và mở TemplateBuilderPage thấy toàn bộ màn hình ở ch
    `ConfirmDialog` Yes/No; chọn **Yes** cập nhật ngay cột IsDefault của template (áp dụng ràng buộc
    chỉ 1 default toàn cục — FR-040) mà KHÔNG cần nhấn Save và KHÔNG ảnh hưởng Name/Alert
    for/step tree/Status/VersionId; chọn **No** đóng dialog và checkbox giữ nguyên giá trị cũ.
+7. **(Update 23)** **Given** hộp thoại xác nhận Approve đang hiện cho template "T004" (có 2 mapping
+   vendor đang hiệu lực hôm nay), **When** chọn **Yes** và cả 2 lệnh gọi D365 push đều thành công,
+   **Then** hệ thống push đúng 2 bản ghi lên D365 (mỗi bản ghi mang Code/Name của T004 và VendorCode
+   của từng mapping), sau đó mới cập nhật Status="Approved", đóng dialog, làm mới danh sách, hiển
+   thị snackbar thành công.
+8. **(Update 23)** **Given** hộp thoại xác nhận Approve đang hiện cho một template KHÔNG có mapping
+   vendor nào đang hiệu lực hôm nay, **When** chọn **Yes** và lệnh gọi D365 thành công, **Then**
+   hệ thống push đúng 1 bản ghi lên D365 với VendorCode rỗng, rồi mới cập nhật Status="Approved".
+9. **(Update 23)** **Given** hộp thoại xác nhận Approve đang hiện, **When** chọn **Yes** nhưng một
+   trong các lệnh gọi D365 push bị lỗi (mất mạng/D365 trả lỗi), **Then** hệ thống KHÔNG cập nhật
+   Status (vẫn Draft), KHÔNG tạo/đổi dữ liệu nào khác trên template, đóng hoặc giữ dialog kèm thông
+   báo lỗi rõ ràng thay vì snackbar thành công — các lệnh gọi D365 đã gửi thành công trước lỗi đó
+   (nếu có, khi push nhiều mapping) KHÔNG bị thu hồi (không rollback phía D365).
 
 ---
 
@@ -1127,13 +1180,16 @@ thành Approved và mở TemplateBuilderPage thấy toàn bộ màn hình ở ch
 
 Người dùng chọn (tick checkbox) đúng 1 template đang ở Status **Approved**, nhấn nút **Request
 change** trên toolbar (cạnh nút Create Template). Hệ thống hiển thị hộp thoại xác nhận Yes/No. Khi
-chọn Yes, hệ thống ngay lập tức tạo một phiên bản mới: một dòng mới trong eutr_templates với cùng
-Code, VersionId tăng 1, Status=Draft, sao chép toàn bộ cây bước (`eutr_template_details`) và toàn
-bộ mapping vendor (`eutr_template_references`) từ dòng Approved cũ sang dòng mới; dòng Approved cũ
-được đánh dấu IsHide=1 (giữ nguyên trong database làm bản ghi lịch sử, không xóa). Danh sách tự làm
-mới, hiển thị dòng mới (Draft, VersionId cao hơn) — đây là dòng người dùng có thể Edit tiếp ở
-TemplateBuilderPage. Khi chọn No, hộp thoại đóng lại, template vẫn giữ nguyên Approved, không có gì
-thay đổi.
+chọn Yes, hệ thống trước tiên gọi D365 xóa bản ghi ERP-side hiện có của template đó theo Code
+(Update 23, xem FR-081/FR-082); chỉ khi lệnh gọi đó thành công, hệ thống mới ngay lập tức tạo một
+phiên bản mới: một dòng mới trong eutr_templates với cùng Code, VersionId tăng 1, Status=Draft, sao
+chép toàn bộ cây bước (`eutr_template_details`) và toàn bộ mapping vendor
+(`eutr_template_references`) từ dòng Approved cũ sang dòng mới; dòng Approved cũ được đánh dấu
+IsHide=1 (giữ nguyên trong database làm bản ghi lịch sử, không xóa). Danh sách tự làm mới, hiển thị
+dòng mới (Draft, VersionId cao hơn) — đây là dòng người dùng có thể Edit tiếp ở TemplateBuilderPage.
+Nếu lệnh gọi D365 lỗi, hệ thống KHÔNG tạo dòng mới, KHÔNG đổi gì, và hiển thị lỗi cho người dùng. Khi
+chọn No, hộp thoại đóng lại (không gọi D365), template vẫn giữ nguyên Approved, không có gì thay
+đổi.
 
 **Why this priority**: Đây là cơ chế duy nhất để chỉnh sửa lại một template đã Approved, đồng thời
 là thời điểm duy nhất hệ thống tăng VersionId — thay thế hoàn toàn cơ chế versioning dựa trên 24
@@ -1166,6 +1222,14 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
 6. **Given** dòng Approved cũ (VersionId=1, IsHide=1) sau khi Request change, **When** truy vấn
    trực tiếp database, **Then** dòng đó vẫn còn đầy đủ dữ liệu step tree/vendor mapping tại thời
    điểm Approved (không bị ghi đè hay xóa) — phục vụ mục đích truy vết lịch sử.
+7. **(Update 23)** **Given** hộp thoại xác nhận Request change đang hiện cho template "T003"
+   (Code="Templates-003"), **When** chọn **Yes** và lệnh gọi D365 xóa theo Code thành công, **Then**
+   hệ thống gọi đúng 1 lệnh xóa D365 với `code = "Templates-003"` TRƯỚC, sau đó mới tạo dòng
+   VersionId=2/Status=Draft, sao chép step tree/mapping, và ẩn dòng cũ (IsHide=1).
+8. **(Update 23)** **Given** hộp thoại xác nhận Request change đang hiện, **When** chọn **Yes**
+   nhưng lệnh gọi D365 xóa bị lỗi (mất mạng/D365 trả lỗi), **Then** hệ thống KHÔNG tạo dòng mới,
+   KHÔNG đổi VersionId/Status/IsHide của dòng hiện tại (vẫn Approved, VersionId=1), và hiển thị
+   thông báo lỗi cho người dùng thay vì snackbar thành công.
 
 ---
 
@@ -1214,6 +1278,27 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
 - **(Update 16)** Khi Request change được xác nhận cho một template đang có 0 step và 0 mapping
   vendor (ví dụ vừa Approve ngay sau khi tạo mà chưa thêm gì), hệ thống vẫn MUST tạo dòng Draft mới
   bình thường (với step tree và mapping rỗng) — không phải lỗi.
+- **(Update 23)** Khi Approve một template chưa từng được đẩy lên D365 trước đó (lần Approve đầu
+  tiên trong vòng đời của Code đó), lệnh gọi push vẫn MUST thực hiện bình thường — hệ thống không
+  kiểm tra D365 đã có bản ghi cho Code đó hay chưa trước khi push, giống hành vi tạo mới bên D365 của
+  `SyncTemplatesToDynamicsAsync`.
+- **(Update 23)** Khi Request change được xác nhận cho một template mà D365 hiện KHÔNG có bản ghi
+  nào cho Code đó (ví dụ chưa từng Approve, hoặc D365-side đã bị xóa thủ công từ trước), lệnh gọi xóa
+  D365 vẫn MUST được gửi bình thường (không kiểm tra tồn tại trước) — hệ thống giả định endpoint
+  `deleteTemplate` của D365 an toàn khi gọi cho một Code không tồn tại, giống hành vi Phase 1 của
+  `SyncTemplatesToDynamicsAsync` (gọi xóa cho MỌI template eligible, không kiểm tra tồn tại trước).
+- **(Update 23)** Vì Approve chỉ khả dụng khi Status=Draft (FR-058) và Draft chỉ đạt được qua
+  Create/Clone (chưa từng Approve) hoặc qua Request change (đã xóa bản ghi D365 cũ ở bước trước đó),
+  một template không bao giờ có thể được Approve 2 lần liên tiếp mà không có Request change ở giữa —
+  do đó lệnh push của Approve KHÔNG cần tự gọi xóa D365 trước khi push (khác với luồng batch đầy đủ
+  của `SyncTemplatesToDynamicsAsync`, vốn luôn xóa-rồi-đẩy cho toàn bộ danh sách eligible mỗi lần
+  chạy) — không có rủi ro tạo bản ghi D365 trùng lặp cho cùng Code.
+- **(Update 23)** Khi lệnh gọi D365 (xóa ở Request change, hoặc một trong các lượt push ở Approve)
+  thất bại giữa chừng (ví dụ push mapping thứ 1 thành công, push mapping thứ 2 lỗi), các lệnh gọi
+  D365 đã gửi thành công trước đó KHÔNG bị thu hồi/rollback phía D365 — chỉ riêng phần dữ liệu cục bộ
+  (Status/VersionId/dòng mới) của EUTR Template là không được commit, theo đúng nguyên tắc "chặn lại"
+  đã xác nhận (2026-09-07); một lượt Approve/Request change tiếp theo có thể được thử lại khi D365
+  hoạt động trở lại.
 - Khi đang chỉnh sửa step (chế độ edit inline) và nhấn Edit trên step khác, step đang edit MUST
   tự động hủy chỉnh sửa (cancel) trước khi mở edit cho step mới.
 - Khi đang chỉnh sửa step và đổi sang step trùng với step khác đã có cùng cấp, hệ thống vẫn cho
@@ -1918,6 +2003,43 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   **Id nhỏ nhất** làm mặc định. Quy tắc này CHỈ áp dụng cho step master đã có sẵn StepId trong bảng
   "step available" — KHÔNG áp dụng cho khu vực "Add new step" (step hoàn toàn mới chưa có StepId nên
   chưa thể có mapping, luôn dùng default PO ở FR-079) và KHÔNG áp dụng cho **Edit step** (FR-008b).
+- **FR-081 (Update 23)**: Khi xác nhận **Yes** ở dialog **Request change** (FR-060), hệ thống MUST
+  gọi D365 để xóa bản ghi ERP-side hiện có của template đó theo **Code**, TRƯỚC khi thực hiện bất kỳ
+  thay đổi cục bộ nào của FR-060 (tạo dòng Draft mới, sao chép step tree/mapping, ẩn dòng Approved
+  cũ) — tái sử dụng nguyên request/endpoint đã triển khai ở
+  `EutrSynchronizeDataService.SyncTemplatesToDynamicsAsync` (011-eutr-synchronize-data, User Story
+  3/FR-025): `POST {Dynamics:ApiUrl}/data/RSVNEutrTemplates/Microsoft.Dynamics.DataEntities.deleteTemplate`
+  với body mang `code` = Code của template. Hệ thống KHÔNG kiểm tra D365 hiện có bản ghi cho Code đó
+  hay không trước khi gọi xóa.
+- **FR-082 (Update 23)**: Nếu lệnh gọi D365 ở FR-081 thất bại (lỗi mạng, D365 trả lỗi), hệ thống
+  MUST dừng lại ngay: KHÔNG tạo dòng Draft mới, KHÔNG sao chép step tree/mapping, KHÔNG đổi IsHide
+  của dòng Approved hiện tại, KHÔNG đổi VersionId — template giữ nguyên Status=Approved như trước
+  khi nhấn Yes — và hệ thống MUST hiển thị thông báo lỗi cho người dùng thay vì snackbar thành công
+  của FR-060.
+- **FR-083 (Update 23)**: Khi xác nhận **Yes** ở dialog **Approve** (FR-059), hệ thống MUST đồng bộ
+  (push) dữ liệu của CHÍNH template đó lên D365 TRƯỚC khi cập nhật Status=Approved của FR-059: truy
+  vấn các mapping trong `eutr_template_references` của TemplateId đó đang hiệu lực hôm nay (FromDate
+  ≤ hôm nay ≤ ToDate), rồi với mỗi mapping đang hiệu lực, push đúng 1 bản ghi qua
+  `POST {Dynamics:ApiUrl}/data/RSVNEutrTemplates` mang Code/Name của template và VendorCode của
+  mapping đó; nếu template không có mapping nào đang hiệu lực, push đúng 1 bản ghi với VendorCode
+  rỗng (không bao giờ bỏ qua hoàn toàn việc push) — tái sử dụng nguyên logic Phase 2 của
+  `SyncTemplatesToDynamicsAsync` (đoạn `activeMappingsByTemplateId`/`foreach (var template in
+  eligibleTemplates)`), chỉ khác là áp dụng cho đúng 1 TemplateId (template vừa Approve) thay vì
+  toàn bộ danh sách eligible.
+- **FR-084 (Update 23)**: Nếu bất kỳ lệnh gọi D365 nào ở FR-083 thất bại (kể cả khi một số mapping
+  đã push thành công trước đó), hệ thống MUST dừng lại ngay: KHÔNG cập nhật Status=Approved, template
+  giữ nguyên Status=Draft như trước khi nhấn Yes, và hệ thống MUST hiển thị thông báo lỗi cho người
+  dùng thay vì snackbar thành công của FR-059. Các bản ghi đã push thành công lên D365 trước lỗi đó
+  (nếu có) KHÔNG bị thu hồi/rollback phía D365 — chỉ riêng phần cập nhật cục bộ bị chặn lại.
+- **FR-085 (Update 23)**: Vì Approve chỉ khả dụng khi Status=Draft (FR-058) và một template chỉ đạt
+  Draft qua Create/Clone (chưa từng có bản ghi D365) hoặc qua Request change (đã xóa bản ghi D365 cũ
+  ở FR-081), hệ thống KHÔNG cần tự gọi xóa D365 trước khi push ở FR-083 — trình tự
+  xóa-ở-Request-change/đẩy-ở-Approve đã đủ để tránh tạo bản ghi D365 trùng lặp cho cùng Code qua
+  nhiều vòng đời Draft↔Approved.
+- **FR-086 (Update 23)**: Cả 2 lệnh gọi D365 mới (FR-081, FR-083) MUST tái sử dụng nguyên cấu hình
+  và cơ chế gọi Dynamics đã có sẵn từ 011-eutr-synchronize-data (`Dynamics:ApiUrl`, `IDynamicService`,
+  cùng payload JSON `application/json`, cùng tham số `?cross-company=true`) — KHÔNG giới thiệu một
+  entity/contract D365 mới nào cho đợt cập nhật này.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -1946,7 +2068,13 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   `eutr_template_references` của TemplateId cũ sang TemplateId mới (xem FR-049/FR-060). **(Update
   15)** Template có thể được tạo mới thông qua **Clone** từ một template khác — template Clone luôn
   có VersionId=1, Status=Draft (Update 16), IsDefault=0, Code tự sinh riêng, hoàn toàn độc lập với
-  template nguồn sau khi tạo (xem FR-050 đến FR-054).
+  template nguồn sau khi tạo (xem FR-050 đến FR-054). **(Update 23)** Xác nhận **Request change**
+  (Approved → Draft) MUST gọi D365 xóa bản ghi ERP-side theo Code TRƯỚC khi tạo dòng Draft mới (xem
+  FR-081/FR-082); xác nhận **Approve** (Draft → Approved) MUST đồng bộ (push) dữ liệu template đó
+  (Code, Name, VendorCode của từng mapping đang hiệu lực — xem **EUTR Template Reference** bên dưới)
+  lên D365 TRƯỚC khi đổi Status (xem FR-083/FR-084) — cả 2 lệnh gọi D365 này tái sử dụng nguyên
+  request/endpoint đã có ở **ERP Template Record** (011-eutr-synchronize-data). Nếu lệnh gọi D365
+  thất bại, thay đổi Status/version tương ứng KHÔNG được commit (xem FR-081 đến FR-086).
 - **EUTR Template Detail**: Đại diện cho một bước cụ thể trong cây bước của template. Thuộc tính:
   định danh, Template Id (liên kết đến template), Step Id (liên kết đến EUTR step), Parent Id
   (liên kết đến step cha hoặc 0 nếu gốc), RequirementType (Required=1/Optional=0),
@@ -2218,6 +2346,12 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
 - **SC-061 (Update 22)**: 100% lượt bỏ tick rồi tick lại cùng một dòng step master trong bảng
   bulk-select áp dụng lại đúng giá trị mặc định (Requirement Type=Required, Take From theo FR-079/
   FR-080) — không giữ lại giá trị tùy chỉnh mà người dùng đã đổi trước khi bỏ tick.
+- **SC-062 (Update 23)**: 100% lượt xác nhận Approve push đúng 1 bản ghi D365/mapping vendor đang
+  hiệu lực của template đó (hoặc đúng 1 bản ghi VendorCode rỗng nếu không có mapping nào), và 0% lượt
+  Approve có Status đổi thành Approved khi có ít nhất 1 lệnh gọi D365 push thất bại trong lượt đó.
+- **SC-063 (Update 23)**: 100% lượt xác nhận Request change gọi D365 xóa theo Code của template
+  TRƯỚC khi tạo dòng Draft mới, và 0% lượt Request change tạo dòng Draft mới/ẩn dòng Approved cũ khi
+  lệnh gọi D365 xóa đó thất bại.
 
 ## Assumptions
 
@@ -2467,3 +2601,32 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   filter cột của DataGrid) ở tầng component. `sortModel`/`setSortModel` cũng đã có sẵn trong hook
   nhưng KHÔNG được dùng ở đợt này (sort theo cột vẫn hoãn lại theo FR-021b) — để dành nếu có yêu cầu
   bật sort riêng sau này.
+- **(Update 23)** Cả 2 lệnh gọi D365 mới (xóa ở Request change, push ở Approve) tái sử dụng nguyên
+  code/contract đã triển khai ở `EutrSynchronizeDataService.SyncTemplatesToDynamicsAsync`
+  (011-eutr-synchronize-data — `DeleteTemplateRequest`, `RSVNEutrTemplates`, cấu hình
+  `Dynamics:ApiUrl`, `IDynamicService.PostAsync`) — phạm vi của đợt cập nhật này ở 003-eutr-templates
+  chỉ là THỜI ĐIỂM các lệnh gọi đó được kích hoạt (gắn với Approve/Request change của một template
+  đơn lẻ), KHÔNG phải thay đổi những gì được gọi hay tạo ra một D365 contract mới.
+- **(Update 23)** Endpoint batch thủ công `test-synchronize-templates` (011-eutr-synchronize-data,
+  User Story 3) giữ nguyên không đổi, độc lập với đợt cập nhật này — nó vẫn tồn tại để một Data
+  Administrator có thể chủ động đồng bộ lại TOÀN BỘ template eligible bất cứ lúc nào (ví dụ sau khi
+  can thiệp thủ công vào D365). Đợt cập nhật này chỉ bổ sung một đường kích hoạt THỨ HAI, tự động
+  theo từng bản ghi (per-record), chạy ngay khi người dùng Approve/Request change một template, để dữ
+  liệu D365 không phải chờ đến lần chạy batch thủ công tiếp theo mới được cập nhật.
+- **(Update 23)** Vì Approve chỉ khả dụng khi Status=Draft và Request change chỉ khả dụng khi
+  Status=Approved (loại trừ lẫn nhau, ràng buộc chọn đúng 1 dòng đã có sẵn ở FR-058), và Request
+  change luôn xóa D365 trước khi tạo dòng Draft mới, một template không bao giờ có thể được Approve 2
+  lần liên tiếp mà không có Request change ở giữa (đã xóa bản ghi D365 cũ trước đó) — do đó lệnh push
+  của Approve không cần tự gọi xóa D365 trước (khác với luồng batch đầy đủ của
+  `SyncTemplatesToDynamicsAsync`, vốn luôn xóa-rồi-đẩy cho toàn bộ danh sách mỗi lần chạy) mà vẫn
+  không có rủi ro tạo bản ghi D365 trùng lặp cho cùng Code.
+- **(Update 23)** "Dữ liệu của template đó" khi Approve được hiểu là đúng TemplateId/dòng mà người
+  dùng đã chọn và xác nhận Approve — chính dòng đang chuyển sang Status=Approved, không phải một
+  version khác của cùng Code.
+- **(Update 23)** Cách xử lý khi lệnh gọi D365 thất bại ("chặn lại" — không commit thay đổi cục bộ,
+  hiển thị lỗi) được xác nhận qua `AskUserQuestion` trong `/speckit-specify` ngày 2026-09-07. Cách xử
+  lý này khác với cách 011-eutr-synchronize-data xử lý lỗi cho luồng batch của chính nó (dừng xử lý
+  các mục còn lại nhưng giữ nguyên các lệnh gọi D365 đã gửi thành công trước đó, không có khái niệm
+  "chặn" vì batch không gắn với một hành động Status cục bộ nào) — ở đây, vì Approve/Request change
+  là hành động cục bộ trên 1 bản ghi (thường chỉ 0-2 lệnh gọi D365), thay đổi Status/version chỉ được
+  commit SAU KHI bước D365 (nếu cần) đã thành công.

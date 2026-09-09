@@ -8,16 +8,16 @@ description: "Task list for Compliance Master Alert Type & Delete Fix"
 
 **Input**: Design documents from `/specs/007-compl-master/`
 
-**Prerequisites**: [plan.md](./plan.md), [spec.md](./spec.md), [research.md](./research.md), [data-model.md](./data-model.md), [contracts/compliance-master-alerttype.md](./contracts/compliance-master-alerttype.md), [contracts/compl-master-delete.md](./contracts/compl-master-delete.md), [quickstart.md](./quickstart.md)
+**Prerequisites**: [plan.md](./plan.md), [spec.md](./spec.md), [research.md](./research.md), [data-model.md](./data-model.md), [contracts/compliance-master-alerttype.md](./contracts/compliance-master-alerttype.md), [contracts/compl-master-delete.md](./contracts/compl-master-delete.md), [contracts/compl-master-condition-table-logic.md](./contracts/compl-master-condition-table-logic.md), [quickstart.md](./quickstart.md)
 
 **Tests**: Not requested in the feature spec — no automated test tasks are included. Validation is manual, via `quickstart.md`.
 
-**Organization**: Tasks are grouped by user story (US1 = Create, P1; US2 = Edit, P2; US3 = List column, P3; US4 = Delete fix, P1, added 2026-08-20) to enable independent implementation and testing of each story.
+**Organization**: Tasks are grouped by user story (US1 = Create, P1; US2 = Edit, P2; US3 = List column, P3; US4 = Delete fix, P1, added 2026-08-20; US5 = Customer Table logic, P1, added 2026-09-08) to enable independent implementation and testing of each story.
 
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel (different files, no dependencies)
-- **[Story]**: Which user story this task belongs to (US1, US2, US3, US4)
+- **[Story]**: Which user story this task belongs to (US1, US2, US3, US4, US5)
 - Paths are relative to the repository root (`E:\Working\Eutr`)
 
 ## Path Conventions
@@ -121,12 +121,28 @@ description: "Task list for Compliance Master Alert Type & Delete Fix"
 
 ---
 
-## Phase 7: Polish & Cross-Cutting Concerns
+## Phase 7: User Story 5 - Use Table logic for the Customer condition in Individual Rule Conditions (Priority: P1)
 
-**Purpose**: Final end-to-end confirmation across all four stories.
+**Goal**: The Customer rule condition's Type selector offers "Table" the same way Product Type already does, even when another condition in the same AND block already uses Table; the Master Preview and compliance-matching behavior for a Customer Table condition work exactly like the already-proven Product Type Table condition, with no backend/DB changes.
+
+**Independent Test**: Open a master's rule-condition builder (e.g. `compliance-master/1021`), add a Customer condition into a block that already has a Product Type condition set to "Table", confirm "Table" is still offered for Customer, select several customers, confirm the Master Preview renders it using the existing Table-condition presentation, save, and confirm compliance matching for that master respects the selected customers. Fully independent of US1/US2/US3/US4 — no shared files (touches `ComplianceMasterForm.jsx` only, and none of that file's `AlertType`-related regions from Phase 2-5).
+
+### Implementation for User Story 5
+
+- [X] T027 [US5] In `compliance-client/src/presentation/pages/compliance-master/components/ComplianceMasterForm.jsx`, scope the `blockHasTable` check (~line 1397-1400) from "any other condition in the block uses Table" to "any other condition in the block **of the same reference type** (`c.modelType === cond.modelType`) uses Table", per [research.md](./research.md) R17-R18 — this is the only code change for this story; the two menu-item branches already reading `blockHasTable` (~line 1456, ~line 1478, confirmed unchanged at 1459/1481 post-edit) need no further edit since they consume the same boolean unchanged. Verified: `eslint` on the changed file reports 0 errors (2 pre-existing unrelated `react-hooks/exhaustive-deps` warnings only)
+- [ ] T028 [US5] Manually validate Scenarios 13-17 and the Regression check for User Story 5 from [quickstart.md](./quickstart.md): Table offered for Customer (13); Table still offered for Customer when a Product Type condition in the same block already uses Table (14); Master Preview renders the Customer Table condition using the existing header+bullet presentation, unchanged from Product Type's (15); save/reload persists both conditions and compliance matching (via `sp_load_compl_by_conditions`/`sp_load_compl_by_conditions_count`) correctly respects the selected customers (16); pre-existing Value/NOT IN Customer conditions are unaffected (17); same-type double-Table and Individual-mode gating remain unchanged (Regression check) — depends on T027
+
+**Checkpoint**: User Story 5 is code-complete pending T027's edit; manual browser validation (T028) confirms the fix end to end, including that the backend/SQL layer (verified, not modified, per `research.md` R19) actually produces correct results for a live Customer Table condition.
+
+---
+
+## Phase 8: Polish & Cross-Cutting Concerns
+
+**Purpose**: Final end-to-end confirmation across all five stories.
 
 - [ ] T018 [P] Run the full [quickstart.md](./quickstart.md) validation pass (Scenarios 1-8), including the Regression check (existing paged list/detail views still load; saving without touching Alert type still succeeds and defaults correctly; sorting/filtering/paging and the Status column are unaffected) — **not yet done**, blocked on the same lack of browser access as T012/T014/T017
 - [X] T026 [P] Confirm the `ComplianceMaster.Delete`-gated UI flow (`compliance-master/index.jsx` confirm-delete dialog) requires zero code changes and simply starts succeeding once T019-T024 land — spot-check that no other caller of the generic `IComplMasterService.DeleteAsync`/`DeleteMultiAsync` (search the backend for other usages) was relying on the old hard-delete behavior: confirmed via grep — `ComplMasterController.cs` (lines 350, 389) is the **only** caller of `_complMasterService.DeleteAsync`/`DeleteMultiAsync` anywhere in `compliance-sys-api`; no background jobs, other controllers, or services invoke master deletion, so the fix's blast radius is exactly the two existing endpoints as planned
+- [X] T029 [P] Confirm no other UI surface hard-codes a one-Table-per-block assumption that T027's scoping change would violate — spot-check `ConditionsView.jsx` and any other condition-rendering component (search the frontend for other readers of `displayType`) for a similar `blockHasTable`-style restriction; per [research.md](./research.md) R17, none were found besides `ComplianceMasterForm.jsx`, but this task exists to make that check explicit as part of Polish rather than assumed — confirmed via grep across `compliance-client/src` for `displayType === 1|blockHasTable|hasTable`: `ComplianceMasterForm.jsx` is the only match in the entire frontend; `ConditionsView.jsx` has no such gating logic at all (purely a read-only renderer, per `research.md` R17)
 
 ---
 
@@ -140,7 +156,8 @@ description: "Task list for Compliance Master Alert Type & Delete Fix"
 - **User Story 2 (Phase 4)**: Depends on Foundational completion **and** on User Story 1's `ComplianceMasterForm.jsx` changes (T009/T010), because Create and Edit share the exact same form component and the same "Alert type" field — Edit's task is purely to populate that already-added field from loaded data. This is a deliberate exception to full story independence, made explicit here rather than pretended away, since both screens are literally one component.
 - **User Story 3 (Phase 5)**: Depends on Foundational completion only for its *implementation* (T015/T016 need nothing from US1/US2's frontend work — the list reads the same backend field independently). Its *manual validation* (T017) is easier to do meaningfully once US1/US2 exist, since that's how you'd create masters with non-default Alert types to check against — but this is a testing convenience, not a hard code dependency.
 - **User Story 4 (Phase 6)**: **No dependency on Setup/Foundational/US1/US2/US3** — the delete fix touches an entirely different code path (`DeleteAsync`/`DeleteMultiAsync`, unrelated stored procedures) from the `AlertType` work. Can be implemented and shipped independently, in either order relative to US1-3, or in parallel by a different session/developer.
-- **Polish (Phase 7)**: Depends on all four user stories being complete.
+- **User Story 5 (Phase 7)**: **No dependency on Setup/Foundational/US1/US2/US3/US4** — touches a single conditional (`blockHasTable`) in `ComplianceMasterForm.jsx` unrelated to any `alertType`/delete code added by the other stories, and no backend/DB work at all. Can be implemented and shipped independently, in any order relative to the other four stories, or in parallel by a different session/developer. (In practice it edits the same file as US1/US2 — T009/T010/T013 — so if worked in the same session as those, sequence the edits to avoid clobbering unrelated hunks; there is no logical/data dependency between them.)
+- **Polish (Phase 8)**: Depends on all five user stories being complete.
 
 ### Parallel Opportunities
 
@@ -150,6 +167,7 @@ description: "Task list for Compliance Master Alert Type & Delete Fix"
 - T015 can run in parallel with any Phase 3/4 task (different file, no shared state) once Foundational is done; T016 depends only on T015.
 - T023 (stored procedure migration) can run in parallel with T019-T022 (C# service-layer changes) — different layers, no shared files; T024 depends only on T023.
 - The entire Phase 6 (User Story 4) can run in parallel with Phases 2-5 (US1/US2/US3) — no shared files or shared Foundational dependency between them.
+- The entire Phase 7 (User Story 5) can run in parallel with Phases 2-6 (US1-US4) at the task-dependency level — no shared Foundational dependency, no backend/DB overlap; the only practical caution is the shared file `ComplianceMasterForm.jsx` with US1/US2 (see note above), which is a sequencing courtesy, not a blocking dependency.
 
 ---
 
@@ -170,7 +188,8 @@ description: "Task list for Compliance Master Alert Type & Delete Fix"
 3. User Story 2 → Edit screen complete → validate → full form feature done
 4. User Story 3 → List column complete → validate → fully done end to end
 5. User Story 4 → delete/bulk-delete fixed → validate → can be delivered before, after, or interleaved with 1-4, since it shares no files or plumbing with them
-6. Polish → full quickstart regression pass across all four stories
+6. User Story 5 → Customer Table logic fixed → validate → can be delivered before, after, or interleaved with 1-4, since it shares no backend/DB plumbing with them (only a soft file-touch overlap with US1/US2, see Dependencies note)
+7. Polish → full quickstart regression pass across all five stories
 
 ### Delete Fix Only (User Story 4, if shipped as its own change)
 
@@ -178,11 +197,17 @@ description: "Task list for Compliance Master Alert Type & Delete Fix"
 2. **STOP and VALIDATE**: Run Scenarios 9-12 from `quickstart.md` (T025)
 3. Shippable on its own: deleting/bulk-deleting Compliance Masters works reliably, including for masters with linked compliance data
 
+### Customer Table Logic Only (User Story 5, if shipped as its own change)
+
+1. Complete Phase 7: T027 (single-conditional edit)
+2. **STOP and VALIDATE**: Run Scenarios 13-17 and the Regression check from `quickstart.md` (T028)
+3. Shippable on its own: the smallest story in this spec — one file, one conditional, no migration, no backend touch
+
 ---
 
 ## Notes
 
 - No test tasks were generated — the feature spec did not request automated tests, and the existing compliance-master feature has no test suite to extend.
-- Total tasks: 26 (1 Setup + 7 Foundational + 4 US1 + 2 US2 + 3 US3 + 6 US4 + 2 Polish). T001-T011, T013, T015-T016 (17 tasks, Alert type) and T019-T026 (8 tasks, delete fix) are done — 25/26; Migration 26 is applied to and verified against the live dev DB. Only T012, T014, T017, T018 (the Alert-type manual browser passes) remain, none available in any session so far (no browser-automation tool). T025's DB-layer verification is done, but a full browser click-through of Scenarios 9-12 is still recommended before calling User Story 4 fully verified end to end.
+- Total tasks: 29 (1 Setup + 7 Foundational + 4 US1 + 2 US2 + 3 US3 + 6 US4 + 2 US5 + 3 Polish, IDs T001-T029, non-sequential due to the phase reordering when US4/US5 were folded in later). T001-T011, T013, T015-T016 (17 tasks, Alert type), T019-T026 (8 tasks, delete fix), T027 (US5 code fix), and T029 (Polish spot-check) are done — 27/29; Migration 26 is applied to and verified against the live dev DB; the `blockHasTable` scoping fix (T027) is applied and lints clean (0 errors). Only T012, T014, T017, T018 (Alert-type manual browser passes) and T028 (US5 manual browser passes, Scenarios 13-17) remain — none available in any session so far, since no browser-automation tool has been available in any session to date. T025's DB-layer verification is done, but a full browser click-through of Scenarios 9-12 is still recommended before calling User Story 4 fully verified end to end.
 - Excel import/export, and the read-only `ComplianceMasterDetail.jsx` summary view, are explicitly out of scope per [research.md](./research.md) R6/R7 — no tasks generated for them.
-- This spec was merged from two originally separate feature specs (`007-compl-master-alert-type` and `008-compl-master-alerttype-column`); their directories have been removed in favor of this single `007-compl-master` spec. A third, later request (the delete bug reproduced with `MAS-01104`) was folded in as User Story 4 on 2026-08-20, at the requester's direction — see `spec.md` Input and `research.md` R12-R16.
+- This spec was merged from two originally separate feature specs (`007-compl-master-alert-type` and `008-compl-master-alerttype-column`); their directories have been removed in favor of this single `007-compl-master` spec. A third, later request (the delete bug reproduced with `MAS-01104`) was folded in as User Story 4 on 2026-08-20, at the requester's direction — see `spec.md` Input and `research.md` R12-R16. A fourth, later still request (Table logic for the Customer condition) was folded in as User Story 5 on 2026-09-08, at the requester's direction — see `spec.md` Input and `research.md` R17-R20.

@@ -147,3 +147,36 @@ driven by the backend `userMenu`/`canAccessMenu` data, not the static menu file 
 also inserts the corresponding `userMenu` row and grants `canAccessMenu('eutr-purchase-orders')` to
 the relevant role(s) in the database. This must be called out at implementation handoff so it is not
 mistaken for a missed code change.
+
+## Decision 9 — Upload default Type/Value (spec Update 1, FR-024/FR-025/FR-026): new optional props, not a shared-default change
+
+**Decision**: Add two optional props to `EutrDocumentsFormDialog.jsx` — `addDefaultTypeName` (a
+string, e.g. `"PO"`) and `addDefaultChips` (an array of chip objects) — consumed only inside the
+`mode="add"` branch of its existing `useEffect(..., [open])` init effect: after `referenceTypes`
+loads, if `addDefaultTypeName` is set, find the matching entry by name (same
+case-insensitive-trim comparison `isPoTypeName` already uses) and `setType` to it instead of `null`;
+if `addDefaultChips` is set, `setChips` to it instead of `[]`. `PurchaseOrderViewPage.jsx`'s Upload
+dialog passes `addDefaultTypeName="PO"` and `addDefaultChips={po ? [po] : []}`, reusing the `po`
+state object it already fetches for the page header (Decision 1's `refType=15` item — same
+`{Id, Code, Name, ...}` shape `EutrAddValueAutocomplete`'s own PO suggestions use, per data-model.md
+§1, so it slots into `chips` without transformation). Both props are left undefined by
+`MapFilePage.jsx`'s call site, so its dialog keeps resetting to `type=null`/`chips=[]` exactly as
+before — zero behavior change for `005`.
+
+**Rationale**: The requested default only applies to one call site (`PurchId/View`'s Upload button).
+Changing `EutrDocumentsFormDialog`'s own unconditional reset-to-empty logic (or its default prop
+values) would silently alter `MapFilePage.jsx`'s dialog too, reversing `005-eutr-sales-orders`
+Research Decision 26 ("full, unrestricted popup — no Type/Step/Value auto-lock") without that spec
+asking for it. Threading the defaults through caller-supplied, opt-in props keeps the shared
+component's default behavior untouched and makes the one differing call site self-documenting.
+Reusing the already-loaded `po` object (rather than issuing a second `refType=15` lookup keyed by
+the URL's `purchId`) avoids a redundant network call — the existence-check fetch (FR-013/FR-014)
+already retrieves the exact record needed.
+
+**Alternatives considered**: (a) Changing `EutrDocumentsFormDialog`'s own defaults so *every* `mode=
+"add"` caller defaults Type to `"PO"` — rejected, this would regress `005`'s explicit "no auto-lock"
+decision for the Map File screen, which was not asked to change. (b) A dedicated, PurchaseOrderView-
+only fork of the dialog — rejected, duplicates the entire Add/Edit form for a two-field default,
+against Constitution Principle II/III's reuse-over-duplication guidance. (c) Fetching a fresh
+`refType=15` record specifically for the prefill instead of reusing `po` state — rejected as an
+unnecessary extra network call when the exact same data is already in memory.
