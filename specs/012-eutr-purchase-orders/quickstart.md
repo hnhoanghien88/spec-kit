@@ -68,6 +68,18 @@ features either — `003`/`004`/`005` were all validated this way).
    tree indicator update immediately, without a page reload.
 6a. Open `/eutr/sales-orders/{SalesId}/map-file` (005) and click its own Upload button. Confirm Type
     and Value still open empty there — the Update 1 default applies only to `PurchId/View` (FR-026).
+6b. With the same Upload popup open on `PurchId/View`, change Type from PO to **Invoice**. Confirm
+    Value re-fills to this same Purchase Order's Purch id (spec Update 2, FR-027). Change Type to
+    **Delivery note**; confirm Value re-fills to the same Purch id again.
+6c. Change Type to **Vendor**. Confirm Value re-fills to this Purchase Order's Vendor code (not the
+    Purch id) — FR-027(b). Manually remove that chip and type/select a different value, then change
+    Type back to **PO**; confirm Value is overwritten again with the Purch id (not the value you just
+    typed) — FR-028's "always overwrite on Type change" rule.
+6d. Change Type to any value outside PO/Vendor/Invoice/Delivery note (e.g. **General agreement**, if
+    configured). Confirm Value is simply cleared/left for manual entry — not auto-filled — FR-028.
+6e. Repeat 6a on `005-eutr-sales-orders`'s Map File Upload popup: change its Type field between PO,
+    Vendor, Invoice, Delivery note. Confirm Value is cleared on every Type change there (existing
+    behavior), never auto-filled — confirms FR-029's scope limit to `PurchId/View` only.
 7. Click **Edit** on an existing document, change a field, save. Confirm the update persists and is
    reflected immediately.
 8. Navigate to `/eutr/purchase-orders/DOES-NOT-EXIST/view` (an invalid Purch id). Confirm a clear

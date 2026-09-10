@@ -76,6 +76,20 @@ already fetched for the page header/existence check — passed as-is into the di
 (`Id`/`Code`/`Name` shape, unchanged). Nothing new is read, written, or stored; see research.md
 Decision 9.
 
+## 6. Re-fill Value on Type change (spec Update 2, FR-027/FR-028/FR-029) — UI transient state only, not persisted
+
+No new entity or field. Extends §5: every time the popup's Type changes (not just at open), Value is
+re-derived from data already held in `PurchaseOrderViewPage` state:
+
+| New Type selected | Value re-filled from | Source (already-fetched state) |
+|---|---|---|
+| PO, Invoice, or Delivery note | the Purchase Order itself | `po` (Entity #1, `refType=15`) |
+| Vendor | the Vendor of this Purchase Order | `{ code: po.orderAccount, name: vendorName }` (Entity #2, `refType=14`, resolved by the existing FR-003/FR-015 lookup) |
+| any other Type | not re-filled (existing free-entry behavior) | n/a |
+
+Nothing new is read, written, or stored — both branches reuse state the page already fetches for its
+header/existence-check and Vendor-name lookup. See research.md Decision 10.
+
 ## Entity Relationship (conceptual, no new persisted relationships)
 
 ```text

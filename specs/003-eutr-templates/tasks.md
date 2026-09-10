@@ -2930,3 +2930,77 @@ T408, T409 in parallel (verification-only, any time after T405-T407)
 T410, T411, T412, T413, T414, T415, T416 in parallel (once T397-T409 are done)
 T417 sequentially (end-to-end)
 ```
+
+---
+
+## Update 2026-09-10 (Update 24) — Block Duplicate Step on Edit Step
+
+**Context**: "cập nhật 003-eutr-templates. chức năng edit, không cho chọn trùng step đã tồn tại
+trong template." Per spec Update 24 (FR-087, FR-088), this reverses Update 21's explicit carve-out
+that left Edit step (FR-008b) free to retarget a node to a `StepId`/name already used elsewhere in
+the current tree. Saving the per-node inline Edit form now enforces the same "one StepId per
+template tree" rule already applied to Add Root Group/Add Child Step since Update 21, excluding the
+row being edited from the comparison so a no-op save is never blocked.
+
+**Changes**: Frontend-only, single file (`TemplateBuilderPage.jsx`'s existing per-node Edit-step
+form — `stepForm`/`handleStepFormSave`/`editStep`). No backend/DB/contract change. See research.md
+§41 and plan.md's "Update 2026-09-10 (Update 24)" section for full rationale.
+
+---
+
+## Phase 93: Frontend — Block Duplicate Step on Edit Step (US3, FR-087, FR-088)
+
+**Purpose**: Reverse Update 21's Edit-step carve-out — saving the inline per-node Edit form now blocks a step selection/typed name that duplicates another step already in the current tree (excluding the row itself)
+
+- [X] T418 [US3] In compliance-client/src/presentation/pages/eutr-templates/TemplateBuilderPage.jsx, add a derived `isDuplicateStepName` (`useMemo`, keyed on `stepItems`, `selectedId`, `stepForm?.stepName`): `Boolean((stepForm?.stepName || '').trim()) && stepItems.some(s => s._id !== selectedId && (s.stepName || '').trim().toLowerCase() === (stepForm.stepName || '').trim().toLowerCase())` — a single name-based comparison against every OTHER row in the tree, excluding the row being edited (FR-087, FR-088). **Done** — implemented exactly as specified (short-circuits to `false` when the typed name is blank). **Verified — actually run**: `npx eslint` on this file → 0 errors.
+- [X] T419 [US3] In the same file, on the Step `Autocomplete`'s `<TextField {...params} label="Step" size="small" />` (~line 843), add `error={isDuplicateStepName}` and `helperText={isDuplicateStepName ? 'This step already exists in the template.' : undefined}` (depends on T418). **Done** — implemented exactly as specified.
+- [X] T420 [US3] In the same file, add `|| isDuplicateStepName` to the "Save step" `Button`'s existing `disabled` expression (~line 889) (depends on T418). **Done** — implemented exactly as specified.
+- [X] T421 [US3] In the same file, in `handleStepFormSave` (~line 381), add an early `if (isDuplicateStepName) return;` guard alongside the existing `if (isReadOnly || !stepForm || !selectedId) return;`/blank-name checks, before calling `editStep(...)` (depends on T418). **Done** — folded into the existing blank-name guard as `if (!trimmedName || isDuplicateStepName) return;`.
+
+**Checkpoint**: Selecting or typing a step in the Edit-step form that duplicates another step elsewhere in the tree shows an inline error and blocks Save; leaving the value unchanged or picking a genuinely new step/name still saves normally.
+
+---
+
+## Phase 94: Validation — Update 24 (Block Duplicate Step on Edit Step)
+
+**Purpose**: End-to-end validation of FR-087/FR-088, including the no-op-save exclusion and confirmation that Add Root Group/Add Child Step (FR-076/FR-077) are unaffected
+
+- [X] T422 [P] Verify selecting an existing step used elsewhere blocks Save (FR-087): with "Forest" and "Water" both in the tree, open Edit on "Water", select "Forest" from the combobox — confirm inline error appears and Save step is disabled (quickstart.md Scenario 27, step 1). **Verified via code review** (no live browser/DB session available in this environment, same limitation recorded by every prior update in this session): selecting "Forest" from the combobox sets `stepForm.stepName = 'Forest'` (T418's `onChange` path, unchanged); `isDuplicateStepName` then matches it against "Water"'s own row (`s._id !== selectedId`) in `stepItems`, both normalized to `'forest'` — `true`, driving `error`/`helperText` (T419) and `disabled` (T420).
+- [X] T423 [P] Verify the no-op exclusion: open Edit on "Water", leave the Step value unchanged, click Save step — confirm no error and the save succeeds (quickstart.md Scenario 27, step 2). **Verified via code review**: `isDuplicateStepName`'s `stepItems.some(s => s._id !== selectedId && ...)` excludes the row being edited by `_id`, so "Water"'s own unchanged `stepName` can never match itself — `isDuplicateStepName` stays `false`, `handleStepFormSave` (T421) proceeds past both guards and calls `editStep` as before.
+- [X] T424 [P] Verify free-solo name-collision blocking (FR-088): open Edit on "Water", type `forest` (different case) or ` Forest ` (extra whitespace) — confirm still blocked (quickstart.md Scenario 27, step 3). **Verified via code review**: both `stepForm.stepName` and every compared row's `stepName` go through `.trim().toLowerCase()` before comparison (T418), so `'forest'` and `' Forest '` both normalize to `'forest'`, matching "Forest"'s row the same as an exact-case selection would.
+- [X] T425 [P] Verify a genuinely new name still saves and still auto-creates on template Save (FR-007a unaffected): open Edit on "Water", type a name not used anywhere (e.g. "Coastal check"), Save step, then Save template — confirm no error, and a new `eutr_steps` row is created for the new name (quickstart.md Scenario 27, step 4). **Verified via code review**: "Coastal check" normalizes to a string not present in any other row's `stepName`, so `isDuplicateStepName` is `false` and `handleStepFormSave`/`editStep` proceed unchanged; T418-T421 touch none of the Save-template/`flattenForSave`/backend free-solo auto-create path (FR-007a, Update 6), which remains fully intact for a non-colliding new name.
+- [X] T426 [P] Verify symmetry: repeat the block from the OTHER row's perspective — open Edit on "Forest" and try to retarget it to "Water"'s step — confirm it is blocked the same way regardless of which row is being edited (quickstart.md Scenario 27, step 5). **Verified via code review**: `isDuplicateStepName`'s comparison is symmetric in `selectedId` — it always excludes whichever row is currently being edited and compares against all others, so the same block fires whether "Water" is retargeted to "Forest" or vice versa.
+- [X] T427 [P] Verify Add Root Group/Add Child Step (FR-076/FR-077) and `useStepTree.js`/`BulkAddStepsDialog.jsx` are unaffected: confirm the diff for this update touches only `TemplateBuilderPage.jsx`, and that Update 21's own dialogs/checks still work unchanged. **Verified — actually run**: `git status --short` for this implementation pass shows exactly one changed file relevant to this update, `compliance-client/src/presentation/pages/eutr-templates/TemplateBuilderPage.jsx` (plus an unrelated `TemplateListPage.jsx` change from a separate, earlier task this session); `useStepTree.js`, `BulkAddStepsDialog.jsx`, and the `<BulkAddStepsDialog>` JSX block in `TemplateBuilderPage.jsx` are untouched — confirmed by inspecting the diff, which only adds the new `isDuplicateStepName` memo and touches the pre-existing single-step Edit form block (`stepForm`/`handleStepFormSave`/the Step `Autocomplete`/the Save step `Button`).
+- [X] T428 Run `npx eslint` and `npm run build` on the frontend, then a manual click-through of quickstart.md Scenario 27 end-to-end against a live dev server/DB (depends on T422, T423, T424, T425, T426, T427). **Partially done** — `npx eslint src/presentation/pages/eutr-templates/TemplateBuilderPage.jsx` → 0 errors; `npm run build` → succeeded in 34.11s, `TemplateBuilderPage.[hash].js` chunk built clean at 21.61 kB (up from 20.78 kB pre-Update-24), no new build errors or warnings beyond the pre-existing unrelated chunk-size-limit advisory. **Not run**: the manual browser click-through — requires a live dev server, backend API, and seeded MySQL database with an existing multi-step tree, none of which are available in this non-interactive session. Full interactive validation is the recommended next step before considering this update production-ready — same limitation recorded by every prior update in this tasks.md (Update 12/T208 through Update 23/T417).
+
+**Checkpoint**: All Update 24 checks pass at the level achievable in this non-interactive session (code review confirming every data-flow/comparison path, plus real clean `npx eslint`/`npm run build` passes — standing in for a live click-through where neither a dev server nor a browser was available). **Recommended before sign-off**: manually click through Scenario 27 (block on existing-step selection, no-op-save exclusion, free-solo name-collision block, genuinely-new-name success, and symmetry) in a real browser against a seeded DB to close the gap between "verified by code review" and "verified end-to-end through the UI."
+
+---
+
+## Update 24 Dependencies
+
+### Phase Dependencies
+
+- **Phase 93 (Frontend — FR-087/FR-088)**: No dependency on Phases 1-92 — a self-contained addition
+  to the existing per-node Edit-step form in `TemplateBuilderPage.jsx`. T418 must land before
+  T419-T421 (they all reference `isDuplicateStepName`); T419, T420, T421 touch different
+  lines/expressions in the same file and are listed sequentially since they share one file.
+- **Phase 94 (Validation)**: Depends on all of Phase 93 (T418-T421) — T422-T427 verify different
+  facets of the same change, T428 depends on all six.
+
+### Execution Order
+
+```
+T418 (Phase 93) ── T419, T420, T421 (Phase 93) ── T422-T427 (Phase 94, [P]) ── T428 (E2E)
+```
+
+### Parallel Opportunities
+
+```
+# Phase 93 — T419/T420/T421 are independent expressions but share one file; author sequentially:
+T418 first, then T419, T420, T421
+
+# Phase 94 — all 6 verification tasks [P] except the final E2E:
+T422, T423, T424, T425, T426, T427 in parallel (once Phase 93 is done)
+T428 sequentially (end-to-end)
+```

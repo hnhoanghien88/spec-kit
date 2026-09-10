@@ -363,3 +363,28 @@ and Value still open empty there.
     FullyQualifiedName~EutrSynchronizeDataServiceTests`).
   - Not touched: User Story 1 (`SyncSalesOrderTemplatesAsync`, the `test-so-template-sync` action)
     does not read `eutr_references`/documents at all — no such gap exists there.
+
+## Phase 8: Spec Update 2 — Re-fill Value on every Type change on `PurchId/View` (FR-027/FR-028/FR-029)
+
+**Goal**: Extend Update 1 so that, while the Upload popup is open on `PurchId/View`, changing Type to
+PO, Invoice, or Delivery note re-fills Value with this Purchase Order's Purch id, and changing Type to
+Vendor re-fills Value with this Purchase Order's Vendor code — every time Type changes (not just at
+open), overwriting the current Value, while any other Type leaves Value untouched. The Map File screen
+(005-eutr-sales-orders) must keep clearing Value to empty on every Type change there, unaffected.
+
+**Independent Test**: Open a Purchase Order's `PurchId/View` screen, click Upload (Type defaults to
+PO, Value to this PO's Purch id per Update 1). Change Type to Invoice, then Delivery note — confirm
+Value re-fills to the same Purch id both times. Change Type to Vendor — confirm Value re-fills to this
+PO's Vendor code instead. Manually edit Value, then change Type again — confirm Value is overwritten
+with the new default, not kept. Change Type to an unrelated value (e.g. General agreement) — confirm
+Value is simply cleared, not auto-filled. Then open `005-eutr-sales-orders`'s Map File screen, change
+its own Upload popup's Type between several values — confirm Value always just clears there, unchanged
+from before this update.
+
+### Implementation for Update 2
+
+- [X] T035 [P] [US2] In `compliance-client/src/presentation/pages/eutr-documents/components/EutrDocumentsFormDialog.jsx`, replace the `addDefaultChips` prop with a new optional function prop `resolveAddDefaultChips(typeName)`. Use it in two places: (a) inside the existing `mode="add"` init effect, once `addDefaultTypeName` is applied, set the initial chips to `resolveAddDefaultChips(addDefaultTypeName) ?? []` instead of the old static `addDefaultChips ?? []`; (b) inside `handleTypeChange`, replace the unconditional `setChips([])` with `setChips(!isEdit && resolveAddDefaultChips ? (resolveAddDefaultChips(newType?.name) ?? []) : [])`, so every Type change re-derives chips from the resolver when one is supplied, and falls back to the existing clear-to-`[]` behavior when it is not. Leave every other behavior (edit mode, step reload on Type change, chip removal) unchanged (research.md Decision 10). (Done — propTypes updated too.)
+- [X] T036 [US2] In `compliance-client/src/presentation/pages/eutr-purchase-orders/PurchaseOrderViewPage.jsx`, replace the `addDefaultChips={po ? [po] : []}` prop passed to the Upload `<EutrDocumentsFormDialog mode="add" ...>` instance with `resolveAddDefaultChips={...}`, a function that: normalizes the given type name to lowercase-trimmed; returns `po ? [po] : []` for `"po"`, `"invoice"`, or `"delivery note"`; returns `po?.orderAccount ? [{ code: po.orderAccount, name: vendorName }] : []` for `"vendor"` (reusing the existing `po`/`vendorName` state already fetched for the page header, FR-027); and returns `[]` for any other type name. Do not modify the Edit dialog instance. Depends on: T035. (Done — added module-level `PO_LIKE_UPLOAD_TYPE_NAMES`/`resolveUploadDefaultChips` helper, wired via `resolveAddDefaultChips={typeName => resolveUploadDefaultChips(typeName, po, vendorName)}`.)
+- [X] T037 [P] Confirm `compliance-client/src/presentation/pages/eutr-sales-orders/MapFilePage.jsx`'s own `<EutrDocumentsFormDialog mode="add" ...>` call sites still pass no `resolveAddDefaultChips` (or `addDefaultChips`) prop, so their Type-change handler keeps clearing Value to `[]` on every Type change exactly as before (FR-029) — no code change expected, verification only. (Confirmed via grep: no match for `addDefaultChips|resolveAddDefaultChips|addDefaultTypeName` in `MapFilePage.jsx` — unaffected.)
+
+**Checkpoint**: Update 2 is independently testable — `PurchId/View`'s Upload popup re-fills Value on every Type change per the PO/Vendor mapping above, while Map File's Upload popup keeps clearing Value on Type change, unaffected. Verified via `eslint` (clean, both changed files) and `vite build` (succeeds, 0 errors) after the change. **Not run**: live click-through in `quickstart.md`'s "Validate the detail screen (US2)" steps 6b–6e (**not run by this pass** — needs a live backend + real D365 data, same constraint as T024/T026/Update 1's checkpoint).

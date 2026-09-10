@@ -1409,6 +1409,36 @@ See research.md Section 40 for the full rationale (why extract from `EutrSynchro
 instead of duplicating the D365 calls in `EutrTemplatesService`, and why the D365 call must run
 before `BeginTransactionAsync` rather than inside it).
 
+### Update 2026-09-10 (Update 24) — Block Duplicate Step on Edit Step (reverses Update 21's carve-out)
+
+**Frontend-only, no backend/DB/contract changes.** Reverses one paragraph of Update 21's own decision
+record — the explicit carve-out that left Edit step (FR-008b) free to retarget a node to a `StepId`
+already used elsewhere in the tree. The fix lives entirely in `TemplateBuilderPage.jsx`'s existing
+per-node inline edit form (`stepForm`/`handleStepFormSave`/`editStep`), reusing the exact
+`isDuplicateName`-style pattern Update 21 already proved out in the sibling
+`BulkAddStepsDialog.jsx` for the same "one StepId per template tree" rule.
+
+- **`TemplateBuilderPage.jsx`** MODIFY:
+  - Add a derived `isDuplicateStepName` (`useMemo`): normalizes `stepForm.stepName`
+    (`.trim().toLowerCase()`) and compares it against every OTHER row in `stepItems` (excluding the
+    row being edited, matched by `_id === selectedId`), normalized the same way. A single name-based
+    comparison covers both FR-087 (picking an existing step already used elsewhere) and FR-088 (a
+    free-solo name colliding with another row's pending or resolved name), since every tree row
+    already carries a resolved `stepName` alongside any `stepId` it may have (Update 6).
+  - Step `Autocomplete`'s `TextField` (currently `label="Step"`) gains `error={isDuplicateStepName}` +
+    a `helperText` explaining the conflict, mirroring `BulkAddStepsDialog.jsx`'s "New step name" field.
+  - "Save step" `Button`'s existing `disabled` expression gains `|| isDuplicateStepName`.
+  - `handleStepFormSave` gains an early `if (isDuplicateStepName) return;` guard (defense-in-depth
+    alongside the button's `disabled` state), so `editStep` is never called with a colliding value.
+- **No change** to `useStepTree.js` (`editStep` itself stays a pure state update, no validation —
+  consistent with `addStep`/`addSteps` having none either), `BulkAddStepsDialog.jsx` (Add Root
+  Group/Add Child Step's own FR-076/FR-077 checks are unaffected), any backend file, or
+  `contracts/api-endpoints.md` (verified — the Update-template endpoint's `details[]` payload
+  shape/validation needs no change; this is a client-side guard preventing certain payloads from ever
+  being constructed).
+
+See research.md Section 41 for the full rationale and alternatives considered.
+
 ## Technical Context
 
 **Language/Version**: .NET 8 (backend), JavaScript/React 18 + Vite 7 (frontend)

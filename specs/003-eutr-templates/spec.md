@@ -832,9 +832,10 @@ hiển thị ở chế độ read-only. Cây bước đúng với thay đổi, P
    trên step "Forest" và đổi thành Optional + Upload manual rồi Save template, **Then** thay đổi
    được cập nhật đè trực tiếp lên dòng hiện tại (Update 16 — không còn phân nhánh 24 giờ) với step
    "Forest" có RequirementType=0 (Optional) và TakeFrom=1 (Upload manual).
-6. **Given** đang edit template (Draft), **When** nhấn Edit trên một step và đổi sang step khác từ
-   combobox, rồi Save template, **Then** StepId mới thay cho StepId cũ được lưu đè trực tiếp lên
-   dòng hiện tại (Update 16 — không còn phân nhánh 24 giờ).
+6. **Given** đang edit template (Draft), **When** nhấn Edit trên một step và đổi sang step khác
+   CHƯA có mặt ở nơi khác trong cây, từ combobox, rồi Save template, **Then** StepId mới thay cho
+   StepId cũ được lưu đè trực tiếp lên dòng hiện tại (Update 16 — không còn phân nhánh 24 giờ).
+   (Update 24: nếu step khác này đã có mặt ở nơi khác trong cây, xem kịch bản 19.)
 7. **Given** đang mở màn hình Edit, **When** mở combobox Vendor, **Then** hệ thống gọi API
    `POST /api/dynamics/reference` với `refType = 13` và hiển thị danh sách vendor, với vendor
    hiện tại được chọn sẵn.
@@ -924,6 +925,23 @@ hiển thị ở chế độ read-only. Cây bước đúng với thay đổi, P
     read-only theo FR-061), **When** người dùng cố kéo thả một step trong cây, **Then** thao tác kéo
     thả bị vô hiệu hóa — cây bước không đổi thứ tự, giống hệt việc nút Move Up/Move Down cũng bị
     disabled ở trạng thái này.
+19. **(Update 24)** **Given** đang edit template (Draft) có step "Forest" (StepId=5) là step gốc và
+    step "Water" (StepId=9) là con của một step khác, **When** nhấn Edit trên step "Water" và chọn
+    "Forest" từ combobox Step rồi nhấn Save (của form inline edit), **Then** hệ thống hiển thị lỗi
+    ngay tại combobox và KHÔNG cho Save dòng "Water" — cây bước không thay đổi, dòng vẫn ở chế độ
+    edit.
+19a. **(Update 24)** **Given** đang Edit step "Water" (đang trỏ StepId=9), **When** không đổi gì
+    trong combobox Step (giữ nguyên "Water") rồi nhấn Save, **Then** hệ thống cho Save bình thường
+    (không báo lỗi trùng) vì so khớp trùng lặp loại trừ chính dòng đang edit.
+19b. **(Update 24)** **Given** đang edit template (Draft) có step "Forest" ở nơi khác trong cây,
+    **When** nhấn Edit trên step "Water" và gõ tự do "forest" (khác hoa/thường) hoặc " Forest "
+    (thừa khoảng trắng) vào combobox Step rồi nhấn Save, **Then** hệ thống vẫn báo lỗi trùng (so
+    khớp không phân biệt hoa/thường, đã trim khoảng trắng) và KHÔNG cho Save.
+19c. **(Update 24)** **Given** đang edit template (Draft), chưa có step tên "Coastal check" ở bất kỳ
+    đâu trong cây lẫn trong danh sách EUTR steps, **When** nhấn Edit trên step "Water" và gõ tự do
+    "Coastal check" rồi Save, **Then** hệ thống cho Save bình thường (không trùng với step nào khác
+    trong cây) — bản ghi mới cho "Coastal check" chỉ MUST được tạo trong eutr_steps khi Save
+    template (theo FR-007a), không ngay lúc Save dòng step.
 
 ---
 
@@ -1252,6 +1270,10 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   tạo bản ghi trùng lặp trong eutr_steps.
 - Khi người dùng gõ tên step chỉ chứa khoảng trắng hoặc để trống rồi Save step, hệ thống MUST báo
   lỗi yêu cầu chọn hoặc nhập tên step hợp lệ, không cho phép thêm step rỗng vào cây.
+- **(Update 24)** Khi Edit step, nếu người dùng chọn/gõ một step đã tồn tại ở nơi khác trong cây
+  (khác dòng đang edit), hệ thống MUST báo lỗi ngay tại combobox và không cho Save dòng đó; nếu
+  không đổi gì (giữ nguyên step hiện tại của chính dòng) hoặc đổi sang một step/tên chưa tồn tại ở
+  nơi khác trong cây thì Save bình thường (xem FR-087/FR-088).
 - Khi lưu/xóa thất bại do lỗi mạng hoặc máy chủ, người dùng nhận thông báo lỗi và dữ liệu không
   bị thay đổi sai lệch.
 - Khi nhấn Back trên màn hình tạo/sửa mà KHÔNG có thay đổi step nào (chưa add/edit step gì), hệ
@@ -1407,6 +1429,34 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   Clone/Confirm, hoặc hủy ở hộp thoại cảnh báo xác nhận, hệ thống KHÔNG tạo template mới, KHÔNG sao
   chép bất kỳ dữ liệu nào.
 
+### Session 2026-09-10 (Update 24) — Chặn chọn trùng step khi Edit step trong cây
+
+- Input: "cập nhật 003-eutr-templates. chức năng edit, không cho chọn trùng step đã tồn tại trong
+  template."
+- Q: Ràng buộc mới áp dụng cho những cách chọn step nào trong form Edit step (FR-008b) — chỉ khi
+  chọn một step có sẵn từ combobox, hay cả khi gõ tự do (free-solo) một tên trùng với step khác
+  đang có trong cây? → A: Cả hai. Dù chọn từ danh sách có sẵn hay gõ tự do một tên khớp (không phân
+  biệt hoa/thường, đã trim khoảng trắng) với một step KHÁC (không phải chính dòng đang edit) đã tồn
+  tại ở bất kỳ vị trí nào trong cây bước hiện tại, hệ thống MUST chặn và báo lỗi ngay tại combobox.
+- Q: Nếu người dùng không đổi gì (giữ nguyên step hiện tại của chính dòng đang edit) thì có bị chặn
+  không? → A: Không — so khớp trùng lặp MUST loại trừ chính dòng đang được edit. Giữ nguyên giá trị
+  cũ hoặc đổi sang một step/tên chưa tồn tại ở nơi khác trong cây đều được phép Save bình thường.
+- Change: **Đảo ngược ngoại lệ Edit step của Update 21 (FR-076)** — thao tác Edit step (FR-008b)
+  trên một node đã có trong cây bây giờ CŨNG phải tuân thủ ràng buộc "một StepId chỉ tồn tại tối đa
+  1 lần trong toàn bộ cây bước của template", giống hệt phạm vi đã áp dụng cho dialog Add Root
+  Group/Add Child Step từ Update 21 — không còn là ngoại lệ. Xem FR-087.
+- Change: Khi nhấn Save trên dòng đang Edit step (nút Save của form inline edit, KHÔNG phải nút Save
+  template), nếu step vừa chọn/gõ (sau khi resolve theo cơ chế gộp-theo-tên FR-007a nếu là tên gõ tự
+  do khớp với step đã có trong danh sách EUTR steps) trùng StepId với MỘT step KHÁC đã tồn tại ở bất
+  kỳ vị trí nào trong cây bước hiện tại (tính trên cả state client-side chưa Save template), hệ
+  thống MUST hiển thị lỗi ngay tại combobox Step và KHÔNG cho Save dòng đó — dòng vẫn ở chế độ edit
+  để người dùng chọn lại. Xem FR-087.
+- Change: Nếu tên gõ tự do là một tên hoàn toàn mới (không khớp step nào trong danh sách EUTR steps,
+  sẽ được tạo StepId mới khi Save template theo FR-007a), hệ thống MUST so khớp thêm theo TÊN (không
+  phân biệt hoa/thường, đã trim khoảng trắng) với tên của mọi step KHÁC đang có trong cây hiện tại
+  (loại trừ chính dòng đang edit); nếu trùng, áp dụng cùng hành vi chặn — vì tên mới này chắc chắn sẽ
+  tạo ra StepId trùng lặp về mặt logic khi Save template. Xem FR-088.
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
@@ -1502,7 +1552,8 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
 - **FR-008a**: Người dùng MUST có thể xóa step khỏi cây bước (ở màn hình Edit) bằng hai cách: (1)
   nhấn icon xóa (X) trên dòng step để xóa đơn lẻ, hoặc (2) tick checkbox chọn một hoặc nhiều step
   rồi nhấn nút "Delete step" để xóa hàng loạt. Khi xóa step cha, toàn bộ step con MUST bị xóa theo.
-- **FR-008b (nguồn dữ liệu TakeFrom đổi ở Update 19 — xem FR-072)**: Người dùng MUST có thể chỉnh
+- **FR-008b (nguồn dữ liệu TakeFrom đổi ở Update 19 — xem FR-072; chặn chọn trùng ở Update 24 — xem
+  FR-087/FR-088)**: Người dùng MUST có thể chỉnh
   sửa step đã tạo trong cây bước (ở màn hình Edit) bằng cách nhấn icon Edit (bút chì) trên dòng
   step. Khi nhấn Edit, dòng step MUST chuyển sang chế độ chỉnh sửa hiển thị: combobox Step
   (free-solo — cho phép đổi sang step khác có sẵn trong danh sách HOẶC gõ trực tiếp một tên step
@@ -1966,9 +2017,12 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   "step available" (FR-027, FR-029) MUST loại trừ mọi step đã có mặt ở bất kỳ node nào trong cây
   hiện tại — không phân biệt đang là step gốc hay step con của node cha nào — bất kể dialog đang mở
   là Add Root Group hay Add Child Step, và bất kể node cha nào đang được chọn khi mở dialog. Ràng
-  buộc này CHỈ áp dụng cho thao tác thêm mới qua 2 dialog này; KHÔNG áp dụng cho **Edit step**
-  (FR-008b) — Edit step vẫn giữ nguyên hành vi cho phép đổi một step đã có sang một StepId đang được
-  dùng ở nơi khác trong cùng cây (không đổi so với trước Update 21).
+  buộc này ban đầu CHỈ áp dụng cho thao tác thêm mới qua 2 dialog này; KHÔNG áp dụng cho **Edit
+  step** (FR-008b) — Edit step vẫn giữ nguyên hành vi cho phép đổi một step đã có sang một StepId
+  đang được dùng ở nơi khác trong cùng cây (không đổi so với trước Update 21). **(Superseded by
+  Update 24 — xem FR-087/FR-088)** Ngoại lệ dành cho Edit step nói trên đã bị đảo ngược — Edit step
+  nay cũng phải tuân thủ đúng ràng buộc "1 StepId chỉ tồn tại tối đa 1 lần trong cây" như Add Root
+  Group/Add Child Step.
 - **FR-077 (Update 21)**: Khu vực **"Add new step"** trong dialog bulk-select (FR-030) MUST validate
   tên vừa nhập trước khi cho gộp vào danh sách "đang chờ thêm" (tính vào M ở FR-027): so khớp tên
   (không phân biệt hoa/thường, đã trim khoảng trắng đầu/cuối) với (a) toàn bộ danh sách EUTR steps
@@ -2040,6 +2094,24 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   và cơ chế gọi Dynamics đã có sẵn từ 011-eutr-synchronize-data (`Dynamics:ApiUrl`, `IDynamicService`,
   cùng payload JSON `application/json`, cùng tham số `?cross-company=true`) — KHÔNG giới thiệu một
   entity/contract D365 mới nào cho đợt cập nhật này.
+- **FR-087 (Update 24 — thay thế ngoại lệ Edit step của FR-076)**: Thao tác **Edit step** (FR-008b)
+  trên một node đã có sẵn trong cây bây giờ MUST tuân thủ đúng ràng buộc "một StepId chỉ tồn tại tối
+  đa 1 lần trong toàn bộ cây bước của template đang sửa" — cùng phạm vi đã áp dụng cho dialog Add
+  Root Group/Add Child Step từ Update 21 (FR-076), không còn là ngoại lệ. Khi nhấn nút Save của form
+  inline edit trên dòng step (KHÔNG phải nút Save template), nếu StepId vừa chọn (từ combobox, sau
+  khi resolve theo cơ chế gộp-theo-tên FR-007a nếu là tên gõ tự do khớp với một step đã có trong
+  danh sách EUTR steps) trùng với StepId của MỘT step KHÁC (loại trừ chính dòng đang edit) đã tồn
+  tại ở bất kỳ vị trí nào trong cây bước hiện tại của template (tính trên cả state client-side chưa
+  Save template), hệ thống MUST hiển thị lỗi ngay tại combobox Step và KHÔNG cho Save dòng đó — dòng
+  vẫn ở chế độ edit để người dùng chọn lại. Giữ nguyên giá trị cũ (không đổi step) hoặc đổi sang một
+  step chưa tồn tại ở nơi khác trong cây đều MUST được phép Save bình thường.
+- **FR-088 (Update 24)**: Nếu tên gõ tự do khi Edit step KHÔNG khớp với bất kỳ step nào trong danh
+  sách EUTR steps hiện có (tên hoàn toàn mới, sẽ được tạo StepId mới khi Save template theo FR-007a),
+  hệ thống MUST so khớp thêm tên đó (không phân biệt hoa/thường, đã trim khoảng trắng đầu/cuối) với
+  tên hiển thị của mọi step KHÁC (loại trừ chính dòng đang edit) đang có trong cây bước hiện tại;
+  nếu trùng, áp dụng cùng hành vi chặn của FR-087 (lỗi tại combobox, không cho Save dòng đó) — vì tên
+  mới này chắc chắn sẽ tạo ra StepId trùng lặp về mặt logic khi Save template (hai node cùng trỏ tới
+  cùng step mới được tạo).
 
 ### Key Entities *(include if feature involves data)*
 
@@ -2096,13 +2168,13 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   nguồn dữ liệu cho combobox khi Add step/Edit step (free-solo). Khi người dùng nhập một tên step
   mới chưa tồn tại trong danh sách này và Save template, hệ thống MUST tự động tạo bản ghi mới
   trong bảng eutr_steps (người tạo/ngày tạo ghi nhận tự động như luồng tạo step thông thường của
-  feature 001-eutr-steps), rồi dùng StepId mới cho eutr_template_details. **(Update 21)** Trong
-  phạm vi một template, một StepId MUST chỉ xuất hiện tối đa 1 lần trong toàn bộ cây bước — ràng
-  buộc này được thực thi ở tầng UI khi thêm mới qua dialog Add Root Group/Add Child Step (lọc danh
-  sách "step available" và chặn trùng tên ở khu vực "Add new step", xem FR-076/FR-077), không phải
-  là một ràng buộc UNIQUE ở tầng database của bảng `eutr_template_details` (Edit step, FR-008b, vẫn
-  có thể tạo ra một StepId lặp lại trong cây nếu người dùng chủ động đổi sang step đã có ở nơi
-  khác).
+  feature 001-eutr-steps), rồi dùng StepId mới cho eutr_template_details. **(Update 21; mở rộng
+  sang Edit step ở Update 24)** Trong phạm vi một template, một StepId MUST chỉ xuất hiện tối đa 1
+  lần trong toàn bộ cây bước — ràng buộc này được thực thi ở tầng UI khi thêm mới qua dialog Add
+  Root Group/Add Child Step (lọc danh sách "step available" và chặn trùng tên ở khu vực "Add new
+  step", xem FR-076/FR-077) VÀ khi chỉnh sửa qua Edit step trên một node đã có (chặn ngay tại
+  combobox khi Save dòng đang edit, xem FR-087/FR-088) — không phải là một ràng buộc UNIQUE ở tầng
+  database của bảng `eutr_template_details`.
 - **D365 Vendor (VendorsV3)**: Dữ liệu vendor từ hệ thống D365, sử dụng các cột dataAreaId,
   VendorAccountNumber và VendorOrganizationName. Truy cập qua API reference chung
   `POST /api/dynamics/reference` với `refType = 13` (ánh xạ tới D365 VendorsV3 trong cấu hình
@@ -2352,6 +2424,12 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
 - **SC-063 (Update 23)**: 100% lượt xác nhận Request change gọi D365 xóa theo Code của template
   TRƯỚC khi tạo dòng Draft mới, và 0% lượt Request change tạo dòng Draft mới/ẩn dòng Approved cũ khi
   lệnh gọi D365 xóa đó thất bại.
+- **SC-064 (Update 24)**: 0% lượt Save trên form Edit step (inline, KHÔNG phải Save template) tạo ra
+  hai node trong cùng một cây bước cùng trỏ tới một StepId, khi người dùng chọn hoặc gõ tự do một
+  step đã tồn tại ở nơi khác trong cây — 100% các lượt này bị chặn kèm lỗi ngay tại combobox.
+- **SC-065 (Update 24)**: 100% lượt Save trên form Edit step khi người dùng giữ nguyên step hiện tại
+  của chính dòng đang edit (không đổi), hoặc đổi sang một step/tên chưa tồn tại ở nơi khác trong cây,
+  MUST được lưu thành công — không bị báo lỗi trùng oan.
 
 ## Assumptions
 
@@ -2630,3 +2708,17 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   "chặn" vì batch không gắn với một hành động Status cục bộ nào) — ở đây, vì Approve/Request change
   là hành động cục bộ trên 1 bản ghi (thường chỉ 0-2 lệnh gọi D365), thay đổi Status/version chỉ được
   commit SAU KHI bước D365 (nếu cần) đã thành công.
+- **(Update 24)** Việc kiểm tra trùng lặp khi Edit step thực thi hoàn toàn ở tầng UI (client-side),
+  dựa trên state cây bước hiện tại (kể cả thay đổi chưa Save template) — giống hệt cách FR-076/FR-077
+  đã kiểm tra cho dialog Add Root Group/Add Child Step ở Update 21, KHÔNG cần thêm ràng buộc UNIQUE
+  ở tầng database cho bảng `eutr_template_details` (bảng này vốn không có ràng buộc như vậy, và việc
+  thêm vào sẽ ảnh hưởng ngoài phạm vi đợt cập nhật này).
+- **(Update 24)** "Step đã tồn tại trong template" được hiểu là step đã có mặt ở BẤT KỲ vị trí nào
+  trong toàn bộ cây bước hiện tại của template đang sửa (không phân biệt step gốc hay step con của
+  node cha nào) — cùng định nghĩa phạm vi đã dùng cho FR-076 (Update 21), để nhất quán giữa hành vi
+  thêm mới (Add Root Group/Add Child Step) và chỉnh sửa (Edit step) trong cùng một cây.
+- **(Update 24)** Không cần hỏi làm rõ thêm qua `AskUserQuestion` cho đợt cập nhật này — 2 câu hỏi
+  phạm vi (áp dụng cho cả combobox chọn sẵn lẫn gõ tự do; loại trừ chính dòng đang edit khỏi so khớp
+  trùng lặp) đều có câu trả lời hợp lý duy nhất, suy ra trực tiếp từ hành vi đã thiết lập của FR-076/
+  FR-077 (Update 21) và từ chính mục đích của tính năng (ngăn trùng lặp thật sự, không chặn nhầm
+  trường hợp không đổi gì).

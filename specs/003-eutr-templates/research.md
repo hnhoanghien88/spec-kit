@@ -2018,3 +2018,89 @@ is shared by 2 callers (Phase 1 + `RequestChangeAsync`); `PushTemplateToDynamics
 once but has exactly 1 caller (`ApproveAsync`) — still a legitimate extraction (isolating the D365
 request-building/`DeleteTemplateRequest`/`RSVNEutrTemplates` payload shape in one place, per
 Principle II/III), just not a 3-call-site DRY win the way Phase 1's delete method is.
+
+## 41. Block Duplicate Step on Edit Step (spec Update 24) — Reverses Update 21's Edit-Step Exception
+
+**Decision**: One change, entirely inside `TemplateBuilderPage.jsx` (the existing per-node inline
+edit form, i.e. the "Step Configuration" panel that already backs `stepForm`/`handleStepFormSave`/
+`editStep`) — no other file, and no backend/DTO/contract, exactly mirroring how Update 21 itself was
+scoped to `BulkAddStepsDialog.jsx`/`TemplateBuilderPage.jsx` alone.
+
+Add a derived `isDuplicateStepName` boolean, computed the same way as `BulkAddStepsDialog.jsx`'s
+existing `isDuplicateName` (research.md §38): normalize `stepForm.stepName` (`.trim().toLowerCase()`)
+and compare it against every OTHER row currently in `stepItems` (`useStepTree`'s flat tree state),
+excluding the row being edited by `_id === selectedId`, using the same normalization on each row's
+own `stepName`. A single name-based comparison is sufficient to cover both duplicate-selection paths
+named in FR-087/FR-088 (picking an existing step from the combobox that's already used elsewhere,
+and typing a free-solo name that collides with another row) because every tree row already carries a
+resolved `stepName` regardless of whether it has a real `StepId` yet (Update 6's free-solo
+resolve-by-name behavior guarantees this) — there is no case where a row has a `StepId` but no
+matching display name to compare against.
+
+When `isDuplicateStepName` is true: the Step `Autocomplete`'s `TextField` gets `error`/`helperText`
+(same visual treatment as `BulkAddStepsDialog.jsx`'s "New step name" field), the "Save step" button
+gains `isDuplicateStepName` to its existing `disabled` expression, and `handleStepFormSave` itself
+also short-circuits on `isDuplicateStepName` as defense-in-depth (in case the button's `disabled`
+state is ever bypassed, e.g. a stale re-render). `editStep`/`useStepTree.js` itself is NOT modified —
+the guard lives entirely in the caller, one level above where `editStep` is invoked, matching how
+Update 21's guards live in the dialog rather than in `useStepTree.js`'s `addStep`/`addSteps`.
+
+**Rationale**: This is a straight reversal of one paragraph in Update 21's decision record (research
+§38's "Alternatives considered," item 1: "the spec... explicitly keeps Edit step (FR-008b) free to
+still produce a repeated `StepId`... a backend rejection would incorrectly also block that
+still-allowed Edit-step path") — that carve-out is exactly what the new spec Update 24 revokes. Since
+Update 21 already built and proved out the "compare normalized names, block with inline
+error/disabled state" pattern in a sibling component for the identical business rule ("one StepId per
+template tree"), reusing that exact pattern in `TemplateBuilderPage.jsx` keeps the two enforcement
+sites visually and behaviorally consistent for the user, and requires no new UI pattern, hook, or
+state-management approach — only a new derived boolean and its two consumers (TextField error prop,
+Save button disabled expression).
+
+**Alternatives considered**:
+- Compare by `StepId` (like FR-076's `usedStepIds` array) instead of by name — rejected: `stepForm`
+  only has a `stepId` when the user picked an existing option from the combobox; a brand-new free-solo
+  name always has `stepId: null` until Save-template resolves it (Update 6), so an ID-only comparison
+  would miss FR-088's case entirely (two different rows both typed as, say, "Forest" would both have
+  `stepId: null` and never compare equal by ID even though they will collide into the same row on
+  Save). Comparing by normalized `stepName` instead handles both FR-087 (ID-backed duplicate) and
+  FR-088 (name-only duplicate) with one check, since a row with a real `stepId` still carries the
+  matching resolved `stepName` alongside it.
+- Enforce this with a server-side check on the Update-template endpoint (reject `details[]` containing
+  a duplicate `StepId`, or resolve free-solo names server-side and reject if two resolve to the same
+  Id) — rejected for the same reason Update 21 rejected it for the Add dialogs: the spec (FR-087/
+  FR-088) scopes this to the Edit-step UI interaction itself (a specific inline error at the moment of
+  attempting to Save the row), not a backend/API-level rule; a server-side rejection would surface far
+  later (only at template-level Save) with a worse UX and would need its own separate validation
+  message design, duplicating the client-side guard for no added correctness (the client-side check
+  already fully prevents the payload from ever being constructed).
+- Extract the duplicate-name check into a small shared helper (e.g.
+  `utils/helpers.js#isDuplicateStepName(name, otherNames)`) reused by both `BulkAddStepsDialog.jsx`
+  and `TemplateBuilderPage.jsx` — considered but not required for this update: the two call sites
+  compare against slightly different candidate lists (`BulkAddStepsDialog.jsx` compares against the
+  master `steps` list AND `existingStepNames`; `TemplateBuilderPage.jsx`'s Edit-step check compares
+  only against `stepItems`, since anything already resolvable from `steps` is, by definition, already
+  present in `stepItems` once loaded into the tree) and the normalization logic (`trim().toLowerCase()`
+  comparison) is a single inline expression, not enough duplicated logic to justify a new shared
+  utility per this codebase's established preference for small, local derived state over premature
+  abstraction (see Update 12/21's own dialog-local `isDuplicateName`, never extracted either).
+
+**Implementation**:
+1. **`TemplateBuilderPage.jsx`** MODIFY:
+   - Add a derived `isDuplicateStepName` (via `useMemo`, matching the file's existing `useMemo` usage
+     for other derived tree computations): `stepItems.some(s => s._id !== selectedId &&
+     (s.stepName || '').trim().toLowerCase() === (stepForm?.stepName || '').trim().toLowerCase())`,
+     short-circuited to `false` when `!stepForm` or the typed name is blank (an empty name is already
+     separately blocked by the existing `!(stepForm.stepName || '').trim()` disabled check).
+   - Step `Autocomplete`'s `<TextField {...params} label="Step" size="small" />` (line ~843) gains
+     `error={isDuplicateStepName}` and `helperText={isDuplicateStepName ? 'This step already exists in
+     the template.' : undefined}`.
+   - "Save step" `Button`'s `disabled` expression (line ~889) gains `|| isDuplicateStepName`.
+   - `handleStepFormSave` (line ~381) gains an early return `if (isDuplicateStepName) return;`
+     alongside its existing `if (isReadOnly || !stepForm || !selectedId) return;`/blank-name guards.
+2. No change to `useStepTree.js` (`editStep` itself stays a pure state-update function, no validation
+   inside it — consistent with `addStep`/`addSteps` also having no validation, which lives in their
+   respective callers/dialogs), `BulkAddStepsDialog.jsx`, any backend file, or
+   `contracts/api-endpoints.md` (verified: the Update-template endpoint's `details[]` payload
+   shape/validation is unaffected — this is a client-side-only guard preventing certain payloads from
+   ever being constructed).
+3. No new dependency, no new component, no new hook.

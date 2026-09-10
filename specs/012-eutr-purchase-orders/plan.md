@@ -209,3 +209,50 @@ compliance-client/src/presentation/pages/
 ```
 
 No files added, no files removed, no backend files touched.
+
+## Update 2 (2026-09-10) — Re-fill Value on every Type change (`PurchId/View`)
+
+**Spec delta**: FR-027/FR-028/FR-029 (spec.md Update 2). Extends Update 1: previously the Upload
+popup's Type/Value defaulted to PO/this-Purchase-Order only once, at open. Now, while the popup stays
+open on `PurchId/View`, **every** time the user changes Type, Value is re-derived: Type = PO, Invoice,
+or Delivery note → Value = this Purchase Order's Purch id; Type = Vendor → Value = this Purchase
+Order's Vendor code. Any other Type is unaffected (no auto-fill, existing free-entry behavior). The
+re-filled Value overwrites whatever was in the field, and remains fully editable afterward (FR-028).
+
+**Summary**: Purely additive frontend change, no backend/API/data-model change. The static
+`addDefaultChips` prop (Update 1) is replaced by a function prop, `resolveAddDefaultChips(typeName)`,
+consulted both at initial open (superseding `addDefaultChips`) and — newly — inside
+`EutrDocumentsFormDialog`'s existing `handleTypeChange` handler, in place of its previous
+unconditional `setChips([])` reset. `PurchaseOrderViewPage.jsx` supplies the resolver, built from
+state it already holds (`po` for the PO-like branch, `{code: po.orderAccount, name: vendorName}` for
+the Vendor branch — no new network call). `MapFilePage.jsx` passes no resolver, so its Type-change
+handler keeps clearing chips to `[]` exactly as before (FR-029). See research.md Decision 10,
+data-model.md §6, and the contracts addendum in `eutr-templates-and-documents-reused.md`.
+
+**Technical Context delta**: No change to Language/Version, Primary Dependencies, Storage, Testing,
+Target Platform, or Project Type. No new network call — both branches of the resolver reuse `po` and
+`vendorName` state already fetched by the existing header/Vendor-name-lookup effects (FR-003/FR-015).
+
+**Constitution Check (re-evaluated)**: Still PASS on all five principles — no new backend surface
+(III), no new route/menu (V), no new persisted state (I), no localization deviation (IV). Principle II
+is reinforced the same way as Update 1: `MapFilePage.jsx`'s call site is left untouched (no resolver
+passed), so `005`'s Decision 26 ("no auto-lock") stays in force there unmodified.
+
+### Project Structure delta
+
+```text
+compliance-client/src/presentation/pages/
+├── eutr-documents/components/
+│   └── EutrDocumentsFormDialog.jsx     # addDefaultChips prop replaced by resolveAddDefaultChips(typeName)
+│                                       #   function prop; used both in the mode="add" init effect and in
+│                                       #   handleTypeChange (replaces its unconditional setChips([]) when
+│                                       #   a resolver is supplied); no resolver -> unchanged behavior
+│                                       #   (MapFilePage.jsx call site unaffected)
+└── eutr-purchase-orders/
+    └── PurchaseOrderViewPage.jsx       # Upload button's <EutrDocumentsFormDialog mode="add" .../> now
+                                        #   passes resolveAddDefaultChips instead of addDefaultChips —
+                                        #   maps Type name -> [po] (PO/Invoice/Delivery note) or
+                                        #   [{code: po.orderAccount, name: vendorName}] (Vendor) or []
+```
+
+No files added, no files removed, no backend files touched.

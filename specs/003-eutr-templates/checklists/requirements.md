@@ -2,7 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-07-02
-**Updated**: 2026-09-07 (Update 23)
+**Updated**: 2026-09-10 (Update 24)
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -894,3 +894,41 @@
   cross-referencing the already-implemented 011-eutr-synchronize-data service, consistent with this
   spec's existing convention of naming database tables/D365 entities as business-domain references
   rather than leaking new implementation detail.
+
+## Update 24 (2026-09-10) — Block selecting a duplicate step on Edit step
+
+- **Input**: "cập nhật 003-eutr-templates. chức năng edit, không cho chọn trùng step đã tồn tại
+  trong template" — closes a gap intentionally left open by Update 21 (2026-08-11), which added the
+  "1 StepId per template tree" rule for the Add Root Group/Add Child Step bulk-select dialogs
+  (FR-076/FR-077) but explicitly excluded Edit step (FR-008b) from that rule.
+- **Change: FR-076 exception for Edit step reversed** — Edit step (FR-008b) on an existing node in
+  the tree now MUST enforce the same "one StepId per template tree" rule as Add Root Group/Add Child
+  Step. **FR-087**, **FR-088** added: saving the inline edit row (not the template-level Save) MUST
+  block with an inline error at the Step combobox when the chosen/typed step (after free-solo
+  name-merge resolution per FR-007a) matches a StepId or, for a brand-new typed name, a step name
+  already present anywhere else in the current tree — excluding the row being edited itself, so
+  leaving the value unchanged is never blocked.
+- User Story 3 (Chỉnh sửa template) gains 4 new acceptance scenarios (19, 19a-19c): selecting an
+  existing step used elsewhere blocks Save; keeping the current value unchanged still saves; a
+  free-solo name matching an existing step case/whitespace-insensitively still blocks; a genuinely
+  new name (no match anywhere) still saves normally. Scenario 6 annotated to cross-reference
+  scenario 19 for the now-blocked case.
+- Edge Cases: 1 new bullet added summarizing the block/allow behavior for Edit step duplicates.
+- Key Entities: EUTR Step entity note updated — the StepId-uniqueness enforcement now covers both
+  the bulk-select dialogs (Update 21) and Edit step (Update 24), still purely at the UI layer (no new
+  database UNIQUE constraint).
+- Success Criteria: SC-064, SC-065 added (0% of inline Edit-step saves create a second node pointing
+  at a StepId already used elsewhere in the tree; 100% of saves that keep the current value or pick a
+  genuinely new step/name succeed without a false-positive duplicate error).
+- Assumptions: 3 new bullets added — the check stays client-side against current tree state (no new
+  DB constraint), "already exists in the template" means anywhere in the tree (same scope as
+  FR-076), and no `AskUserQuestion` clarification was needed since both scope questions (applies to
+  both pick-from-list and free-solo typing; excludes the row being edited) have a single reasonable
+  answer directly derived from the FR-076/FR-077 precedent.
+- No [NEEDS CLARIFICATION] markers were embedded in the spec — resolved inline during
+  `/speckit-specify` following this spec's established "resolve via reasoning from precedent, not
+  marker" pattern.
+- Spec Quality Checklist re-validated against the updated spec: all 16/16 items remain passing (no
+  regressions, no newly-failing items). FR-087/FR-088 describe the duplicate check at the
+  business/UX level (what triggers the block, what error appears, what is excluded) without leaking
+  implementation detail (which component/hook enforces it is left to `/speckit-plan`).

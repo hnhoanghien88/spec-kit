@@ -47,12 +47,29 @@ endpoints it already wraps) are unchanged and out of scope for this feature to a
 | Prop | Type | Effect when set | When omitted |
 |---|---|---|---|
 | `addDefaultTypeName` | `string` | Initial `Type` is the reference-type entry whose name matches (case-insensitive), instead of `null` | `Type` starts `null` (unchanged existing behavior) |
-| `addDefaultChips` | `array` | Initial `Value` chips are this array, instead of `[]` | `Value` starts `[]` (unchanged existing behavior) |
+| `resolveAddDefaultChips` | `(typeName: string) => array` | Initial `Value` chips are `resolveAddDefaultChips(addDefaultTypeName)`, instead of `[]` (superseded — see Update 2 addendum below, this prop also now drives every subsequent Type change, not only the initial open) | `Value` starts `[]` (unchanged existing behavior) |
 
 Only `PurchaseOrderViewPage.jsx` passes these (`addDefaultTypeName="PO"`,
-`addDefaultChips={po ? [po] : []}`). `MapFilePage.jsx`'s existing call site passes neither, so its
-popup's reset-to-empty behavior is unchanged — this addendum does not alter any existing consumer of
-`EutrDocumentsFormDialog`.
+`resolveAddDefaultChips={...}`, see Update 2 addendum). `MapFilePage.jsx`'s existing call site passes
+neither, so its popup's reset-to-empty behavior is unchanged — this addendum does not alter any
+existing consumer of `EutrDocumentsFormDialog`.
+
+**Component prop contract addendum (spec Update 2, FR-027/FR-028/FR-029, research.md Decision 10)**:
+the static `addDefaultChips` prop (Update 1) is replaced by the function prop `resolveAddDefaultChips`
+above, now consulted on **every** Type change while the popup is open in `mode="add"` (not only at
+open time), replacing the dialog's previous unconditional "clear chips on Type change" behavior when
+a resolver is supplied:
+
+| Type selected in the popup | `resolveAddDefaultChips(typeName)` returns | Value chips become |
+|---|---|---|
+| `PO`, `Invoice`, `Delivery note` | `[po]` (the Purchase Order being viewed) | `[po]` (overwrites current chips) |
+| `Vendor` | `[{ code: po.orderAccount, name: vendorName }]` | that single Vendor chip (overwrites current chips) |
+| any other Type (e.g. `General agreement`), or no resolver supplied | `[]` | `[]` (existing reset-to-empty behavior, unchanged) |
+
+The re-filled Value is still not locked — `showEditableChips`/`EutrAddValueAutocomplete` continue to
+accept user edits/removals/additions exactly as before (FR-025/FR-028). `MapFilePage.jsx` passes no
+`resolveAddDefaultChips`, so its Type-change handler keeps clearing chips to `[]` exactly as before —
+unaffected by this addendum.
 
 `EutrFileViewerDialog.jsx` (owner: `004-eutr-documents`) is reused for the AVAILABLE FILES "View"
 action, backed by the existing `GET /api/eutr-documents/get-file-by-idref` — unchanged.

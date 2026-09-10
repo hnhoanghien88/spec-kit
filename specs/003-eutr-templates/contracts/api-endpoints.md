@@ -360,6 +360,13 @@ HTTP 400, same `ValidationException` → 400 mapping this controller already use
   *before* the existing Save click — the request body shape, per-detail fields, and free-solo step
   auto-create resolution (Update 6) are all unchanged, and Edit step's free-solo combobox keeps
   allowing a repeated `StepId` as before. No contract change.
+- **Update 24 (2026-09-10)**: `TemplateBuilderPage.jsx`'s single-step Edit form (the "Step
+  Configuration" panel's inline `stepForm`, not the Add Root Group/Add Child Step dialogs) now also
+  blocks saving a step that would duplicate a `StepId`/name already used elsewhere in the current
+  tree — reverses Update 21's explicit carve-out that had left this path unrestricted. Like Update 21,
+  this only affects which `details[]` entries the frontend is able to construct *before* the existing
+  Save click; the request body shape, per-detail fields, and free-solo step auto-create resolution
+  (Update 6) are all unchanged. No contract change.
 - **(Superseded by Update 16)** ~~Update 15 (2026-07-15, bug fix — FR-049): in the ≥24h branch, the
   backend now ALSO copies every `eutr_template_references` row of the old `TemplateId` to the new
   `TemplateId`.~~ This copy behavior still exists, but it moved with the version-bump trigger to

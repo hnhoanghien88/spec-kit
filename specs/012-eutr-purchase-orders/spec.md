@@ -26,6 +26,33 @@
   — vì Decision 26 của 005-eutr-sales-orders coi đây là quyết định riêng của luồng đó, không bị thay đổi
   bởi cập nhật này.
 
+### Session 2026-09-10 (Update 2)
+
+- Input: Cập nhật 012-eutr-purchase-orders. Ở màn hình chi tiết (`PurchId/View`), khi úp tài liệu, popup
+  Add tài liệu có trường **Type** gồm các giá trị **PO**, **Vendor**, **Invoice**, **Delivery note** (các
+  loại tham chiếu đã có sẵn trong hệ thống, dùng chung với 004-eutr-documents). Khi người dùng đổi giá
+  trị Type, hệ thống MUST tự động điền lại dữ liệu vào trường **Value**: nếu Type là **PO**, **Invoice**,
+  hoặc **Delivery note** thì Value tự điền Purch Id của Purchase Order đang xem (dòng đang active trên
+  màn hình); nếu Type là **Vendor** thì Value tự điền Vendor Code của Purchase Order đang xem.
+- Change: Mở rộng hành vi tự điền của Update 1 (FR-024/025/026, vốn chỉ tự điền một lần khi popup mở với
+  Type mặc định = PO) thành tự điền lại Value **mỗi khi Type thay đổi** trong lúc popup đang mở, không
+  chỉ ở lần mở đầu tiên — xem FR-027/028/029 mới bổ sung bên dưới.
+- Decision: "Purch Id của dòng active" được hiểu là Purch Id của chính Purchase Order đang xem trên màn
+  hình `PurchId/View` (đã cố định theo `PurchId` trên URL — màn hình này không có bảng nhiều dòng/nhiều
+  Purchase Order để chọn "dòng active" khác, xem Assumptions), thống nhất với cách FR-024 đã dùng "Purch
+  Id đang xem" ở Update 1. Tương tự, "Vendor Code" là Vendor code của chính Purchase Order đang xem.
+- Decision: Nếu người dùng chọn một Type khác ngoài 4 giá trị trên (ví dụ "General agreement"), Value
+  KHÔNG bị tự điền/ghi đè — giữ nguyên hành vi nhập tay hiện có của popup dùng chung (004-eutr-documents)
+  cho các Type không thuộc nhóm PO-like/Vendor.
+- Decision: Việc tự điền lại Value theo Type mới sẽ **ghi đè** giá trị Value hiện tại (kể cả khi người
+  dùng đã tự nhập/đổi Value trước đó) — vì mục tiêu là luôn khớp đúng Type vừa chọn, tránh trường hợp
+  Value cũ (thuộc Type trước) bị hiểu nhầm là hợp lệ với Type mới. Value sau khi tự điền lại vẫn KHÔNG bị
+  khóa, người dùng vẫn có thể sửa tiếp trước khi lưu (giữ nguyên nguyên tắc "không khóa trường" của
+  FR-025).
+- Change: Phạm vi áp dụng vẫn giữ nguyên như Update 1 — CHỈ áp dụng cho popup Add tài liệu mở từ nút
+  Upload tại `PurchId/View` (012-eutr-purchase-orders). Màn hình Map File (005-eutr-sales-orders) không
+  bị ảnh hưởng bởi thay đổi này.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Xem danh sách EUTR Purchase Orders (Priority: P1)
@@ -139,6 +166,15 @@ trạng thái của step đó trong cây được cập nhật ngay mà không c
 11. **Given** popup Add tài liệu đã mở với Type = PO và Value = Purch Id đang xem (đã tự điền), **When**
     người dùng đổi Type và/hoặc Value sang giá trị khác trước khi lưu, **Then** hệ thống chấp nhận giá
     trị mới do người dùng chọn (hai trường không bị khóa).
+12. **Given** popup Add tài liệu đang mở tại `PurchId/View`, **When** người dùng đổi Type sang **Invoice**
+    hoặc **Delivery note**, **Then** trường Value tự động điền lại thành Purch Id của Purchase Order
+    đang xem.
+13. **Given** popup Add tài liệu đang mở tại `PurchId/View`, **When** người dùng đổi Type sang **Vendor**,
+    **Then** trường Value tự động điền lại thành Vendor Code của Purchase Order đang xem.
+14. **Given** popup Add tài liệu đang mở tại `PurchId/View` với Value đã tự điền theo một Type trước đó,
+    **When** người dùng tiếp tục đổi sang một Type khác trong nhóm PO/Vendor/Invoice/Delivery note,
+    **Then** Value được ghi đè bằng giá trị mặc định tương ứng Type mới (không giữ lại Value cũ), và
+    người dùng vẫn có thể sửa tiếp Value sau khi tự điền lại.
 
 ---
 
@@ -250,6 +286,22 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
 - **FR-026**: Việc tự điền theo FR-024/FR-025 CHỈ áp dụng cho nút Upload ở màn hình `PurchId/View`
   của 012-eutr-purchase-orders; hành vi Upload ở màn hình Map File (005-eutr-sales-orders) MUST giữ
   nguyên như hiện tại (không tự điền Type/Value).
+- **FR-027**: Trong popup Add tài liệu mở từ nút Upload ở màn hình `PurchId/View`, trường Type MUST cho
+  chọn (tối thiểu) các giá trị đã có sẵn trong hệ thống: **PO**, **Vendor**, **Invoice**, **Delivery
+  note** (cùng danh mục type tham chiếu dùng chung với 004-eutr-documents); mỗi khi người dùng đổi giá
+  trị Type sang một trong các giá trị này, hệ thống MUST tự động điền lại trường Value như sau: (a) Type
+  = PO, Invoice, hoặc Delivery note → Value = Purch Id của Purchase Order đang xem; (b) Type = Vendor →
+  Value = Vendor Code của Purchase Order đang xem.
+- **FR-028**: Việc tự điền lại Value theo FR-027 MUST thực hiện lại mỗi lần Type thay đổi (không chỉ ở
+  lần mở popup đầu tiên), và MUST ghi đè giá trị Value hiện tại (nếu có) bằng giá trị mặc định tương ứng
+  Type mới; Value sau khi tự điền lại vẫn KHÔNG bị khóa (disable) — người dùng vẫn có thể chỉnh sửa/xóa/
+  đổi sang giá trị khác trước khi lưu, giữ nguyên nguyên tắc không khóa trường như FR-025. Nếu người
+  dùng đổi Type sang một giá trị khác ngoài PO/Vendor/Invoice/Delivery note (ví dụ General agreement),
+  hệ thống KHÔNG tự điền/ghi đè Value — giữ nguyên hành vi nhập tay hiện có của popup dùng chung.
+- **FR-029**: Hành vi tự điền lại Value theo Type (FR-027/FR-028) CHỈ áp dụng cho popup Add tài liệu mở
+  từ nút Upload tại màn hình `PurchId/View` của 012-eutr-purchase-orders; hành vi Upload ở màn hình Map
+  File (005-eutr-sales-orders) MUST giữ nguyên như hiện tại (không tự điền lại Value khi đổi Type),
+  theo đúng phạm vi đã giới hạn ở FR-026.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -310,3 +362,12 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
   Add mở ra từ nút Upload của `PurchId/View`, không phải khóa cứng giá trị — người dùng vẫn có toàn
   quyền đổi sang Type/Value khác trước khi lưu, giữ đúng nguyên tắc "popup đầy đủ, không giới hạn"
   mà 005-eutr-sales-orders (Decision 26) đã chọn cho chính popup dùng chung này.
+- "Dòng active" nhắc tới ở yêu cầu tự điền lại Value theo Type (FR-027/028) là chính Purchase Order
+  đang được xem tại màn hình `PurchId/View` (đã cố định theo `PurchId` trên URL) — màn hình này không
+  có bảng nhiều dòng/nhiều Purchase Order để chọn "active" khác (khác với màn hình danh sách Overview,
+  nơi mỗi dòng có nút View riêng để điều hướng sang đúng `PurchId/View` tương ứng). Vì vậy "PO của dòng
+  active" và "Vendor Code của dòng active" đều quy về cùng một Purchase Order đang mở trên trang, nhất
+  quán với cách FR-024 đã dùng cụm "Purch Id đang xem".
+- Type = PO, Vendor, Invoice, Delivery note là các giá trị type tham chiếu đã tồn tại sẵn trong hệ
+  thống (dùng chung với 004-eutr-documents); tính năng này không yêu cầu tạo mới type nào, chỉ bổ sung
+  hành vi tự điền Value theo các type đã có.

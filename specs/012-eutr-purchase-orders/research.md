@@ -180,3 +180,50 @@ only fork of the dialog — rejected, duplicates the entire Add/Edit form for a 
 against Constitution Principle II/III's reuse-over-duplication guidance. (c) Fetching a fresh
 `refType=15` record specifically for the prefill instead of reusing `po` state — rejected as an
 unnecessary extra network call when the exact same data is already in memory.
+
+## Decision 10 — Re-fill Value on every Type change (spec Update 2, FR-027/FR-028/FR-029): replace the static `addDefaultChips` prop with a per-Type resolver function
+
+**Decision**: Replace `EutrDocumentsFormDialog`'s `addDefaultChips` prop (Decision 9, a static array
+used only at popup-open time) with a new optional function prop, `resolveAddDefaultChips(typeName)`,
+called from **two** places instead of one: (a) inside the existing `mode="add"` init effect, once the
+default Type (`addDefaultTypeName`) is applied, using `resolveAddDefaultChips(addDefaultTypeName)`;
+and (b) inside the existing `handleTypeChange` handler, on every subsequent Type change, using
+`resolveAddDefaultChips(newType?.name)` in place of the current unconditional `setChips([])`. When the
+resolver returns a non-empty array, those become the new chips (overwriting whatever was there,
+per spec Update 2's explicit "ghi đè" decision); when it returns `[]`/`undefined`/is not supplied, the
+existing reset-to-empty behavior is preserved exactly — so `MapFilePage.jsx` (which passes no
+resolver) is byte-for-byte unaffected, same as Decision 9.
+
+`PurchaseOrderViewPage.jsx` supplies the resolver as a small pure function closing over the page's
+already-loaded `po` (refType=15 item — `code`/`name` used directly as the PO/Invoice/Delivery note
+chip, same shape as Decision 9) and a new `{ code: po.orderAccount, name: vendorName }` object built
+from state the page already fetches for its header (`po.orderAccount`, and `vendorName` — the string
+already resolved by the existing Vendor-name-lookup effect, FR-003/FR-015) for the Vendor chip:
+
+```text
+resolveAddDefaultChips(typeName):
+  normalized = typeName.trim().toLowerCase()
+  if normalized in {"po", "invoice", "delivery note"}: return po ? [po] : []
+  if normalized == "vendor": return po?.orderAccount ? [{ code: po.orderAccount, name: vendorName }] : []
+  else: return []   # any other Type (e.g. "General agreement") — no auto-fill, matches FR-028
+```
+
+**Rationale**: A single resolver function (keyed by Type name, called from both the initial-open path
+and the change-handler path) is simpler than two separate mechanisms and guarantees the initial fill
+(Update 1) and the reactive re-fill (Update 2) can never drift apart — both always resolve the same
+way for the same Type name. Building the Vendor chip from state already on the page (no extra fetch)
+follows the same no-redundant-network-call reasoning as Decision 9; `vendorName` is already fetched
+by the existing FR-003/FR-015 effect regardless of whether the Upload dialog is open.
+
+**Alternatives considered**: (a) Keep `addDefaultChips` as-is and add a second, separate prop just for
+the per-Type map (e.g. `defaultChipsByTypeName`) — rejected as redundant: both the initial fill and
+the reactive re-fill need the exact same Type→chips mapping, so one resolver function serves both
+call sites and removes the risk of the two lists disagreeing. (b) Compute the Vendor chip via a fresh
+`refType=14` lookup at the moment Type is changed to "Vendor" instead of reusing `vendorName` state —
+rejected, `vendorName` is already resolved and kept in sync with `po` by the existing effect, so a
+second lookup would be a redundant network call for data already in memory. (c) Hardcode the four
+Type names (`PO`, `Vendor`, `Invoice`, `Delivery note`) as a shared constant imported from
+`EutrAddValueAutocomplete.jsx`'s existing `PO_LIKE_TYPE_NAMES`/`VENDOR_TYPE_NAME` sets — considered,
+but rejected to avoid coupling `PurchaseOrderViewPage.jsx` to that component's internal (non-exported)
+constants; the resolver duplicates just the three literal strings needed, which is simpler than
+exporting new internals from a component whose props contract is otherwise closed.

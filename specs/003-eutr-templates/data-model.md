@@ -206,15 +206,27 @@ approach).
   **anywhere** in the current template's client-side tree (any ParentId, not just the target one) is
   excluded from the dialog's selectable list — a `StepId` can now appear at most once per template
   when authored through these two dialogs. This is still a **UI-layer** rule only, not a database
-  `UNIQUE` constraint on `eutr_template_details.StepId`: **Edit step** (the existing per-node inline
+  `UNIQUE` constraint on `eutr_template_details.StepId`. ~~Edit step (the existing per-node inline
   edit, unrelated to these two dialogs) is explicitly unchanged and can still retarget a node to a
   `StepId` already used elsewhere in the same tree, so a template CAN still end up with a repeated
-  `StepId` if a user deliberately does that via Edit step. Update 21 also adds a duplicate-name guard
-  to the same dialogs' free-solo "Add new step" entry: a typed name matching (trimmed,
-  case-insensitive) an existing `eutr_steps` name or a `StepName` already in the current tree is
-  rejected client-side with an inline error instead of silently resolving to that step's existing
-  `StepId` (Update 6's resolve-by-name behavior is otherwise unchanged everywhere else, e.g. Edit
-  step's own free-solo combobox).
+  `StepId` if a user deliberately does that via Edit step.~~ **Superseded by Update 24**: Edit step
+  now enforces the identical whole-tree uniqueness rule — see below. Update 21 also adds a
+  duplicate-name guard to the same dialogs' free-solo "Add new step" entry: a typed name matching
+  (trimmed, case-insensitive) an existing `eutr_steps` name or a `StepName` already in the current
+  tree is rejected client-side with an inline error instead of silently resolving to that step's
+  existing `StepId`.
+- **Edit step now also blocks duplicates (Update 24, FR-087/FR-088)**: saving the per-node inline
+  edit form (`TemplateBuilderPage.jsx`'s `handleStepFormSave` → `useStepTree.editStep`) now compares
+  the form's current `stepName` (trimmed, case-insensitive) against every OTHER row's `stepName` in
+  the client-side tree (`stepItems`, excluding the row being edited by `_id`). Because every tree row
+  already carries a resolved `stepName` (whether from an existing `StepId` or a still-pending
+  free-solo name), this single name comparison catches both cases that used to be treated
+  differently: picking an existing step from the combobox that is already used elsewhere in the tree,
+  and typing a free-solo name that matches another row's name (resolved or pending). On a match, Save
+  is blocked with an inline error at the Step field and `editStep` is not called — the row stays in
+  edit mode. Comparing by `_id` (not by `StepId`) is what correctly allows a no-op save (keeping the
+  row's own current step unchanged never counts as a match against itself). This is the same
+  UI-layer-only rule as FR-076/FR-077 — no database `UNIQUE` constraint added.
 - **Clone (new, Update 15)**: the backend re-indexes the source template's DB-Id-based detail tree
   (as returned by `GetByIdWithDetailsAsync`) into the same 1-based sequential-position `ParentId`
   convention the frontend already sends on every normal Save, then reuses the existing

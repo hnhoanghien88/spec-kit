@@ -48,3 +48,15 @@
   gốc, đã ghi lại thành assumption trong spec.
 - Re-validated toàn bộ checklist: tất cả mục vẫn PASS, không phát sinh chi tiết triển khai
   (implementation detail) hay yêu cầu không kiểm chứng được.
+
+### Update 2 (2026-09-10) — Tự điền lại Value mỗi khi đổi Type ở popup Upload (PurchId/View)
+
+- Bổ sung FR-027/FR-028/FR-029 và 3 acceptance scenario (User Story 2, #12-14): mở rộng tự điền của
+  Update 1 (chỉ áp dụng lần mở popup đầu tiên) thành tự điền lại Value mỗi khi Type đổi, theo nhóm
+  PO/Invoice/Delivery note → Purch Id, và Vendor → Vendor Code; các Type khác không bị ghi đè.
+- "Dòng active" được làm rõ trong Assumptions là chính Purchase Order đang xem tại `PurchId/View`
+  (không có khái niệm nhiều dòng/nhiều PO để chọn trong chính màn hình này) — không cần
+  [NEEDS CLARIFICATION] vì đây là suy luận duy nhất hợp lý khớp với FR-024 gốc và cấu trúc màn hình
+  hiện có (đã xác nhận qua code thực tế: `PurchaseOrderViewPage.jsx` là trang chi tiết 1 PO cố định).
+- Re-validated toàn bộ checklist: tất cả mục vẫn PASS, không phát sinh chi tiết triển khai hay yêu cầu
+  không kiểm chứng được.

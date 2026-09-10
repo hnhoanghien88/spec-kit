@@ -944,8 +944,40 @@ review" and "verified end-to-end through the UI."
    still only pending in the client-side tree (`stepId: null`), not yet written to `eutr_steps`
 8. Click template **Save**; select an existing step already in the tree, click its **Edit** icon
    (pencil, not Root Group/Child Step) and change it to a step used elsewhere in the tree (e.g.
-   retarget it to "Forest"'s `StepId`); **Expected**: this single-step Edit form still allows it with
-   no error — Edit step (FR-008b) is explicitly unaffected by FR-076/FR-077, unlike step 2-5 above
+   retarget it to "Forest"'s `StepId`); ~~**Expected**: this single-step Edit form still allows it
+   with no error — Edit step (FR-008b) is explicitly unaffected by FR-076/FR-077, unlike step 2-5
+   above~~ **superseded (Update 24)**: this is now BLOCKED — see Scenario 27, which reverses this
+   step's expectation
+
+### Scenario 27: Block Duplicate Step on Edit Step (FR-087, FR-088, Update 24)
+
+**Prerequisite**: a Draft template whose tree already has a root step "Forest" and, under a different
+parent (or also as a root), a step "Water" — e.g. built via Scenario 25's steps 1-3.
+
+1. Select "Water" in the tree, click its **Edit** icon (pencil — the single-step inline edit form in
+   the right-hand "Step Configuration" panel, NOT the Root Group/Child Step bulk dialogs); in the
+   **Step** combobox, select "Forest" from the dropdown (an existing option, already present
+   elsewhere in the tree); **Expected**: an inline error appears on the Step field (e.g. "This step
+   already exists in the template."), and the **Save step** button is disabled — clicking it (if
+   somehow still enabled) does nothing (FR-087)
+2. Without saving, re-select "Water" (the row's own original step) in the same combobox — i.e. leave
+   the value unchanged from what it was before opening Edit; **Expected**: no error, **Save step** is
+   enabled, and clicking it succeeds with no change to the tree (excluding the row being edited from
+   the duplicate check means a no-op save is never blocked)
+3. In the Step combobox, type the free-solo name `forest` (lowercase) or ` Forest ` (extra
+   whitespace) instead of selecting from the dropdown; **Expected**: still blocked with the same
+   inline error (case-insensitive, trimmed match against "Forest"'s name elsewhere in the tree)
+   (FR-088)
+4. Type a genuinely new name not used anywhere in the tree or in the EUTR steps master list (e.g.
+   "Coastal check"); **Expected**: no error, **Save step** enabled, click it; **Expected**: "Water"'s
+   row now shows "Coastal check" with `stepId: null` pending — click template **Save**; **Expected**:
+   a new `eutr_steps` row named "Coastal check" is created and its `StepId` is written to this row's
+   `eutr_template_details` record, consistent with the existing free-solo auto-create behavior
+   (FR-007a) — this confirms FR-088's block only fires on an actual collision, not on every free-solo
+   entry
+5. Repeat step 1 but this time open **Edit** on "Forest" itself (not "Water") and try to retarget it
+   to "Water"'s `StepId`; **Expected**: same block — the rule is symmetric regardless of which row is
+   being edited or in which order the two steps were originally added
 
 ### Scenario 26: Default Requirement Type/Take From on Add Root Group / Add Child Step (FR-078 to FR-080, Update 22)
 
