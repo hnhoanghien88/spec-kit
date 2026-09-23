@@ -781,13 +781,18 @@ dụng, giữ lại chỉ để tham khảo lịch sử:
   header và step tree được ghi đè trực tiếp lên bản ghi hiện có.~~
 
 **(Update 16)** VersionId chỉ tăng đúng 1 thời điểm duy nhất trong toàn bộ vòng đời template: khi
-người dùng xác nhận **Request change** trên TemplateListPage để chuyển template từ Status=Approved
-về Status=Draft (xem User Story 9, FR-060) — không còn liên quan gì đến CreatedDate/24 giờ. Nếu
-template đang Status=**Approved**, toàn bộ TemplateBuilderPage (header + step tree) MUST hiển thị
-ở chế độ **read-only** — ẩn/disabled nút Save, Add step, Edit step, Delete step, Root Group, Child
-Step, kèm banner cảnh báo; người dùng phải nhấn **Request change** trên TemplateListPage (xem User
-Story 9) để đưa template về Draft trước khi có thể chỉnh sửa tiếp (xem FR-061). Grid chỉ hiển thị
-phiên bản mới nhất (IsHide = 0).
+người dùng xác nhận **Request change** trên TemplateListPage để chuyển template từ Status=Public
+D365 (đổi tên từ "Approved" ở Update 25) về Status=Draft (xem User Story 9, FR-060) — không còn
+liên quan gì đến CreatedDate/24 giờ. **(Update 25; sửa lại ở Update 26)** ~~Khi Status đang Draft,
+ngoài nút **Save template** hiện có, màn hình còn có nút **Save template & Public D365**~~ Từ Update
+26, nút **Save template** đã bị ẩn hoàn toàn (FR-095) — khi Status đang Draft, màn hình chỉ còn nút
+**Save template & Public D365** để vừa lưu vừa công bố lên D365 trong cùng một thao tác (xem User
+Story 8, FR-090 đến FR-098). Nếu template đang Status=**Public D365**, toàn bộ TemplateBuilderPage
+(header + step tree) MUST hiển thị ở chế độ **read-only** — ẩn/disabled nút **Save template & Public
+D365** (nút **Save template** đã ẩn sẵn từ Update 26, không còn phụ thuộc Status), Add step, Edit
+step, Delete step, Root Group, Child Step, kèm banner cảnh báo; người dùng phải nhấn **Request
+change** trên TemplateListPage (xem User Story 9) để đưa template về Draft trước khi có thể chỉnh
+sửa tiếp (xem FR-061). Grid chỉ hiển thị phiên bản mới nhất (IsHide = 0).
 
 **Why this priority**: Chỉnh sửa template là nhu cầu tất yếu khi quy trình EUTR thay đổi, và cơ
 chế versioning giúp giữ lại lịch sử thay đổi để truy vết — đồng thời tránh tạo quá nhiều version
@@ -796,8 +801,8 @@ rác khi người dùng sửa nhanh liên tiếp trong thời gian ngắn sau kh
 **Independent Test**: Nhấn Edit trên một template đang Draft, xác nhận Vendor hiển thị đúng từ API
 reference (refType=13) và Alert for hiển thị đúng group hiện tại (từ `GET /api/group-email`), thay
 đổi step (edit step đã có + thêm/xóa), lưu, và xác nhận dữ liệu được cập nhật đè trực tiếp lên cùng
-dòng (Id/VersionId không đổi). Mở Edit trên một template đang Approved và xác nhận toàn bộ màn hình
-hiển thị ở chế độ read-only. Cây bước đúng với thay đổi, ParentId đúng trong DB.
+dòng (Id/VersionId không đổi). Mở Edit trên một template đang Public D365 và xác nhận toàn bộ màn
+hình hiển thị ở chế độ read-only. Cây bước đúng với thay đổi, ParentId đúng trong DB.
 
 **Acceptance Scenarios**:
 
@@ -817,10 +822,11 @@ hiển thị ở chế độ read-only. Cây bước đúng với thay đổi, P
    MUST cập nhật đè trực tiếp lên dòng hiện tại — cùng Id, cùng VersionId=1, CreatedDate không đổi,
    KHÔNG tạo dòng mới, KHÔNG set IsHide. Lặp lại Edit + Save nhiều lần liên tiếp vẫn luôn đè lên
    cùng dòng đó, không phụ thuộc thời gian đã trôi qua kể từ lần tạo/sửa trước.
-1d. **(Update 16)** **Given** template "T004" đang Status=**Approved**, **When** nhấn icon Edit,
-   **Then** TemplateBuilderPage MỞ Ở CHẾ ĐỘ READ-ONLY (banner cảnh báo, toàn bộ trường header và
-   thao tác trên step tree bị disabled) — người dùng KHÔNG thể Save bất kỳ thay đổi nào cho đến khi
-   dùng Request change (User Story 9) để đưa template về Draft.
+1d. **(Update 16; đổi tên Status ở Update 25)** **Given** template "T004" đang Status=**Public
+   D365**, **When** nhấn icon Edit, **Then** TemplateBuilderPage MỞ Ở CHẾ ĐỘ READ-ONLY (banner cảnh
+   báo, toàn bộ trường header và thao tác trên step tree bị disabled, cả 2 nút Save template và Save
+   template & Public D365 đều ẩn/disabled) — người dùng KHÔNG thể Save bất kỳ thay đổi nào cho đến
+   khi dùng Request change (User Story 9) để đưa template về Draft.
 2. **Given** đang edit template (Status=Draft), **When** thêm một step con mới vào cây, lưu,
    **Then** dòng hiện tại (cùng Id/VersionId) chứa toàn bộ step cũ cộng thêm step mới trong
    eutr_template_details với ParentId chính xác.
@@ -921,10 +927,10 @@ hiển thị ở chế độ read-only. Cây bước đúng với thay đổi, P
     vào một step ở cấp cha/con khác (không cùng ParentId) thay vì thả giữa các step cùng cấp,
     **Then** hệ thống KHÔNG thay đổi ParentId của step đó — thao tác bị bỏ qua (không có gì xảy ra)
     thay vì tạo quan hệ cha-con mới.
-18. **(Update 17)** **Given** một template đang Status=**Approved** (TemplateBuilderPage đang
-    read-only theo FR-061), **When** người dùng cố kéo thả một step trong cây, **Then** thao tác kéo
-    thả bị vô hiệu hóa — cây bước không đổi thứ tự, giống hệt việc nút Move Up/Move Down cũng bị
-    disabled ở trạng thái này.
+18. **(Update 17; đổi tên Status ở Update 25)** **Given** một template đang Status=**Public D365**
+    (TemplateBuilderPage đang read-only theo FR-061), **When** người dùng cố kéo thả một step trong
+    cây, **Then** thao tác kéo thả bị vô hiệu hóa — cây bước không đổi thứ tự, giống hệt việc nút
+    Move Up/Move Down cũng bị disabled ở trạng thái này.
 19. **(Update 24)** **Given** đang edit template (Draft) có step "Forest" (StepId=5) là step gốc và
     step "Water" (StepId=9) là con của một step khác, **When** nhấn Edit trên step "Water" và chọn
     "Forest" từ combobox Step rồi nhấn Save (của form inline edit), **Then** hệ thống hiển thị lỗi
@@ -1137,116 +1143,154 @@ riêng, cây bước và mapping vendor giống hệt template nguồn.
 
 ---
 
-### User Story 8 - Approve template (Priority: P2, Update 16)
+### User Story 8 - Save template & Public D365 (Priority: P2, Update 16; **chuyển từ nút Approve trên TemplateListPage sang nút trên TemplateBuilderPage ở Update 25**; **Update 26: ẩn nút Save template độc lập, thêm bước xóa D365 trước khi push**)
 
-Người dùng chọn (tick checkbox) đúng 1 template đang ở Status **Draft** trong TemplateListPage, sau
-đó nhấn nút **Approve** trên toolbar (cạnh nút Create Template). Hệ thống hiển thị hộp thoại xác
-nhận Yes/No. Khi chọn Yes, hệ thống trước tiên đồng bộ (push) dữ liệu của template đó (Code, Name,
-và VendorCode của từng mapping vendor đang hiệu lực hôm nay — hoặc 1 bản ghi VendorCode rỗng nếu
-không có mapping nào) lên D365 (Update 23, xem FR-081 đến FR-086); chỉ khi toàn bộ lệnh gọi D365 đó
-thành công, hệ thống mới cập nhật Status của dòng thành **Approved** ngay lập tức (không tạo dòng
-mới, không đổi VersionId); danh sách tự làm mới để hiển thị Chip Status mới. Nếu D365 lỗi, Status
-KHÔNG đổi và người dùng thấy thông báo lỗi thay vì snackbar thành công. Khi chọn No, hộp thoại đóng
-lại và không có gì thay đổi (không gọi D365). Sau khi Approved, template chuyển sang chế độ
-read-only trên TemplateBuilderPage — muốn chỉnh sửa tiếp phải dùng Request change (xem User Story
-9).
+**(Superseded by Update 25)** ~~Người dùng chọn (tick checkbox) đúng 1 template đang ở Status
+**Draft** trong TemplateListPage, sau đó nhấn nút **Approve** trên toolbar (cạnh nút Create
+Template).~~ Nút **Approve** trên toolbar TemplateListPage đã bị **loại bỏ hoàn toàn** kể từ Update
+25 (xem FR-089). Thay vào đó, khi đang mở một template Status=**Draft** ở màn hình
+**TemplateBuilderPage** (`/eutr/templates/edit/:id`), người dùng nhấn nút **Save template & Public
+D365** — **(Superseded by Update 26)** ~~đặt ngay cạnh nút **Save template**~~ nút Save DUY NHẤT còn
+hiển thị trên màn hình kể từ Update 26 (nút **Save template** đã bị ẩn hoàn toàn — xem FR-095) (xem
+FR-090). Hệ thống hiển thị hộp thoại xác nhận Yes/No. Khi chọn Yes, hệ thống thực hiện tuần tự: (1)
+lưu đè header + step tree hiện tại lên cùng dòng, giống hệt logic của nút **Save template** (FR-057);
+(2) chỉ khi bước (1) thành công, **(Update 26)** gọi D365 xóa bản ghi ERP-side hiện có của template
+đó theo Code (`DeleteTemplateFromDynamicsAsync`, xem FR-096); (3) chỉ khi bước (2) thành công, đồng
+bộ (push) dữ liệu của template đó (Code, Name, và VendorCode của từng mapping vendor đang hiệu lực
+hôm nay — hoặc 1 bản ghi VendorCode rỗng nếu không có mapping nào) lên D365, tái sử dụng nguyên logic
+FR-083/FR-084 của Approve cũ; chỉ khi lệnh gọi D365 push đó thành công, hệ thống mới cập nhật Status
+của dòng thành **Public D365** ngay lập tức (không tạo dòng mới, không đổi VersionId), đóng dialog,
+hiển thị snackbar thành công, và TemplateBuilderPage chuyển sang chế độ read-only (FR-061). Nếu bước
+(1) thất bại validate, hệ thống dừng lại ngay tại đó (không gọi D365, không đổi Status) và báo lỗi
+giống hệt Save template. Nếu bước (2) (xóa D365, Update 26) hoặc bước (3) (push D365) lỗi, thay đổi
+header/step tree ở bước (1) VẪN được giữ nguyên (đã lưu), nhưng Status KHÔNG đổi (vẫn Draft) và
+người dùng thấy thông báo lỗi thay vì snackbar thành công — có thể nhấn lại nút này để thử lại toàn
+bộ chuỗi xóa→push D365 mà không mất dữ liệu đã lưu. Khi chọn No, hộp thoại đóng lại và không có gì
+thay đổi (không lưu, không gọi D365). Sau khi Public D365, template chuyển sang chế độ read-only trên
+TemplateBuilderPage — muốn chỉnh sửa tiếp phải dùng Request change (xem User Story 9).
 
-**Why this priority**: Approve đánh dấu một template đã được rà soát và sẵn sàng sử dụng chính
+**Why this priority**: Public D365 đánh dấu một template đã được rà soát và sẵn sàng sử dụng chính
 thức — cần thiết để phân biệt template đang nháp (Draft, có thể còn thay đổi) với template đã chốt
-(Approved, không còn bị sửa nhầm).
+(Public D365, không còn bị sửa nhầm). Gộp vào nút Save template & Public D365 giúp người dùng lưu
+thay đổi mới nhất và công bố lên D365 trong cùng một thao tác, tránh trường hợp Approve một bản ghi
+cũ chưa kịp Save.
 
-**Independent Test**: Chọn 1 template Draft, nhấn Approve, xác nhận Yes, kiểm tra Chip Status đổi
-thành Approved và mở TemplateBuilderPage thấy toàn bộ màn hình ở chế độ read-only.
+**Independent Test**: Mở Edit một template Draft, chỉnh sửa header/step tree, nhấn Save template &
+Public D365, xác nhận Yes, kiểm tra: dữ liệu vừa chỉnh sửa đã được lưu, Chip Status đổi thành Public
+D365, và mở lại TemplateBuilderPage thấy toàn bộ màn hình ở chế độ read-only.
 
 **Acceptance Scenarios**:
 
-1. **Given** một template đang Status=Draft, **When** tick chọn dòng đó rồi nhấn nút **Approve**,
-   **Then** hệ thống hiển thị hộp thoại xác nhận Yes/No.
-2. **Given** hộp thoại xác nhận Approve đang hiện, **When** chọn **Yes**, **Then** Status của
-   template chuyển thành **Approved**, VersionId và Id giữ nguyên, danh sách tự làm mới hiển thị
-   Chip Status="Approved".
-3. **Given** hộp thoại xác nhận Approve đang hiện, **When** chọn **No**, **Then** hộp thoại đóng
-   lại, Status của template KHÔNG thay đổi (vẫn Draft).
-4. **Given** chưa tick chọn dòng nào, hoặc đã tick chọn nhiều hơn 1 dòng, hoặc dòng đã chọn đang
-   Status=Approved, **When** xem toolbar, **Then** nút Approve ở trạng thái disabled.
-5. **Given** một template vừa được Approve, **When** nhấn icon Edit để mở TemplateBuilderPage,
-   **Then** toàn bộ màn hình (header + step tree) hiển thị ở chế độ read-only kèm banner cảnh báo,
-   không có nút Save/Add step/Edit step/Delete step nào hoạt động được, NGOẠI TRỪ checkbox **Set as
-   default template** vẫn có thể tick/bỏ tick được (Update 18, xem FR-068).
-6. **(Update 18)** **Given** một template đang Status=Approved, đang mở ở TemplateBuilderPage,
-   **When** tick (hoặc bỏ tick) checkbox **Set as default template**, **Then** hệ thống hiển thị
-   `ConfirmDialog` Yes/No; chọn **Yes** cập nhật ngay cột IsDefault của template (áp dụng ràng buộc
-   chỉ 1 default toàn cục — FR-040) mà KHÔNG cần nhấn Save và KHÔNG ảnh hưởng Name/Alert
-   for/step tree/Status/VersionId; chọn **No** đóng dialog và checkbox giữ nguyên giá trị cũ.
-7. **(Update 23)** **Given** hộp thoại xác nhận Approve đang hiện cho template "T004" (có 2 mapping
-   vendor đang hiệu lực hôm nay), **When** chọn **Yes** và cả 2 lệnh gọi D365 push đều thành công,
-   **Then** hệ thống push đúng 2 bản ghi lên D365 (mỗi bản ghi mang Code/Name của T004 và VendorCode
-   của từng mapping), sau đó mới cập nhật Status="Approved", đóng dialog, làm mới danh sách, hiển
-   thị snackbar thành công.
-8. **(Update 23)** **Given** hộp thoại xác nhận Approve đang hiện cho một template KHÔNG có mapping
-   vendor nào đang hiệu lực hôm nay, **When** chọn **Yes** và lệnh gọi D365 thành công, **Then**
-   hệ thống push đúng 1 bản ghi lên D365 với VendorCode rỗng, rồi mới cập nhật Status="Approved".
-9. **(Update 23)** **Given** hộp thoại xác nhận Approve đang hiện, **When** chọn **Yes** nhưng một
-   trong các lệnh gọi D365 push bị lỗi (mất mạng/D365 trả lỗi), **Then** hệ thống KHÔNG cập nhật
-   Status (vẫn Draft), KHÔNG tạo/đổi dữ liệu nào khác trên template, đóng hoặc giữ dialog kèm thông
-   báo lỗi rõ ràng thay vì snackbar thành công — các lệnh gọi D365 đã gửi thành công trước lỗi đó
-   (nếu có, khi push nhiều mapping) KHÔNG bị thu hồi (không rollback phía D365).
+1. **(Update 25; sửa lại ở Update 26)** **Given** một template đang Status=Draft đang mở ở
+   TemplateBuilderPage, **When** xem khu vực nút Save, **Then** CHỈ thấy đúng 1 nút **Save template &
+   Public D365** khả dụng — nút **Save template** KHÔNG còn hiển thị (ẩn hoàn toàn, xem FR-095).
+2. **(Update 25)** **Given** template đang Status=Draft, **When** nhấn **Save template & Public
+   D365**, **Then** hệ thống hiển thị hộp thoại xác nhận Yes/No.
+3. **(Update 25)** **Given** hộp thoại xác nhận đang hiện, **When** chọn **Yes** và cả bước lưu lẫn
+   bước push D365 đều thành công, **Then** header/step tree được lưu đè lên dòng hiện tại (cùng Id,
+   cùng VersionId), Status chuyển thành **Public D365**, TemplateBuilderPage chuyển sang read-only,
+   và danh sách TemplateListPage (khi quay lại) hiển thị Chip Status="Public D365".
+4. **(Update 25)** **Given** hộp thoại xác nhận đang hiện, **When** chọn **No**, **Then** hộp thoại
+   đóng lại, KHÔNG có gì được lưu, Status vẫn Draft.
+5. **(Update 25)** **Given** template đang Status=**Public D365**, **When** mở TemplateBuilderPage
+   qua icon Edit, **Then** toàn bộ màn hình (header + step tree) hiển thị ở chế độ read-only kèm
+   banner cảnh báo, nút **Save template** VÀ **Save template & Public D365** đều ẩn/disabled, NGOẠI
+   TRỪ checkbox **Set as default template** vẫn có thể tick/bỏ tick được (Update 18, xem FR-068).
+6. **(Update 18; đổi tên Status ở Update 25)** **Given** một template đang Status=Public D365, đang
+   mở ở TemplateBuilderPage, **When** tick (hoặc bỏ tick) checkbox **Set as default template**,
+   **Then** hệ thống hiển thị `ConfirmDialog` Yes/No; chọn **Yes** cập nhật ngay cột IsDefault của
+   template (áp dụng ràng buộc chỉ 1 default toàn cục — FR-040) mà KHÔNG cần nhấn nút Save nào và
+   KHÔNG ảnh hưởng Name/Alert for/step tree/Status/VersionId; chọn **No** đóng dialog và checkbox
+   giữ nguyên giá trị cũ.
+7. **(Update 23; chuyển sang nút Save template & Public D365 ở Update 25)** **Given** hộp thoại xác
+   nhận Save template & Public D365 đang hiện cho template "T004" (có 2 mapping vendor đang hiệu lực
+   hôm nay), **When** chọn **Yes**, bước lưu header/step tree thành công, và cả 2 lệnh gọi D365 push
+   đều thành công, **Then** hệ thống push đúng 2 bản ghi lên D365 (mỗi bản ghi mang Code/Name của
+   T004 và VendorCode của từng mapping), sau đó mới cập nhật Status="Public D365", đóng dialog, làm
+   mới màn hình, hiển thị snackbar thành công.
+8. **(Update 23; chuyển sang nút Save template & Public D365 ở Update 25)** **Given** hộp thoại xác
+   nhận đang hiện cho một template KHÔNG có mapping vendor nào đang hiệu lực hôm nay, **When** chọn
+   **Yes** và lệnh gọi D365 thành công, **Then** hệ thống push đúng 1 bản ghi lên D365 với VendorCode
+   rỗng, rồi mới cập nhật Status="Public D365".
+9. **(Update 23; chuyển sang nút Save template & Public D365 ở Update 25)** **Given** hộp thoại xác
+   nhận đang hiện, **When** chọn **Yes**, bước lưu header/step tree thành công, nhưng một trong các
+   lệnh gọi D365 push bị lỗi (mất mạng/D365 trả lỗi), **Then** hệ thống giữ nguyên thay đổi
+   header/step tree đã lưu ở bước (1), KHÔNG cập nhật Status (vẫn Draft), hiển thị thông báo lỗi rõ
+   ràng thay vì snackbar thành công — các lệnh gọi D365 đã gửi thành công trước lỗi đó (nếu có, khi
+   push nhiều mapping) KHÔNG bị thu hồi (không rollback phía D365).
+10. **(Update 25)** **Given** template đang Status=Draft, **When** bước lưu header/step tree (ví dụ
+    Name để trống, hoặc trùng StepId theo FR-087/FR-088) thất bại validate ngay khi nhấn Yes ở
+    Save template & Public D365, **Then** hệ thống dừng lại ngay, KHÔNG gọi D365, KHÔNG đổi Status,
+    hiển thị lỗi validate giống hệt khi dùng nút Save template thông thường.
+11. **(Update 26)** **Given** hộp thoại xác nhận Save template & Public D365 đang hiện, **When** chọn
+    **Yes**, bước lưu header/step tree thành công, nhưng lệnh gọi D365 xóa bản ghi theo Code
+    (`DeleteTemplateFromDynamicsAsync`) bị lỗi (mất mạng/D365 trả lỗi), **Then** hệ thống dừng lại
+    ngay: KHÔNG gọi lệnh push D365 (bước kế tiếp), KHÔNG đổi Status (vẫn Draft) — thay đổi
+    header/step tree đã lưu ở bước (1) VẪN được giữ nguyên — và hiển thị thông báo lỗi rõ ràng thay
+    vì snackbar thành công. Người dùng có thể nhấn lại nút này để thử lại toàn bộ chuỗi xóa→push D365.
+12. **(Update 26)** **Given** một template đang Status=Draft, **When** mở TemplateBuilderPage,
+    **Then** KHÔNG có nút **Save template** nào hiển thị trên màn hình dưới bất kỳ hình thức nào
+    (không ẩn theo điều kiện, mà loại bỏ hẳn khỏi giao diện) — chỉ có nút **Save template & Public
+    D365**.
 
 ---
 
-### User Story 9 - Request change (đưa template Approved về Draft để chỉnh sửa) (Priority: P2, Update 16)
+### User Story 9 - Request change (đưa template Public D365 về Draft để chỉnh sửa) (Priority: P2, Update 16; **tên Status đổi từ "Approved" thành "Public D365" ở Update 25**)
 
-Người dùng chọn (tick checkbox) đúng 1 template đang ở Status **Approved**, nhấn nút **Request
-change** trên toolbar (cạnh nút Create Template). Hệ thống hiển thị hộp thoại xác nhận Yes/No. Khi
-chọn Yes, hệ thống trước tiên gọi D365 xóa bản ghi ERP-side hiện có của template đó theo Code
-(Update 23, xem FR-081/FR-082); chỉ khi lệnh gọi đó thành công, hệ thống mới ngay lập tức tạo một
-phiên bản mới: một dòng mới trong eutr_templates với cùng Code, VersionId tăng 1, Status=Draft, sao
-chép toàn bộ cây bước (`eutr_template_details`) và toàn bộ mapping vendor
-(`eutr_template_references`) từ dòng Approved cũ sang dòng mới; dòng Approved cũ được đánh dấu
-IsHide=1 (giữ nguyên trong database làm bản ghi lịch sử, không xóa). Danh sách tự làm mới, hiển thị
-dòng mới (Draft, VersionId cao hơn) — đây là dòng người dùng có thể Edit tiếp ở TemplateBuilderPage.
-Nếu lệnh gọi D365 lỗi, hệ thống KHÔNG tạo dòng mới, KHÔNG đổi gì, và hiển thị lỗi cho người dùng. Khi
-chọn No, hộp thoại đóng lại (không gọi D365), template vẫn giữ nguyên Approved, không có gì thay
-đổi.
+Người dùng chọn (tick checkbox) đúng 1 template đang ở Status **Public D365**, nhấn nút **Request
+change** trên toolbar (cạnh nút Create Template — từ Update 25, đây là hành động cấp-dòng DUY NHẤT
+còn lại trên toolbar bên cạnh Create Template, sau khi nút Approve bị loại bỏ, xem FR-089). Hệ thống
+hiển thị hộp thoại xác nhận Yes/No. Khi chọn Yes, hệ thống trước tiên gọi D365 xóa bản ghi ERP-side
+hiện có của template đó theo Code (Update 23, xem FR-081/FR-082); chỉ khi lệnh gọi đó thành công, hệ
+thống mới ngay lập tức tạo một phiên bản mới: một dòng mới trong eutr_templates với cùng Code,
+VersionId tăng 1, Status=Draft, sao chép toàn bộ cây bước (`eutr_template_details`) và toàn bộ
+mapping vendor (`eutr_template_references`) từ dòng Public D365 cũ sang dòng mới; dòng Public D365
+cũ được đánh dấu IsHide=1 (giữ nguyên trong database làm bản ghi lịch sử, không xóa). Danh sách tự
+làm mới, hiển thị dòng mới (Draft, VersionId cao hơn) — đây là dòng người dùng có thể Edit tiếp ở
+TemplateBuilderPage. Nếu lệnh gọi D365 lỗi, hệ thống KHÔNG tạo dòng mới, KHÔNG đổi gì, và hiển thị
+lỗi cho người dùng. Khi chọn No, hộp thoại đóng lại (không gọi D365), template vẫn giữ nguyên Public
+D365, không có gì thay đổi.
 
-**Why this priority**: Đây là cơ chế duy nhất để chỉnh sửa lại một template đã Approved, đồng thời
-là thời điểm duy nhất hệ thống tăng VersionId — thay thế hoàn toàn cơ chế versioning dựa trên 24
-giờ trước đây, giúp lịch sử phiên bản gắn liền với vòng đời phê duyệt thay vì mốc thời gian tùy ý.
+**Why this priority**: Đây là cơ chế duy nhất để chỉnh sửa lại một template đã Public D365, đồng
+thời là thời điểm duy nhất hệ thống tăng VersionId — thay thế hoàn toàn cơ chế versioning dựa trên
+24 giờ trước đây, giúp lịch sử phiên bản gắn liền với vòng đời phê duyệt thay vì mốc thời gian tùy
+ý.
 
-**Independent Test**: Approve một template, sau đó chọn dòng đó và nhấn Request change, xác nhận
-Yes, kiểm tra: dòng Approved cũ vẫn còn trong database với IsHide=1, một dòng mới xuất hiện trên
-danh sách với cùng Code, VersionId cao hơn, Status=Draft, và cây bước/vendor mapping giống hệt dòng
-cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thường (không còn read-only).
+**Independent Test**: Đưa một template lên Public D365 (nhấn Save template & Public D365 ở
+TemplateBuilderPage — User Story 8), sau đó chọn dòng đó và nhấn Request change, xác nhận Yes, kiểm
+tra: dòng Public D365 cũ vẫn còn trong database với IsHide=1, một dòng mới xuất hiện trên danh sách
+với cùng Code, VersionId cao hơn, Status=Draft, và cây bước/vendor mapping giống hệt dòng cũ; mở
+Edit trên dòng mới xác nhận có thể chỉnh sửa bình thường (không còn read-only).
 
 **Acceptance Scenarios**:
 
-1. **Given** một template "T003" đang Status=Approved, VersionId=1, có 4 step và 2 mapping vendor,
-   **When** tick chọn dòng đó rồi nhấn nút **Request change**, **Then** hệ thống hiển thị hộp thoại
-   xác nhận Yes/No.
+1. **Given** một template "T003" đang Status=Public D365, VersionId=1, có 4 step và 2 mapping
+   vendor, **When** tick chọn dòng đó rồi nhấn nút **Request change**, **Then** hệ thống hiển thị
+   hộp thoại xác nhận Yes/No.
 2. **Given** hộp thoại xác nhận Request change đang hiện, **When** chọn **Yes**, **Then** hệ thống
    ngay lập tức tạo một dòng mới trong eutr_templates (cùng Code, VersionId=2, Status=Draft,
    IsHide=0), sao chép đúng 4 step từ eutr_template_details và đúng 2 mapping từ
    eutr_template_references của dòng cũ sang dòng mới, và cập nhật dòng cũ (VersionId=1) thành
    IsHide=1 — dòng cũ vẫn còn nguyên trong database, không bị xóa.
 3. **Given** hộp thoại xác nhận Request change đang hiện, **When** chọn **No**, **Then** hộp thoại
-   đóng lại, template "T003" vẫn giữ nguyên Status=Approved, VersionId=1, KHÔNG có dòng mới nào
+   đóng lại, template "T003" vẫn giữ nguyên Status=Public D365, VersionId=1, KHÔNG có dòng mới nào
    được tạo.
 4. **Given** chưa tick chọn dòng nào, hoặc đã chọn nhiều hơn 1 dòng, hoặc dòng đã chọn đang
    Status=Draft, **When** xem toolbar, **Then** nút Request change ở trạng thái disabled.
 5. **Given** Request change vừa tạo dòng mới (Draft, VersionId=2), **When** nhấn icon Edit trên
    dòng đó, **Then** TemplateBuilderPage mở ở chế độ chỉnh sửa bình thường (không read-only), Save
-   cập nhật đè trực tiếp lên dòng VersionId=2 này (không tạo thêm dòng mới nào nữa cho đến lần
-   Approve/Request change tiếp theo).
-6. **Given** dòng Approved cũ (VersionId=1, IsHide=1) sau khi Request change, **When** truy vấn
+   template cập nhật đè trực tiếp lên dòng VersionId=2 này (không tạo thêm dòng mới nào nữa cho đến
+   lần Save template & Public D365/Request change tiếp theo).
+6. **Given** dòng Public D365 cũ (VersionId=1, IsHide=1) sau khi Request change, **When** truy vấn
    trực tiếp database, **Then** dòng đó vẫn còn đầy đủ dữ liệu step tree/vendor mapping tại thời
-   điểm Approved (không bị ghi đè hay xóa) — phục vụ mục đích truy vết lịch sử.
+   điểm Public D365 (không bị ghi đè hay xóa) — phục vụ mục đích truy vết lịch sử.
 7. **(Update 23)** **Given** hộp thoại xác nhận Request change đang hiện cho template "T003"
    (Code="Templates-003"), **When** chọn **Yes** và lệnh gọi D365 xóa theo Code thành công, **Then**
    hệ thống gọi đúng 1 lệnh xóa D365 với `code = "Templates-003"` TRƯỚC, sau đó mới tạo dòng
    VersionId=2/Status=Draft, sao chép step tree/mapping, và ẩn dòng cũ (IsHide=1).
 8. **(Update 23)** **Given** hộp thoại xác nhận Request change đang hiện, **When** chọn **Yes**
    nhưng lệnh gọi D365 xóa bị lỗi (mất mạng/D365 trả lỗi), **Then** hệ thống KHÔNG tạo dòng mới,
-   KHÔNG đổi VersionId/Status/IsHide của dòng hiện tại (vẫn Approved, VersionId=1), và hiển thị
+   KHÔNG đổi VersionId/Status/IsHide của dòng hiện tại (vẫn Public D365, VersionId=1), và hiển thị
    thông báo lỗi cho người dùng thay vì snackbar thành công.
 
 ---
@@ -1288,31 +1332,34 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   vượt mốc 24 giờ mới tạo version mới.~~ Từ Update 16, mốc 24 giờ không còn được sử dụng: Save khi
   Draft luôn cập nhật đè lên dòng hiện tại bất kể CreatedDate; VersionId chỉ tăng khi xác nhận
   Request change (Approved → Draft) — xem FR-057, FR-060.
-- **(Update 16; ngoại lệ Update 18)** Khi một template đang Status=Approved, mọi thao tác
-  Save/Add step/Edit step/Delete step trên TemplateBuilderPage đều bị khóa (read-only) — kể cả khi
-  gọi trực tiếp API cập nhật (backend MUST từ chối cập nhật header/step tree cho một TemplateId
-  đang Approved trừ khi đi qua luồng Request change), NGOẠI TRỪ việc bật/tắt cờ **IsDefault**
-  (FR-068) — backend MUST cho phép một API cập nhật riêng chỉ đổi IsDefault ngay cả khi Status đang
-  Approved, độc lập với luồng cập nhật header/step tree bị chặn ở trên.
-- **(Update 16)** Khi người dùng tick chọn 2 dòng trở lên (bất kể Status), hoặc không chọn dòng
-  nào, cả nút Approve và Request change trên toolbar đều disabled — 2 hành động này chỉ áp dụng cho
-  đúng 1 template tại một thời điểm, không hỗ trợ bulk.
-- **(Update 16)** Khi Request change được xác nhận cho một template đang có 0 step và 0 mapping
-  vendor (ví dụ vừa Approve ngay sau khi tạo mà chưa thêm gì), hệ thống vẫn MUST tạo dòng Draft mới
-  bình thường (với step tree và mapping rỗng) — không phải lỗi.
-- **(Update 23)** Khi Approve một template chưa từng được đẩy lên D365 trước đó (lần Approve đầu
-  tiên trong vòng đời của Code đó), lệnh gọi push vẫn MUST thực hiện bình thường — hệ thống không
-  kiểm tra D365 đã có bản ghi cho Code đó hay chưa trước khi push, giống hành vi tạo mới bên D365 của
-  `SyncTemplatesToDynamicsAsync`.
+- **(Update 16; ngoại lệ Update 18; đổi tên Status ở Update 25)** Khi một template đang
+  Status=**Public D365**, mọi thao tác Save/Add step/Edit step/Delete step trên TemplateBuilderPage
+  đều bị khóa (read-only) — kể cả khi gọi trực tiếp API cập nhật (backend MUST từ chối cập nhật
+  header/step tree cho một TemplateId đang Public D365 trừ khi đi qua luồng Request change), NGOẠI
+  TRỪ việc bật/tắt cờ **IsDefault** (FR-068) — backend MUST cho phép một API cập nhật riêng chỉ đổi
+  IsDefault ngay cả khi Status đang Public D365, độc lập với luồng cập nhật header/step tree bị chặn
+  ở trên.
+- **(Update 16; đổi ở Update 25)** Khi người dùng tick chọn 2 dòng trở lên, hoặc không chọn dòng
+  nào, nút Request change trên toolbar disabled — hành động này chỉ áp dụng cho đúng 1 template tại
+  một thời điểm, không hỗ trợ bulk (không còn nút Approve trên toolbar để so sánh, xem FR-089).
+- **(Update 16; đổi tên Status ở Update 25)** Khi Request change được xác nhận cho một template
+  đang có 0 step và 0 mapping vendor (ví dụ vừa Save template & Public D365 ngay sau khi tạo mà chưa
+  thêm gì), hệ thống vẫn MUST tạo dòng Draft mới bình thường (với step tree và mapping rỗng) —
+  không phải lỗi.
+- **(Update 23; nút đổi ở Update 25)** Khi Save template & Public D365 một template chưa từng được
+  đẩy lên D365 trước đó (lần Public D365 đầu tiên trong vòng đời của Code đó), lệnh gọi push vẫn
+  MUST thực hiện bình thường — hệ thống không kiểm tra D365 đã có bản ghi cho Code đó hay chưa
+  trước khi push, giống hành vi tạo mới bên D365 của `SyncTemplatesToDynamicsAsync`.
 - **(Update 23)** Khi Request change được xác nhận cho một template mà D365 hiện KHÔNG có bản ghi
   nào cho Code đó (ví dụ chưa từng Approve, hoặc D365-side đã bị xóa thủ công từ trước), lệnh gọi xóa
   D365 vẫn MUST được gửi bình thường (không kiểm tra tồn tại trước) — hệ thống giả định endpoint
   `deleteTemplate` của D365 an toàn khi gọi cho một Code không tồn tại, giống hành vi Phase 1 của
   `SyncTemplatesToDynamicsAsync` (gọi xóa cho MỌI template eligible, không kiểm tra tồn tại trước).
-- **(Update 23)** Vì Approve chỉ khả dụng khi Status=Draft (FR-058) và Draft chỉ đạt được qua
-  Create/Clone (chưa từng Approve) hoặc qua Request change (đã xóa bản ghi D365 cũ ở bước trước đó),
-  một template không bao giờ có thể được Approve 2 lần liên tiếp mà không có Request change ở giữa —
-  do đó lệnh push của Approve KHÔNG cần tự gọi xóa D365 trước khi push (khác với luồng batch đầy đủ
+- **(Update 23; nút đổi ở Update 25)** Vì Save template & Public D365 chỉ khả dụng khi Status=Draft
+  (FR-090) và Draft chỉ đạt được qua Create/Clone (chưa từng Public D365) hoặc qua Request change
+  (đã xóa bản ghi D365 cũ ở bước trước đó), một template không bao giờ có thể được đưa lên Public
+  D365 2 lần liên tiếp mà không có Request change ở giữa —
+  do đó lệnh push của Save template & Public D365 KHÔNG cần tự gọi xóa D365 trước khi push (khác với luồng batch đầy đủ
   của `SyncTemplatesToDynamicsAsync`, vốn luôn xóa-rồi-đẩy cho toàn bộ danh sách eligible mỗi lần
   chạy) — không có rủi ro tạo bản ghi D365 trùng lặp cho cùng Code.
 - **(Update 23)** Khi lệnh gọi D365 (xóa ở Request change, hoặc một trong các lượt push ở Approve)
@@ -1457,6 +1504,71 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   (loại trừ chính dòng đang edit); nếu trùng, áp dụng cùng hành vi chặn — vì tên mới này chắc chắn sẽ
   tạo ra StepId trùng lặp về mặt logic khi Save template. Xem FR-088.
 
+### Session 2026-09-18 (Update 25) — Đổi tên Status "Approved" thành "Public D365"; bỏ nút Approve, gộp vào nút "Save template & Public D365" trên màn hình Edit
+
+- Input: "cập nhật 003-eutr-templates, đổi status Approved thành Public D365, bỏ nút Approve. Trong
+  màn hình eutr/templates/edit/{Id} sẽ thêm 1 nút Save template & Public D365 kế nút Save template,
+  logic sẽ giống với nút Save template và nút Approve."
+- Change: Giá trị enum Status thứ hai **đổi tên từ "Approved" thành "Public D365"** trên toàn bộ hệ
+  thống — hằng số dùng chung tại `compliance-client/src/utils/helpers.js` (FR-055), Chip hiển thị
+  trên **TemplateListPage** (FR-062), banner cảnh báo read-only trên **TemplateBuilderPage** (FR-061),
+  và tuỳ chọn filter theo cột Status (FR-074). Giá trị **Draft** và hành vi gắn với từng Status (Save
+  đè dòng khi Draft — FR-057; read-only khi không phải Draft — FR-061; ràng buộc Is default vẫn chỉnh
+  sửa được bất kể Status — FR-068) giữ nguyên không đổi, chỉ đổi TÊN hiển thị/giá trị của trạng thái
+  thứ hai. Từ Update 25, KHÔNG còn nơi nào trên UI hiển thị chữ "Approved" — xem FR-094.
+- Change: **Bỏ hoàn toàn nút Approve** trên toolbar của **TemplateListPage** (đã thêm ở FR-058/FR-059,
+  Update 16) — toolbar chỉ còn lại **Create Template** và **Request change** (điều kiện khả dụng của
+  Request change đổi từ "dòng đã chọn đang Status=Approved" thành "dòng đã chọn đang Status=**Public
+  D365**", cơ chế còn lại — tạo dòng Draft mới, sao chép step tree/mapping, ẩn dòng cũ, gọi D365 xóa
+  trước — giữ nguyên không đổi, xem FR-060/FR-081/FR-082). Xem FR-089.
+- Change: Màn hình **TemplateBuilderPage** (route `/eutr/templates/edit/:id`) MUST bổ sung nút **Save
+  template & Public D365**, đặt ngay cạnh nút **Save template** hiện có (cùng vị trí ở cột trái, dưới
+  checkbox "Set as default template" — xem Update 4), chỉ hiển thị/khả dụng khi template đang
+  Status=**Draft** (ẩn/disabled khi Status=Public D365, giống điều kiện của nút Save template hiện
+  tại theo FR-061). Nhấn nút này thực hiện gộp logic của 2 hành động đã có: (1) lưu đè header + step
+  tree lên dòng hiện tại giống hệt nút **Save template** (FR-057), sau đó (2) đồng bộ (push) dữ liệu
+  template đó lên D365 và cập nhật Status=Public D365 trên cùng dòng giống hệt nút **Approve** cũ
+  (tái sử dụng nguyên logic FR-083/FR-084, chỉ đổi nơi kích hoạt từ dialog Approve trên
+  TemplateListPage sang nút này trên TemplateBuilderPage). Xem FR-090 đến FR-093.
+- Change: Nhấn **Save template & Public D365** MUST hiển thị `ConfirmDialog` xác nhận Yes/No trước
+  khi thực hiện (tái sử dụng đúng pattern Yes/No đã có ở nút Approve cũ — FR-059). Chọn **Yes** MUST
+  thực hiện tuần tự bước (1) rồi bước (2) ở trên trong cùng một lượt xác nhận; chọn **No** đóng dialog,
+  KHÔNG lưu gì và KHÔNG gọi D365. Xem FR-091.
+- No [NEEDS CLARIFICATION] markers được nhúng vào spec — yêu cầu gốc đã đủ rõ để suy ra hành vi hợp
+  lý duy nhất (gộp Save + Approve thành 1 nút, giữ nguyên 2 luồng logic đã có ở FR-057/FR-083/FR-084
+  chỉ đổi nơi kích hoạt), theo đúng pattern "resolve via reasonable default, document in Assumptions"
+  đã thiết lập của spec này (ví dụ Update 12/15/19/22/24). Các quyết định phụ (có giữ lại phần đã lưu
+  ở bước (1) khi bước (2) lỗi hay không; nút mới ẩn/disable theo đúng điều kiện của Save template) được
+  ghi rõ ở Assumptions bên dưới.
+
+### Session 2026-09-21 (Update 26) — Ẩn nút "Save template" trên màn hình Edit; xóa bản ghi D365 trước khi push ở "Save template & Public D365"
+
+- Input: "cập nhật 003-eutr-templates, màn hình edit, ẩn nút Save Template. Thêm logic xóa template
+  trước khi save và public D365 như `await _synchronizeDataService.DeleteTemplateFromDynamicsAsync(existing.Code, ct);`
+  vào nút Save Template & Public D365."
+- Change: Nút **Save template** trên **TemplateBuilderPage** (`/eutr/templates/edit/:id`,
+  `TemplateBuilderPage.jsx`) MUST bị ẩn hoàn toàn khỏi màn hình Edit, không phân biệt Status (Draft
+  hay Public D365) — thay thế điều kiện "hiển thị khi Draft, ẩn khi Public D365" đã áp dụng cho nút
+  này ở FR-057/FR-061/FR-090. Từ Update 26, nút **Save template & Public D365** là nút Save DUY NHẤT
+  còn hiển thị trên màn hình Edit, tiếp tục tuân theo đúng điều kiện hiển thị/khả dụng hiện có (chỉ
+  khi Status=Draft, ẩn/disabled khi Public D365 — FR-090). Logic lưu đè header/step tree của nút Save
+  template (FR-057) KHÔNG bị loại bỏ — vẫn được tái sử dụng làm bước (1) bên trong luồng Save template
+  & Public D365 (FR-091), chỉ riêng nút bấm độc lập của nó bị ẩn khỏi giao diện. Xem FR-095.
+- Change: Luồng backend của **Save template & Public D365** (`EutrTemplatesService.ApproveAsync`)
+  MUST gọi `await _synchronizeDataService.DeleteTemplateFromDynamicsAsync(existing.Code, ct);` để xóa
+  bản ghi ERP-side hiện có của template đó theo Code, NGAY TRƯỚC lệnh gọi
+  `PushTemplateToDynamicsAsync` đã có (đẩy bản ghi mới lên D365) — bất kể D365 đã có bản ghi cho Code
+  đó hay chưa, và bất kể template đã từng trải qua Request change hay chưa. Đây là bước xóa PHÒNG THỦ
+  (defensive delete) bổ sung, thay thế lý do "không cần xóa trước khi push vì Request change đã xóa
+  trước đó" đã ghi ở FR-085 (Update 23) — từ Update 26, FR-085 KHÔNG còn là căn cứ áp dụng. Xem
+  FR-096 đến FR-098.
+- No [NEEDS CLARIFICATION] markers được nhúng vào spec — yêu cầu gốc đã cung cấp đúng đoạn code cần
+  thêm (`DeleteTemplateFromDynamicsAsync(existing.Code, ct)`) và vị trí gọi (trước Save & Public
+  D365), đủ rõ để suy ra hành vi hợp lý duy nhất. Quyết định phụ duy nhất cần suy luận — xử lý ra sao
+  khi chính lệnh gọi xóa D365 mới này thất bại — được resolve theo đúng pattern lỗi đã thiết lập cho
+  mọi lệnh gọi D365 khác trong spec này (chặn lại, giữ nguyên phần đã lưu cục bộ, báo lỗi thay vì
+  snackbar thành công — xem FR-082/FR-084/FR-093), ghi rõ ở FR-097 và Assumptions bên dưới.
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
@@ -1600,7 +1712,8 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
     bằng cây bước mới nhất từ màn hình Edit (xóa step cũ không còn trong cây, thêm step mới, cập
     nhật step đã sửa) với ParentId chính xác.
   *(Update 16 bỏ hoàn toàn nhánh dựa trên tuổi bản ghi (24 giờ) ở trên. Xem FR-057 cho logic
-  versioning mới, gắn với việc chuyển Status từ Approved về Draft qua Request change.)*
+  versioning mới, gắn với việc chuyển Status từ Public D365 (đổi tên từ "Approved" ở Update 25) về
+  Draft qua Request change.)*
 - **FR-013**: Người dùng MUST có thể xóa template (soft delete), có bước xác nhận trước khi xóa.
   Xóa MUST chỉ cập nhật IsDeleted = 1 trên dòng đang hiển thị (IsHide=0), KHÔNG xóa dữ liệu
   thật trong database.
@@ -1643,7 +1756,8 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   FR-071; nội dung mỗi dòng dưới đây không đổi.)* Mỗi dòng MUST hiển thị: ô tên gồm 2 dòng chữ —
   dòng đậm hiển thị **Code** thật của template, dòng phụ/caption bên dưới hiển thị **Name** thật;
   Chip **Version** (giá trị versionId); Chip **Default** (chỉ hiện khi IsDefault=1); Chip **Status**
-  (giá trị "Draft" hoặc "Approved" — Update 16, xem FR-055/FR-062); số lượng **Steps** hiện có
+  (giá trị "Draft" hoặc "Public D365" — Update 16, đổi tên ở Update 25, xem FR-055/FR-062); số lượng
+  **Steps** hiện có
   trong cây bước của template (số thật, xem FR-021c); và cột **Actions**. Danh sách chỉ hiển thị
   các template có IsDeleted=0 VÀ IsHide=0, và hỗ trợ phân trang (theo FR-003).
 - **FR-021a**: Ô tìm kiếm trên TemplateListPage MUST lọc danh sách theo **Code** hoặc **Name** khớp
@@ -1682,10 +1796,15 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   `EutrTemplatesAddEdit.jsx` (không viết lại từ đầu): tải template theo Id
   (`GetEutrTemplatesUseCase`), tải danh sách EUTR steps (`GetEutrStepsUseCase`), tải danh sách group
   Alert (`GetAllGroupEmailUseCase`, lọc GroupType=Alert/IsAddition=false), lưu qua
-  `UpdateEutrTemplatesUseCase` áp dụng logic versioning MỚI gắn với Status Draft/Approved (FR-057 —
-  KHÔNG còn logic 24 giờ của FR-012), tự động tạo step mới khi gõ tự do (FR-007a), cảnh báo khi Back
-  mà có thay đổi step chưa lưu (FR-015), và chuyển sang chế độ read-only hoàn toàn khi
-  Status=Approved (FR-061). Giao diện hiển thị (cây bước dạng tree-view bên trái + panel cấu hình
+  `UpdateEutrTemplatesUseCase` áp dụng logic versioning MỚI gắn với Status Draft/Public D365
+  (FR-057 — KHÔNG còn logic 24 giờ của FR-012), tự động tạo step mới khi gõ tự do (FR-007a), cảnh báo
+  khi Back mà có thay đổi step chưa lưu (FR-015), và chuyển sang chế độ read-only hoàn toàn khi
+  Status=Public D365 (FR-061). **(Update 25; sửa lại ở Update 26)** Panel cấu hình bên phải cũng MUST
+  bổ sung nút **Save template & Public D365** — **(Superseded by Update 26)** ~~cạnh nút **Save
+  template**~~ nay là nút Save duy nhất khi Status=Draft, vì nút **Save template** đã bị ẩn hoàn toàn
+  (FR-095) — tái sử dụng `UpdateEutrTemplatesUseCase` cho bước lưu rồi gọi tiếp luồng xóa D365 + push
+  D365 + đổi Status (FR-090 đến FR-098). Giao diện hiển thị (cây bước dạng tree-view bên trái + panel
+  cấu hình
   bên phải, toolbar Add Root/Add Child/Move/Delete/Expand/Collapse) MUST giữ theo đúng bố cục hiện
   có của `TemplateBuilderPage.jsx` — KHÔNG áp dụng lại layout 2 cột form/list của
   `EutrTemplatesAddEdit.jsx`. Panel cấu hình bên phải MUST hiển thị các trường header **Code
@@ -1876,8 +1995,9 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
 - **FR-054 (Update 15)**: Nếu New template name để trống hoặc Alert for chưa chọn khi nhấn nút xác
   nhận Clone (FR-051), hệ thống MUST báo lỗi validate ngay tại dialog Clone và KHÔNG hiển thị hộp
   thoại xác nhận (FR-052), KHÔNG tạo bản ghi nào.
-- **FR-055 (Update 16)**: Hệ thống MUST bổ sung cột **Status** vào bảng `eutr_templates`, kiểu enum
-  2 giá trị **Draft** và **Approved**, định nghĩa hằng số dùng chung tại
+- **FR-055 (Update 16; đổi tên giá trị ở Update 25 — xem FR-094)**: Hệ thống MUST bổ sung cột
+  **Status** vào bảng `eutr_templates`, kiểu enum 2 giá trị **Draft** và **Public D365** (đổi tên từ
+  "Approved" ở Update 25), định nghĩa hằng số dùng chung tại
   `compliance-client/src/utils/helpers.js` (theo đúng quy ước các enum dùng chung khác của feature
   này — REQUIREMENT_TYPES, TAKE_FROM_OPTIONS, groupEmailType — không khai báo cục bộ, trùng lặp
   trong từng component).
@@ -1890,46 +2010,52 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   lâu. VersionId chỉ MUST tăng đúng 1 thời điểm duy nhất trong toàn bộ vòng đời template: khi người
   dùng xác nhận **Request change** để chuyển một template từ Status=Approved về Status=Draft (xem
   FR-060).
-- **FR-058 (Update 16)**: Toolbar của **TemplateListPage** MUST bổ sung 2 nút **Approve** và
-  **Request change**, đặt cạnh nút **Create Template**, tái sử dụng cơ chế checkbox chọn dòng
-  (per-row) đã có (FR-022, Update 10). Nút **Approve** MUST chỉ khả dụng (enabled) khi có đúng 1
-  dòng đang được chọn VÀ dòng đó đang Status=Draft — các trường hợp khác (0 dòng, nhiều hơn 1 dòng,
-  hoặc dòng đã chọn đang Status=Approved) MUST disabled. Nút **Request change** MUST chỉ khả dụng
-  khi có đúng 1 dòng đang được chọn VÀ dòng đó đang Status=Approved — các trường hợp khác MUST
-  disabled.
-- **FR-059 (Update 16)**: Nhấn nút **Approve** (khi đã khả dụng) MUST hiển thị `ConfirmDialog`
-  xác nhận Yes/No (nêu rõ Code/Name của template sắp Approve). Chọn **Yes** MUST cập nhật
-  Status=Approved ngay trên dòng hiện tại (giữ nguyên Id, VersionId, toàn bộ step tree và vendor
-  mapping không đổi), đóng dialog, làm mới danh sách, và hiển thị snackbar thành công. Chọn **No**
-  MUST đóng dialog và KHÔNG thay đổi Status hay bất kỳ dữ liệu nào của template.
-- **FR-060 (Update 16)**: Nhấn nút **Request change** (khi đã khả dụng) MUST hiển thị
-  `ConfirmDialog` xác nhận Yes/No (nêu rõ Code/Name của template và cảnh báo sẽ tạo phiên bản Draft
-  mới). Chọn **Yes** MUST thực hiện ngay lập tức, đồng thời: (1) tạo một dòng mới trong
-  eutr_templates với cùng Code, VersionId = VersionId cũ + 1, Status=Draft, IsHide=0, IsDeleted=0,
-  giữ nguyên Name/AlertFor/IsDefault từ dòng cũ; (2) sao chép toàn bộ `eutr_template_details` của
-  dòng cũ sang TemplateId mới, giữ nguyên StepId/RequirementType/TakeFrom/DisplayOrder/cấu trúc
-  ParentId; (3) sao chép toàn bộ `eutr_template_references` của dòng cũ sang TemplateId mới, giữ
-  nguyên VendorCode/FromDate/ToDate; (4) cập nhật dòng cũ (Approved) thành IsHide=1 — dòng cũ MUST
-  được giữ nguyên trong database (không xóa) làm bản ghi lịch sử bất biến. Sau khi hoàn tất, dialog
-  đóng lại, danh sách tự làm mới hiển thị dòng mới (Draft, VersionId cao hơn), và hệ thống hiển thị
-  snackbar thành công. Chọn **No** MUST đóng dialog và KHÔNG tạo dòng mới, KHÔNG thay đổi Status
-  hay bất kỳ dữ liệu nào của template (vẫn Approved).
-- **FR-061 (Update 16; ngoại lệ bổ sung ở Update 18 — xem FR-068)**: Khi một template đang
-  Status=**Approved**, màn hình **TemplateBuilderPage** (mở qua icon Edit) MUST hiển thị ở chế độ
-  **read-only gần như hoàn toàn**: banner cảnh báo (ví dụ "Template đã Approved — không thể chỉnh
-  sửa trực tiếp. Hãy nhấn Request change để chỉnh sửa."), trường header **Name** và **Alert for**
-  MUST disabled, nút **Save** MUST ẩn hoặc disabled, và toàn bộ thao tác trên cây bước (Root Group,
-  Child Step, Edit step, Delete step, drag-and-drop sắp xếp) MUST bị vô hiệu hóa. **(Update 18)**
-  Riêng checkbox **Set as default template** là NGOẠI LỆ DUY NHẤT — vẫn MUST enabled và cho phép
-  tick/bỏ tick ngay cả khi Approved, theo cơ chế lưu riêng ở FR-068 (KHÔNG đi qua nút Save chung).
-  Khi Status=**Draft**, TemplateBuilderPage hoạt động bình thường như hiện hành (không đổi bởi
-  Update 16).
-- **FR-062 (Update 16)**: Mỗi dòng trên **TemplateListPage** MUST hiển thị thêm Chip **Status**
-  (giá trị "Draft" hoặc "Approved"), đặt cạnh Chip Default, theo đúng vị trí đã mô tả ở FR-021.
-- **FR-063 (Update 16)**: Ràng buộc **Is default** (FR-040) và cột **Steps**/tra cứu Alert for
-  KHÔNG thay đổi bởi Status — người dùng vẫn có thể đánh dấu Default hoặc xem số Steps cho template
-  ở bất kỳ Status nào; chỉ riêng thao tác CHỈNH SỬA nội dung (header + step tree) trên
-  TemplateBuilderPage mới bị khóa khi Approved (FR-061).
+- **FR-058 (Update 16; sửa lại ở Update 25 — xem FR-089)**: **(Superseded by Update 25)**
+  ~~Toolbar của **TemplateListPage** MUST bổ sung 2 nút **Approve** và **Request change**~~ — nút
+  Approve đã bị loại bỏ (FR-089). Toolbar của **TemplateListPage** MUST có nút **Request change**,
+  đặt cạnh nút **Create Template**, tái sử dụng cơ chế checkbox chọn dòng (per-row) đã có (FR-022,
+  Update 10). Nút **Request change** MUST chỉ khả dụng khi có đúng 1 dòng đang được chọn VÀ dòng đó
+  đang Status=**Public D365** — các trường hợp khác (0 dòng, nhiều hơn 1 dòng, hoặc dòng đã chọn
+  đang Status=Draft) MUST disabled.
+- **FR-059 (Update 16 — Removed by Update 25)**: ~~Nhấn nút **Approve** (khi đã khả dụng) MUST hiển
+  thị `ConfirmDialog` xác nhận Yes/No (nêu rõ Code/Name của template sắp Approve). Chọn **Yes** MUST
+  cập nhật Status=Approved ngay trên dòng hiện tại (giữ nguyên Id, VersionId, toàn bộ step tree và
+  vendor mapping không đổi), đóng dialog, làm mới danh sách, và hiển thị snackbar thành công. Chọn
+  **No** MUST đóng dialog và KHÔNG thay đổi Status hay bất kỳ dữ liệu nào của template.~~ Nút Approve
+  và dialog xác nhận của nó không còn tồn tại trên TemplateListPage kể từ Update 25 — logic tương
+  đương (push D365 rồi đổi Status) nay được kích hoạt từ nút **Save template & Public D365** trên
+  TemplateBuilderPage, xem FR-090 đến FR-093.
+- **FR-060 (Update 16; đổi tên Status ở Update 25)**: Nhấn nút **Request change** (khi đã khả dụng)
+  MUST hiển thị `ConfirmDialog` xác nhận Yes/No (nêu rõ Code/Name của template và cảnh báo sẽ tạo
+  phiên bản Draft mới). Chọn **Yes** MUST thực hiện ngay lập tức, đồng thời: (1) tạo một dòng mới
+  trong eutr_templates với cùng Code, VersionId = VersionId cũ + 1, Status=Draft, IsHide=0,
+  IsDeleted=0, giữ nguyên Name/AlertFor/IsDefault từ dòng cũ; (2) sao chép toàn bộ
+  `eutr_template_details` của dòng cũ sang TemplateId mới, giữ nguyên
+  StepId/RequirementType/TakeFrom/DisplayOrder/cấu trúc ParentId; (3) sao chép toàn bộ
+  `eutr_template_references` của dòng cũ sang TemplateId mới, giữ nguyên VendorCode/FromDate/ToDate;
+  (4) cập nhật dòng cũ (Public D365) thành IsHide=1 — dòng cũ MUST được giữ nguyên trong database
+  (không xóa) làm bản ghi lịch sử bất biến. Sau khi hoàn tất, dialog đóng lại, danh sách tự làm mới
+  hiển thị dòng mới (Draft, VersionId cao hơn), và hệ thống hiển thị snackbar thành công. Chọn **No**
+  MUST đóng dialog và KHÔNG tạo dòng mới, KHÔNG thay đổi Status hay bất kỳ dữ liệu nào của template
+  (vẫn Public D365).
+- **FR-061 (Update 16; ngoại lệ bổ sung ở Update 18 — xem FR-068; đổi tên Status và bổ sung nút mới
+  ở Update 25 — xem FR-090)**: Khi một template đang Status=**Public D365**, màn hình
+  **TemplateBuilderPage** (mở qua icon Edit) MUST hiển thị ở chế độ **read-only gần như hoàn toàn**:
+  banner cảnh báo (ví dụ "Template đã Public D365 — không thể chỉnh sửa trực tiếp. Hãy nhấn Request
+  change để chỉnh sửa."), trường header **Name** và **Alert for** MUST disabled, cả 2 nút **Save
+  template** và **Save template & Public D365** (Update 25) MUST ẩn hoặc disabled, và toàn bộ thao
+  tác trên cây bước (Root Group, Child Step, Edit step, Delete step, drag-and-drop sắp xếp) MUST bị
+  vô hiệu hóa. **(Update 18)** Riêng checkbox **Set as default template** là NGOẠI LỆ DUY NHẤT — vẫn
+  MUST enabled và cho phép tick/bỏ tick ngay cả khi Public D365, theo cơ chế lưu riêng ở FR-068
+  (KHÔNG đi qua nút Save nào). Khi Status=**Draft**, TemplateBuilderPage hoạt động bình thường như
+  hiện hành, cộng thêm nút **Save template & Public D365** mới của Update 25 (xem FR-090).
+- **FR-062 (Update 16; đổi tên giá trị ở Update 25)**: Mỗi dòng trên **TemplateListPage** MUST hiển
+  thị thêm Chip **Status** (giá trị "Draft" hoặc "Public D365"), đặt cạnh Chip Default, theo đúng vị
+  trí đã mô tả ở FR-021.
+- **FR-063 (Update 16; đổi tên Status ở Update 25)**: Ràng buộc **Is default** (FR-040) và cột
+  **Steps**/tra cứu Alert for KHÔNG thay đổi bởi Status — người dùng vẫn có thể đánh dấu Default
+  hoặc xem số Steps cho template ở bất kỳ Status nào; chỉ riêng thao tác CHỈNH SỬA nội dung (header
+  + step tree) trên TemplateBuilderPage mới bị khóa khi Public D365 (FR-061).
 - **FR-064 (Update 17)**: TemplateBuilderPage MUST bổ sung khả năng kéo thả (drag-and-drop) trên
   từng dòng step trong cây bước để sắp xếp lại DisplayOrder giữa các step **cùng cấp** (cùng
   ParentId) — bổ sung thêm bên cạnh 2 nút Move Up/Move Down hiện có (FR-006), KHÔNG thay thế hay gỡ
@@ -1943,21 +2069,22 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   của toàn bộ nhóm anh em bị ảnh hưởng MUST được cập nhật ngay trên giao diện (dùng chung cơ chế sắp
   xếp với FR-006), đánh dấu màn hình có thay đổi chưa lưu, và chỉ thực sự ghi xuống
   `eutr_template_details` khi người dùng nhấn Save — không tự động lưu ngay khi kéo thả.
-- **FR-067 (Update 17)**: Thao tác kéo thả MUST chỉ khả dụng khi template đang Status=Draft; khi
-  Status=**Approved** (read-only theo FR-061), kéo thả MUST bị vô hiệu hóa giống các thao tác chỉnh
-  sửa cây bước khác (Add/Edit/Delete step, Move Up/Move Down).
-- **FR-068 (Update 18)**: Trên **TemplateBuilderPage**, khi template đang Status=**Approved**,
-  checkbox **Set as default template** MUST vẫn enabled (ngoại lệ của FR-061). Khi người dùng
-  tick/bỏ tick checkbox này, hệ thống MUST hiển thị `ConfirmDialog` xác nhận Yes/No (nêu rõ hành
-  động sắp thực hiện — đặt/bỏ template làm default) TRƯỚC khi lưu. Chọn **Yes** MUST gọi API cập
-  nhật ngay lập tức CHỈ cột `IsDefault` của template đang mở (không đụng đến Name, AlertFor,
-  VersionId, Status, hay `eutr_template_details`/`eutr_template_references`), áp dụng đúng ràng buộc
-  toàn cục hiện có (FR-040 — tự động bỏ cờ IsDefault trên template khác đang là default nếu có, bất
-  kể Status của template đó), sau đó đóng dialog và hiển thị snackbar thành công; checkbox phản ánh
-  đúng giá trị mới. Chọn **No** MUST đóng dialog, checkbox quay lại đúng giá trị trước khi tick/bỏ
-  tick (không gọi API, không thay đổi dữ liệu). Cơ chế lưu này hoàn toàn độc lập với nút Save chính
-  của TemplateBuilderPage (vốn vẫn ẩn/disabled khi Approved theo FR-061) — không cần Save để áp dụng
-  thay đổi Default.
+- **FR-067 (Update 17; đổi tên Status ở Update 25)**: Thao tác kéo thả MUST chỉ khả dụng khi template
+  đang Status=Draft; khi Status=**Public D365** (read-only theo FR-061), kéo thả MUST bị vô hiệu hóa
+  giống các thao tác chỉnh sửa cây bước khác (Add/Edit/Delete step, Move Up/Move Down).
+- **FR-068 (Update 18; đổi tên Status ở Update 25)**: Trên **TemplateBuilderPage**, khi template
+  đang Status=**Public D365**, checkbox **Set as default template** MUST vẫn enabled (ngoại lệ của
+  FR-061). Khi người dùng tick/bỏ tick checkbox này, hệ thống MUST hiển thị `ConfirmDialog` xác nhận
+  Yes/No (nêu rõ hành động sắp thực hiện — đặt/bỏ template làm default) TRƯỚC khi lưu. Chọn **Yes**
+  MUST gọi API cập nhật ngay lập tức CHỈ cột `IsDefault` của template đang mở (không đụng đến Name,
+  AlertFor, VersionId, Status, hay `eutr_template_details`/`eutr_template_references`), áp dụng đúng
+  ràng buộc toàn cục hiện có (FR-040 — tự động bỏ cờ IsDefault trên template khác đang là default
+  nếu có, bất kể Status của template đó), sau đó đóng dialog và hiển thị snackbar thành công;
+  checkbox phản ánh đúng giá trị mới. Chọn **No** MUST đóng dialog, checkbox quay lại đúng giá trị
+  trước khi tick/bỏ tick (không gọi API, không thay đổi dữ liệu). Cơ chế lưu này hoàn toàn độc lập
+  với nút Save của TemplateBuilderPage — **(Update 26)** chỉ còn duy nhất **Save template & Public
+  D365** (nút **Save template** đã bị ẩn hoàn toàn theo FR-095) — vốn vẫn ẩn/disabled khi Public D365
+  theo FR-061 — không cần Save để áp dụng thay đổi Default.
 - **FR-069 (Update 19)**: **TemplateListPage** MUST render bảng danh sách bằng component dùng chung
   `DataGridStyled` (`@presentation/components/shared/DataGridStyles`) bọc MUI `DataGrid`, theo đúng
   pattern các trang danh sách EUTR khác trong hệ thống (ví dụ `eutr-reference-types/index.jsx`,
@@ -2059,37 +2186,43 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   chưa thể có mapping, luôn dùng default PO ở FR-079) và KHÔNG áp dụng cho **Edit step** (FR-008b).
 - **FR-081 (Update 23)**: Khi xác nhận **Yes** ở dialog **Request change** (FR-060), hệ thống MUST
   gọi D365 để xóa bản ghi ERP-side hiện có của template đó theo **Code**, TRƯỚC khi thực hiện bất kỳ
-  thay đổi cục bộ nào của FR-060 (tạo dòng Draft mới, sao chép step tree/mapping, ẩn dòng Approved
+  thay đổi cục bộ nào của FR-060 (tạo dòng Draft mới, sao chép step tree/mapping, ẩn dòng Public D365
   cũ) — tái sử dụng nguyên request/endpoint đã triển khai ở
   `EutrSynchronizeDataService.SyncTemplatesToDynamicsAsync` (011-eutr-synchronize-data, User Story
   3/FR-025): `POST {Dynamics:ApiUrl}/data/RSVNEutrTemplates/Microsoft.Dynamics.DataEntities.deleteTemplate`
   với body mang `code` = Code của template. Hệ thống KHÔNG kiểm tra D365 hiện có bản ghi cho Code đó
   hay không trước khi gọi xóa.
-- **FR-082 (Update 23)**: Nếu lệnh gọi D365 ở FR-081 thất bại (lỗi mạng, D365 trả lỗi), hệ thống
-  MUST dừng lại ngay: KHÔNG tạo dòng Draft mới, KHÔNG sao chép step tree/mapping, KHÔNG đổi IsHide
-  của dòng Approved hiện tại, KHÔNG đổi VersionId — template giữ nguyên Status=Approved như trước
-  khi nhấn Yes — và hệ thống MUST hiển thị thông báo lỗi cho người dùng thay vì snackbar thành công
-  của FR-060.
-- **FR-083 (Update 23)**: Khi xác nhận **Yes** ở dialog **Approve** (FR-059), hệ thống MUST đồng bộ
-  (push) dữ liệu của CHÍNH template đó lên D365 TRƯỚC khi cập nhật Status=Approved của FR-059: truy
-  vấn các mapping trong `eutr_template_references` của TemplateId đó đang hiệu lực hôm nay (FromDate
-  ≤ hôm nay ≤ ToDate), rồi với mỗi mapping đang hiệu lực, push đúng 1 bản ghi qua
-  `POST {Dynamics:ApiUrl}/data/RSVNEutrTemplates` mang Code/Name của template và VendorCode của
-  mapping đó; nếu template không có mapping nào đang hiệu lực, push đúng 1 bản ghi với VendorCode
+- **FR-082 (Update 23; đổi tên Status ở Update 25)**: Nếu lệnh gọi D365 ở FR-081 thất bại (lỗi mạng,
+  D365 trả lỗi), hệ thống MUST dừng lại ngay: KHÔNG tạo dòng Draft mới, KHÔNG sao chép step
+  tree/mapping, KHÔNG đổi IsHide của dòng Public D365 hiện tại, KHÔNG đổi VersionId — template giữ
+  nguyên Status=Public D365 như trước khi nhấn Yes — và hệ thống MUST hiển thị thông báo lỗi cho
+  người dùng thay vì snackbar thành công của FR-060.
+- **FR-083 (Update 23; kích hoạt từ nút Save template & Public D365 kể từ Update 25 — xem FR-091)**:
+  Khi xác nhận **Yes** ở dialog xác nhận **~~Approve~~ Save template & Public D365** (FR-091), hệ
+  thống MUST đồng bộ (push) dữ liệu của CHÍNH template đó lên D365 TRƯỚC khi cập nhật Status=Public
+  D365 của FR-091: truy vấn các mapping trong `eutr_template_references` của TemplateId đó đang
+  hiệu lực hôm nay (FromDate ≤ hôm nay ≤ ToDate), rồi với mỗi mapping đang hiệu lực, push đúng 1 bản
+  ghi qua `POST {Dynamics:ApiUrl}/data/RSVNEutrTemplates` mang Code/Name của template và VendorCode
+  của mapping đó; nếu template không có mapping nào đang hiệu lực, push đúng 1 bản ghi với VendorCode
   rỗng (không bao giờ bỏ qua hoàn toàn việc push) — tái sử dụng nguyên logic Phase 2 của
   `SyncTemplatesToDynamicsAsync` (đoạn `activeMappingsByTemplateId`/`foreach (var template in
-  eligibleTemplates)`), chỉ khác là áp dụng cho đúng 1 TemplateId (template vừa Approve) thay vì
-  toàn bộ danh sách eligible.
-- **FR-084 (Update 23)**: Nếu bất kỳ lệnh gọi D365 nào ở FR-083 thất bại (kể cả khi một số mapping
-  đã push thành công trước đó), hệ thống MUST dừng lại ngay: KHÔNG cập nhật Status=Approved, template
-  giữ nguyên Status=Draft như trước khi nhấn Yes, và hệ thống MUST hiển thị thông báo lỗi cho người
-  dùng thay vì snackbar thành công của FR-059. Các bản ghi đã push thành công lên D365 trước lỗi đó
-  (nếu có) KHÔNG bị thu hồi/rollback phía D365 — chỉ riêng phần cập nhật cục bộ bị chặn lại.
-- **FR-085 (Update 23)**: Vì Approve chỉ khả dụng khi Status=Draft (FR-058) và một template chỉ đạt
+  eligibleTemplates)`), chỉ khác là áp dụng cho đúng 1 TemplateId (template vừa Save & Public D365)
+  thay vì toàn bộ danh sách eligible.
+- **FR-084 (Update 23; kích hoạt từ nút Save template & Public D365 kể từ Update 25)**: Nếu bất kỳ
+  lệnh gọi D365 nào ở FR-083 thất bại (kể cả khi một số mapping đã push thành công trước đó), hệ
+  thống MUST dừng lại ngay: KHÔNG cập nhật Status=Public D365, template giữ nguyên Status=Draft như
+  trước khi nhấn Yes (thay đổi header/step tree đã lưu ở bước (1) của FR-091 VẪN được giữ, xem
+  FR-093), và hệ thống MUST hiển thị thông báo lỗi cho người dùng thay vì snackbar thành công của
+  FR-091. Các bản ghi đã push thành công lên D365 trước lỗi đó (nếu có) KHÔNG bị thu hồi/rollback
+  phía D365 — chỉ riêng phần cập nhật cục bộ Status bị chặn lại.
+- **FR-085 (Update 23; đổi tên Status ở Update 25; Superseded by Update 26 — xem FR-096/FR-098)**:
+  ~~Vì Save template & Public D365 chỉ khả dụng khi Status=Draft (FR-090) và một template chỉ đạt
   Draft qua Create/Clone (chưa từng có bản ghi D365) hoặc qua Request change (đã xóa bản ghi D365 cũ
-  ở FR-081), hệ thống KHÔNG cần tự gọi xóa D365 trước khi push ở FR-083 — trình tự
-  xóa-ở-Request-change/đẩy-ở-Approve đã đủ để tránh tạo bản ghi D365 trùng lặp cho cùng Code qua
-  nhiều vòng đời Draft↔Approved.
+  ở FR-081), hệ thống KHÔNG cần tự gọi xóa D365 trước khi push ở FR-083 — trình tự xóa-ở-Request-
+  change/đẩy-ở-Save & Public D365 đã đủ để tránh tạo bản ghi D365 trùng lặp cho cùng Code qua nhiều
+  vòng đời Draft↔Public D365.~~ Từ Update 26, lý do trên KHÔNG còn là căn cứ áp dụng: hệ thống chủ
+  động gọi xóa D365 (defensive delete) NGAY TRƯỚC MỌI lượt push của Save template & Public D365, bất
+  kể vòng đời Draft↔Public D365 trước đó — xem FR-096.
 - **FR-086 (Update 23)**: Cả 2 lệnh gọi D365 mới (FR-081, FR-083) MUST tái sử dụng nguyên cấu hình
   và cơ chế gọi Dynamics đã có sẵn từ 011-eutr-synchronize-data (`Dynamics:ApiUrl`, `IDynamicService`,
   cùng payload JSON `application/json`, cùng tham số `?cross-company=true`) — KHÔNG giới thiệu một
@@ -2112,18 +2245,90 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   nếu trùng, áp dụng cùng hành vi chặn của FR-087 (lỗi tại combobox, không cho Save dòng đó) — vì tên
   mới này chắc chắn sẽ tạo ra StepId trùng lặp về mặt logic khi Save template (hai node cùng trỏ tới
   cùng step mới được tạo).
+- **FR-089 (Update 25 — thay thế phần Approve của FR-058)**: Toolbar của **TemplateListPage** MUST
+  bỏ hoàn toàn nút **Approve** (đã thêm ở FR-058, Update 16) và dialog xác nhận Approve của nó
+  (FR-059) — nút này không còn xuất hiện dưới bất kỳ hình thức nào (không ẩn/disabled, mà loại bỏ
+  hẳn khỏi DOM). Toolbar chỉ còn lại nút **Create Template** và nút **Request change** (điều kiện
+  khả dụng theo FR-058 đã cập nhật).
+- **FR-090 (Update 25; vị trí cập nhật ở Update 26 — xem FR-095)**: Màn hình **TemplateBuilderPage**
+  (`/eutr/templates/edit/:id`) MUST bổ sung nút **Save template & Public D365**, đặt ở cột trái, dưới
+  checkbox "Set as default template" (xem Update 4) — **(Superseded by Update 26)** ~~ngay cạnh nút
+  **Save template** hiện có~~ tại vị trí trước đây của nút **Save template**, vì từ Update 26 nút
+  **Save template** đã bị ẩn hoàn toàn (FR-095) và nút này trở thành nút Save duy nhất. Nút này MUST
+  chỉ hiển thị/khả dụng khi template đang Status=**Draft** — ẩn/disabled khi Status=**Public D365**
+  (xem FR-061).
+- **FR-091 (Update 25)**: Nhấn nút **Save template & Public D365** (khi đã khả dụng) MUST hiển thị
+  `ConfirmDialog` xác nhận Yes/No (nêu rõ Code/Name của template, và rằng hành động sẽ lưu thay đổi
+  hiện tại đồng thời công bố (Public) template đó lên D365) — tái sử dụng đúng pattern `ConfirmDialog`
+  Yes/No đã có ở nút Approve cũ (FR-059). Chọn **Yes** MUST thực hiện tuần tự, trong cùng một lượt
+  xác nhận: (1) lưu đè header + step tree hiện tại lên dòng hiện tại (cùng Id, cùng VersionId),
+  đúng logic và đúng validate của nút **Save template** (FR-057, FR-007a, FR-087, FR-088); (2) chỉ
+  khi bước (1) thành công, đồng bộ (push) dữ liệu CHÍNH template đó (Code, Name, và VendorCode của
+  từng mapping vendor đang hiệu lực hôm nay — hoặc 1 bản ghi VendorCode rỗng nếu không có mapping
+  nào) lên D365, tái sử dụng nguyên logic của FR-083; (3) chỉ khi bước (2) thành công, cập nhật
+  Status=**Public D365** ngay trên dòng hiện tại (không tạo dòng mới, không đổi VersionId), đóng
+  dialog, hiển thị snackbar thành công, và TemplateBuilderPage chuyển sang chế độ read-only (FR-061).
+  Chọn **No** MUST đóng dialog, KHÔNG thực hiện bước nào ở trên (không lưu, không gọi D365, không
+  đổi Status).
+- **FR-092 (Update 25)**: Nếu bước (1) ở FR-091 thất bại validate (ví dụ Name để trống, Alert for
+  chưa chọn, hoặc StepId trùng lặp theo FR-087/FR-088), hệ thống MUST dừng lại ngay tại bước đó —
+  KHÔNG gọi D365 (bước 2), KHÔNG đổi Status (bước 3) — và hiển thị lỗi validate giống hệt khi validate
+  thất bại trên nút **Save template** thông thường; dialog xác nhận (nếu đã đóng khi nhấn Yes) không
+  cần mở lại, lỗi hiển thị ngay trên form giống hành vi Save template hiện tại.
+- **FR-093 (Update 25)**: Nếu bước (1) ở FR-091 thành công nhưng bước (2) (đồng bộ D365) thất bại
+  (mất mạng, D365 trả lỗi), hệ thống MUST giữ nguyên thay đổi header/step tree đã lưu ở bước (1)
+  (KHÔNG rollback phần đã lưu cục bộ) nhưng MUST KHÔNG thực hiện bước (3) — Status giữ nguyên Draft
+  — và MUST hiển thị thông báo lỗi rõ ràng cho người dùng thay vì snackbar thành công. Người dùng có
+  thể nhấn lại **Save template & Public D365** để thử đồng bộ D365 lần nữa; vì header/step tree đã
+  được lưu ở lần trước, bước (1) của lần thử lại MUST vẫn thành công (không có gì thay đổi để lưu
+  lại) và hệ thống tiếp tục ngay với bước (2).
+- **FR-094 (Update 25)**: Toàn bộ nơi hiển thị tên trạng thái "Approved" trên giao diện — Chip Status
+  trên TemplateListPage (FR-062), banner cảnh báo read-only trên TemplateBuilderPage (FR-061), tuỳ
+  chọn filter theo cột Status (FR-074) — MUST đổi thành **"Public D365"**. Hằng số enum dùng chung
+  tại `compliance-client/src/utils/helpers.js` (FR-055) MUST đổi giá trị/nhãn tương ứng; tên hằng số
+  JavaScript cụ thể (ví dụ đổi `APPROVED` thành `PUBLIC_D365` hay giữ tên hằng số và chỉ đổi nhãn
+  hiển thị) do bước `/speckit-plan` quyết định, miễn là nhãn hiển thị cho người dùng cuối luôn là
+  "Public D365" kể từ Update 25.
+- **FR-095 (Update 26)**: Nút **Save template** trên **TemplateBuilderPage** (nút riêng tại
+  `TemplateBuilderPage.jsx`, gọi `handleSave`) MUST bị ẩn hoàn toàn khỏi màn hình Edit — loại bỏ hẳn
+  khỏi giao diện (không phải disabled), không phân biệt Status (Draft hay Public D365). Điều này thay
+  thế điều kiện hiển thị theo Status của riêng nút này đã nêu ở FR-057/FR-061/FR-090. Logic lưu đè
+  header/step tree mà nút này từng gọi (FR-057, `UpdateEutrTemplatesUseCase`) KHÔNG bị loại bỏ — vẫn
+  được tái sử dụng làm bước (1) bên trong luồng **Save template & Public D365** (FR-091). Từ Update
+  26, nút **Save template & Public D365** là nút Save DUY NHẤT còn hiển thị trên màn hình Edit, tiếp
+  tục chỉ hiển thị/khả dụng khi Status=Draft (ẩn/disabled khi Public D365 — FR-090 không đổi).
+- **FR-096 (Update 26)**: Trong luồng **Save template & Public D365**
+  (`EutrTemplatesService.ApproveAsync`), hệ thống MUST gọi
+  `await _synchronizeDataService.DeleteTemplateFromDynamicsAsync(existing.Code, ct);` để xóa bản ghi
+  ERP-side hiện có của template đó theo Code — tái sử dụng đúng phương thức đã triển khai và đang
+  dùng cho Request change (FR-081, `IEutrSynchronizeDataService.DeleteTemplateFromDynamicsAsync`).
+  Lệnh gọi xóa này MUST thực hiện SAU khi bước (1) lưu header/step tree (FR-091) thành công và NGAY
+  TRƯỚC lệnh gọi `PushTemplateToDynamicsAsync` hiện có (bước push D365, FR-083) — bất kể D365 đã có
+  bản ghi cho Code đó hay chưa, và bất kể template đã từng trải qua Request change trước đó hay chưa
+  (khác với giả định trước đây của FR-085).
+- **FR-097 (Update 26)**: Nếu lệnh gọi D365 xóa ở FR-096 thất bại (lỗi mạng, D365 trả lỗi), hệ thống
+  MUST dừng lại ngay: KHÔNG gọi bước push D365 (FR-083), KHÔNG cập nhật Status (vẫn Draft) — thay đổi
+  header/step tree đã lưu ở bước (1) của FR-091 VẪN được giữ nguyên (không rollback phần đã lưu cục
+  bộ) — và MUST hiển thị thông báo lỗi rõ ràng cho người dùng thay vì snackbar thành công, cùng hành
+  vi báo lỗi như FR-093. Người dùng có thể nhấn lại **Save template & Public D365** để thử lại toàn
+  bộ chuỗi (xóa D365 → push D365); vì header/step tree đã được lưu ở lần trước, bước (1) của lần thử
+  lại MUST vẫn thành công ngay và hệ thống tiếp tục với bước xóa D365 (FR-096).
+- **FR-098 (Update 26)**: FR-085 (Update 23) không còn là căn cứ áp dụng kể từ Update 26 — việc thêm
+  bước xóa D365 phòng thủ (FR-096) trước MỌI lượt push của Save template & Public D365 không phụ
+  thuộc vào giả định vòng đời Draft↔Public D365 đã nêu ở FR-085.
 
 ### Key Entities *(include if feature involves data)*
 
 - **EUTR Template** *(Update 13: không còn gắn trực tiếp với vendor — xem EUTR Template
   Reference)*. Thuộc tính: định danh, Code (hệ thống tự sinh theo quy tắc prefix + số tăng dần,
   readonly — ví dụ Templates-001), Name, Is default, VersionId, **Status** (Update 16 — enum 2 giá
-  trị Draft/Approved, định nghĩa tại `compliance-client/src/utils/helpers.js`, mặc định Draft khi
-  tạo mới, xem FR-055/FR-056), AlertFor (Id tham chiếu đến `compl_group_email.Id` — KHÔNG còn là
-  văn bản tự do; Name của group được hiển thị ở grid qua tra cứu), IsDeleted (cờ xóa mềm,
-  0=hiện/1=đã xóa), IsHide (cờ ẩn version cũ, 0=hiện/1=đã ẩn), người tạo, ngày tạo, người cập nhật,
-  ngày cập nhật. **KHÔNG còn thuộc tính Vendor code** (loại bỏ theo FR-039, Update 13) — dữ liệu
-  VendorCode cũ trên các bản ghi hiện có bị xóa hoàn toàn cùng cột, không migrate.
+  trị Draft/**Public D365** (đổi tên từ "Approved" ở Update 25, xem FR-094), định nghĩa tại
+  `compliance-client/src/utils/helpers.js`, mặc định Draft khi tạo mới, xem FR-055/FR-056), AlertFor
+  (Id tham chiếu đến `compl_group_email.Id` — KHÔNG còn là văn bản tự do; Name của group được hiển
+  thị ở grid qua tra cứu), IsDeleted (cờ xóa mềm, 0=hiện/1=đã xóa), IsHide (cờ ẩn version cũ,
+  0=hiện/1=đã ẩn), người tạo, ngày tạo, người cập nhật, ngày cập nhật. **KHÔNG còn thuộc tính Vendor
+  code** (loại bỏ theo FR-039, Update 13) — dữ liệu VendorCode cũ trên các bản ghi hiện có bị xóa
+  hoàn toàn cùng cột, không migrate.
   Khi tạo mới, VersionId = 1, Status = Draft. **(Superseded by Update 16 — xem FR-057)**
   ~~Khi edit: nếu bản ghi được tạo cách đây TRÊN 24 giờ (so với CreatedDate), tạo dòng mới với
   VersionId tự tăng (VersionId cũ + 1) và đánh dấu dòng cũ IsHide=1; nếu DƯỚI 24 giờ, cập nhật đè
@@ -2131,22 +2336,27 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   TemplateBuilderPage (chỉ khả dụng khi Status=Draft), hệ thống LUÔN cập nhật đè trực tiếp lên dòng
   hiện tại (giữ nguyên Id, VersionId, CreatedDate) — không còn phân biệt theo tuổi bản ghi. VersionId
   chỉ tăng (VersionId cũ + 1, tạo dòng mới, đánh dấu dòng cũ IsHide=1) đúng 1 thời điểm: khi người
-  dùng xác nhận **Request change** để chuyển Status từ Approved về Draft (xem FR-060). Approve
-  (Draft → Approved, FR-059) KHÔNG tạo dòng mới, chỉ đổi Status trên cùng dòng. Khi Status=Approved,
-  bản ghi ở chế độ read-only trên TemplateBuilderPage (FR-061). Ràng buộc Is default (Update 13,
-  FR-040): TOÀN CỤC chỉ tối đa 1 template IsDefault=1 tại một thời điểm (không còn giới hạn theo
-  vendor), không phụ thuộc Status. **(Update 15)** Khi tạo dòng version mới (nay là lúc xác nhận
-  Request change — Update 16), ngoài cây bước, hệ thống MUST đồng thời sao chép toàn bộ mapping
+  dùng xác nhận **Request change** để chuyển Status từ Public D365 về Draft (xem FR-060). **(Update
+  16; nút đổi ở Update 25)** Chuyển Draft → Public D365 KHÔNG tạo dòng mới, chỉ đổi Status trên cùng
+  dòng — trước Update 25 được kích hoạt qua nút Approve trên TemplateListPage (FR-059, đã loại bỏ),
+  từ Update 25 được kích hoạt qua nút **Save template & Public D365** trên TemplateBuilderPage
+  (FR-090/FR-091), gộp chung với việc lưu header/step tree mới nhất. Khi Status=Public D365, bản ghi
+  ở chế độ read-only trên TemplateBuilderPage (FR-061). Ràng buộc Is default (Update 13, FR-040):
+  TOÀN CỤC chỉ tối đa 1 template IsDefault=1 tại một thời điểm (không còn giới hạn theo vendor),
+  không phụ thuộc Status. **(Update 15)** Khi tạo dòng version mới (nay là lúc xác nhận Request
+  change — Update 16), ngoài cây bước, hệ thống MUST đồng thời sao chép toàn bộ mapping
   `eutr_template_references` của TemplateId cũ sang TemplateId mới (xem FR-049/FR-060). **(Update
   15)** Template có thể được tạo mới thông qua **Clone** từ một template khác — template Clone luôn
   có VersionId=1, Status=Draft (Update 16), IsDefault=0, Code tự sinh riêng, hoàn toàn độc lập với
-  template nguồn sau khi tạo (xem FR-050 đến FR-054). **(Update 23)** Xác nhận **Request change**
-  (Approved → Draft) MUST gọi D365 xóa bản ghi ERP-side theo Code TRƯỚC khi tạo dòng Draft mới (xem
-  FR-081/FR-082); xác nhận **Approve** (Draft → Approved) MUST đồng bộ (push) dữ liệu template đó
-  (Code, Name, VendorCode của từng mapping đang hiệu lực — xem **EUTR Template Reference** bên dưới)
-  lên D365 TRƯỚC khi đổi Status (xem FR-083/FR-084) — cả 2 lệnh gọi D365 này tái sử dụng nguyên
+  template nguồn sau khi tạo (xem FR-050 đến FR-054). **(Update 23; nút đổi ở Update 25)** Xác nhận
+  **Request change** (Public D365 → Draft) MUST gọi D365 xóa bản ghi ERP-side theo Code TRƯỚC khi
+  tạo dòng Draft mới (xem FR-081/FR-082); xác nhận **Save template & Public D365** (Draft → Public
+  D365) MUST lưu header/step tree rồi đồng bộ (push) dữ liệu template đó (Code, Name, VendorCode của
+  từng mapping đang hiệu lực — xem **EUTR Template Reference** bên dưới) lên D365 TRƯỚC khi đổi
+  Status (xem FR-083/FR-084/FR-090 đến FR-093) — cả 2 lệnh gọi D365 này tái sử dụng nguyên
   request/endpoint đã có ở **ERP Template Record** (011-eutr-synchronize-data). Nếu lệnh gọi D365
-  thất bại, thay đổi Status/version tương ứng KHÔNG được commit (xem FR-081 đến FR-086).
+  thất bại, thay đổi Status KHÔNG được commit nhưng phần header/step tree đã lưu (nếu có) vẫn được
+  giữ nguyên (xem FR-081 đến FR-086, FR-093).
 - **EUTR Template Detail**: Đại diện cho một bước cụ thể trong cây bước của template. Thuộc tính:
   định danh, Template Id (liên kết đến template), Step Id (liên kết đến EUTR step), Parent Id
   (liên kết đến step cha hoặc 0 nếu gốc), RequirementType (Required=1/Optional=0),
@@ -2197,7 +2407,7 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   thủ công qua dialog Add Vendor — xem FR-043 đến FR-048. **(Update 15; trigger #1 cập nhật ở Update
   16)** Toàn bộ bản ghi thuộc một TemplateId MUST được sao chép tự động (không cần thao tác
   Export/Import thủ công) sang TemplateId mới trong 2 trường hợp: (1) khi xác nhận **Request
-  change** đưa template từ Approved về Draft — tạo version mới (FR-049/FR-060; trước Update 16 đây
+  change** đưa template từ Public D365 về Draft — tạo version mới (FR-049/FR-060; trước Update 16 đây
   là nhánh "trên 24 giờ" của FR-012, nay không còn mốc thời gian này), và (2) khi Clone một template
   sang template mới (FR-053) — cả hai trường hợp đều giữ nguyên VendorCode/FromDate/ToDate của từng
   mapping, không kiểm tra chồng lấn giữa TemplateId nguồn và TemplateId mới (khác TemplateId nên
@@ -2365,28 +2575,31 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
 - **SC-046 (Update 16)**: 100% lượt Save ở TemplateBuilderPage khi Status=Draft cập nhật đè lên
   dòng hiện tại (không tạo dòng mới, VersionId không đổi) — không còn phân nhánh theo tuổi bản ghi,
   bất kể CreatedDate đã qua bao lâu.
-- **SC-047 (Update 16)**: 100% lượt xác nhận Yes ở dialog Approve chuyển đúng Status sang Approved
-  trên cùng dòng, không tạo dòng mới, không đổi VersionId; 100% lượt chọn No không làm thay đổi
-  Status hay dữ liệu nào.
-- **SC-048 (Update 16)**: 100% lượt xác nhận Yes ở dialog Request change tạo đúng 1 dòng mới
-  (VersionId+1, Status=Draft) sao chép chính xác toàn bộ step tree và vendor mapping từ dòng
-  Approved cũ, đồng thời dòng cũ được IsHide=1 và vẫn còn nguyên vẹn trong database; 100% lượt
-  chọn No không tạo dòng mới và không đổi Status.
-- **SC-049 (Update 16)**: 100% lượt mở TemplateBuilderPage cho một template đang Status=Approved
-  hiển thị chế độ read-only hoàn toàn (không có thao tác Save/Add step/Edit step/Delete step nào
-  thực hiện được); 100% lượt mở cho template Status=Draft hoạt động chỉnh sửa bình thường.
-- **SC-050 (Update 16)**: Nút Approve/Request change trên toolbar TemplateListPage chỉ enabled
-  đúng theo điều kiện chọn 1 dòng khớp Status tương ứng (FR-058) cho 100% trạng thái lựa chọn có
-  thể xảy ra trên danh sách (0 dòng, 1 dòng Draft, 1 dòng Approved, nhiều hơn 1 dòng).
-- **SC-051 (Update 17)**: 100% lượt kéo thả một step tới vị trí khác trong cùng cấp (Draft) cập
-  nhật đúng DisplayOrder trên giao diện ngay lập tức, cho kết quả giống hệt khi dùng nút Move
-  Up/Move Down để đạt cùng vị trí đích; 0% lượt kéo thả làm thay đổi ParentId hoặc bị áp dụng khi
-  template đang Status=Approved.
-- **SC-052 (Update 18)**: 100% lượt tick/bỏ tick checkbox Set as default template trên một template
-  đang Status=Approved hiển thị ConfirmDialog Yes/No trước khi lưu; 100% lượt chọn Yes cập nhật
-  đúng cột IsDefault (kèm áp dụng ràng buộc chỉ 1 default toàn cục) mà không tạo thay đổi nào khác
-  trên Name/Alert for/step tree/Status/VersionId, và không yêu cầu nhấn nút Save (vốn vẫn ẩn/
-  disabled); 100% lượt chọn No giữ nguyên giá trị IsDefault ban đầu.
+- **SC-047 (Update 16 — Removed by Update 25)**: ~~100% lượt xác nhận Yes ở dialog Approve chuyển
+  đúng Status sang Approved trên cùng dòng, không tạo dòng mới, không đổi VersionId; 100% lượt chọn
+  No không làm thay đổi Status hay dữ liệu nào.~~ Dialog Approve không còn tồn tại — xem SC-066 đến
+  SC-070 cho tiêu chí tương đương của nút Save template & Public D365.
+- **SC-048 (Update 16; đổi tên Status ở Update 25)**: 100% lượt xác nhận Yes ở dialog Request change
+  tạo đúng 1 dòng mới (VersionId+1, Status=Draft) sao chép chính xác toàn bộ step tree và vendor
+  mapping từ dòng Public D365 cũ, đồng thời dòng cũ được IsHide=1 và vẫn còn nguyên vẹn trong
+  database; 100% lượt chọn No không tạo dòng mới và không đổi Status.
+- **SC-049 (Update 16; đổi tên Status ở Update 25)**: 100% lượt mở TemplateBuilderPage cho một
+  template đang Status=Public D365 hiển thị chế độ read-only hoàn toàn (không có thao tác Save
+  template/Save template & Public D365/Add step/Edit step/Delete step nào thực hiện được); 100% lượt
+  mở cho template Status=Draft hoạt động chỉnh sửa bình thường.
+- **SC-050 (Update 16 — sửa lại ở Update 25)**: Nút **Request change** trên toolbar TemplateListPage
+  chỉ enabled đúng theo điều kiện chọn 1 dòng Status=Public D365 (FR-058) cho 100% trạng thái lựa
+  chọn có thể xảy ra trên danh sách (0 dòng, 1 dòng Draft, 1 dòng Public D365, nhiều hơn 1 dòng);
+  0% màn hình còn hiển thị nút Approve trên toolbar (xem FR-089).
+- **SC-051 (Update 17; đổi tên Status ở Update 25)**: 100% lượt kéo thả một step tới vị trí khác
+  trong cùng cấp (Draft) cập nhật đúng DisplayOrder trên giao diện ngay lập tức, cho kết quả giống
+  hệt khi dùng nút Move Up/Move Down để đạt cùng vị trí đích; 0% lượt kéo thả làm thay đổi ParentId
+  hoặc bị áp dụng khi template đang Status=Public D365.
+- **SC-052 (Update 18; đổi tên Status ở Update 25)**: 100% lượt tick/bỏ tick checkbox Set as default
+  template trên một template đang Status=Public D365 hiển thị ConfirmDialog Yes/No trước khi lưu;
+  100% lượt chọn Yes cập nhật đúng cột IsDefault (kèm áp dụng ràng buộc chỉ 1 default toàn cục) mà
+  không tạo thay đổi nào khác trên Name/Alert for/step tree/Status/VersionId, và không yêu cầu nhấn
+  nút Save nào (vốn vẫn ẩn/disabled); 100% lượt chọn No giữ nguyên giá trị IsDefault ban đầu.
 - **SC-053 (Update 19)**: 100% combobox TakeFrom (Add step, Edit step, bulk-select) hiển thị đúng
   danh sách hiện có trong bảng `eutr_reference_types` tại thời điểm mở form — thêm/sửa/xóa một
   reference type qua màn hình 006-eutr-reference-types phản ánh đúng vào các combobox này ở lần mở
@@ -2418,18 +2631,43 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
 - **SC-061 (Update 22)**: 100% lượt bỏ tick rồi tick lại cùng một dòng step master trong bảng
   bulk-select áp dụng lại đúng giá trị mặc định (Requirement Type=Required, Take From theo FR-079/
   FR-080) — không giữ lại giá trị tùy chỉnh mà người dùng đã đổi trước khi bỏ tick.
-- **SC-062 (Update 23)**: 100% lượt xác nhận Approve push đúng 1 bản ghi D365/mapping vendor đang
-  hiệu lực của template đó (hoặc đúng 1 bản ghi VendorCode rỗng nếu không có mapping nào), và 0% lượt
-  Approve có Status đổi thành Approved khi có ít nhất 1 lệnh gọi D365 push thất bại trong lượt đó.
-- **SC-063 (Update 23)**: 100% lượt xác nhận Request change gọi D365 xóa theo Code của template
-  TRƯỚC khi tạo dòng Draft mới, và 0% lượt Request change tạo dòng Draft mới/ẩn dòng Approved cũ khi
-  lệnh gọi D365 xóa đó thất bại.
+- **SC-062 (Update 23 — kích hoạt từ nút Save template & Public D365 kể từ Update 25)**: 100% lượt
+  xác nhận Save template & Public D365 push đúng 1 bản ghi D365/mapping vendor đang hiệu lực của
+  template đó (hoặc đúng 1 bản ghi VendorCode rỗng nếu không có mapping nào), và 0% lượt có Status
+  đổi thành Public D365 khi có ít nhất 1 lệnh gọi D365 push thất bại trong lượt đó.
+- **SC-063 (Update 23; đổi tên Status ở Update 25)**: 100% lượt xác nhận Request change gọi D365 xóa
+  theo Code của template TRƯỚC khi tạo dòng Draft mới, và 0% lượt Request change tạo dòng Draft
+  mới/ẩn dòng Public D365 cũ khi lệnh gọi D365 xóa đó thất bại.
 - **SC-064 (Update 24)**: 0% lượt Save trên form Edit step (inline, KHÔNG phải Save template) tạo ra
   hai node trong cùng một cây bước cùng trỏ tới một StepId, khi người dùng chọn hoặc gõ tự do một
   step đã tồn tại ở nơi khác trong cây — 100% các lượt này bị chặn kèm lỗi ngay tại combobox.
 - **SC-065 (Update 24)**: 100% lượt Save trên form Edit step khi người dùng giữ nguyên step hiện tại
   của chính dòng đang edit (không đổi), hoặc đổi sang một step/tên chưa tồn tại ở nơi khác trong cây,
   MUST được lưu thành công — không bị báo lỗi trùng oan.
+- **SC-066 (Update 25)**: 100% lượt nhấn nút Save template & Public D365 (khi khả dụng, Status=Draft)
+  hiển thị ConfirmDialog Yes/No trước khi thực hiện bất kỳ thay đổi nào.
+- **SC-067 (Update 25)**: 100% lượt chọn Yes ở dialog Save template & Public D365 mà cả bước lưu
+  header/step tree lẫn bước push D365 đều thành công cập nhật đúng Status=Public D365 trên cùng dòng
+  (cùng Id, cùng VersionId, không tạo dòng mới), và TemplateBuilderPage chuyển sang chế độ read-only
+  ngay sau đó.
+- **SC-068 (Update 25)**: 100% lượt bước lưu header/step tree thất bại validate khi nhấn Yes ở Save
+  template & Public D365 KHÔNG gọi D365 và KHÔNG đổi Status — hành vi báo lỗi giống hệt nút Save
+  template thông thường.
+- **SC-069 (Update 25)**: 100% lượt bước lưu header/step tree thành công nhưng bước push D365 thất
+  bại vẫn giữ nguyên thay đổi header/step tree đã lưu (không mất dữ liệu), Status vẫn giữ Draft, và
+  hiển thị thông báo lỗi rõ ràng thay vì snackbar thành công.
+- **SC-070 (Update 25)**: 0% màn hình (TemplateListPage, TemplateBuilderPage) còn hiển thị nút
+  Approve hoặc nhãn "Approved" sau khi hoàn tất Update 25 — toàn bộ đã đổi thành nút **Save template
+  & Public D365** (trên TemplateBuilderPage) và nhãn **"Public D365"** (Chip Status, banner, filter).
+- **SC-071 (Update 26)**: 0% màn hình TemplateBuilderPage còn hiển thị nút **Save template** dưới bất
+  kỳ Status nào (Draft hay Public D365) sau khi hoàn tất Update 26 — chỉ còn nút **Save template &
+  Public D365** (hiển thị/khả dụng khi Draft, ẩn/disabled khi Public D365).
+- **SC-072 (Update 26)**: 100% lượt xác nhận Yes ở dialog Save template & Public D365 (khi bước lưu
+  header/step tree thành công) gọi đúng 1 lệnh D365 xóa theo Code của template TRƯỚC lệnh gọi push
+  D365, bất kể D365 đã có bản ghi cho Code đó hay chưa.
+- **SC-073 (Update 26)**: 0% lượt Save template & Public D365 thực hiện lệnh gọi push D365 hoặc đổi
+  Status khi lệnh gọi D365 xóa (SC-072) thất bại — thay đổi header/step tree đã lưu ở bước (1) vẫn
+  được giữ nguyên và người dùng thấy thông báo lỗi rõ ràng.
 
 ## Assumptions
 
@@ -2463,20 +2701,41 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   DƯỚI 24 giờ, cập nhật đè trực tiếp lên dòng hiện tại (không tạo dòng mới). Mốc 24 giờ được tính
   bằng `(thời điểm hiện tại - CreatedDate) so sánh với 24 giờ`, dùng giờ server (UTC hoặc giờ hệ
   thống nhất quán với các trường audit khác).~~ Toàn bộ cơ chế dựa trên mốc 24 giờ này KHÔNG còn áp
-  dụng — xem 2 assumption Update 16 bên dưới cho cơ chế versioning mới gắn với Status Draft/Approved.
-- **(Update 16)** Versioning mới gắn liền với vòng đời phê duyệt thay vì mốc thời gian: mỗi
-  template có Status **Draft** hoặc **Approved** (enum định nghĩa tại
-  `compliance-client/src/utils/helpers.js`, xem FR-055). Tạo mới (Create Template hoặc Clone) luôn
-  bắt đầu ở Draft. Save khi Draft luôn đè lên dòng hiện tại, không tạo version mới, bất kể
-  CreatedDate đã qua bao lâu. VersionId chỉ tăng đúng 1 lần, tại thời điểm xác nhận **Request
-  change** (chuyển Approved → Draft) — thời điểm này đồng thời tạo dòng mới, sao chép toàn bộ step
-  tree + vendor mapping, và ẩn (IsHide=1) dòng Approved cũ làm bản ghi lịch sử. Approve (Draft →
-  Approved) KHÔNG tạo version mới, chỉ đổi Status trên cùng dòng. Cơ chế này thay thế hoàn toàn mốc
-  24 giờ trước đây, gắn lịch sử phiên bản với vòng đời phê duyệt thay vì thời gian tùy ý.
-- **(Update 16)** Nút Approve/Request change là hành động cấp-dòng (per-record) duy nhất tại một
-  thời điểm — không hỗ trợ Approve/Request change hàng loạt (bulk) cho nhiều template cùng lúc,
-  khác với cơ chế bulk delete (FR-022) đã có. Nếu người dùng chọn nhiều hơn 1 dòng (hoặc 0 dòng),
-  cả 2 nút đều disabled (xem FR-058).
+  dụng — xem 2 assumption Update 16 bên dưới cho cơ chế versioning mới gắn với Status Draft/Public
+  D365.
+- **(Update 16; tên Status và nút kích hoạt đổi ở Update 25)** Versioning mới gắn liền với vòng đời
+  phê duyệt thay vì mốc thời gian: mỗi template có Status **Draft** hoặc **Public D365** (đổi tên từ
+  "Approved" ở Update 25, enum định nghĩa tại `compliance-client/src/utils/helpers.js`, xem FR-055).
+  Tạo mới (Create Template hoặc Clone) luôn bắt đầu ở Draft. Save khi Draft luôn đè lên dòng hiện
+  tại, không tạo version mới, bất kể CreatedDate đã qua bao lâu. VersionId chỉ tăng đúng 1 lần, tại
+  thời điểm xác nhận **Request change** (chuyển Public D365 → Draft) — thời điểm này đồng thời tạo
+  dòng mới, sao chép toàn bộ step tree + vendor mapping, và ẩn (IsHide=1) dòng Public D365 cũ làm
+  bản ghi lịch sử. Chuyển Draft → Public D365 KHÔNG tạo version mới, chỉ đổi Status trên cùng dòng —
+  trước Update 25 được kích hoạt bằng nút Approve trên TemplateListPage, từ Update 25 được kích hoạt
+  bằng nút **Save template & Public D365** trên TemplateBuilderPage (FR-090/FR-091). Cơ chế này thay
+  thế hoàn toàn mốc 24 giờ trước đây, gắn lịch sử phiên bản với vòng đời phê duyệt thay vì thời gian
+  tùy ý.
+- **(Update 16; nút đổi ở Update 25)** Request change (trên TemplateListPage) và Save template &
+  Public D365 (trên TemplateBuilderPage) là hành động cấp-dòng (per-record) duy nhất tại một thời
+  điểm — không hỗ trợ thực hiện hàng loạt (bulk) cho nhiều template cùng lúc, khác với cơ chế bulk
+  delete (FR-022) đã có. Nếu người dùng chọn nhiều hơn 1 dòng (hoặc 0 dòng) trên TemplateListPage,
+  nút Request change disabled (xem FR-058); Save template & Public D365 chỉ áp dụng cho template
+  đang mở ở TemplateBuilderPage nên không có khái niệm chọn nhiều dòng.
+- **(Update 25)** Khi bước lưu header/step tree của Save template & Public D365 thành công nhưng
+  bước push D365 sau đó thất bại, quyết định giữ nguyên phần đã lưu (không rollback) thay vì hoàn
+  tác toàn bộ thao tác là một lựa chọn hợp lý được suy ra trực tiếp từ câu yêu cầu gốc ("logic sẽ
+  giống với nút Save template và nút Approve" — ngụ ý 2 bước độc lập nối tiếp nhau, không phải một
+  giao dịch nguyên tử duy nhất) — giúp người dùng không mất công nhập lại khi chỉ có bước đồng bộ
+  D365 gặp sự cố tạm thời (mất mạng), và nhất quán với cách FR-057 (Save template) luôn thành công
+  độc lập với D365.
+- **(Update 25)** Nút **Save template & Public D365** luôn hiển thị `ConfirmDialog` Yes/No trước khi
+  thực hiện (tái sử dụng đúng pattern đã có ở nút Approve cũ, FR-059) — vì hành động này vừa lưu dữ
+  liệu vừa công bố lên hệ thống ERP bên ngoài (D365), cùng mức độ ảnh hưởng với Approve cũ, nên giữ
+  nguyên bước xác nhận thay vì lưu ngay không hỏi như nút Save template thông thường.
+- **(Update 25)** Tên hằng số JavaScript cụ thể cho giá trị Status "Public D365" trong
+  `compliance-client/src/utils/helpers.js` (ví dụ đổi tên hằng số `APPROVED` hiện có, hay thêm hằng
+  số mới và loại bỏ hằng số cũ) được quyết định ở bước `/speckit-plan` — yêu cầu bắt buộc duy nhất là
+  nhãn hiển thị cho người dùng cuối trên mọi màn hình phải là "Public D365", không còn "Approved".
 - Dirty-tracking cho cảnh báo Back: trạng thái "có thay đổi chưa lưu" được xác định dựa trên việc
   cây bước (step tree) đã bị thay đổi so với lúc tải trang (thêm step mới, xóa step, hoặc chỉnh
   sửa step qua icon Edit) mà chưa nhấn Save template. Thay đổi trên các trường header
@@ -2685,29 +2944,46 @@ cũ; mở Edit trên dòng mới xác nhận có thể chỉnh sửa bình thư�
   `Dynamics:ApiUrl`, `IDynamicService.PostAsync`) — phạm vi của đợt cập nhật này ở 003-eutr-templates
   chỉ là THỜI ĐIỂM các lệnh gọi đó được kích hoạt (gắn với Approve/Request change của một template
   đơn lẻ), KHÔNG phải thay đổi những gì được gọi hay tạo ra một D365 contract mới.
-- **(Update 23)** Endpoint batch thủ công `test-synchronize-templates` (011-eutr-synchronize-data,
-  User Story 3) giữ nguyên không đổi, độc lập với đợt cập nhật này — nó vẫn tồn tại để một Data
-  Administrator có thể chủ động đồng bộ lại TOÀN BỘ template eligible bất cứ lúc nào (ví dụ sau khi
-  can thiệp thủ công vào D365). Đợt cập nhật này chỉ bổ sung một đường kích hoạt THỨ HAI, tự động
-  theo từng bản ghi (per-record), chạy ngay khi người dùng Approve/Request change một template, để dữ
-  liệu D365 không phải chờ đến lần chạy batch thủ công tiếp theo mới được cập nhật.
-- **(Update 23)** Vì Approve chỉ khả dụng khi Status=Draft và Request change chỉ khả dụng khi
-  Status=Approved (loại trừ lẫn nhau, ràng buộc chọn đúng 1 dòng đã có sẵn ở FR-058), và Request
-  change luôn xóa D365 trước khi tạo dòng Draft mới, một template không bao giờ có thể được Approve 2
-  lần liên tiếp mà không có Request change ở giữa (đã xóa bản ghi D365 cũ trước đó) — do đó lệnh push
-  của Approve không cần tự gọi xóa D365 trước (khác với luồng batch đầy đủ của
+- **(Update 23; nút đổi ở Update 25)** Endpoint batch thủ công `test-synchronize-templates`
+  (011-eutr-synchronize-data, User Story 3) giữ nguyên không đổi, độc lập với đợt cập nhật này — nó
+  vẫn tồn tại để một Data Administrator có thể chủ động đồng bộ lại TOÀN BỘ template eligible bất cứ
+  lúc nào (ví dụ sau khi can thiệp thủ công vào D365). Đợt cập nhật này chỉ bổ sung một đường kích
+  hoạt THỨ HAI, tự động theo từng bản ghi (per-record), chạy ngay khi người dùng nhấn Save template &
+  Public D365/Request change một template, để dữ liệu D365 không phải chờ đến lần chạy batch thủ
+  công tiếp theo mới được cập nhật.
+- **(Update 23; nút đổi và tên Status đổi ở Update 25; Superseded by Update 26)** ~~Vì Save template
+  & Public D365 chỉ khả dụng khi Status=Draft và Request change chỉ khả dụng khi Status=Public D365
+  (loại trừ lẫn nhau, ràng buộc chọn đúng 1 dòng đã có sẵn ở FR-058), và Request change luôn xóa D365
+  trước khi tạo dòng Draft mới, một template không bao giờ có thể được đưa lên Public D365 2 lần liên
+  tiếp mà không có Request change ở giữa (đã xóa bản ghi D365 cũ trước đó) — do đó lệnh push của Save
+  template & Public D365 không cần tự gọi xóa D365 trước (khác với luồng batch đầy đủ của
   `SyncTemplatesToDynamicsAsync`, vốn luôn xóa-rồi-đẩy cho toàn bộ danh sách mỗi lần chạy) mà vẫn
-  không có rủi ro tạo bản ghi D365 trùng lặp cho cùng Code.
-- **(Update 23)** "Dữ liệu của template đó" khi Approve được hiểu là đúng TemplateId/dòng mà người
-  dùng đã chọn và xác nhận Approve — chính dòng đang chuyển sang Status=Approved, không phải một
-  version khác của cùng Code.
+  không có rủi ro tạo bản ghi D365 trùng lặp cho cùng Code.~~ Từ Update 26, lệnh push của Save
+  template & Public D365 CŨNG chủ động gọi xóa D365 trước (defensive delete, giống luồng batch của
+  `SyncTemplatesToDynamicsAsync`) — xem FR-096/FR-098. Việc thêm bước xóa này không thay đổi
+  ràng buộc loại trừ lẫn nhau giữa 2 nút (FR-058) hay cơ chế Request change (FR-081/FR-082), chỉ bổ
+  sung thêm một lệnh gọi D365 idempotent trước mỗi lượt push để loại bỏ hoàn toàn phụ thuộc vào giả
+  định vòng đời trước đó.
+- **(Update 26)** Khi lệnh gọi D365 xóa mới (FR-096) thất bại, hệ thống áp dụng đúng cách xử lý lỗi
+  đã thiết lập cho mọi lệnh gọi D365 khác trong spec này (chặn lại — không tiếp tục bước kế tiếp,
+  không commit thay đổi Status, giữ nguyên phần đã lưu cục bộ ở bước (1), hiển thị lỗi rõ ràng — xem
+  FR-082/FR-084/FR-093/FR-097) thay vì coi đây là một luồng lỗi khác biệt.
+- **(Update 26)** "Ẩn nút Save template" được hiểu là loại bỏ hẳn nút khỏi DOM (không render), theo
+  đúng pattern đã dùng khi loại bỏ nút Approve ở Update 25 (FR-089) — không phải chỉ disabled/mờ đi.
+  Việc ẩn áp dụng bất kể Status, vì từ Update 26 không còn tình huống nào cần hiển thị riêng nút Save
+  template độc lập với nút Save template & Public D365.
+- **(Update 23; nút đổi ở Update 25)** "Dữ liệu của template đó" khi Save template & Public D365
+  được hiểu là đúng TemplateId/dòng mà người dùng đang mở ở TemplateBuilderPage và xác nhận Yes —
+  chính dòng đang chuyển sang Status=Public D365, không phải một version khác của cùng Code.
 - **(Update 23)** Cách xử lý khi lệnh gọi D365 thất bại ("chặn lại" — không commit thay đổi cục bộ,
   hiển thị lỗi) được xác nhận qua `AskUserQuestion` trong `/speckit-specify` ngày 2026-09-07. Cách xử
   lý này khác với cách 011-eutr-synchronize-data xử lý lỗi cho luồng batch của chính nó (dừng xử lý
   các mục còn lại nhưng giữ nguyên các lệnh gọi D365 đã gửi thành công trước đó, không có khái niệm
-  "chặn" vì batch không gắn với một hành động Status cục bộ nào) — ở đây, vì Approve/Request change
-  là hành động cục bộ trên 1 bản ghi (thường chỉ 0-2 lệnh gọi D365), thay đổi Status/version chỉ được
-  commit SAU KHI bước D365 (nếu cần) đã thành công.
+  "chặn" vì batch không gắn với một hành động Status cục bộ nào) — ở đây, vì Save template & Public
+  D365/Request change là hành động cục bộ trên 1 bản ghi (thường chỉ 0-2 lệnh gọi D365), thay đổi
+  Status/version chỉ được commit SAU KHI bước D365 (nếu cần) đã thành công (phần header/step tree đã
+  lưu trước bước D365, nếu có, vẫn được giữ nguyên ngay cả khi bước D365 sau đó thất bại — xem
+  FR-093, khác biệt so với Update 23).
 - **(Update 24)** Việc kiểm tra trùng lặp khi Edit step thực thi hoàn toàn ở tầng UI (client-side),
   dựa trên state cây bước hiện tại (kể cả thay đổi chưa Save template) — giống hệt cách FR-076/FR-077
   đã kiểm tra cho dialog Add Root Group/Add Child Step ở Update 21, KHÔNG cần thêm ràng buộc UNIQUE

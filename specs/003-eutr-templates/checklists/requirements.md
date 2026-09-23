@@ -2,7 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-07-02
-**Updated**: 2026-09-10 (Update 24)
+**Updated**: 2026-09-21 (Update 26)
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -932,3 +932,92 @@
   regressions, no newly-failing items). FR-087/FR-088 describe the duplicate check at the
   business/UX level (what triggers the block, what error appears, what is excluded) without leaking
   implementation detail (which component/hook enforces it is left to `/speckit-plan`).
+
+### Update 2026-09-18 — Update 25 Changes
+
+- Input: "cập nhật 003-eutr-templates, đổi status Approved thành Public D365, bỏ nút Approve. Trong
+  màn hình eutr/templates/edit/{Id} sẽ thêm 1 nút Save template & Public D365 kế nút Save template,
+  logic sẽ giống với nút Save template và nút Approve."
+- Status enum value renamed: the second Status value changes from **"Approved"** to **"Public
+  D365"** everywhere on the UI (Status Chip on TemplateListPage, read-only banner on
+  TemplateBuilderPage, the Status column filter) and in the shared `helpers.js` enum. The **Draft**
+  value and every behavior tied to each Status value are unchanged — only the display name/value of
+  the second Status changes. See FR-055, FR-062, FR-094.
+- The **Approve** button and its confirm dialog are fully removed from the TemplateListPage toolbar
+  (FR-058, FR-059 marked Superseded/Removed). The toolbar now only has **Create Template** and
+  **Request change** (enablement condition updated to Status=Public D365).
+- **New button on TemplateBuilderPage** (`/eutr/templates/edit/:id`): **Save template & Public
+  D365**, placed next to the existing **Save template** button, visible/enabled only when
+  Status=Draft. Clicking it (after a Yes/No `ConfirmDialog`, reusing the old Approve dialog pattern)
+  runs, in sequence: (1) the same save logic as **Save template** (persist header + step tree onto
+  the current row, no new version); (2) only if (1) succeeds, the same D365 push logic the old
+  **Approve** button used (FR-083/FR-084, reused as-is); (3) only if (2) succeeds, sets
+  Status=Public D365 on the same row. If step (1) fails validation, nothing else runs (no D365 call,
+  no Status change) — same error UX as Save template. If step (2) (D365) fails after (1) already
+  succeeded, the saved header/step tree changes are KEPT (not rolled back) but Status stays Draft,
+  with an error shown instead of a success snackbar — the user can retry the button without
+  re-entering data. See FR-090 to FR-093, User Story 8 (rewritten), SC-066 to SC-070.
+- User Story 8 rewritten from "Approve template" (ListPage toolbar action) to "Save template &
+  Public D365" (TemplateBuilderPage button); User Story 9 (Request change) kept the same mechanics,
+  only the Status name changed (Approved → Public D365) and its toolbar-button neighbor changed from
+  Approve to nothing (Request change is now the sole per-row action besides Create Template).
+- No [NEEDS CLARIFICATION] markers were embedded — the original request was specific enough to
+  derive a single reasonable behavior (merge Save + Approve into one button, reuse FR-057/FR-083/
+  FR-084 logic, only change the trigger location), following this spec's established
+  "resolve via reasonable default, document in Assumptions" pattern (Update 12/15/19/22/24). The one
+  judgment call — whether the header/step-tree save from step (1) is kept when the D365 push in step
+  (2) subsequently fails — is documented in Assumptions as a reasonable interpretation of "logic
+  giống Save template và Approve" (two chained, independently-successful steps, not one atomic
+  transaction).
+- Spec Quality Checklist re-validated against the updated spec: all 16/16 items remain passing.
+  FR-089 to FR-094 describe the button/toolbar/naming changes at the business/UX level; the exact
+  JS constant name for the renamed enum value is deferred to `/speckit-plan` (FR-094).
+
+### Update 2026-09-21 — Update 26 Changes
+
+- Input: "cập nhật 003-eutr-templates, màn hình edit, ẩn nút Save Template. Thêm logic xóa template
+  trước khi save và public D365 như `await _synchronizeDataService.DeleteTemplateFromDynamicsAsync(existing.Code, ct);`
+  vào nút Save Template & Public D365."
+- **Pre-write code audit** (via Explore agent): confirmed `TemplateBuilderPage.jsx` renders two
+  independent buttons — **Save template** (`handleSave`, lines 757-766) and **Save template &
+  Public D365** (`handleSaveAndPublish`, lines 767-780); backend `EutrTemplatesService.ApproveAsync`
+  (lines 200-246) currently calls `PushTemplateToDynamicsAsync` directly with no preceding delete
+  call; `DeleteTemplateFromDynamicsAsync(string code, CancellationToken ct)` already exists on
+  `IEutrSynchronizeDataService`/`EutrSynchronizeDataService` and is currently only invoked from
+  `RequestChangeAsync` (the Request change flow, FR-081).
+- **Change: Save template button hidden** — FR-095 added: the standalone **Save template** button on
+  TemplateBuilderPage MUST be removed from the DOM entirely (not just disabled), regardless of
+  Status. **Save template & Public D365** becomes the sole Save action on the Edit screen, keeping
+  its existing Status=Draft-only visibility (FR-090, unchanged). The underlying save-overwrite logic
+  the button used to trigger (FR-057) is not removed — it remains step (1) inside the Save & Public
+  D365 flow (FR-091).
+- **Change: defensive D365 delete added to Save & Public D365** — FR-096 through FR-098 added: the
+  `ApproveAsync` flow (triggered by Save template & Public D365) MUST now call
+  `_synchronizeDataService.DeleteTemplateFromDynamicsAsync(existing.Code, ct)` immediately after the
+  header/step-tree save (step 1) succeeds and immediately before the existing
+  `PushTemplateToDynamicsAsync` push (step 2/FR-083) — regardless of whether the template has ever
+  been pushed to D365 before. This explicitly supersedes FR-085 (Update 23), which had argued the
+  delete-before-push step was unnecessary because Request change always deletes first; FR-098 records
+  that this assumption is no longer relied upon from Update 26 onward. FR-097 defines the failure
+  path for the new delete call: if it fails, the flow stops (no push, no Status change), the
+  already-saved header/step tree from step (1) is kept, and an error is shown — mirroring the
+  existing error-handling pattern of FR-082/FR-084/FR-093 rather than introducing a new one.
+- User Story 8 narrative and acceptance scenario 1 updated to reflect the single remaining Save
+  button; two new acceptance scenarios (11, 12) added — the new D365-delete-failure short-circuit,
+  and confirmation that Save template never renders on the Edit screen regardless of Status.
+- Success Criteria: SC-071 through SC-073 added (Save template never renders; delete-before-push call
+  always fires on a successful Save & Public D365 attempt; delete failure blocks the push/Status
+  change while preserving the already-saved header/step tree).
+- Assumptions: FR-085's superseded reasoning and the FR-096 failure-handling choice (reuse the
+  existing "block, don't roll back local save" pattern) documented; "ẩn nút" (hide) is treated as
+  full DOM removal, consistent with how the Approve button was removed in Update 25 (FR-089), not
+  merely disabling it.
+- No [NEEDS CLARIFICATION] markers were embedded in the spec — the user's request supplied the exact
+  code line and call site (Save & Public D365, before push), leaving only one reasonable inference
+  (how the new delete call's own failure is handled), which was resolved by reusing this spec's
+  already-established D365-error-handling convention rather than inventing a new one.
+- Spec Quality Checklist re-validated against the updated spec: all 16/16 items remain passing (no
+  regressions, no newly-failing items). FR-095 to FR-098 describe the button-visibility and
+  call-sequencing changes at the business/UX level; the exact frontend removal mechanism (deleting
+  the JSX block vs. a permanently-false render condition) and the precise backend call placement
+  within `ApproveAsync` are implementation details left to `/speckit-plan`.

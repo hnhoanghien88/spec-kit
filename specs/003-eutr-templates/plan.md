@@ -1439,6 +1439,121 @@ per-node inline edit form (`stepForm`/`handleStepFormSave`/`editStep`), reusing 
 
 See research.md Section 41 for the full rationale and alternatives considered.
 
+### Update 2026-09-18 (Update 25) — Rename Status "Approved" → "Public D365"; Remove Approve Button, Merge into "Save template & Public D365" on TemplateBuilderPage
+
+**Frontend-mostly, backend comment/label-only (no DB migration — the Status column stores a byte,
+0/1, unchanged).** Per spec Update 25 (FR-089 to FR-094): the second `TemplateStatusEnum`/
+`TEMPLATE_STATUS` value keeps its numeric value (1) but its display name/label changes from
+"Approved" to "Public D365". The **Approve** button and its confirm dialog are removed entirely
+from `TemplateListPage.jsx`'s toolbar (only **Create Template** and **Request change** remain).
+`TemplateBuilderPage.jsx` gains a **Save template & Public D365** button next to **Save template**
+that, on confirm, calls the existing `PUT /api/eutr-templates/{id}` (Update) endpoint and then —
+only if that succeeds — the existing `POST /api/eutr-templates/{id}/approve` (Approve) endpoint in
+sequence from the client, reusing both endpoints exactly as they already behave (Principle III —
+reuse existing backend; the "gap" is purely sequencing two existing calls from a new UI trigger).
+
+- **`ComplianceSys.Application/Constants/TemplateStatus.cs`** MODIFY: rename enum member
+  `Approved = 1` → `PublicD365 = 1` (value unchanged).
+- **`ComplianceSys.Application/Services/EutrTemplatesService.cs`** MODIFY: update the 5
+  `TemplateStatusEnum.Approved` references (in `UpdateAsync`, `ApproveAsync`, `RequestChangeAsync`)
+  to `TemplateStatusEnum.PublicD365`; update Vietnamese comments and the "Only a Draft template can
+  be Approved."/"Only an Approved template can request change." validation messages. `ApproveAsync`
+  and `RequestChangeAsync` themselves are **unchanged in behavior** — same D365-then-commit
+  sequencing (FR-083/FR-084, FR-081/FR-082), same transaction boundaries — only naming/messages
+  change.
+- **`ComplianceSys.Api/Controllers/EutrTemplatesController.cs`** MODIFY: comment + response message
+  text only ("Template approved successfully." → "Template published to D365 successfully."). The
+  route (`POST {id}/approve`), method name (`Approve`), and `IEutrTemplatesService.ApproveAsync`
+  contract are **kept as-is** — renaming the internal method/route name is out of scope (no
+  user-facing effect; Principle III favors minimal churn on a working contract).
+- **`IEutrTemplatesRepository.cs`, `EutrTemplatesRepository.cs`, `IEutrTemplatesService.cs`,
+  `EutrSynchronizeDataService.cs`, `IEutrSynchronizeDataService.cs`** MODIFY: comment-only renames
+  (no logic change).
+- **`compliance-client/src/utils/helpers.js`** MODIFY: `TEMPLATE_STATUS.APPROVED` → `.PUBLIC_D365`
+  (value unchanged, 1); `TEMPLATE_STATUS_LABELS[1]` → `'Public D365'`.
+- **`useEutrTemplatesColumns.jsx`** MODIFY: Status Chip color condition updated to
+  `TEMPLATE_STATUS.PUBLIC_D365`.
+- **`TemplateListPage.jsx`** MODIFY: remove the Approve `Button`, its `ConfirmDialog`,
+  `approveConfirmOpen` state, `canApprove` derived value, `handleApprove`, the `CheckIcon` import,
+  and the `ApproveEutrTemplatesUseCase` import/instance (FR-089). `canRequestChange` condition and
+  the Request-change dialog copy updated to `TEMPLATE_STATUS.PUBLIC_D365`/"Public D365".
+- **`TemplateBuilderPage.jsx`** MODIFY: `isReadOnly` condition updated to
+  `TEMPLATE_STATUS.PUBLIC_D365`; read-only banner text updated. Adds: import + instance of the
+  existing `ApproveEutrTemplatesUseCase` (already used by `TemplateListPage` pre-Update-25, now
+  reused here); a `validateAndBuildPayload()` helper extracted from `handleSave`'s inline
+  validation+payload construction (used by both `handleSave` and the new handler, avoiding
+  duplicated Name/Alert-for validation, FR-092); a new **Save template & Public D365** `Button`
+  (next to Save template, same `disabled` gating) that opens a `ConfirmDialog`
+  (`saveAndPublishConfirmOpen`); `handleSaveAndPublish` which — on Yes — validates, calls
+  `updateUseCase.execute` (step 1), and only on success calls `approveUseCase.execute` (step 2); if
+  step 1 fails, stops with the same validation-error UX as Save template (FR-092); if step 2 fails
+  after step 1 succeeded, the saved header/step-tree changes are **kept** (no rollback — step 1
+  already committed server-side), `Status` stays Draft, and an error snackbar explains the template
+  was saved but not published, inviting a retry (FR-093).
+- **No change** to `UpdateEutrTemplatesUseCase`, `ApproveEutrTemplatesUseCase`,
+  `RequestChangeEutrTemplatesUseCase` (all three already existed pre-Update-25 and are reused
+  as-is), `contracts/api-endpoints.md` endpoint shapes (verified — no request/response contract
+  change, only which UI trigger calls `/approve` and when), or any DB migration file (the Status
+  column and its 0/1 values are unchanged; this is a display-label/enum-member rename only).
+
+**Verified**: `dotnet build` on `compliance-sys-api` → 0 `error CS` (the only build errors were
+`MSB3027`/file-lock copy errors from a locally running `ComplianceSys.Api` process holding the
+output DLL — an environment artifact, not a compile error from this change). `npx eslint` on all 4
+changed frontend files → 0 errors. `npm run build` on `compliance-client` → succeeded in 39.20s, no
+new errors/warnings beyond the pre-existing unrelated chunk-size advisory (`TemplateBuilderPage`
+chunk 23.03 kB, `TemplateListPage` chunk 12.76 kB).
+
+See research.md Section 42 for the full rationale (why the button reuses two existing endpoints
+sequentially from the client instead of adding a new combined backend endpoint).
+
+### Update 2026-09-21 (Update 26) — Hide "Save template" Button; Add Defensive D365 Delete Before Push in "Save template & Public D365"
+
+**Frontend: remove one JSX button block. Backend: add one existing-method call inside
+`ApproveAsync`, before the existing push call.** Per spec Update 26 (FR-095 to FR-098): the
+standalone **Save template** button on `TemplateBuilderPage.jsx` is removed from the DOM entirely
+(not conditionally hidden) — **Save template & Public D365** becomes the screen's only Save
+control, keeping its existing Status=Draft-only `disabled`/visibility gating unchanged. On the
+backend, `EutrTemplatesService.ApproveAsync` (the handler already reused by "Save template &
+Public D365" since Update 25) gains one new call —
+`await _synchronizeDataService.DeleteTemplateFromDynamicsAsync(existing.Code, ct);` — placed
+immediately before the existing `PushTemplateToDynamicsAsync` call, reusing the exact method
+`RequestChangeAsync` already calls (no new D365 endpoint, DTO, or dependency; Principle III).
+
+- **`compliance-client/src/presentation/pages/eutr-templates/TemplateBuilderPage.jsx`** MODIFY:
+  delete the **Save template** `<Button onClick={handleSave} ...>` JSX block (previously at lines
+  757-766) entirely — not wrapped in a falsy condition, removed from the render tree.
+  **Correction to the initial plan** (found only once the actual code was read line-by-line while
+  implementing): `handleSaveAndPublish` does NOT call `handleSave` internally — it duplicates the
+  same `validateAndBuildPayload()` + `updateUseCase.execute` calls directly, with its own
+  success/error handling (a fact the Update 25 plan/research entries already stated correctly, but
+  this Update 26 entry initially mis-restated). Once the button is removed, `handleSave` itself has
+  no remaining caller anywhere in the file and is dead code — deleted, along with the `saving`/
+  `setSaving` state it alone mutated. The 6 other JSX spots that read `saving` to disable the
+  tree-editing toolbar (Root Group, Child Step, Move Up/Down, Delete step) and the Save & Public
+  D365 button itself are changed to read `publishing` instead (the one remaining in-flight-save
+  signal), preserving the existing "disable tree edits while a save/publish is running" behavior
+  instead of silently dropping it. `validateAndBuildPayload()` is kept — it is still used by
+  `handleSaveAndPublish`.
+- **`ComplianceSys.Application/Services/EutrTemplatesService.cs`** MODIFY: in `ApproveAsync` (lines
+  200-246), insert `await _synchronizeDataService.DeleteTemplateFromDynamicsAsync(existing.Code, ct);`
+  immediately after the header/step-tree save step succeeds and immediately before the existing
+  `await _synchronizeDataService.PushTemplateToDynamicsAsync(existing.Id, existing.Code,
+  existing.Name, ct);` call (line 221). Both calls are wrapped by the same `try/catch` that already
+  converts a D365 failure into a `ValidationException` via `BuildD365ErrorMessage(ex)` (lines
+  223-229) — reused as-is for the new delete call too (FR-097), so a delete failure short-circuits
+  before the push and before the `Status = PublicD365` transaction (lines 231-242), exactly like an
+  existing push failure does today. No signature change to `ApproveAsync`, no new field/constructor
+  dependency (`_synchronizeDataService` already exists on this service since Update 23).
+- **No change** to `IEutrSynchronizeDataService`/`EutrSynchronizeDataService.DeleteTemplateFromDynamicsAsync`
+  (already implemented and already called from `RequestChangeAsync`, Update 23), `RequestChangeAsync`
+  itself, any DTO, any DB column/migration, or `contracts/api-endpoints.md`'s request/response
+  shapes for `POST {id}/approve` (the endpoint's side effects gain one extra D365 call; its
+  request/response contract is unchanged — see contracts/api-endpoints.md Section 10 note).
+
+See research.md Section 43 for the full rationale (why the delete call is placed inside
+`ApproveAsync` rather than in the frontend, and why hiding the button means DOM removal rather than
+a disabled/conditional render).
+
 ## Technical Context
 
 **Language/Version**: .NET 8 (backend), JavaScript/React 18 + Vite 7 (frontend)
@@ -1725,6 +1840,14 @@ new cross-feature dependency (`EutrTemplatesService` now depends on `IEutrSynchr
 one-directional and does not close a cycle (verified: `EutrSynchronizeDataService` depends only on
 `IEutrTemplatesRepository`/`IEutrTemplateReferencesRepository`, never on `IEutrTemplatesService`). No
 new dependency package.
+
+**Post-design re-check (2026-09-21 update 26)**: All principles still PASS. The new delete call
+stays inside `EutrTemplatesService.ApproveAsync` (Application layer, Principle I) and calls a method
+that already exists on `IEutrSynchronizeDataService` — no controller change, no new D365
+integration, no new dependency (Principle III, taken further than Update 23: this reuses a method
+already exposed for exactly this purpose, not just the same underlying HTTP call shape). The
+frontend change is a JSX deletion inside `TemplateBuilderPage.jsx`'s existing render tree — no new
+component, route, or dependency (Principle V unaffected).
 
 ## Project Structure
 

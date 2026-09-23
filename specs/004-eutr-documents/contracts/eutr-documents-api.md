@@ -201,7 +201,8 @@
   và ≤ 10MB; file không hợp lệ bị loại (không upload, không tạo document) nhưng vẫn xuất hiện trong
   response với `success: false` kèm `errorMessage`.
 - Với mỗi file hợp lệ upload SharePoint thành công, backend tạo 1 bản ghi mới trong
-  `eutr_documents` (`Name` = tên file gốc, `ValidFrom` = ngày hiện tại, `ValidTo` = `9999-12-31`,
+  `eutr_documents` (`Name` = **(Update 25)** tên tự tính theo Step/Prefix của master — KHÔNG còn là
+  tên file gốc, xem mục Update 25 bên dưới; `ValidFrom` = ngày hiện tại, `ValidTo` = `9999-12-31`,
   `FileId` = id SharePoint) — **không** qua `EutrDocumentsRequestDto`/`POST /api/eutr-documents`.
   Bảng `eutr_documents` không lưu `poCode` — PO chỉ dùng để xác định thư mục SharePoint.
 - **(Update 7)** Trước khi upload lên SharePoint, mỗi file MUST qua thêm validate **prefix tên
@@ -336,6 +337,10 @@ Edit không còn rẽ nhánh mở popup Assign condition cho Type="Upload manual
 - **(Update 19)** `validFrom`/`validTo` (`date?`, nullable): cùng ý nghĩa/fallback với `eutr-upload-multi`
   (xem mục ở trên) — giá trị hiển thị ở popup Add tại thời điểm Upload, mặc định
   `DateTime.Today`/`9999-12-31` khi vắng mặt.
+- **(Update 25)** `eutr_documents.Name` ghi cho mỗi document tạo ra ở endpoint này KHÔNG còn là tên
+  file gốc — tính theo (Prefix từ `eutr_master_documents` nếu `stepId` có cấu hình) + Step Name, làm
+  sạch ký tự đặc biệt, giữ đuôi file gốc; xem mục "Update 25" bên dưới và `data-model.md`. Request/
+  response shape của endpoint này **không đổi** (không field mới).
 
 ### API dùng chung — `GET /api/eutr-reference-types` (đã tồn tại từ feature `006-eutr-reference-types`, không đổi)
 
@@ -486,3 +491,13 @@ phạm vi feature.
 > `UploadEutrManualFilesMulti` (`uploadEutrManualFilesMulti` → `POST /sharepoint/
 > eutr-upload-manual-multi`). `GetEutrDocumentsPoReferences`/`getPoReferences` **KHÔNG bị xóa** (khác
 > dự kiến ban đầu) — xem ghi chú Update 19 phía trên.
+
+## Update 25 — Tự động đổi tên file theo Step + Prefix của master khi Upload
+
+Không có contract nào đổi request/response shape — cả `POST /api/sharepoint/eutr-upload-multi` và
+`POST /api/sharepoint/eutr-upload-multi-by-type` giữ nguyên field. Thay đổi duy nhất là **giá trị**
+`Name` được ghi vào bản ghi `eutr_documents` mỗi endpoint tạo ra (xem 2 ghi chú "(Update 25)" ở trên và
+`data-model.md` cho công thức đầy đủ) — `eutr_documents.Name` không còn phản ánh tên file gốc người
+dùng chọn. `EutrUploadFileResultDto.FileName` trên response tiếp tục là tên file **gốc** (dùng đối
+chiếu với lượt chọn file, không đổi). Không có use case/API client frontend nào cần sửa (0 thay đổi
+`compliance-client`).

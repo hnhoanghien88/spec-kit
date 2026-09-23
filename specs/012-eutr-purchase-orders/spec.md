@@ -10,6 +10,38 @@
 
 ## Clarifications
 
+### Session 2026-09-23 (Update 5) — Ẩn nút Upload/Edit theo permissionList của menu eutr-documents (sửa lại cả cơ chế Upload của Update 4)
+
+- Input: Cập nhật 005-eutr-sales-orders, 012-eutr-purchase-orders màn hình view, map file: nếu không
+  có quyền `EutrDocuments.Create` sẽ không hiển thị nút attach file (Upload), không có quyền
+  `EutrDocuments.Update` sẽ không hiển thị nút Edit file.
+- Bối cảnh: Update 4 (phiên trước) đã ẩn nút **Upload** ở `PurchId/View` theo đúng quyền tạo tài liệu
+  mới, nhưng dùng cơ chế dò quyền qua endpoint mới `GET /api/eutr-documents/can-create` — phần Edit
+  chưa được xử lý (Update 4 cố ý để ngoài phạm vi: "nút Edit ... tiếp tục hiển thị và hoạt động bình
+  thường, không bị ảnh hưởng"). Bản đầu của Update 5 định giải quyết phần Edit bằng cách thêm endpoint
+  `can-update` mới (mô phỏng `can-create`), tái sử dụng từ `005-eutr-sales-orders` Update 29 (cùng
+  phiên).
+- **Sửa lại sau kiểm thử thực tế (cùng phiên)**: người yêu cầu tính năng kiểm thử trực tiếp trên trình
+  duyệt (`/eutr/purchase-orders/PO00000059/view`), thu hồi quyền `EutrDocuments.Create`/
+  `EutrDocuments.Update` cho user test, nhưng nút Upload lẫn Edit đều vẫn hiển thị. Chụp màn hình
+  DevTools Network xác nhận: response của `GET .../menu-managements/permissions?appCode=ComplApi&...`
+  cho menu `eutr-documents` (id 242) đã có sẵn field `permissionList` — cùng cơ chế
+  `permissionList`/`getMenuDataFromStorage` đã dùng ở `005-eutr-sales-orders` Update 28 (menu
+  `eutr-sales-orders`) — và `'Create'`/`'Update'` là 2 phần tử hợp lệ trong `permissionList` đó (user
+  test lúc chụp chỉ có `['Download', 'ReadAll', 'ReadOne', 'ViewMenu']`, thiếu cả hai). Vì vậy cả cơ chế
+  dò quyền qua `can-create` (Update 4) lẫn `can-update` (bản đầu của Update 5) đều bị thay thế —
+  `permissionList` của menu `eutr-documents` đã đủ dữ liệu, không cần endpoint dò quyền nào.
+- Quyết định (đã sửa lại): (1) `PurchaseOrderViewPage.jsx` đọc `permissionList` của menu
+  `eutr-documents` qua đúng `getMenuDataFromStorage()` đã dùng ở Update 28 của 005. (2) Nút **Upload**
+  chỉ hiển thị khi `permissionList.includes('Create')` — thay thế hoàn toàn cơ chế `can-create` của
+  Update 4 (không phải giữ song song). (3) Nút **Edit** trên mỗi dòng AVAILABLE FILES chỉ hiển thị khi
+  `permissionList.includes('Update')` — độc lập với Upload, đúng tinh thần FR-034 (2 quyền độc lập). (4)
+  Nút **View** (xem trước nội dung file) không bị ảnh hưởng. (5) Backend không đổi gì —
+  `EutrDocuments.Create`/`EutrDocuments.Update` vẫn là 2 policy thật bảo vệ đúng
+  `POST /api/eutr-documents`/`PUT /api/eutr-documents/{id}`; 2 endpoint dò quyền `can-create`/
+  `can-update` bị xoá hẳn (không còn nơi nào gọi, theo đúng lựa chọn của người yêu cầu tính năng —
+  không giữ lại dead code).
+
 ### Session 2026-09-07 (Update 1)
 
 - Input: Cập nhật 012-eutr-purchase-orders. Trong màn hình chi tiết (`PurchId/View`), khi người dùng
@@ -52,6 +84,49 @@
 - Change: Phạm vi áp dụng vẫn giữ nguyên như Update 1 — CHỈ áp dụng cho popup Add tài liệu mở từ nút
   Upload tại `PurchId/View` (012-eutr-purchase-orders). Màn hình Map File (005-eutr-sales-orders) không
   bị ảnh hưởng bởi thay đổi này.
+
+### Session 2026-09-18 (Update 3) — Kế thừa: File name tự động đổi theo Step/Prefix master khi Upload (004-eutr-documents Update 25)
+
+- Input: yêu cầu đổi tên file theo Step/Prefix master được gửi cho `004-eutr-documents`, kèm chỉ định
+  "áp dụng logic này cho upload file ở màn hình 005-eutr-sales-orders, 012-eutr-purchase-orders".
+- Change: Nút **Upload** và **Edit** ở màn hình `PurchId/View` (FR-021/FR-022) mở đúng popup Add/Edit
+  dùng chung với `004-eutr-documents` và gọi đúng luồng Upload chung — không có logic đặt tên file
+  riêng ở đặc tả này — do đó **tự động kế thừa nguyên vẹn** hành vi đổi tên file theo Step (+ Prefix
+  của `eutr_master_documents`, nếu Step có cấu hình) đã đặc tả ở `004-eutr-documents` Update 25
+  (FR-062–FR-067 của đặc tả đó): File name của mỗi document tạo qua Upload ở đây KHÔNG còn là tên file
+  gốc, mà là Prefix (nếu có) + Step Name đã chọn (hoặc, khi Type vẫn là "PO" tự điền sẵn theo Update 1,
+  Step ứng với Prefix khớp dài nhất), đã làm sạch ký tự đặc biệt, giữ đuôi file gốc.
+- Change: Không có thay đổi nào cần thực hiện riêng ở `012-eutr-purchase-orders` (không có FR/Key
+  Entity nào của đặc tả này cần cập nhật) — khu vực AVAILABLE FILES ở `PurchId/View` tiếp tục hiển thị
+  đúng giá trị `eutr_documents.Name` hiện có trong DB tại thời điểm đọc, tự động phản ánh tên đã đổi.
+- Q: Việc Upload ở `PurchId/View` tự điền sẵn Type = "PO" (Update 1) có nghĩa là hầu hết lượt Upload ở
+  đây rơi vào nhánh Type = "PO" của Update 25 (Step suy ra từ khớp Prefix, không chọn tường minh) —
+  điều này có ảnh hưởng gì tới đặc tả này không? → A: **Không** — Type = "PO" tự điền sẵn nhưng người
+  dùng vẫn có thể đổi sang Type khác trước khi Upload (Update 1/2, không khóa trường); dù giữ nguyên
+  Type = "PO" hay đổi Type khác, logic đổi tên đều áp dụng đúng theo nhánh tương ứng đã đặc tả ở
+  `004-eutr-documents` Update 25 — không cần thêm quy tắc riêng nào ở đặc tả này.
+
+### Session 2026-09-22 (Update 4) — Ẩn nút Upload khi user không có quyền
+
+- Input: Cập nhật 012-eutr-purchase-orders, nếu user không có quyền Update, thì ẩn nút Upload trong
+  màn hình view.
+- Q: Nút Upload ở `PurchId/View` thực chất mở popup Add tài liệu dùng chung với 004-eutr-documents,
+  và hành động Upload gọi đúng luồng tạo tài liệu mới (Create) của đặc tả đó — không phải luồng sửa
+  (Update, vốn là hành động của nút Edit). "Quyền Update" mà người dùng nhắc tới nên map vào quyền
+  nào để quyết định ẩn/hiện nút Upload? → A: Dùng đúng quyền thật đang bảo vệ hành động Upload (tạo
+  tài liệu mới, dùng chung với 004-eutr-documents) — "Update" trong yêu cầu được hiểu theo nghĩa
+  nghiệp vụ chung ("người dùng có thể thay đổi/bổ sung dữ liệu hay không"), không phải tên quyền kỹ
+  thuật theo đúng nghĩa đen.
+- Decision: Nút Upload ở `PurchId/View` MUST chỉ hiển thị khi người dùng hiện tại có quyền thực hiện
+  hành động tạo tài liệu mới (Upload/Add) — cùng quyền đang kiểm soát hành động Upload dùng chung với
+  004-eutr-documents. Nếu người dùng không có quyền này, nút Upload MUST bị ẩn hoàn toàn (không hiển
+  thị dạng vô hiệu hóa/disable).
+- Decision: Việc ẩn nút Upload theo Update này CHỈ áp dụng cho chính nút Upload — nút Edit và toàn bộ
+  phần còn lại của màn hình (cây thư mục theo Template, khu vực AVAILABLE FILES, thông tin Purch
+  id/Vendor code/Vendor name) tiếp tục hiển thị và hoạt động bình thường, không bị ảnh hưởng.
+- Decision: Đây là điều kiện hiển thị bổ sung cho nút Upload đã có (FR-021/024/027) — không thay đổi
+  bất kỳ hành vi nào khác của nút Upload khi nút đó vẫn hiển thị (vẫn tự điền Type/Value theo Update
+  1/2, vẫn dùng chung popup và luồng Upload của 004-eutr-documents).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -175,6 +250,24 @@ trạng thái của step đó trong cây được cập nhật ngay mà không c
     **When** người dùng tiếp tục đổi sang một Type khác trong nhóm PO/Vendor/Invoice/Delivery note,
     **Then** Value được ghi đè bằng giá trị mặc định tương ứng Type mới (không giữ lại Value cũ), và
     người dùng vẫn có thể sửa tiếp Value sau khi tự điền lại.
+15. **Given** người dùng hiện tại KHÔNG có quyền thực hiện hành động tạo tài liệu mới (Upload/Add, dùng
+    chung với 004-eutr-documents), **When** mở màn hình chi tiết `PurchId/View`, **Then** nút Upload
+    KHÔNG hiển thị trên màn hình (không phải ở trạng thái disable); các phần còn lại của màn hình (cây
+    thư mục, AVAILABLE FILES, nút Edit — nếu user có quyền `EutrDocuments.Update` theo kịch bản 17/18)
+    vẫn hiển thị và hoạt động bình thường.
+16. **Given** người dùng hiện tại CÓ quyền thực hiện hành động tạo tài liệu mới, **When** mở màn hình
+    chi tiết `PurchId/View`, **Then** nút Upload hiển thị bình thường như các Update trước đó đã mô tả.
+17. **Given** `permissionList` của menu `eutr-documents` KHÔNG chứa `'Update'` (Update 5), **When** xem
+    AVAILABLE FILES ở màn hình chi tiết `PurchId/View`, **Then** nút Edit trên MỌI dòng tài liệu đều
+    KHÔNG hiển thị (không phải disable) — nút Upload (nếu `permissionList` có `'Create'`) và toàn bộ
+    phần còn lại của màn hình không bị ảnh hưởng.
+18. **Given** `permissionList` của menu `eutr-documents` chứa `'Update'` (Update 5), **When** xem
+    AVAILABLE FILES, **Then** nút Edit hiển thị trên mọi dòng và hoạt động đúng như hành vi đã có trước
+    Update 5.
+19. **Given** người dùng hiện tại có quyền `EutrDocuments.Update` nhưng không có quyền
+    `EutrDocuments.Create` (hoặc ngược lại), **When** mở màn hình chi tiết, **Then** đúng một trong hai
+    nút Upload/Edit hiển thị theo đúng quyền tương ứng của nó, nút còn lại bị ẩn — không có trường hợp
+    ẩn cả hai chỉ vì thiếu một quyền.
 
 ---
 
@@ -214,6 +307,13 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
   khác trong bảng hiển thị bình thường.
 - Khi màn hình chi tiết (`PurchId/View`) đang tải cây thư mục/tài liệu mà việc tải bị lỗi, hệ thống
   hiển thị thông báo lỗi rõ ràng thay vì cây rỗng gây hiểu nhầm.
+- (Update 5, sửa lại) `permissionList` của menu `eutr-documents` rỗng/không tải được (ví dụ lỗi tạm
+  thời khi lấy menu từ storage): hệ thống coi như user không có quyền Create/Update nào (mặc định ẩn cả
+  Upload và Edit), theo đúng cách xử lý mặc định-an-toàn (fail-closed) đã áp dụng cho `permissionList`
+  của menu `eutr-sales-orders` ở `005-eutr-sales-orders` Update 28.
+- (Update 5) User không có cả hai quyền `'Create'`/`'Update'` trong `permissionList` của menu
+  `eutr-documents`: màn hình `PurchId/View` chỉ còn hiển thị cây thư mục/AVAILABLE FILES ở chế độ gần
+  như chỉ đọc (không còn nút Upload lẫn Edit) — không phải trạng thái lỗi.
 
 ## Requirements *(mandatory)*
 
@@ -302,6 +402,35 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
   từ nút Upload tại màn hình `PurchId/View` của 012-eutr-purchase-orders; hành vi Upload ở màn hình Map
   File (005-eutr-sales-orders) MUST giữ nguyên như hiện tại (không tự điền lại Value khi đổi Type),
   theo đúng phạm vi đã giới hạn ở FR-026.
+- **FR-030**: Nút **Upload** ở màn hình chi tiết (`PurchId/View`) MUST chỉ hiển thị khi người dùng
+  hiện tại có quyền thực hiện hành động tạo tài liệu mới (Upload/Add) — cùng quyền đang kiểm soát hành
+  động Upload dùng chung với 004-eutr-documents. Nếu người dùng không có quyền này, nút Upload MUST bị
+  ẩn hoàn toàn khỏi màn hình, không hiển thị ở trạng thái vô hiệu hóa (disable). **Sửa lại ở Update 5**:
+  cơ chế xác định "có quyền hay không" đổi từ dò qua endpoint `can-create` (như Update 4 ban đầu) sang
+  đọc `permissionList.includes('Create')` của menu `eutr-documents` (xem FR-033) — kết quả yêu cầu
+  không đổi, chỉ đổi cách lấy dữ liệu.
+- **FR-031**: Việc ẩn nút Upload theo FR-030 MUST KHÔNG ảnh hưởng tới nút Edit hay bất kỳ phần nào
+  khác của màn hình `PurchId/View` (cây thư mục theo Template, khu vực AVAILABLE FILES, thông tin
+  Purch id/Vendor code/Vendor name) — các phần này tiếp tục hiển thị và hoạt động bình thường, không
+  phụ thuộc vào quyền tạo tài liệu mới.
+- **FR-032**: Khi nút Upload hiển thị theo FR-030 (người dùng có quyền), toàn bộ hành vi đã đặc tả cho
+  nút Upload ở các Update trước đó (tự điền Type/Value — FR-024 đến FR-029) MUST giữ nguyên không đổi.
+- **FR-033** (Update 5, sửa lại): `PurchaseOrderViewPage.jsx` MUST đọc `permissionList` của menu
+  `eutr-documents` (qua `getMenuDataFromStorage()`, cùng cơ chế `005-eutr-sales-orders` Update 28 đã
+  dùng cho menu `eutr-sales-orders`). Nút **Upload** (FR-030) chỉ hiển thị khi `permissionList` chứa
+  `'Create'`; nút **Edit** trên mỗi dòng tài liệu ở AVAILABLE FILES chỉ hiển thị khi `permissionList`
+  chứa `'Update'`. Nếu thiếu quyền tương ứng, nút đó MUST bị ẩn hoàn toàn, không hiển thị ở trạng thái
+  vô hiệu hóa (disable).
+- **FR-034** (Update 5): Quyền Create và quyền Update ở FR-033 là 2 điều kiện độc lập — nút Upload chỉ
+  phụ thuộc `permissionList.includes('Create')`, nút Edit chỉ phụ thuộc `permissionList.includes('Update')`;
+  một user có thể có cả hai, chỉ một, hoặc không có quyền nào trong hai quyền này.
+- **FR-035** (Update 5): Việc ẩn nút Edit theo FR-033 MUST KHÔNG ảnh hưởng tới nút Upload (FR-030) hay
+  bất kỳ phần nào khác của màn hình `PurchId/View` (cây thư mục theo Template, khu vực AVAILABLE FILES,
+  thông tin Purch id/Vendor code/Vendor name) — các phần này tiếp tục hiển thị và hoạt động bình
+  thường, không phụ thuộc vào quyền `EutrDocuments.Update`.
+- **FR-036** (Update 5): Khi nút Edit hiển thị theo FR-033 (người dùng có quyền), toàn bộ hành vi đã
+  đặc tả cho nút Edit ở các Update trước đó MUST giữ nguyên không đổi — Update này chỉ thêm điều kiện
+  hiển thị, không đổi luồng nghiệp vụ khi nút đã hiển thị.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -332,6 +461,12 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
   cập nhật ngay trên cùng màn hình, không cần tải lại trang.
 - **SC-005**: 0% màn hình danh sách hoặc màn hình chi tiết hiển thị dữ liệu Template/Progress/tài
   liệu giả (demo/mock) sau khi tính năng hoàn thành.
+- **SC-006**: 100% người dùng không có quyền tạo tài liệu mới không nhìn thấy nút Upload trên màn hình
+  chi tiết Purchase Order, loại bỏ hoàn toàn khả năng họ nhấn vào một chức năng mà họ không được phép
+  thực hiện.
+- **SC-007** (Update 5): 100% người dùng không có quyền `EutrDocuments.Update` không nhìn thấy nút
+  Edit trên bất kỳ dòng AVAILABLE FILES nào của màn hình chi tiết Purchase Order — trong khi người
+  dùng có đủ quyền tiếp tục thấy và dùng được nút này đúng như hành vi trước Update 5.
 
 ## Assumptions
 
@@ -371,3 +506,15 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
 - Type = PO, Vendor, Invoice, Delivery note là các giá trị type tham chiếu đã tồn tại sẵn trong hệ
   thống (dùng chung với 004-eutr-documents); tính năng này không yêu cầu tạo mới type nào, chỉ bổ sung
   hành vi tự điền Value theo các type đã có.
+- "Quyền tạo tài liệu mới" (FR-030) là quyền đã tồn tại sẵn trong hệ thống, cùng quyền đang kiểm soát
+  việc gọi thành công hành động Upload/Add tài liệu dùng chung với 004-eutr-documents — tính năng này
+  không tạo ra một loại quyền mới riêng cho màn hình Purchase Order, chỉ bổ sung điều kiện hiển thị
+  (ẩn/hiện) nút Upload dựa trên quyền đã có đó. **Sửa lại ở Update 5**: thông tin quyền theo hành động
+  cụ thể (`'Create'`/`'Update'`) hoá ra đã có sẵn trong `permissionList` của menu `eutr-documents` (xác
+  nhận qua kiểm thử thực tế) — không cần xây cơ chế "lấy thông tin quyền theo hành động cụ thể" riêng
+  như giả định ban đầu của Update 4.
+- (Update 5, sửa lại) `EutrDocuments.Update` (FR-033) là quyền đã tồn tại sẵn ở backend, cùng policy
+  đang kiểm soát việc gọi thành công `PUT /api/eutr-documents/{id}` (hành động Save của popup Edit tài
+  liệu dùng chung với 004-eutr-documents) — không phải quyền mới. Giao diện xác định quyền này qua
+  `permissionList` của menu `eutr-documents` (cùng cơ chế FR-033/Update 28) — không qua endpoint dò
+  quyền nào; endpoint `can-update` từng được thêm trong bản đầu của Update này đã bị xoá.

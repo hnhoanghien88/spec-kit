@@ -191,6 +191,80 @@ VARCHAR(255) — vẫn còn hiệu lực và được kế thừa nguyên vẹn 
   phạm vi yêu cầu gốc của cập nhật này; search box tiếp tục chỉ gồm Type/Step name/Conditions (Update
   21), không đổi.
 
+### Session 2026-09-18 (Update 25) — Tự động đổi tên file theo Step (+ Prefix của master nếu có) khi Upload
+
+- Input: "cập nhật 004-eutr-documents khi upload file, sẽ tự động đổi tên file theo step, nếu step có
+  cấu hình trong master, thì lấy prefix gắn vào phía trước nữa (tên xóa đi những ký tự đặc biệt \ ..
+  để khỏi lỗi)"; sau đó bổ sung "áp dụng logic này cho upload file ở màn hình 005-eutr-sales-orders,
+  012-eutr-purchase-orders" (xem mục kế thừa ở cuối phần này).
+- Change: Với **Type khác "PO"** (Step được chọn tường minh ở combobox Step trong popup Add, FR-010),
+  mỗi file upload thành công trong lượt Upload đó KHÔNG còn giữ tên file gốc làm File name — hệ thống
+  MUST tự động tính một **tên file mới**: (a) tra `eutr_master_documents` theo `StepId` của Step đã
+  chọn; nếu có ít nhất một bản ghi (`Prefix` khác null/rỗng), lấy `Prefix` của bản ghi có `Id` nhỏ nhất
+  trong số đó; nếu không có bản ghi nào (Step chưa được "cấu hình trong master"), không có Prefix; (b)
+  tên file mới = (Prefix nếu có) + `Name` của Step đã chọn, nối trực tiếp không có ký tự phân cách, đã
+  qua bước làm sạch (xem dưới); (c) giữ nguyên đuôi file gốc (phần mở rộng, ví dụ `.pdf`). `eutr_documents.Name`
+  MUST lưu đúng tên mới này — tên file gốc người dùng chọn KHÔNG còn được lưu/hiển thị ở bất kỳ đâu sau
+  khi upload thành công.
+- Change: Với **Type = "PO"**, logic xác định (các) `StepId` khớp Prefix trong `eutr_master_documents`
+  (so khớp phần đầu tên file gốc, có thể khớp nhiều `StepId`, FR-020) MUST giữ nguyên không đổi — vẫn
+  tạo đủ một bản ghi `eutr_references` cho mỗi `StepId` khớp (FR-023 không đổi). Sau khi khớp xong, hệ
+  thống MUST bổ sung thêm một bước đổi tên file: trong số các bản ghi `eutr_master_documents` đã khớp,
+  chọn bản ghi có `Prefix` **dài nhất** (khớp cụ thể/đặc hiệu nhất với tên file gốc) — nếu nhiều bản ghi
+  cùng độ dài Prefix dài nhất, chọn bản ghi có `Id` nhỏ nhất trong số đó; dùng đúng `Prefix` và `StepId`
+  (→ `Name`) của bản ghi thắng cuộc này để tính tên file mới theo đúng công thức (Prefix + Step Name,
+  làm sạch, giữ đuôi file) như Type khác "PO" ở trên. `eutr_documents.Name` MUST lưu tên mới này — tên
+  file gốc không còn được giữ lại.
+- Change: **Bước làm sạch tên** (áp dụng cho phần Prefix + Step Name trước khi nối vào nhau, cho cả hai
+  luồng Type = "PO" và Type khác "PO"): hệ thống MUST loại bỏ mọi ký tự không hợp lệ làm tên file trên
+  hệ điều hành/SharePoint (tối thiểu `\ / : * ? " < > |`) và loại bỏ mọi chuỗi hai dấu chấm liên tiếp
+  (`..`) khỏi kết quả, để tránh lỗi khi tạo/tải file lên SharePoint. Nếu sau khi làm sạch, phần
+  Prefix + Step Name trở thành rỗng (ví dụ Step Name chỉ chứa toàn ký tự bị loại bỏ, hoặc trống), hệ
+  thống MUST dùng tên dự phòng `Step{StepId}` (ví dụ `Step12`) làm phần tên trước khi thêm đuôi file,
+  để đảm bảo luôn có một tên file hợp lệ.
+- Change: Tên dùng để tải file thật lên SharePoint (khác với `eutr_documents.Name`, vốn đã có cơ chế
+  hậu tố ngẫu nhiên 6 ký tự để tránh trùng tên vật lý trên SharePoint) MUST tiếp tục áp dụng cùng cơ
+  chế hậu tố ngẫu nhiên đó, nhưng dựa trên **tên file mới** (Prefix + Step Name đã làm sạch) thay vì tên
+  file gốc.
+- Change: Vì tên file mới chỉ phụ thuộc Type/Step (và Prefix của master, nếu có) — không còn phụ thuộc
+  tên file gốc — nhiều file khác nhau được upload cùng một lượt (hoặc nhiều lượt khác nhau) với cùng
+  Type/Step (hoặc, với PO, cùng bản ghi master thắng cuộc) MUST tạo ra các document có File name **giống
+  hệt nhau** (ví dụ nhiều file PDF upload cho cùng Step "Invoice" có Prefix "INV" đều có File name =
+  "INVInvoice.pdf") — đây là hành vi được chấp nhận, kế thừa nguyên tắc File name không có ràng buộc
+  duy nhất đã có (xem Edge Cases hiện có).
+- Change: Chế độ sửa (Edit, User Story 3) KHÔNG bị ảnh hưởng — Edit không upload lại file, không tính
+  toán lại tên file; File name của document hiện có giữ nguyên (kể cả khi người dùng đổi Step trong
+  Edit, theo FR-029/FR-033 hiện có) — logic đổi tên ở Update này CHỈ áp dụng tại thời điểm Upload (Add),
+  không áp dụng khi Save (Edit).
+- Kế thừa sang các màn hình dùng chung popup Add/Edit: `005-eutr-sales-orders` (nút Upload/Edit ở Step 2
+  Map File, Update 6 của đặc tả đó) và `012-eutr-purchase-orders` (nút Upload/Edit ở `PurchId/View`,
+  FR-021/FR-022 của đặc tả đó) đều gọi đúng popup Add/Edit và luồng Upload dùng chung này, KHÔNG có logic
+  đặt tên file riêng — do đó tự động kế thừa nguyên vẹn toàn bộ hành vi đổi tên ở Update này mà không cần
+  thay đổi gì thêm ở hai đặc tả đó, kể cả khi `012-eutr-purchase-orders` tự điền sẵn Type = "PO" (FR-024
+  của đặc tả đó): vẫn áp dụng đúng nhánh Type = "PO" ở trên nếu người dùng giữ nguyên Type đó lúc Upload.
+- Q: Có nên áp dụng đổi tên cho cả Type = "PO", nơi Step hiện được suy ra từ việc khớp Prefix (không
+  phải do người dùng chọn), thay vì chỉ Type khác "PO" (Step chọn tường minh)? → A: **Có, áp dụng cho
+  mọi Type kể cả PO** — nhưng logic tìm StepId khớp Prefix qua tên file gốc (FR-020) giữ nguyên không
+  đổi; bước đổi tên chỉ là một bước **bổ sung** chạy sau khi đã xác định xong (các) StepId khớp, không
+  thay thế cơ chế validate/khớp hiện có.
+- Q: Tên file mới có giữ lại tên file gốc (ví dụ làm hậu tố) để người dùng còn nhận diện được file đã
+  upload không, hay thay thế hoàn toàn? → A: **Thay thế hoàn toàn** — tên file mới chỉ gồm Prefix (nếu
+  có) + Step Name + đuôi file gốc; tên file gốc không được lưu/hiển thị ở bất kỳ đâu trong hệ thống sau
+  khi upload thành công (thông báo lỗi cho file bị từ chối TRƯỚC khi tạo document, ví dụ sai định
+  dạng/kích thước/không khớp prefix, vẫn tiếp tục hiển thị tên file gốc vì lỗi đó xảy ra trước bước đổi
+  tên).
+- Q: Với Type = "PO", khi tên file gốc khớp Prefix của nhiều Step khác nhau cùng lúc, nên dùng
+  Step/Prefix nào trong số đó để đổi tên (vì chỉ có đúng 1 file vật lý/1 tên hiển thị, trong khi mọi
+  StepId khớp đều vẫn được ghi bản ghi `eutr_references` riêng)? → A: **Dùng bản ghi có Prefix khớp dài
+  nhất** (khớp cụ thể/đặc hiệu nhất với tên file gốc) — nếu nhiều bản ghi cùng độ dài Prefix dài nhất,
+  ưu tiên bản ghi có `Id` nhỏ nhất (tie-break, cùng nguyên tắc "Id nhỏ nhất" đã dùng ở FR-032 cho tình
+  huống tương tự).
+- Q: Ký tự nào bị coi là "đặc biệt" cần loại bỏ khỏi tên mới? → A: Tối thiểu phải loại bỏ dấu gạch chéo
+  ngược (`\`) và chuỗi hai dấu chấm liên tiếp (`..`) như yêu cầu gốc nêu rõ; hệ thống MUST áp dụng rộng
+  hơn — loại bỏ toàn bộ tập ký tự không hợp lệ làm tên file trên hệ điều hành/SharePoint
+  (`\ / : * ? " < > |`) để phòng lỗi tương tự với các ký tự khác cùng nhóm, không chỉ giới hạn đúng 2 ký
+  tự nêu trong yêu cầu gốc.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Xem danh sách EUTR documents (Priority: P1)
@@ -289,13 +363,19 @@ Invoice/Delivery note/General agreement → thư mục cố định theo tên Ty
 định theo `Name` của Type). Khi Type = "PO", tên file MUST khớp một `Prefix` trong
 `eutr_master_documents` — file không khớp bị loại kèm cảnh báo.
 
-Với mỗi file upload thành công, hệ thống tạo một document mới trong `eutr_documents` (File name =
-tên file gốc, Valid from = giá trị đang hiển thị ở popup, Valid to = giá trị đang hiển thị ở popup,
-FileId = id từ SharePoint). Với Type khác "PO", hệ thống ghi một bản ghi `eutr_references` cho mỗi
+Với mỗi file upload thành công, hệ thống tạo một document mới trong `eutr_documents` — **(Update 25)**
+File name **KHÔNG còn là tên file gốc** mà được hệ thống tự động tính lại theo Step: (Prefix từ
+`eutr_master_documents`, nếu Step đó — với Type khác "PO" là Step đã chọn; với Type = "PO" là Step
+ứng với Prefix khớp dài nhất — có cấu hình trong master) + Name của Step đó, đã làm sạch ký tự đặc
+biệt (loại bỏ `\ / : * ? " < > |` và mọi chuỗi `..`), giữ nguyên đuôi file gốc (xem Update 25 ở mục
+Clarifications để biết đầy đủ công thức và các trường hợp biên) — cùng Valid from = giá trị đang hiển
+thị ở popup, Valid to = giá trị đang hiển thị ở popup, FileId = id từ SharePoint. Với Type khác "PO",
+hệ thống ghi một bản ghi `eutr_references` cho mỗi
 chip (DocumentId, StepId đã chọn, RefType = `Id` của Type đã chọn, RefValue = giá trị chip). Với
 Type = "PO", hệ thống ghi một bản ghi `eutr_references` cho **mỗi** `StepId` khớp Prefix của file đó
 (RefType = `Id` của Type "PO" đang chọn — gửi kèm dưới dạng `TypeId`, RefValue = giá trị chip PO đã
-chọn). **(Update 23)** Với Type = "Invoice", bản ghi `eutr_documents` vừa tạo cho file đó MUST được
+chọn) — không phụ thuộc vào việc Step nào được chọn để đổi tên file ở trên. **(Update 23)** Với Type =
+"Invoice", bản ghi `eutr_documents` vừa tạo cho file đó MUST được
 ghi thêm giá trị Invoice number đang hiển thị ở popup vào cột `Invoice` (không ghi vào
 `eutr_references`). Sau khi lượt Upload hoàn tất (toàn bộ hoặc một phần thành công), popup MUST tự
 đóng lại.
@@ -308,7 +388,13 @@ hiển thị; gõ/chọn một PO hợp lệ, xác nhận chip xuất hiện, ô
 to sang giá trị khác; nhấn Upload, chọn file có tên khớp prefix hợp lệ; xác nhận document mới xuất
 hiện trên danh sách với đúng Valid from/Valid to đã chỉnh sửa (không phải mặc định) và đúng
 `eutr_references` (StepId khớp prefix, RefValue = mã PO); riêng biệt xác nhận không sửa Valid
-from/Valid to thì document tạo ra có Valid from = hôm nay, Valid to = ngày tối đa.
+from/Valid to thì document tạo ra có Valid from = hôm nay, Valid to = ngày tối đa. **(Update 25)**
+Riêng biệt: chọn Type khác "PO" (ví dụ "Invoice") có Step "A" (không có cấu hình trong
+`eutr_master_documents`) và Step "B" (có cấu hình Prefix = "INV"); upload một file bất kỳ (ví dụ
+`baocao.pdf`) với Step "A" đã chọn, xác nhận File name trên danh sách = "A.pdf" (không phải
+`baocao.pdf`); lặp lại với Step "B", xác nhận File name = "INVB.pdf"; upload thêm một file khác cũng
+với Step "B", xác nhận document mới cũng có File name = "INVB.pdf" (trùng với document trước, được hệ
+thống chấp nhận bình thường).
 
 **Acceptance Scenarios**:
 
@@ -373,6 +459,30 @@ from/Valid to thì document tạo ra có Valid from = hôm nay, Valid to = ngày
     thành công, **Then** bản ghi `eutr_documents` tạo ra cho file đó có cột `Invoice` = giá trị đang
     hiển thị ở popup tại thời điểm Upload; các bản ghi `eutr_references` tạo cùng lượt Upload đó KHÔNG
     có cột/giá trị Invoice nào (dữ liệu chỉ nằm trên `eutr_documents`).
+24. **(Update 25)** **Given** Type đã chọn khác "PO" với Step "Invoice" (Step này có bản ghi
+    `eutr_master_documents` với `Prefix = "INV"`), **When** upload thành công một file tên bất kỳ (ví
+    dụ `scan001.pdf`), **Then** `eutr_documents.Name` của document tạo ra = "INVInvoice.pdf" (Prefix +
+    Step Name + đuôi file gốc) — không phải `scan001.pdf`.
+25. **(Update 25)** **Given** Type đã chọn khác "PO" với một Step KHÔNG có bản ghi nào trong
+    `eutr_master_documents`, **When** upload thành công, **Then** `eutr_documents.Name` = đúng `Name`
+    của Step đó (đã làm sạch) + đuôi file gốc — không có Prefix ở đầu.
+26. **(Update 25)** **Given** Type = "PO", tên file gốc khớp Prefix của hai bản ghi
+    `eutr_master_documents` khác nhau (ví dụ `Prefix = "INV"` ứng Step A và `Prefix = "INV2026"` ứng
+    Step B), **When** upload thành công, **Then** hệ thống vẫn ghi đủ 2 bản ghi `eutr_references`
+    (một cho Step A, một cho Step B, theo FR-023 không đổi), nhưng `eutr_documents.Name` được tính theo
+    bản ghi có Prefix dài hơn ("INV2026" — khớp Step B), không phải Step A.
+27. **(Update 25)** **Given** Step Name (hoặc Prefix) đang cấu hình chứa ký tự `\` hoặc chuỗi `..`
+    (dữ liệu do người dùng nhập tự do ở `001-eutr-steps`/`002-eutr-masters`), **When** upload thành
+    công dùng Step/Prefix đó, **Then** `eutr_documents.Name` của document tạo ra KHÔNG chứa ký tự `\`
+    hoặc chuỗi `..` nào — các ký tự/chuỗi đó bị loại bỏ khỏi tên trước khi lưu, không gây lỗi khi tải
+    file lên SharePoint.
+28. **(Update 25)** **Given** hai file khác nhau (tên gốc khác nhau) được upload trong cùng một lượt
+    Upload với cùng Type/Step (hoặc, với Type = "PO", cùng bản ghi master thắng cuộc), **Then** cả hai
+    document tạo ra đều có `eutr_documents.Name` **giống hệt nhau** — hệ thống lưu bình thường, không
+    báo lỗi trùng tên.
+29. **(Update 25)** **Given** một file trong lượt Upload bị loại vì sai định dạng/kích thước hoặc (Type
+    = "PO") không khớp Prefix nào, **Then** thông báo lỗi liệt kê đúng **tên file gốc** của file đó
+    (không phải tên đã đổi, vì file này không tạo được document nên không có tên mới).
 
 ---
 
@@ -707,6 +817,26 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
 - **(Update 24)** Khi giá trị `eutr_documents.Invoice` dài, cột Invoice trên bảng danh sách chính tuân
   theo cùng cơ chế hiển thị/cắt ngắn văn bản (nếu có) như các cột văn bản đơn khác của bảng (ví dụ File
   name) — không có yêu cầu riêng biệt nào về giới hạn độ dài hiển thị cho cột này.
+- **(Update 25)** Khi Step Name (và/hoặc Prefix của master đang dùng) sau khi làm sạch ký tự đặc biệt
+  trở thành chuỗi rỗng (ví dụ Step Name chỉ toàn ký tự bị loại bỏ, hoặc để trống trong `eutr_steps`),
+  hệ thống MUST dùng tên dự phòng `Step{StepId}` làm phần tên trước khi thêm đuôi file, đảm bảo không
+  bao giờ tạo ra `eutr_documents.Name` rỗng.
+- **(Update 25)** Khi một Step (chọn ở Add với Type khác "PO", hoặc là Step "thắng cuộc" theo Prefix
+  dài nhất khớp với Type = "PO") có nhiều hơn một bản ghi `eutr_master_documents` cùng `StepId`, hệ
+  thống MUST dùng `Prefix` của bản ghi có `Id` nhỏ nhất trong số đó để đổi tên — không gộp/nối nhiều
+  Prefix lại với nhau.
+- **(Update 25)** File bị loại khỏi lượt upload (sai định dạng/kích thước, hoặc — Type = "PO" — không
+  khớp Prefix nào) KHÔNG tạo document nên không có tên mới; thông báo lỗi tương ứng MUST tiếp tục nêu
+  đúng **tên file gốc** người dùng đã chọn, không phải tên đã đổi theo Step.
+- **(Update 25)** Việc đổi tên theo Step/Prefix CHỈ xảy ra ở thời điểm Upload (Add) — mở lại popup Edit
+  cho một document đã tạo KHÔNG tính toán lại hay hiển thị "tên gợi ý mới" nào; File name hiện có của
+  document chỉ đổi khi có một luồng nghiệp vụ khác ghi đè trực tiếp (hiện tại không có luồng nào như
+  vậy trong phạm vi feature này).
+- **(Update 25)** Nhiều document khác nhau (tạo từ các file gốc khác nhau, cùng Type/Step hoặc — với
+  PO — cùng bản ghi master thắng cuộc) có `eutr_documents.Name` trùng nhau sau khi đổi tên KHÔNG phải
+  lỗi hệ thống — kế thừa nguyên tắc File name không có ràng buộc duy nhất đã nêu ở trên; người dùng
+  phân biệt các document trùng tên qua Valid from/Valid to/Created date/icon View (xem nội dung file
+  thật) khi cần.
 
 ## Requirements *(mandatory)*
 
@@ -778,9 +908,10 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   không khớp bất kỳ Prefix nào MUST bị loại khỏi lượt upload kèm cảnh báo rõ ràng, không chặn các
   file hợp lệ khác trong cùng lượt.
 - **FR-021**: Với mỗi file upload thành công lên SharePoint, hệ thống MUST tạo một bản ghi mới trong
-  `eutr_documents`: File name = tên file gốc, Valid from = giá trị đang hiển thị ở trường Valid from
-  của popup tại thời điểm Upload, Valid to = giá trị đang hiển thị ở trường Valid to, FileId = id trả
-  về từ SharePoint; ghi nhận người tạo/ngày tạo tự động.
+  `eutr_documents`: File name = **(Update 25)** tên file hệ thống tự tính theo Step/Prefix của master
+  (KHÔNG còn là tên file gốc — xem FR-062/FR-063/FR-064), Valid from = giá trị đang hiển thị ở trường
+  Valid from của popup tại thời điểm Upload, Valid to = giá trị đang hiển thị ở trường Valid to,
+  FileId = id trả về từ SharePoint; ghi nhận người tạo/ngày tạo tự động.
 - **FR-022**: Với Type khác "PO", với mỗi file upload thành công, hệ thống MUST ghi thêm một bản ghi
   `eutr_references` cho **mỗi** chip đang có trong vùng chọn tại thời điểm Upload: `DocumentId` = Id
   document vừa tạo, `StepId` = Step đã chọn, `RefType` = `Id` của Type đã chọn, `RefValue` = giá trị
@@ -916,6 +1047,30 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
 - **FR-061 (Update 24)**: Bảng danh sách chính MUST hiển thị cột **Invoice** ngay sau cột Step name,
   lấy trực tiếp giá trị `eutr_documents.Invoice` của mỗi document (không qua `eutr_references`), hiển
   thị dạng văn bản đơn thuần; document có `Invoice = null` MUST hiển thị cột này ở trạng thái trống.
+- **FR-062 (Update 25)**: Với Type khác "PO", với mỗi file upload thành công, hệ thống MUST tính File
+  name mới theo công thức: (Prefix từ `eutr_master_documents` có `StepId` = Step đã chọn, nếu tồn tại
+  ít nhất một bản ghi — lấy `Prefix` của bản ghi `Id` nhỏ nhất khi có nhiều bản ghi cùng `StepId`) +
+  `Name` của Step đã chọn, nối trực tiếp không có ký tự phân cách, đã làm sạch theo FR-064, giữ nguyên
+  đuôi file gốc. `eutr_documents.Name` MUST lưu đúng tên mới này thay cho tên file gốc.
+- **FR-063 (Update 25)**: Với Type = "PO", sau khi xác định xong (các) `StepId` khớp Prefix theo
+  FR-020 (không đổi, vẫn tạo đủ bản ghi `eutr_references` cho mỗi `StepId` khớp theo FR-023), hệ thống
+  MUST chọn bản ghi `eutr_master_documents` có `Prefix` **dài nhất** trong số các bản ghi đã khớp
+  (tie-break: `Id` nhỏ nhất nếu nhiều bản ghi cùng độ dài Prefix dài nhất) để tính File name mới theo
+  đúng công thức ở FR-062 (Prefix + Step Name của bản ghi thắng cuộc, làm sạch theo FR-064, giữ đuôi
+  file gốc). Việc chọn bản ghi thắng cuộc để đặt tên KHÔNG ảnh hưởng số lượng/nội dung các bản ghi
+  `eutr_references` được tạo.
+- **FR-064 (Update 25)**: Bước làm sạch tên (áp dụng cho phần Prefix + Step Name trước khi ghép, dùng
+  chung cho FR-062 và FR-063) MUST loại bỏ mọi ký tự không hợp lệ làm tên file trên hệ điều hành/
+  SharePoint (tối thiểu `\ / : * ? " < > |`) và loại bỏ mọi chuỗi hai dấu chấm liên tiếp (`..`) khỏi
+  kết quả. Nếu kết quả rỗng sau khi làm sạch, hệ thống MUST dùng tên dự phòng `Step{StepId}` thay thế.
+- **FR-065 (Update 25)**: Tên dùng để tải file thật lên SharePoint MUST tiếp tục áp dụng cơ chế hậu tố
+  ngẫu nhiên chống trùng tên vật lý hiện có, nhưng dựa trên File name mới đã tính theo FR-062/FR-063
+  thay vì tên file gốc.
+- **FR-066 (Update 25)**: Logic đổi tên (FR-062 đến FR-065) MUST chỉ áp dụng tại thời điểm Upload
+  (Add). Popup Edit (Save) MUST KHÔNG tính toán lại hay thay đổi File name của document hiện có, kể cả
+  khi Step bị đổi ở Edit (không ảnh hưởng FR-029/FR-033 hiện có).
+- **FR-067 (Update 25)**: Hệ thống MUST cho phép nhiều document có File name trùng nhau sau khi áp
+  dụng FR-062/FR-063 (không báo lỗi), kế thừa nguyên tắc File name không có ràng buộc duy nhất đã có.
 
 ## Key Entities *(include if feature involves data)*
 
@@ -930,6 +1085,10 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   tại của document = "Invoice" (nhập ở popup Add/Edit); mọi Type khác giữ `null`. Edit MUST có thể cập
   nhật trực tiếp `ValidFrom`/`ValidTo`/`Invoice` của document mà không tạo bản ghi mới. **(Update 24)**
   `Invoice` MUST hiển thị trên bảng danh sách chính (cột riêng, ngay sau Step name) — xem FR-061.
+  **(Update 25)** File name KHÔNG còn là tên file gốc người dùng chọn — MUST là giá trị hệ thống tự
+  tính từ Step (+ Prefix của `eutr_master_documents`, nếu Step đó có cấu hình) tại thời điểm Upload,
+  xem FR-062/FR-063/FR-064; không duy nhất giữa các document vẫn đúng như trước, nay càng rõ hơn vì
+  nhiều file khác nhau upload cùng Type/Step MUST tạo File name giống hệt nhau (xem FR-067).
 - **EUTR Reference (liên kết Document ↔ Step/Type/Value)**: Bảng `eutr_references` (Id, RefId,
   DocumentId, StepId, RefType, RefValue). Mỗi file upload thành công qua popup Add tạo một hoặc nhiều
   bản ghi: với Type khác "PO", một bản ghi cho mỗi chip Value đã chọn (`RefValue` = giá trị chip); với
@@ -957,9 +1116,12 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   hiện trong combobox nếu có bản ghi `TypeId` khớp Type đó.
 - **EUTR Master Document (Prefix/Step) — nguồn tham chiếu, KHÔNG thuộc phạm vi CRUD feature này**:
   Bảng `eutr_master_documents` (Id, StepId, Prefix), quản lý bởi feature `002-eutr-masters`. Feature
-  này đọc (read-only) bảng này để validate tên file khi Type = "PO" — `Prefix` chỉ duy nhất theo cặp
-  (`StepId`, `Prefix`), một chuỗi Prefix có thể khớp nhiều `StepId`, khi đó mỗi `StepId` khớp tạo một
-  bản ghi `eutr_references` riêng.
+  này đọc (read-only) bảng này để: (a) validate tên file khi Type = "PO" — `Prefix` chỉ duy nhất theo
+  cặp (`StepId`, `Prefix`), một chuỗi Prefix có thể khớp nhiều `StepId`, khi đó mỗi `StepId` khớp tạo
+  một bản ghi `eutr_references` riêng; (b) **(Update 25)** đặt tên file mới khi Upload — với Type khác
+  "PO", tra theo `StepId` đã chọn để lấy Prefix (nếu có); với Type = "PO", trong số các bản ghi đã khớp
+  ở (a), chọn bản ghi có `Prefix` dài nhất để lấy Prefix/Step dùng đặt tên (xem FR-062/FR-063). Một
+  `StepId` có thể không có bản ghi nào (không "cấu hình trong master" — bỏ qua Prefix khi đặt tên).
 - **D365 RSVNEutrPurchOrders / RSVNEutrSalesOrderPurchases / VendorsV3 (external, read-only)**: Dữ
   liệu tham chiếu D365 lấy qua `POST /api/dynamics/reference` với `refType = 15`/`16`/`14` tương
   ứng — không có bảng lưu trữ cục bộ.
@@ -1017,6 +1179,10 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
 - **SC-015 (Update 24)**: 100% document có `eutr_documents.Invoice` khác `null` hiển thị đúng giá trị
   đó ở cột Invoice (ngay sau cột Step name) trên bảng danh sách chính; 100% document `Invoice = null`
   hiển thị cột này ở trạng thái trống.
+- **SC-016 (Update 25)**: 100% lượt Upload thành công (Type khác "PO" và Type = "PO") tạo
+  `eutr_documents.Name` đúng theo công thức Prefix (nếu Step có cấu hình trong `eutr_master_documents`)
+  + Step Name + đuôi file gốc, không chứa ký tự `\` hay chuỗi `..`; 0% document tạo mới sau Update này
+  còn giữ nguyên tên file gốc làm File name.
 
 ## Assumptions
 
@@ -1079,3 +1245,20 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   nhiều dòng/1 document, ví dụ nhiều `StepId` khớp Prefix) loại bỏ hoàn toàn nhu cầu đồng bộ/hòa giải
   giá trị Invoice number giữa nhiều bản ghi — không cần migration nào trên `eutr_references` cho tính
   năng này (chỉ `eutr_documents` cần cột mới).
+- **(Update 25)** Prefix và Step Name được nối trực tiếp, không có ký tự phân cách (ví dụ Prefix
+  `"INV"` + Step Name `"Invoice"` → `"INVInvoice"`) — đúng theo cách yêu cầu gốc mô tả ("lấy prefix gắn
+  vào phía trước"), không có yêu cầu nào về dấu phân cách (`_`, `-`, khoảng trắng...) giữa hai phần.
+- **(Update 25)** Đuôi file gốc (phần mở rộng) được giữ nguyên y hệt (kể cả hoa/thường) khi ghép vào tên
+  mới — không thuộc phạm vi làm sạch/đổi tên, vì đuôi file đã được validate thuộc danh sách định dạng
+  cho phép ở FR-018 trước khi tới bước đổi tên.
+- **(Update 25)** Popup Add KHÔNG hiển thị bản xem trước/gợi ý tên file mới trước khi Upload (giao diện
+  hiện tại không hiển thị tên file đã chọn ở bất kỳ đâu trước khi Upload) — người dùng chỉ thấy File
+  name đã đổi sau khi quay lại danh sách chính (User Story 1); phạm vi cập nhật này không yêu cầu thêm
+  UI xem trước tên mới trong popup.
+- **(Update 25)** Thông báo lỗi cho file bị từ chối trước khi tạo document (sai định dạng/kích thước,
+  không khớp Prefix khi Type = "PO") tiếp tục dùng tên file gốc để liệt kê — hành vi hiện có của
+  `EutrUploadService` không đổi, vì bước đổi tên chỉ chạy cho các file ĐÃ upload thành công.
+- **(Update 25)** Việc kế thừa hành vi đổi tên sang `005-eutr-sales-orders` và `012-eutr-purchase-orders`
+  không cần thay đổi backend/frontend riêng ở hai feature đó — cả hai đều gọi đúng cùng endpoint/luồng
+  Upload dùng chung với `004-eutr-documents`, không có logic đặt tên file độc lập nào ở tầng feature của
+  chúng; xem ghi chú kế thừa trong Update 25 ở mục Clarifications.

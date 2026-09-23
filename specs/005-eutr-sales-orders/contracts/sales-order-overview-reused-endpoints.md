@@ -51,3 +51,16 @@ sections and `research.md` Decisions 42-52 for the full data flow and per-row st
   (`code`) `FilterRequest` entries already join with `or` (verified in `BuildFilterString`), so an
   N-entry whitelist filter is expressed with the exact request shape this endpoint already accepts.
   See `research.md` Decisions 60-61.
+
+## Update 24 (2026-09-18) — ETD column, Year/ETD Week filter, brown buttons, default sort: 1 extended contract, 0 new endpoints
+
+| Endpoint | Owning contract | Used for | Request shape used |
+|---|---|---|---|
+| `POST /api/dynamics/reference?refType=11` | `contracts/dynamics-reference-refType-11.md` (**extended**, Update 24) | Same paged Sales Order list Overview has always used — response now also carries `rsVnETD`; request now also accepts `RsVnETD`/`inyear`/`inweeks` filter entries; default sort call args change from `'Code'`/`'asc'` to `'DeliveryDate'`/`'desc'` | `FilterRequest[]` — existing Code/Name search entries (FR-011) and/or the Update 16 Template whitelist, plus at most one new `{column:"RsVnETD", operator:"inyear"|"inweeks", value}` entry when Year/ETD Week is set |
+
+- No new endpoint, no new controller action, no new policy — this update only widens the response DTO
+  and the recognized filter/sort inputs of the one endpoint Overview already calls (research.md Decisions
+  74-76).
+- The brown View/Download button color and the ETD column render are pure frontend changes with no
+  corresponding backend contract of their own.
+- See `data-model.md`'s "Update 24" section and `research.md` Decisions 74-76 for the full design.

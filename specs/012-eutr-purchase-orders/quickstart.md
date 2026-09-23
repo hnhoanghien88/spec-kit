@@ -87,6 +87,37 @@ features either — `003`/`004`/`005` were all validated this way).
 9. Navigate to the detail screen for the Prerequisite #3 Purchase Order (blank Template). Confirm a
    clear "no Template" state instead of an empty-looking (but technically loaded) step tree.
 
+## Validate Upload/Edit button visibility by `permissionList` of menu `eutr-documents` (spec Update 4/Update 5, FR-030..FR-036)
+
+**Correction note**: Update 4 originally gated Upload via a live backend probe
+(`GET /api/eutr-documents/can-create`); an early draft of Update 5 added a mirror `can-update` for
+Edit. Live testing showed both probes were unnecessary — the menu `eutr-documents`'s `permissionList`
+(same mechanism `005-eutr-sales-orders` Update 28 uses for menu `eutr-sales-orders`) already carries
+`'Create'`/`'Update'`. Both probes were removed; the steps below verify the corrected,
+`permissionList`-based mechanism. This session's sibling update to `005-eutr-sales-orders` (that spec's
+own Update 29) applies the identical correction to Map File Step 2's Upload/Edit buttons — see that
+feature's own quickstart.md "Update 29" section.
+
+1. Grant the test role both `'Create'` and `'Update'` on menu `eutr-documents` (via the same menu-admin
+   mechanism used for menu `eutr-sales-orders` in `005`'s Update 28). Open any Purchase Order's
+   `PurchId/View`. Confirm both the **Upload** button and every AVAILABLE FILES row's **Edit** button
+   are visible and behave exactly as validated in the previous section (US2 step 6).
+2. Revoke `'Create'` only (keep `'Update'`), reload. Confirm:
+   - The **Upload** button does not appear anywhere on the page (not present, not merely
+     disabled/greyed-out).
+   - The **Edit** button on existing documents, the step tree, and AVAILABLE FILES all still render
+     and behave normally (FR-031) — only Upload is affected.
+3. Restore `'Create'`, revoke `'Update'` only, reload. Confirm:
+   - The **Edit** button does not appear on any AVAILABLE FILES row (not present, not disabled).
+   - The **Upload** button (per its own, independent `'Create'` gate), the step tree, and AVAILABLE
+     FILES itself all still render and behave normally (FR-035) — only Edit is affected.
+4. Revoke both `'Create'` and `'Update'`, reload. Confirm both Upload and Edit are hidden
+   simultaneously, while the step tree/AVAILABLE FILES/PO info remain visible.
+5. Restore both, reload. Confirm the Upload and Edit buttons reappear immediately on every row (no
+   stale cached "hidden" state).
+6. Confirm the browser makes no `can-create`/`can-update` network call when opening `PurchId/View`
+   (DevTools Network tab) — the visibility check reads `localStorage` only, no round trip.
+
 ## Cross-check
 
 - Compare the Progress figure on the Overview row (step 3 above) against the completed/missing step

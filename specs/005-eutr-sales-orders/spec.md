@@ -10,6 +10,233 @@
 
 ## Clarifications
 
+### Session 2026-09-23 (Update 29) — Màn hình Map File (Step 2): ẩn nút Upload/Edit tài liệu theo permissionList của menu eutr-documents
+
+- Input: Cập nhật 005-eutr-sales-orders (và 012-eutr-purchase-orders) màn hình view, map file: nếu
+  không có quyền `EutrDocuments.Create` sẽ không hiển thị nút attach file (Upload), không có quyền
+  `EutrDocuments.Update` sẽ không hiển thị nút Edit file.
+- Bối cảnh: Rà soát mã nguồn thực tế (`MapFilePage.jsx`, màn hình Map File Step 2) cho thấy nút
+  **Upload** (UploadIcon, mở popup Add tài liệu dùng chung 004-eutr-documents, FR-026) và nút **Edit**
+  trên từng dòng AVAILABLE FILES (mở popup Edit tài liệu, FR-027) hiện KHÔNG có bất kỳ điều kiện quyền
+  nào — luôn hiển thị cho mọi user có quyền truy cập menu `eutr-sales-orders`, kể cả khi user đó không
+  có quyền Create/Update trên menu `eutr-documents`.
+- **Sửa lại sau kiểm thử thực tế (cùng phiên)**: bản đầu của Update này đưa ra hai endpoint "dò quyền"
+  mới ở backend (`GET /api/eutr-documents/can-create`/`can-update`, dựa theo mẫu 012 Update 4). Người
+  yêu cầu tính năng kiểm thử trực tiếp trên trình duyệt (chụp màn hình DevTools Network, response của
+  `GET /api/menu-managements/permissions?appCode=ComplApi&email=...`) và xác nhận: menu `eutr-documents`
+  (id 242) đã có sẵn field `permissionList` — cùng cơ chế `permissionList`/`getMenuDataFromStorage` đã
+  dùng ở Update 28 (menu `eutr-sales-orders`) — và giá trị `'Create'`/`'Update'` là 2 phần tử hợp lệ
+  trong `permissionList` đó (ví dụ user test chỉ có `['Download', 'ReadAll', 'ReadOne', 'ViewMenu']`,
+  thiếu cả `'Create'` lẫn `'Update'`), y hệt cách `'Update'`/`'Download'` đã hoạt động cho menu
+  `eutr-sales-orders`. Vì vậy giả định ban đầu ("permissionList không có Create/Update, phải dò quyền
+  qua API riêng") là sai — `permissionList` của menu `eutr-documents` đã đủ để quyết định ẩn/hiện, không
+  cần endpoint dò quyền mới nào. Update này được sửa lại để dùng đúng cơ chế `permissionList` đã có, bỏ
+  hẳn 2 endpoint `can-create`/`can-update` mới thêm (đã xoá — không còn nơi nào gọi).
+- Quyết định (đã sửa lại): (1) Màn hình Map File Step 2 lấy `permissionList` của menu `eutr-documents`
+  (không phải `eutr-sales-orders`) qua đúng `getMenuDataFromStorage()` đã dùng ở Update 28, vì Upload/
+  Edit ở đây là hành động trên `EutrDocuments`, không phải trên chính Sales Order. (2) Nút **Upload**
+  chỉ hiển thị khi `permissionList.includes('Create')`; nút **Edit** trên mỗi dòng AVAILABLE FILES chỉ
+  hiển thị khi `permissionList.includes('Update')` — độc lập với nhau, giống đúng tinh thần FR-186 (2
+  quyền độc lập) của Update 28. (3) Nút **View** (xem trước nội dung file, chỉ đọc, FR-092 đến FR-098)
+  KHÔNG bị ảnh hưởng — luôn hiển thị như hiện có, vì đây không phải hành động Create/Update. (4) Không
+  đổi bất kỳ hành vi nào khác của Upload/Edit khi các nút này vẫn hiển thị (người dùng có quyền) — chỉ
+  thêm điều kiện hiển thị. (5) Backend không thay đổi gì — `EutrDocuments.Create`/`EutrDocuments.Update`
+  vẫn là 2 policy thật bảo vệ đúng `POST /api/eutr-documents`/`PUT /api/eutr-documents/{id}` (không đổi
+  bởi Update này); chỉ điều kiện hiển thị ở giao diện là đổi từ "dò quyền qua API mới" sang "đọc
+  `permissionList` đã có sẵn của menu `eutr-documents`".
+
+### Session 2026-09-22 (Update 28) — Ẩn/hiện icon Map File/Edit/Download theo permissionList của user trên menu
+
+- Bối cảnh: Rà soát mã nguồn thực tế (`SalesOrderOverviewPage.jsx` dòng ~954-1011,
+  `ViewSalesOrderPage.jsx` dòng ~1098-1118) cho thấy 3 icon hành động — **Map File** (Overview),
+  **Edit / Map File** (View, gộp chung 1 nút) và **Download** (cả Overview và View) — hiện luôn hiển
+  thị cho mọi người dùng có quyền truy cập menu, không có bất kỳ kiểm tra quyền chi tiết
+  (`permissionList`) nào. Các màn hình khác trong cùng hệ thống (`eutr-documents`,
+  `eutr-templates`, `compliance-view-so`, `eutr-reference-types`, ...) đã có sẵn cơ chế chuẩn: lấy
+  `permissionList` của menu hiện tại qua `getMenuDataFromStorage().find(m => m.code === <menu code
+  hiện tại>)?.permissionList`, rồi dùng `permissionList.includes('Update')` để ẩn/hiện nút Edit và
+  `permissionList.includes('Download')` để ẩn/hiện nút Download — Update này áp dụng đúng cơ chế đó
+  cho menu `eutr-sales-orders`, không phát minh cơ chế quyền mới.
+- Yêu cầu: (1) Icon **Map File** ở cột Actions của bảng Overview và nút **Edit / Map File** ở toolbar
+  màn hình View chỉ hiển thị khi `permissionList` của user trên menu `eutr-sales-orders` có chứa
+  quyền **Update**; nếu không có quyền Update, icon/nút này KHÔNG hiển thị. (2) Icon **Download** ở
+  cột Actions của bảng Overview và nút **Download** ở toolbar màn hình View chỉ hiển thị khi
+  `permissionList` có chứa quyền **Download**; nếu không có quyền Download, icon/nút này KHÔNG hiển
+  thị.
+- Quyết định: Áp dụng đúng mẫu kiểm tra quyền `permissionList.includes('Update' | 'Download')` đã
+  dùng thống nhất trong toàn hệ thống (menu code `eutr-sales-orders`, lấy qua
+  `getMenuDataFromStorage()` như các màn hình EUTR khác) cho cả 2 màn hình Overview và View. Icon
+  **View summary** (Overview) và nút **Back** (View) không đổi — không gắn thêm điều kiện quyền nào
+  (giữ nguyên hành vi hiện có, vì đây không phải hành động Update/Download). Việc ẩn icon chỉ là ẩn ở
+  giao diện; Update này không yêu cầu thay đổi bất kỳ API/quyền phía backend nào (điều hướng trực
+  tiếp URL vẫn là rủi ro đã biết chung của toàn hệ thống, nằm ngoài phạm vi Update này, giống các màn
+  hình khác đã áp dụng mẫu này).
+
+### Session 2026-09-22 (Update 27) — Overview: khung tìm kiếm khớp thêm theo Customer ID (mã khách hàng)
+
+- Bối cảnh: FR-011 quy định ô tìm kiếm ở Overview khớp theo Sales ID hoặc Customer, và Independent
+  Test của User Story 2 vốn đã mô tả "Sales ID hoặc mã/tên Customer". Qua rà soát mã nguồn thực tế
+  (`SalesOrderOverviewPage.jsx`'s `buildSearchFilters()` và backend `BuildFilterString`/
+  `EntityMappings` cho `refType = 11` ở `ComplDynamicsService.cs`), từ khóa tìm kiếm hiện tại trên
+  thực tế chỉ khớp 2 cột: Sales ID (`Code` → D365 `SalesId`) và Customer name (`Name` → D365
+  `CustName`) — KHÔNG khớp cột **Customer** (mã/tài khoản khách hàng, `CustAccount`, ví dụ "10676")
+  dù cột này đã hiển thị sẵn trên bảng (FR-004). Đây là một khoảng trống hiện có (verified gap),
+  không phải hành vi mong muốn.
+- Yêu cầu: người dùng nhập một mã khách hàng đã biết (ví dụ "10676") vào đúng ô tìm kiếm hiện có phải
+  lọc được sang các sales order của khách hàng đó, theo đúng kiểu khớp "chứa" (không phân biệt hoa/
+  thường) đã áp dụng cho Sales ID/Customer name.
+- Quyết định: mở rộng từ khóa tìm kiếm hiện có để khớp OR thêm cột Customer (`CustAccount`), theo
+  đúng mẫu tái sử dụng đã có sẵn trong cùng cơ chế dùng chung cho màn hình Purchase Orders (`refType =
+  15`), nơi `BuildFilterString` đã có sẵn một nhánh OR-search mở rộng theo `VendorCode` (chỉ áp dụng
+  cho entity Purchase Orders) bên cạnh Code/Name mặc định — Update này áp dụng đúng cơ chế đó, phạm vi
+  riêng cho entity Sales Orders/cột `CustAccount`, không phát minh cơ chế lọc mới và không ảnh hưởng
+  tới bất kỳ `refType` nào khác đang dùng chung `BuildFilterString`. Không thêm ô tìm kiếm mới, không
+  đổi placeholder/nhãn của ô tìm kiếm hiện có — chỉ mở rộng tập cột mà cùng một từ khóa được khớp vào.
+
+### Session 2026-09-21 (Update 26) — Màn hình View: Header đổi ô "Template" thành (các) PO đã chọn; Toolbar Template Tree chỉ còn 1 tab "Template" (ẩn các tab template riêng lẻ)
+
+- Bối cảnh: Ở màn hình **View Sales Order** (`/eutr/sales-orders/:salesId/view`), người yêu cầu tính
+  năng muốn 2 thay đổi hiển thị:
+  1. Ô nhãn **"Template"** ở header (hiện hiển thị (các) chip `TemplateCode`, ví dụ `Templates-009`,
+     `Templates-008`) đổi thành hiển thị (các) chip **PO** mà người dùng đã chọn cho Sales Order này
+     (ví dụ `PO1`, `PO2`) — cùng nguồn dữ liệu với bảng "Selected Purchase Orders" đã có (FR-037).
+  2. Toolbar cây template (`data-marker="template-tree-toolbar"`, FR-058) chỉ còn hiển thị đúng 1 tab
+     duy nhất, đổi tên từ **"All"** thành **"Template"**; (các) tab/chip riêng cho từng template đã lưu
+     (ví dụ `TEMPLATES-009`, `TEMPLATES-008`) bị ẩn, không còn hiển thị.
+- Q&A (làm rõ trong phiên này):
+  - Q: Ô header thay chip Template bằng chip PO nên đổi nhãn hiển thị thành gì?
+    A: Đổi nhãn thành **"Purchase Order(s)"** (giữ đúng thuật ngữ đầy đủ đã dùng ở tiêu đề bảng "Selected
+    Purchase Orders" bên dưới, thay vì rút gọn thành "PO" hay giữ nguyên nhãn cũ "Template").
+- Change: Ô header **"Purchase Order(s)"** (trước đây là "Template") MUST hiển thị đúng (các) chip
+  `PurchId` của (các) Purchase Order đã chọn cho Sales Order này (cùng nguồn dữ liệu đã dùng cho bảng
+  "Selected Purchase Orders", FR-037/FR-038) — KHÔNG còn hiển thị chip `TemplateCode` nào ở vị trí này.
+- Change: Toolbar cây template MUST chỉ còn hiển thị đúng 1 tab duy nhất tại vị trí trước đây là chip
+  **All** (đầu tiên), đổi nhãn hiển thị thành **"Template"**; toàn bộ (các) chip riêng cho từng
+  `TemplateCode` (trước đây hiển thị cạnh chip All, FR-058) MUST bị ẩn, không còn render trên toolbar.
+- Change: Tab **"Template"** duy nhất còn lại này MUST tiếp tục thực hiện đúng nguyên vẹn cơ chế dữ liệu
+  đã có của chip **All** trước Update này (FR-130 đến FR-141 không đổi) — chỉ đổi nhãn hiển thị và việc
+  ẩn các lựa chọn khác, không đổi cách tải/tính cây gộp hay AVAILABLE FILES.
+- Change: Vì (các) chip template riêng lẻ bị ẩn, màn hình View từ Update này KHÔNG còn cách nào để
+  người dùng chuyển xem cây của một template cụ thể (khác với hành vi FR-059 trước Update này) — muốn
+  xem/sửa theo từng template cụ thể, người dùng chuyển sang màn hình **Map File** (nút Edit / Map File,
+  không đổi bởi Update này).
+- Change: Việc đổi ô header và ẩn tab template riêng lẻ ở Update này KHÔNG làm thay đổi bất kỳ hành vi
+  nào khác đã có của màn hình View — Selected Purchase Orders, Template Checklist (nội dung cây gộp),
+  AVAILABLE FILES (lọc theo step khi click node cây), nút Download/popup chọn định dạng tải, Validation
+  Summary, nút Edit / Map File, nút Back — chỉ đổi cách hiển thị của đúng ô header Template→Purchase
+  Order(s) và toolbar Template Tree.
+
+### Session 2026-09-18 (Update 25) — Cột Sales status: ánh xạ nhãn hiển thị "Backorder" → "Open order"
+
+- Bối cảnh: Bảng Overview đã có sẵn cột **Sales status** hiển thị nguyên văn giá trị `SalesStatus` lấy
+  từ cùng nguồn tham chiếu `reference type = 11` (D365) đang cấp dữ liệu Sales ID/Customer/Customer
+  name/Delivery date/ETD — cột này tồn tại trong code hiện tại nhưng chưa từng được đặc tả ở bất kỳ
+  Update nào trước đây. Người yêu cầu tính năng muốn khi API trả về giá trị trạng thái là
+  **"Backorder"**, màn hình hiển thị nhãn **"Open order"** thay vì "Backorder".
+- Change: Bảng Overview MUST tiếp tục hiển thị cột **Sales status**, lấy dữ liệu thật từ trường
+  `SalesStatus` của cùng nguồn tham chiếu `reference type = 11` đã cấp dữ liệu cho các cột Sales ID/
+  Customer/Customer name/Delivery date/ETD (KHÔNG cần nguồn dữ liệu/API mới, KHÔNG thay đổi gì ở nguồn
+  tham chiếu type = 11 hiện có).
+- Change: Khi giá trị `SalesStatus` trả về từ API cho một dòng là chuỗi **"Backorder"** (so khớp chính
+  xác, không phân biệt hoa/thường), cột Sales status của dòng đó MUST hiển thị nhãn **"Open order"**
+  thay cho "Backorder" — đây chỉ là một quy tắc đổi **nhãn hiển thị** trên giao diện; giá trị gốc
+  `SalesStatus` = "Backorder" ở nguồn dữ liệu/API KHÔNG bị thay đổi, không ghi đè bất kỳ bản ghi nào.
+- Change: Mọi giá trị `SalesStatus` khác "Backorder" (ví dụ "Invoiced", "Delivered", các giá trị khác
+  D365 có thể trả về) MUST tiếp tục hiển thị **nguyên văn** giá trị API trả về, giống hành vi hiện tại —
+  Update này KHÔNG định nghĩa thêm bất kỳ ánh xạ nhãn nào khác ngoài "Backorder" → "Open order".
+- Change: Nếu `SalesStatus` là rỗng/`null` cho một dòng, cột Sales status MUST tiếp tục hiển thị đúng
+  trạng thái trống hiện có (placeholder "-"), không áp dụng ánh xạ nhãn nào.
+- Change: Việc đổi nhãn hiển thị này KHÔNG làm thay đổi bất kỳ hành vi/quy tắc nào đã đặc tả ở các Update
+  trước cho các cột/khung tìm kiếm/nút khác của Overview (Sales ID, Customer, Customer name, Delivery
+  date, ETD, Year/ETD Week, Template, Progress, View/Download/Map File) — chỉ đổi cách hiển thị của
+  đúng cột Sales status khi giá trị gốc là "Backorder".
+
+### Session 2026-09-18 (Update 24) — Bổ sung cột ETD, khung tìm kiếm Year/ETD Week và đổi màu nút View/Download giống màn hình Compliance View (ref-type = 11)
+
+- Bối cảnh: Người yêu cầu tính năng muốn màn hình **EUTR Sales Orders (Overview)** đồng bộ thêm 3 điểm
+  với màn hình **Compliance View** đang lọc theo `ref-type = 11` (cùng nguồn dữ liệu sales order):
+  hiển thị thêm cột **ETD**, có khung tìm kiếm theo **Year**/**Week** giống màn hình đó, đổi màu 2 nút
+  **View**/**Download** sang màu nâu, và sắp xếp danh sách sales order giống màn hình đó.
+- Change: Bảng Overview MUST bổ sung cột **ETD** đặt ngay **sau** cột **Delivery date** (trước cột
+  Template) — hiển thị ngày ETD (Estimated Time of Departure) thật của sales order, lấy từ cùng bản
+  ghi nguồn tham chiếu dùng chung reference type = 11 đang cấp dữ liệu cho Sales ID/Customer/Customer
+  name/Delivery date (trường `RsVnETD` đã có sẵn trên cùng thực thể D365 dùng chung với màn hình
+  Compliance View lọc `ref-type = 11`) — KHÔNG cần bổ sung nguồn dữ liệu/API mới, KHÔNG cần thay đổi gì
+  ở nguồn tham chiếu type = 11 hiện có (khác với FR-009, việc bổ sung Delivery date trước đây từng cần
+  đăng ký thêm trường vì nguồn chưa có; ETD đã có sẵn trên cùng thực thể).
+- Change: Nếu sales order không có giá trị ETD, cột ETD MUST hiển thị trạng thái trống rõ ràng (không
+  phải lỗi, không để trắng gây hiểu nhầm) — đúng cùng quy tắc trống đã áp dụng cho cột Delivery date
+  (FR-006).
+- Change: Bảng Overview MUST bổ sung một khung tìm kiếm mới, đặt phía trên bảng, giống bố cục và hành
+  vi khung tìm kiếm Year/ETD Week đang có ở màn hình Compliance View (`ref-type = 11`):
+  1. Dropdown **Year** — liệt kê các năm có dữ liệu ETD, mặc định chọn năm hiện tại (hoặc năm có dữ
+     liệu gần nhất nếu năm hiện tại chưa có dữ liệu), giống hành vi Year của Compliance View.
+  2. Dropdown **ETD Week** (nhãn hiển thị dạng "All weeks in {Year đã chọn}" khi chưa chọn tuần cụ
+     thể nào) — cho phép chọn 1 hoặc nhiều tuần theo lịch ISO week của đúng năm đang chọn ở Year, kèm
+     nút xóa riêng lựa chọn tuần (Clear week) để quay lại "All weeks in {Year}".
+  3. Ô tìm kiếm tự do (text) — giữ nguyên đúng hành vi tìm theo Sales ID/Customer đã có (FR-011),
+     không thay thế, không đổi cách khớp ("chứa", không phân biệt hoa/thường).
+  4. Nút **Search** — áp dụng đồng thời điều kiện Year/ETD Week (nếu có) và từ khóa tìm kiếm (nếu có)
+     lên danh sách.
+  5. Nút **Clear** — xóa toàn bộ điều kiện Year/ETD Week/từ khóa đang áp dụng, đưa bảng về trạng thái
+     mặc định (không lọc, trang đầu), đúng như hành vi nút Clear ở Compliance View.
+- Change: Điều kiện lọc theo Year/ETD Week MUST áp dụng trên đúng trường **ETD** (`RsVnETD`) của sales
+  order — chọn Year lọc các sales order có ETD thuộc năm đó; nếu người dùng chọn thêm 1 hoặc nhiều tuần
+  cụ thể trong dropdown ETD Week, hệ thống MUST lọc tiếp trong đúng phạm vi (các) tuần ISO đó của năm
+  đang chọn; nếu dropdown ETD Week đang ở trạng thái mặc định ("All weeks in {Year}"), hệ thống MUST
+  chỉ áp dụng điều kiện Year, không giới hạn theo tuần — dùng lại đúng cơ chế quy đổi (năm, danh sách
+  tuần ISO) → khoảng ngày mà Compliance View đang dùng cho cùng cột `RsVnETD`, không định nghĩa công
+  thức quy đổi tuần/năm riêng cho Overview.
+- Change: Điều kiện Year/ETD Week và ô tìm kiếm Sales ID/Customer (FR-011) MUST kết hợp theo kiểu
+  **AND** (thu hẹp dần danh sách) khi cả hai cùng có giá trị — không loại trừ lẫn nhau, không phải lựa
+  chọn "một trong hai".
+- Change: Khi bộ lọc Year/ETD Week/từ khóa không khớp sales order nào, bảng MUST hiển thị đúng trạng
+  thái trống ("No data") theo quy tắc hiện có (FR-012) — không phải lỗi.
+- Change: Nút **View** và nút **Download** ở cột Actions của mỗi dòng Overview MUST đổi màu sang màu
+  **nâu** — dùng đúng giá trị màu nâu đã có sẵn trong theme dùng chung của hệ thống (không tự chọn một
+  mã màu nâu mới) — thay cho màu mặc định/màu xanh (primary) hiện tại của 2 nút này. Nút **Map File**
+  (nút hành động còn lại trên cùng dòng, dùng để điều hướng sang màn hình Map File) và các nút/biểu
+  tượng khác của Overview (ví dụ icon trạng thái xử lý của Download) KHÔNG đổi màu theo yêu cầu này.
+- Change: Việc đổi màu nút View/Download MUST áp dụng cho mọi trạng thái bình thường của 2 nút này
+  (không disable) trên mọi dòng của bảng Overview — không áp dụng màu khác nhau tuỳ theo dòng có dữ
+  liệu Mapped/Template hay không; các trạng thái đặc thù đã có sẵn (ví dụ icon loading khi Download
+  đang xử lý, FR-090) tiếp tục hiển thị đúng như hiện tại, chỉ đổi màu nền của chính 2 nút, không đổi ý
+  nghĩa hay hành vi của trạng thái đó.
+- Change: Thứ tự sắp xếp mặc định của danh sách sales order ở Overview MUST đổi để giống màn hình
+  Compliance View (`ref-type = 11`): khi người dùng chưa chủ động sắp theo cột nào, danh sách MUST sắp
+  theo **Delivery date giảm dần** (mới nhất trước) — thay cho việc sắp cố định theo Sales ID tăng dần
+  hiện tại.
+- Change: Việc đổi thứ tự sắp xếp mặc định (Delivery date giảm dần) MUST áp dụng đồng thời với mọi điều
+  kiện lọc hiện có và mới (từ khóa Sales ID/Customer, Year/ETD Week, cũng như điều kiện lọc theo
+  Template khi ô tìm kiếm đang trống — FR-107) — thứ tự sắp xếp không làm thay đổi tập kết quả đã được
+  các điều kiện lọc đó xác định, chỉ thay đổi thứ tự hiển thị các dòng kết quả đó.
+- Change: Việc bổ sung cột ETD, khung tìm kiếm Year/ETD Week, đổi màu nút View/Download và đổi thứ tự
+  sắp xếp mặc định ở Update này KHÔNG làm thay đổi bất kỳ hành vi/quy tắc nào đã đặc tả ở các Update
+  trước cho cột Sales ID/Customer/Customer name/Delivery date/Template/Progress, cho việc phân trang
+  (FR-010), cho việc khôi phục từ khóa/trang khi Back từ Map File/View (FR-094 đến FR-099), hay cho nội
+  dung/cấu trúc file zip Download (FR-087 đến FR-092, FR-152 đến FR-160) — chỉ bổ sung 1 cột hiển thị,
+  1 khung tìm kiếm mới, đổi màu 2 nút, và đổi thứ tự sắp xếp mặc định.
+
+### Session 2026-09-18 (Update 23) — Kế thừa: File name tự động đổi theo Step/Prefix master khi Upload (004-eutr-documents Update 25)
+
+- Input: yêu cầu đổi tên file theo Step/Prefix master được gửi cho `004-eutr-documents`, kèm chỉ định
+  "áp dụng logic này cho upload file ở màn hình 005-eutr-sales-orders, 012-eutr-purchase-orders".
+- Change: Nút **Upload** và **Edit** ở Step 2 (AVAILABLE FILES, Update 6) mở đúng popup Add/Edit dùng
+  chung với `004-eutr-documents` và gọi đúng luồng Upload chung (không có logic đặt tên file riêng ở
+  đặc tả này) — do đó **tự động kế thừa nguyên vẹn** hành vi đổi tên file theo Step (+ Prefix của
+  `eutr_master_documents`, nếu Step có cấu hình) đã đặc tả ở `004-eutr-documents` Update 25
+  (FR-062–FR-067 của đặc tả đó): File name của mỗi document tạo qua Upload ở đây KHÔNG còn là tên file
+  gốc, mà là Prefix (nếu có) + Step Name đã chọn, đã làm sạch ký tự đặc biệt, giữ đuôi file gốc.
+- Change: Không có thay đổi nào cần thực hiện riêng ở `005-eutr-sales-orders` (không có FR/Key Entity
+  nào của đặc tả này cần cập nhật) — mọi màn hình hiển thị File name (AVAILABLE FILES ở Map File/View,
+  cây step, Download zip theo tên file) tiếp tục hiển thị đúng giá trị `eutr_documents.Name` hiện có
+  trong DB tại thời điểm đọc, tự động phản ánh tên đã đổi mà không cần logic hiển thị riêng.
+- Q: Việc đổi tên có ảnh hưởng tới cách Map File/View so khớp file với Template/Step (dựa trên
+  `eutr_references.StepId`, không phải theo File name) không? → A: **Không** — mọi logic map/mapped
+  status trong đặc tả này đều dựa trên `eutr_references.StepId`/`RefType` (xem Update 7/17/19), không
+  bao giờ so khớp theo `eutr_documents.Name`; đổi tên file chỉ ảnh hưởng cột hiển thị, không ảnh hưởng
+  logic nghiệp vụ nào ở đây.
+
 ### Session 2026-09-07 (Update 22) — Nút Download hiển thị popup chọn định dạng tải (Combined All / By Template) thay vì đóng gói cả hai cùng lúc
 
 - Bối cảnh: Từ Update 21 (FR-142 đến FR-151), mỗi lượt nhấn Download (View: FR-069; Overview: FR-087)
@@ -990,6 +1217,32 @@ mọi Sales ID theo từ khóa đó bất kể đã có Template hay chưa.
     22), **Then** file zip tải về chỉ chứa đúng 1 thư mục **All** chứa cây thư mục lồng nhau theo tên
     step (cha/con đúng theo cây All của màn hình View), mỗi thư mục step chỉ chứa đúng tài liệu "Mapped"
     của step đó hợp nhất qua mọi template đã lưu — không kèm theo thư mục nào theo tên template.
+18. **Given** một sales order có đầy đủ dữ liệu ETD từ nguồn tham chiếu, **When** bảng hiển thị dòng
+    đó (Update 24), **Then** cột **ETD** hiển thị ngay sau cột Delivery date và hiển thị đúng ngày ETD.
+19. **Given** một sales order không có ETD, **When** bảng hiển thị dòng đó, **Then** cột ETD hiển thị
+    trạng thái trống rõ ràng (không lỗi).
+20. **Given** đang xem bảng Overview, **When** quan sát nút View và nút Download trên bất kỳ dòng nào,
+    **Then** cả hai nút đều hiển thị màu nâu (Update 24), khác với màu mặc định trước đây; nút Map
+    File trên cùng dòng vẫn giữ nguyên màu như trước.
+21. **Given** danh sách sales order có nhiều dòng với Delivery date khác nhau và người dùng chưa chủ
+    động sắp theo cột nào, **When** bảng hiển thị (lần mở đầu tiên hoặc sau khi Search/Clear), **Then**
+    các dòng được sắp theo Delivery date giảm dần (mới nhất trước), giống thứ tự mặc định của màn hình
+    Compliance View (`ref-type = 11`) — không còn sắp theo Sales ID tăng dần.
+22. **Given** `permissionList` của user trên menu `eutr-sales-orders` chứa quyền **Update** (Update
+    28), **When** bảng Overview hiển thị bất kỳ dòng nào, **Then** icon **Map File** ở cột Actions của
+    dòng đó hiển thị bình thường.
+23. **Given** `permissionList` của user trên menu `eutr-sales-orders` KHÔNG chứa quyền **Update**
+    (Update 28), **When** bảng Overview hiển thị bất kỳ dòng nào, **Then** icon **Map File** ở cột
+    Actions của dòng đó KHÔNG hiển thị (icon View summary vẫn hiển thị bình thường, không đổi).
+24. **Given** `permissionList` của user trên menu `eutr-sales-orders` chứa quyền **Download** (Update
+    28), **When** bảng Overview hiển thị bất kỳ dòng nào, **Then** icon **Download** ở cột Actions của
+    dòng đó hiển thị bình thường.
+25. **Given** `permissionList` của user trên menu `eutr-sales-orders` KHÔNG chứa quyền **Download**
+    (Update 28), **When** bảng Overview hiển thị bất kỳ dòng nào, **Then** icon **Download** ở cột
+    Actions của dòng đó KHÔNG hiển thị.
+26. **Given** `permissionList` chứa cả quyền Update và quyền Download (Update 28), **When** bảng
+    Overview hiển thị, **Then** cả icon Map File và icon Download đều hiển thị trên mỗi dòng, độc lập
+    với nhau.
 
 ---
 
@@ -1034,6 +1287,27 @@ chỉ còn hiển thị các dòng khớp; xóa từ khóa, xác nhận bảng q
 8. **Given** từ khóa tìm kiếm đã được khôi phục sau khi Back không còn khớp bất kỳ sales order nào
    (dữ liệu đã thay đổi trong lúc ở Map File/View), **When** bảng tải lại dữ liệu mới nhất, **Then**
    bảng hiển thị trạng thái trống ("No data"), không phải lỗi.
+9. **Given** đang ở Overview (Update 24), **When** chọn một năm ở dropdown **Year** và nhấn **Search**
+   mà không chọn tuần cụ thể nào (giữ "All weeks in {Year}"), **Then** bảng chỉ hiển thị các sales
+   order có ETD thuộc đúng năm đã chọn.
+10. **Given** đã chọn Year, **When** chọn thêm 1 hoặc nhiều tuần cụ thể ở dropdown **ETD Week** và
+    nhấn **Search**, **Then** bảng chỉ hiển thị các sales order có ETD rơi vào đúng (các) tuần ISO đã
+    chọn của năm đó.
+11. **Given** đã nhập từ khóa Sales ID/Customer và đồng thời chọn Year/ETD Week, **When** nhấn
+    **Search**, **Then** bảng chỉ hiển thị các dòng thỏa mãn đồng thời cả từ khóa lẫn điều kiện
+    Year/ETD Week (kết hợp AND).
+12. **Given** đang có điều kiện Year/ETD Week/từ khóa đang áp dụng, **When** nhấn nút **Clear**,
+    **Then** toàn bộ điều kiện bị xóa và bảng trở về danh sách mặc định (không lọc, trang đầu).
+13. **Given** điều kiện Year/ETD Week đã chọn không khớp sales order nào, **When** nhấn Search,
+    **Then** bảng hiển thị trạng thái trống ("No data"), không phải lỗi.
+14. **Given** danh sách đang hiển thị đầy đủ, **When** nhập một mã khách hàng (Customer ID,
+    `CustAccount`, ví dụ "10676") hợp lệ vào ô tìm kiếm, **Then** bảng chỉ hiển thị (các) dòng có
+    Customer (mã) khớp — cùng kiểu khớp "chứa", không phân biệt hoa/thường như tìm theo Sales ID/
+    Customer name (Update 27).
+15. **Given** một từ khóa vừa khớp "chứa" một phần Sales ID của một dòng vừa khớp "chứa" một phần mã
+    Customer của một dòng khác, **When** tìm kiếm, **Then** bảng hiển thị đồng thời cả hai dòng đó
+    (khớp OR trên cả 3 cột Sales ID/Customer/Customer name), không giới hạn kết quả chỉ theo một cột
+    (Update 27).
 
 ---
 
@@ -1198,6 +1472,17 @@ màn hình EUTR Sales Orders.
 28. **Given** Sales Order có nhiều PO ở Step 1, **When** trang tải dữ liệu Variants/Materials cho
     toàn bộ bảng, **Then** hệ thống chỉ gọi 1 lượt tới nguồn tham chiếu type = 20 theo Sales ID hiện
     tại rồi nhóm kết quả theo `RSVNRefPurchId` cho từng dòng — không gọi riêng lẻ theo từng PO.
+29. **Given** `permissionList` của menu `eutr-documents` KHÔNG chứa `'Create'` (Update 29), **When** mở
+    Step 2 của Map File, **Then** nút **Upload** KHÔNG hiển thị (không phải dạng disable), toàn bộ phần
+    còn lại của Step 2 (cây template, AVAILABLE FILES, nút Edit/View trên mỗi dòng — nếu
+    `permissionList` có quyền tương ứng) tiếp tục hiển thị và hoạt động bình thường.
+30. **Given** `permissionList` của menu `eutr-documents` KHÔNG chứa `'Update'` (Update 29), **When** xem
+    AVAILABLE FILES ở Step 2, **Then** nút **Edit** trên MỌI dòng tài liệu đều KHÔNG hiển thị; nút
+    **View** trên các dòng đó vẫn hiển thị và hoạt động bình thường (không bị ảnh hưởng).
+31. **Given** `permissionList` của menu `eutr-documents` chứa cả `'Create'` lẫn `'Update'` (Update 29),
+    **When** mở Step 2 của Map File, **Then** cả nút Upload lẫn nút Edit trên mọi dòng đều hiển thị
+    đúng như hành vi đã có trước Update 29 (Update 1 đến Update 8) — không có thay đổi hành vi nào
+    khác ngoài việc thêm điều kiện hiển thị.
 
 ---
 
@@ -1206,25 +1491,28 @@ màn hình EUTR Sales Orders.
 Từ màn hình EUTR Sales Orders, người dùng nhấn nút "View" trên một dòng để mở màn hình **View Sales
 Order** của Sales Order đó. Màn hình kiểm tra Sales Order có tồn tại hay không (cùng nguồn tham chiếu
 dùng chung với Overview/Map File), hiển thị đúng thông tin Sales ID/Customer/Customer name ở header,
-danh sách các **Purchase Order đã chọn** (lấy từ `eutr_purchase_attachments`, tra cứu thêm thông tin
-PO thật từ D365) — bảng này (`data-marker="selected-po-table"`) còn hiển thị hai cột **Variants** và
-**Materials** (từ Update 18), lấy dữ liệu thật theo đúng cách của bảng PO ở Step 1 Map File (Update
-17): nguồn tham chiếu type = 20 lọc theo PO của từng dòng, gộp `ProductVariant`/`ItemId` duy nhất
-thành danh sách trong 1 ô — và **Template Checklist** — cây các bước của (các) template gắn với Sales
-Order đó.
-Toolbar cây template (`data-marker="template-tree-toolbar"`) hiển thị một chip **All** (đầu tiên) cùng
-một chip cho mỗi template đã lưu; Template Checklist chỉ hiển thị đúng cây của **một** lựa chọn tại một
-thời điểm — cây của lựa chọn đang được chọn ở toolbar, **mặc định là All khi mở màn hình lần đầu (Update
-20)** nếu Sales Order đã có ít nhất 1 template lưu sẵn. Click vào một template khác ở toolbar sẽ chuyển
-sang hiển thị đúng cây của template đó. Mỗi bước trong
+ô **Purchase Order(s)** ở header hiển thị (các) chip `PurchId` của (các) PO đã chọn cho Sales Order này
+(cùng nguồn dữ liệu với danh sách PO bên dưới — **thay cho ô "Template" hiển thị chip `TemplateCode`
+trước Update 26**), danh sách các **Purchase Order đã chọn** (lấy từ `eutr_purchase_attachments`, tra
+cứu thêm thông tin PO thật từ D365) — bảng này (`data-marker="selected-po-table"`) còn hiển thị hai cột
+**Variants** và **Materials** (từ Update 18), lấy dữ liệu thật theo đúng cách của bảng PO ở Step 1 Map
+File (Update 17): nguồn tham chiếu type = 20 lọc theo PO của từng dòng, gộp `ProductVariant`/`ItemId`
+duy nhất thành danh sách trong 1 ô — và **Template Checklist** — cây các bước của (các) template gắn
+với Sales Order đó.
+Toolbar cây template (`data-marker="template-tree-toolbar"`) **từ Update 26 chỉ còn hiển thị đúng 1 tab
+duy nhất, nhãn "Template"** (trước đây là chip **All** cùng một chip riêng cho mỗi template đã lưu —
+(các) chip riêng đó nay bị ẩn); Template Checklist luôn hiển thị đúng cây gộp — cùng cơ chế dữ liệu đã
+có của chip All trước Update 26 (FR-130 đến FR-141, **mặc định tự kích hoạt khi mở màn hình lần đầu,
+Update 20**) — không còn cách nào ở màn hình này để chuyển xem cây của một template cụ thể riêng lẻ
+(muốn xem theo từng template, chuyển sang Map File). Mỗi bước trong
 cây hiển thị đúng trạng thái đã có tài liệu hay còn thiếu, xác định dựa trên tài liệu thật
 (`eutr_references`) thuộc **đúng PO của chính template đang xem** (tra theo `eutr_purchase_attachments`)
-— không nhầm lẫn với tài liệu thuộc PO của một template khác dù hai template dùng chung tên Step. Click
-vào chip **All** (Update 19) hiển thị cây của **template mặc định toàn hệ thống** (`eutr_templates` với
-`IsDefault = 1`/`IsHide = 0`/`IsDeleted = 0`) nhưng chỉ giữ lại (các) step của template mặc định đó mà
-step cũng tồn tại ở ít nhất một template đã lưu của Sales Order này — step khác bị loại bỏ; khi All
-đang active, khu vực AVAILABLE FILES hiển thị hợp toàn bộ tài liệu của **mọi** template đã lưu của Sales
-Order, không giới hạn theo 1 template. Toàn bộ màn hình chỉ ở chế độ xem — không có thao tác tick chọn
+— không nhầm lẫn với tài liệu thuộc PO của một template khác dù hai template dùng chung tên Step. Tab
+**"Template"** (Update 19, đổi tên từ "All" ở Update 26) luôn hiển thị cây của **template mặc định toàn
+hệ thống** (`eutr_templates` với `IsDefault = 1`/`IsHide = 0`/`IsDeleted = 0`) nhưng chỉ giữ lại (các)
+step của template mặc định đó mà step cũng tồn tại ở ít nhất một template đã lưu của Sales Order này —
+step khác bị loại bỏ; khu vực AVAILABLE FILES hiển thị hợp toàn bộ tài liệu của **mọi** template đã lưu
+của Sales Order, không giới hạn theo 1 template. Toàn bộ màn hình chỉ ở chế độ xem — không có thao tác tick chọn
 PO, map/unmap tài liệu hay upload nào. Muốn thay đổi, người
 dùng nhấn nút **Edit / Map File** để chuyển sang màn hình Map File. Nút **Back** đưa người dùng quay
 lại Overview, khôi phục đúng từ khóa tìm kiếm/trang đã xem trước đó nếu người dùng mở màn hình View
@@ -1426,6 +1714,34 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
     và xác nhận một lựa chọn bất kỳ trên popup, **Then** hệ thống hiển thị đúng thông báo không có tài
     liệu để tải và KHÔNG tải xuống file zip — kể cả khi chọn Combined và cây All (theo template mặc
     định) vẫn có step hợp lệ nhưng không step nào có tài liệu.
+42. **Given** Sales Order đã Save PO Mapping với một hoặc nhiều PurchId (Update 26), **When** mở màn
+    hình View, **Then** ô header **"Purchase Order(s)"** hiển thị đúng một chip cho mỗi `PurchId` đã
+    chọn (ví dụ `PO1`, `PO2`) — không còn hiển thị chip `TemplateCode` nào ở ô này.
+43. **Given** Sales Order chưa Save PO Mapping nào (chưa có bản ghi trong `eutr_purchase_attachments`),
+    **When** mở màn hình View, **Then** ô header **"Purchase Order(s)"** hiển thị trạng thái trống rõ
+    ràng (không hiển thị chip nào, không báo lỗi).
+44. **Given** đang mở màn hình View, **When** xem toolbar cây template, **Then** toolbar chỉ hiển thị
+    đúng 1 tab duy nhất mang nhãn **"Template"** — không còn hiển thị bất kỳ chip riêng nào cho từng
+    `TemplateCode` đã lưu của Sales Order này, kể cả khi Sales Order có từ 2 template đã lưu trở lên.
+45. **Given** tab **"Template"** duy nhất đang hiển thị, **When** người dùng click vào tab này, **Then**
+    hệ thống tải lại template mặc định toàn hệ thống và hiển thị đúng cây gộp — cùng hành vi dữ liệu đã
+    có của chip All trước Update 26 (FR-130), chỉ khác nhãn hiển thị.
+46. **Given** một Sales Order có 2 template đã lưu trở lên (điều kiện từng cho hiển thị nhiều chip
+    template ở toolbar trước Update 26), **When** mở màn hình View, **Then** Template Checklist chỉ
+    hiển thị đúng 1 cây — cây gộp của tab "Template" — người dùng không còn cách nào trong màn hình này
+    để xem riêng cây của từng template (kịch bản 11, 12, 15, 21, 27 đến 36 mô tả hành vi chuyển đổi giữa
+    các chip template riêng lẻ trước Update 26 — từ Update 26, các chip đó bị ẩn nên các kịch bản này
+    không còn có thể thực hiện qua UI của màn hình View; muốn xem/sửa theo từng template, chuyển sang
+    Map File).
+47. **Given** `permissionList` của user trên menu `eutr-sales-orders` chứa quyền **Update** (Update
+    28), **When** mở màn hình View, **Then** nút **Edit / Map File** ở toolbar hiển thị bình thường.
+48. **Given** `permissionList` của user trên menu `eutr-sales-orders` KHÔNG chứa quyền **Update**
+    (Update 28), **When** mở màn hình View, **Then** nút **Edit / Map File** ở toolbar KHÔNG hiển thị
+    (nút Back vẫn hiển thị bình thường, không đổi).
+49. **Given** `permissionList` của user trên menu `eutr-sales-orders` chứa quyền **Download** (Update
+    28), **When** mở màn hình View, **Then** nút **Download** ở toolbar hiển thị bình thường.
+50. **Given** `permissionList` của user trên menu `eutr-sales-orders` KHÔNG chứa quyền **Download**
+    (Update 28), **When** mở màn hình View, **Then** nút **Download** ở toolbar KHÔNG hiển thị.
 
 ---
 
@@ -1708,6 +2024,49 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
   nếu người dùng chọn **Combined (All)**, file zip vẫn có đúng 1 thư mục All nhưng ở trạng thái rỗng,
   không báo lỗi toàn bộ thao tác Download; nếu người dùng chọn **By Template**, tình trạng cây All
   không ảnh hưởng gì tới lượt tải đó vì thư mục All không được đóng gói trong lựa chọn này.
+- (Update 26) Sales Order có nhiều PO đã chọn (ô header "Purchase Order(s)" hiển thị nhiều chip): các
+  chip hiển thị đầy đủ, tự động xuống dòng (wrap) khi không đủ chỗ trên 1 hàng — không bị cắt bớt hay
+  che khuất chip nào, cùng cách trình bày đã áp dụng cho (các) chip Template trước Update 26.
+- (Update 26) Sales Order có 1 PO đã chọn trùng đúng giá trị `PurchId` xuất hiện 2 lần trong
+  `eutr_purchase_attachments` (dữ liệu bất thường ngoài luồng nghiệp vụ bình thường): ô header "Purchase
+  Order(s)" hiển thị đúng theo số dòng thật có trong danh sách "Selected Purchase Orders" bên dưới —
+  không tự loại trùng, giữ nhất quán 2 khu vực hiển thị cùng 1 nguồn dữ liệu.
+- (Update 26) Người dùng có đường dẫn/bookmark cũ từng chọn xem 1 chip template cụ thể ở toolbar (URL
+  không lưu lựa chọn này — theo FR-060/kịch bản 36 hiện có): vì (các) chip template riêng lẻ đã bị ẩn,
+  màn hình View luôn hiển thị đúng tab "Template" (cây gộp) khi mở, không có trạng thái lỗi hay cây
+  trống bất thường nào phát sinh từ việc thiếu chip cũ.
+- (Update 27) Từ khóa nhập vào trùng khớp "chứa" trên nhiều hơn một trong 3 cột được khớp (Sales ID/
+  Customer/Customer name) của cùng một dòng (ví dụ mã Customer xuất hiện lại như một đoạn con trong
+  Sales ID của chính dòng đó): dòng đó vẫn chỉ hiển thị một lần duy nhất trong kết quả (không nhân đôi
+  do khớp nhiều cột cùng lúc).
+- (Update 27) Mã Customer (`CustAccount`) trống/`null` cho một sales order: dòng đó không khớp thêm
+  bởi điều kiện Customer ID mới, nhưng vẫn có thể khớp bình thường theo Sales ID/Customer name như
+  trước Update này — không phát sinh lỗi hay bị loại khỏi kết quả nếu khớp ở cột khác.
+- (Update 28) User không có cả quyền Update lẫn quyền Download trên menu `eutr-sales-orders`: ở
+  Overview, dòng đó chỉ còn hiển thị icon **View summary** trong cột Actions (Map File và Download
+  đều ẩn); ở View, toolbar chỉ còn nút **Back** (Edit / Map File và Download đều ẩn) — không phải
+  trạng thái lỗi, chỉ là kết quả bình thường khi user thiếu cả hai quyền.
+- (Update 28) `permissionList` của menu `eutr-sales-orders` rỗng/không tải được (ví dụ lỗi tạm thời
+  khi lấy menu từ storage): hệ thống coi như user không có quyền Update/Download nào (mặc định ẩn
+  icon Map File/Edit và Download), theo đúng cách xử lý mặc định-an-toàn (fail-closed) mà các màn
+  hình khác trong hệ thống (`eutr-documents`, `eutr-templates`, ...) đã áp dụng khi thiếu
+  `permissionList`.
+- (Update 28) User có quyền Update nhưng không có quyền Download (hoặc ngược lại): mỗi màn hình chỉ
+  ẩn đúng icon/nút của quyền đang thiếu, icon/nút còn lại vẫn hiển thị và hoạt động bình thường —
+  không ẩn cả hai chỉ vì thiếu một quyền.
+- (Update 29) `permissionList` của menu `eutr-documents` rỗng/không tải được (ví dụ lỗi tạm thời khi
+  lấy menu từ storage): hệ thống coi như user không có quyền Create/Update nào (mặc định ẩn cả Upload
+  và Edit), theo đúng cách xử lý mặc định-an-toàn (fail-closed) đã áp dụng cho `permissionList` của
+  menu `eutr-sales-orders` ở Update 28.
+- (Update 29) User không có cả hai quyền `'Create'`/`'Update'` trong `permissionList` của menu
+  `eutr-documents`: Step 2 chỉ còn hiển thị cây template và AVAILABLE FILES ở chế độ gần như chỉ đọc
+  (còn nút View, không còn Upload/Edit) — không phải trạng thái lỗi.
+- (Update 29) User có `'Create'`/`'Update'` trong `permissionList` của menu `eutr-documents` nhưng
+  KHÔNG có quyền Update trên menu `eutr-sales-orders` (FR-182/FR-183 của Update 28): user đó sẽ không
+  thấy được icon Map File/nút Edit / Map File để vào được màn hình Map File ngay từ đầu — trường hợp 2
+  lớp quyền (menu `eutr-sales-orders` và menu `eutr-documents`) không phụ thuộc lẫn nhau, mỗi lớp kiểm
+  soát đúng phạm vi của nó (Update 28 kiểm soát việc vào được màn hình Map File; Update 29 kiểm soát
+  riêng nút Upload/Edit bên trong màn hình đó khi đã vào được).
 
 ## Requirements *(mandatory)*
 
@@ -1745,7 +2104,9 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
 - **FR-011**: Users MUST có thể tìm kiếm/lọc danh sách theo Sales ID hoặc Customer (khớp kiểu
   "chứa", không phân biệt hoa/thường), theo đúng mẫu tìm kiếm tham chiếu đã có trong hệ thống. **Từ
   Update 16**: khi từ khóa khác rỗng, kết quả tìm kiếm này KHÔNG áp dụng điều kiện lọc Template ở
-  FR-107 (xem FR-109).
+  FR-107 (xem FR-109). **Cập nhật từ Update 27**: "Customer" ở yêu cầu này nay khớp OR đồng thời trên
+  cả mã khách hàng (Customer, `CustAccount`) và tên khách hàng (Customer name) — xem FR-179 đến
+  FR-181 cho phạm vi và cơ chế chi tiết.
 - **FR-012**: Khi từ khóa tìm kiếm không khớp sales order nào, hệ thống MUST hiển thị trạng thái
   trống ("No data"), không phải lỗi.
 - **FR-013**: Màn hình này là **read-only** trong phạm vi tính năng — KHÔNG cung cấp chức năng thêm
@@ -1918,16 +2279,22 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
 - **FR-058**: Toolbar cây template ở màn hình View (`data-marker="template-tree-toolbar"`) MUST hiển
   thị một chip riêng biệt cho mỗi template trong `templatesData` của Sales Order này (nhãn hiển thị =
   tên template) — thay thế hoàn toàn các chip tĩnh/demo hiện có ("template code1"/"template code2"/
-  "All"), theo đúng cách hiển thị đã áp dụng ở toolbar Map File (FR-047).
+  "All"), theo đúng cách hiển thị đã áp dụng ở toolbar Map File (FR-047). **Đã thay thế ở Update 26**:
+  từ Update 26, toolbar này KHÔNG còn hiển thị các chip riêng theo từng template mô tả ở đây — xem
+  FR-175.
 - **FR-059**: Khi người dùng click vào một chip template ở toolbar này, **Template Checklist** ở màn
   hình View MUST chỉ hiển thị đúng cây của template được chọn (`selectedTemplateCode`) — không còn
   hiển thị nối tiếp cây của mọi template cùng lúc như hiện tại. Chip của template đang được chọn xem
-  MUST có trạng thái hiển thị khác biệt so với các chip còn lại.
+  MUST có trạng thái hiển thị khác biệt so với các chip còn lại. **Đã thay thế ở Update 26**: vì (các)
+  chip template riêng lẻ bị ẩn (FR-175), hành vi chọn xem 1 template cụ thể này không còn thực hiện
+  được từ toolbar của màn hình View — xem FR-177.
 - **FR-060**: Khi mở màn hình View lần đầu, hoặc khi lựa chọn template hiện tại không còn tồn tại
   trong `templatesData` (ví dụ sau khi tải lại trang), nếu `templatesData` rỗng thì hệ thống MUST tiếp
   tục hiển thị trạng thái "chưa có cây template" (FR-040) như hiện có; nếu `templatesData` có ít nhất 1
   template, hệ thống MUST tự động chọn **All** làm lựa chọn hiển thị mặc định ở toolbar cây template
-  (thay cho việc tự động chọn template đầu tiên như trước Update 20) — **cập nhật từ Update 20**.
+  (thay cho việc tự động chọn template đầu tiên như trước Update 20) — **cập nhật từ Update 20**. **Cập
+  nhật từ Update 26**: cơ chế tự động kích hoạt này không đổi, chỉ đổi nhãn hiển thị của lựa chọn này từ
+  "All" thành "Template" (FR-176) — không còn có lựa chọn nào khác để mặc định chọn thay thế.
 - **FR-061**: Trạng thái "đã có tài liệu"/"còn thiếu" của một step trong Template Checklist ở màn hình
   View MUST chỉ đúng ("đã có tài liệu") khi thỏa đồng thời cả hai điều kiện sau — thay thế cách so
   khớp hiện tại (chỉ so tên Step, gộp chung tài liệu của mọi PO/mọi template):
@@ -2442,6 +2809,140 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
   Sales Order đang xem (template mặc định có thể không phải là một trong số đó). Chỉ đọc, không tạo/
   sửa/xóa bản ghi nào từ màn hình View.
 
+- **FR-161** (Update 24): Bảng Overview MUST hiển thị cột **ETD** đặt ngay sau cột Delivery date (trước
+  cột Template) — lấy giá trị thật từ trường ETD (`RsVnETD`) trên cùng bản ghi nguồn tham chiếu dùng
+  chung reference type = 11 đang cấp dữ liệu Sales ID/Customer/Customer name/Delivery date; nếu sales
+  order không có ETD, cột MUST hiển thị trạng thái trống rõ ràng (không phải lỗi) — đúng cùng quy tắc
+  trống đã áp dụng cho Delivery date (FR-006).
+- **FR-162** (Update 24): Overview MUST bổ sung khung tìm kiếm gồm dropdown **Year** và dropdown **ETD
+  Week** đặt phía trên bảng, cùng bố cục và hành vi (nhãn "All weeks in {Year}" khi chưa chọn tuần cụ
+  thể, cho phép chọn nhiều tuần, nút xóa riêng lựa chọn tuần) với khung tìm kiếm Year/ETD Week đang có
+  ở màn hình Compliance View lọc `ref-type = 11` — dùng lại đúng cơ chế xác định danh sách năm/tuần ISO
+  khả dụng, không định nghĩa lại danh sách năm/tuần riêng cho Overview.
+- **FR-163** (Update 24): Users MUST có thể lọc danh sách Overview theo Year đã chọn (áp dụng lên
+  trường ETD/`RsVnETD` của sales order); nếu chỉ chọn Year mà không chọn tuần cụ thể nào ở ETD Week
+  (giữ "All weeks in {Year}"), điều kiện lọc MUST chỉ giới hạn theo năm, không giới hạn theo tuần.
+- **FR-164** (Update 24): Khi người dùng chọn thêm 1 hoặc nhiều tuần cụ thể ở dropdown ETD Week, hệ
+  thống MUST lọc tiếp danh sách Overview trong đúng phạm vi (các) tuần ISO đó của năm đang chọn ở Year
+  — dùng lại đúng cơ chế quy đổi (năm, danh sách tuần) → khoảng ngày mà Compliance View đang áp dụng
+  cho cùng trường ETD/`RsVnETD`, không định nghĩa công thức quy đổi tuần/năm riêng cho Overview.
+- **FR-165** (Update 24): Điều kiện lọc Year/ETD Week (FR-163/FR-164) MUST kết hợp theo kiểu AND với ô
+  tìm kiếm Sales ID/Customer hiện có (FR-011) khi cả hai cùng có giá trị — không thay thế, không loại
+  trừ lẫn nhau; nút **Search** MUST áp dụng đồng thời mọi điều kiện đang có (từ khóa và/hoặc Year/ETD
+  Week) lên danh sách khi được nhấn.
+- **FR-166** (Update 24): Khung tìm kiếm mới MUST có nút **Clear** để xóa đồng thời điều kiện Year/ETD
+  Week và từ khóa tìm kiếm đang áp dụng, đưa bảng Overview về danh sách mặc định (không lọc, trang
+  đầu) — cùng ý nghĩa với nút Clear đang có ở màn hình Compliance View.
+- **FR-167** (Update 24): Khi điều kiện Year/ETD Week/từ khóa không khớp sales order nào, Overview MUST
+  hiển thị đúng trạng thái trống ("No data") theo quy tắc hiện có (FR-012), không phải lỗi.
+- **FR-168** (Update 24): Nút **View** và nút **Download** ở cột Actions của mỗi dòng Overview MUST đổi
+  màu nền sang màu **nâu**, dùng đúng giá trị màu nâu đã có sẵn trong theme dùng chung của hệ thống
+  (không tự chọn một mã màu nâu mới) — thay cho màu mặc định/màu xanh (primary) hiện tại của 2 nút
+  này; nút **Map File** trên cùng dòng và các icon/trạng thái khác của Overview KHÔNG đổi màu theo yêu
+  cầu này, áp dụng cho mọi dòng và mọi trạng thái bình thường (không disable) của 2 nút.
+- **FR-169** (Update 24): Khi người dùng chưa chủ động sắp xếp theo cột nào, danh sách Overview MUST
+  sắp mặc định theo **Delivery date giảm dần** (mới nhất trước) — thay cho thứ tự sắp cố định theo
+  Sales ID tăng dần hiện tại, giống đúng thứ tự mặc định của màn hình Compliance View (`ref-type = 11`)
+  cho cùng loại dữ liệu sales order. Thứ tự sắp xếp này áp dụng trên tập kết quả đã được mọi điều kiện
+  lọc hiện có (từ khóa, Year/ETD Week, lọc Template khi ô tìm kiếm trống ở FR-107) xác định — không làm
+  thay đổi tập kết quả, chỉ thay đổi thứ tự hiển thị.
+- **FR-170** (Update 25): Bảng Overview MUST hiển thị cột **Sales status** với dữ liệu thật lấy từ
+  trường `SalesStatus` của cùng nguồn tham chiếu `reference type = 11` đang cấp dữ liệu cho Sales ID/
+  Customer/Customer name/Delivery date/ETD — cột này tồn tại từ trước Update 25 nhưng được ghi nhận
+  chính thức vào đặc tả từ Update này.
+- **FR-171** (Update 25): Khi giá trị `SalesStatus` của một dòng là chuỗi **"Backorder"** (so khớp
+  chính xác, không phân biệt hoa/thường), cột Sales status MUST hiển thị nhãn **"Open order"** thay cho
+  "Backorder" — chỉ đổi nhãn hiển thị trên giao diện, KHÔNG thay đổi giá trị `SalesStatus` gốc ở nguồn
+  dữ liệu/API.
+- **FR-172** (Update 25): Mọi giá trị `SalesStatus` khác "Backorder" (bao gồm rỗng/`null`) MUST tiếp
+  tục hiển thị đúng như hành vi hiện tại (nguyên văn giá trị API, hoặc placeholder trống nếu rỗng/
+  `null`) — không áp dụng thêm bất kỳ ánh xạ nhãn nào khác ngoài quy tắc ở FR-171.
+- **FR-173** (Update 26): Ô header của màn hình View trước đây mang nhãn **"Template"** (hiển thị (các)
+  chip `TemplateCode` theo FR-039) MUST đổi nhãn hiển thị thành **"Purchase Order(s)"** và hiển thị đúng
+  (các) chip `PurchId` của (các) Purchase Order đã chọn cho Sales Order này — cùng nguồn dữ liệu đã dùng
+  cho danh sách "Selected Purchase Orders" (FR-037), KHÔNG còn hiển thị chip `TemplateCode` nào ở ô này.
+- **FR-174** (Update 26): Nếu Sales Order chưa Save PO Mapping nào (danh sách PO đã chọn rỗng — FR-038),
+  ô header **"Purchase Order(s)"** MUST hiển thị trạng thái trống rõ ràng (không hiển thị chip nào,
+  không phải lỗi) — cùng tinh thần trạng thái trống đã áp dụng cho ô này trước Update 26 ("No template
+  saved").
+- **FR-175** (Update 26): Toolbar cây template (`data-marker="template-tree-toolbar"`, FR-058) MUST chỉ
+  còn hiển thị đúng 1 tab duy nhất tại vị trí trước đây là chip **All** (đầu tiên); toàn bộ (các) chip
+  riêng cho từng `TemplateCode` đã lưu của Sales Order này (trước đây hiển thị cạnh chip All theo
+  FR-058) MUST bị ẩn, không còn render trên toolbar — bất kể Sales Order đang xem có bao nhiêu template
+  đã lưu.
+- **FR-176** (Update 26): Tab duy nhất còn lại ở FR-175 MUST đổi nhãn hiển thị từ **"All"** thành
+  **"Template"**, nhưng tiếp tục thực hiện đúng nguyên vẹn cơ chế dữ liệu đã có của chip All trước Update
+  này (FR-130 đến FR-141 không đổi: tải template mặc định toàn hệ thống, lọc theo step tồn tại ở Sales
+  Order, tự động kích hoạt khi mở màn hình lần đầu theo FR-060, AVAILABLE FILES hiển thị hợp tài liệu
+  mọi template) — chỉ đổi nhãn hiển thị và việc ẩn các lựa chọn khác ở FR-175.
+- **FR-177** (Update 26): Vì (các) chip template riêng lẻ bị ẩn (FR-175), màn hình View từ Update này
+  KHÔNG còn cung cấp cách nào để người dùng chuyển xem cây của một template cụ thể riêng lẻ (khác với
+  hành vi FR-059 trước Update này) — Template Checklist ở màn hình View luôn chỉ hiển thị đúng cây gộp
+  của tab "Template" (FR-176); muốn xem/sửa theo từng template cụ thể, người dùng MUST chuyển sang màn
+  hình Map File qua nút **Edit / Map File** hiện có (không đổi bởi Update này).
+- **FR-178** (Update 26): Việc đổi ô header Template→Purchase Order(s) (FR-173/FR-174) và ẩn (các) tab
+  template riêng lẻ (FR-175 đến FR-177) KHÔNG làm thay đổi bất kỳ hành vi/quy tắc nào khác đã có của màn
+  hình View — Selected Purchase Orders (FR-037), nội dung cây Template Checklist (FR-130 đến FR-141),
+  AVAILABLE FILES lọc theo step khi click node cây (FR-101/FR-102), nút Download/popup chọn định dạng
+  tải (FR-152 đến FR-160), Validation Summary (FR-062), nút Edit / Map File, nút Back (FR-093 đến
+  FR-098) — chỉ đổi cách hiển thị của đúng ô header và toolbar Template Tree.
+- **FR-179** (Update 27): Ô tìm kiếm từ khóa hiện có ở Overview (FR-011) MUST mở rộng để khớp thêm
+  cột **Customer** (mã/tài khoản khách hàng, `CustAccount`, ví dụ "10676") theo đúng kiểu "chứa",
+  không phân biệt hoa/thường — kết hợp **OR** với điều kiện khớp Sales ID và Customer name đã có
+  (FR-011), theo đúng cơ chế OR-search nhiều cột dùng chung sẵn có trong hệ thống (đã áp dụng cho
+  màn hình Purchase Orders/`VendorCode`). Người dùng chỉ cần đúng một ô tìm kiếm duy nhất — không
+  thêm ô/nút mới — để tìm theo bất kỳ Sales ID, Customer (mã) hoặc Customer name nào khớp từ khóa.
+- **FR-180**: Việc mở rộng khớp theo Customer ID (FR-179) KHÔNG làm thay đổi bất kỳ quy tắc kết hợp
+  nào đã có của khung tìm kiếm Overview — kết quả vẫn kết hợp **AND** với điều kiện Year/ETD Week khi
+  có (FR-165), và vẫn tuân theo đúng quy tắc bật/tắt lọc Template theo từ khóa trống/khác trống hiện
+  có (FR-107/FR-109) không đổi.
+- **FR-181**: Việc mở rộng khớp theo Customer ID (FR-179) chỉ áp dụng cho màn hình EUTR Sales Orders
+  (nguồn tham chiếu dùng chung `reference type = 11`) — KHÔNG áp dụng cho bất kỳ `reference type`/màn
+  hình tham chiếu nào khác đang dùng chung cơ chế tìm kiếm này, theo đúng phạm vi giới hạn-theo-entity
+  đã áp dụng cho phần mở rộng tìm kiếm theo `VendorCode` hiện có của màn hình Purchase Orders.
+- **FR-182** (Update 28): Icon **Map File** ở cột Actions của mỗi dòng trong bảng Overview (FR-004)
+  MUST chỉ hiển thị khi `permissionList` của user trên menu `eutr-sales-orders` có chứa quyền
+  **Update**; khi không có quyền Update, icon này MUST không hiển thị (không chỉ disable).
+- **FR-183** (Update 28): Nút **Edit / Map File** ở toolbar màn hình View Sales Order MUST chỉ hiển
+  thị khi `permissionList` của user trên menu `eutr-sales-orders` có chứa quyền **Update**; khi
+  không có quyền Update, nút này MUST không hiển thị.
+- **FR-184** (Update 28): Icon **Download** ở cột Actions của mỗi dòng trong bảng Overview MUST chỉ
+  hiển thị khi `permissionList` có chứa quyền **Download**; khi không có quyền Download, icon này
+  MUST không hiển thị.
+- **FR-185** (Update 28): Nút **Download** ở toolbar màn hình View Sales Order MUST chỉ hiển thị khi
+  `permissionList` có chứa quyền **Download**; khi không có quyền Download, nút này MUST không hiển
+  thị.
+- **FR-186** (Update 28): Quyền Update và quyền Download là 2 điều kiện độc lập — một user có thể có
+  cả hai, chỉ một, hoặc không có quyền nào trong hai quyền này; mỗi icon/nút (FR-182 đến FR-185) MUST
+  chỉ phụ thuộc đúng vào quyền tương ứng của chính nó, không phụ thuộc vào quyền còn lại.
+- **FR-187** (Update 28): Icon **View summary** ở Overview và nút **Back** ở màn hình View KHÔNG bị
+  ảnh hưởng bởi Update này — luôn hiển thị như hành vi hiện có, không gắn thêm điều kiện quyền nào.
+- **FR-188** (Update 28): Việc ẩn/hiện icon Map File/Edit/Download theo permissionList (FR-182 đến
+  FR-186) KHÔNG làm thay đổi bất kỳ hành vi nào khác đã có của các icon/nút này khi chúng được hiển
+  thị — điều hướng Map File (FR-005 và tương đương ở View), popup chọn định dạng tải Download (FR-152
+  đến FR-160), và toàn bộ logic của màn hình Map File/View đích đến giữ nguyên không đổi.
+- **FR-189** (Update 29, sửa lại): Màn hình Map File Step 2 MUST đọc `permissionList` của menu
+  `eutr-documents` (qua `getMenuDataFromStorage()`, cùng cơ chế Update 28 đã dùng cho menu
+  `eutr-sales-orders`) và chỉ hiển thị nút **Upload** (UploadIcon, FR-026) khi `permissionList` chứa
+  `'Create'`; nếu không có, nút Upload MUST bị ẩn hoàn toàn, không hiển thị ở trạng thái vô hiệu hóa
+  (disable).
+- **FR-190** (Update 29, sửa lại): Màn hình Map File Step 2 MUST chỉ hiển thị nút **Edit** trên mỗi
+  dòng tài liệu ở AVAILABLE FILES (FR-027) khi `permissionList` của menu `eutr-documents` (cùng nguồn
+  FR-189) chứa `'Update'`; nếu không có, nút Edit của mọi dòng MUST bị ẩn hoàn toàn, không hiển thị ở
+  trạng thái vô hiệu hóa.
+- **FR-191** (Update 29): Quyền Create và quyền Update ở FR-189/FR-190 là 2 điều kiện độc lập — nút
+  Upload chỉ phụ thuộc `permissionList.includes('Create')`, nút Edit của mỗi dòng chỉ phụ thuộc
+  `permissionList.includes('Update')`; một user có thể có cả hai, chỉ một, hoặc không có quyền nào
+  trong hai quyền này.
+- **FR-192** (Update 29): Nút **View** (xem trước nội dung file, FR-092 đến FR-098) và toàn bộ phần
+  còn lại của màn hình Map File (Step 1 chọn PO, cây thư mục template, thông tin header, nút Back)
+  KHÔNG bị ảnh hưởng bởi FR-189/FR-190 — tiếp tục hiển thị và hoạt động như hiện có, không phụ thuộc
+  vào `permissionList` của menu `eutr-documents`.
+- **FR-193** (Update 29): Khi nút Upload/Edit hiển thị theo FR-189/FR-190 (người dùng có quyền), toàn
+  bộ hành vi đã đặc tả cho hai nút này ở các Update trước đó (Update 1 đến Update 8, ví dụ hành vi
+  popup Add/Edit, refresh AVAILABLE FILES sau khi lưu) MUST giữ nguyên không đổi — Update này chỉ
+  thêm điều kiện hiển thị, không đổi luồng nghiệp vụ khi nút đã hiển thị.
+
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
@@ -2670,6 +3171,41 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
   kỳ file zip nào — 0% lượt gọi API tải zip phát sinh từ hành động đóng popup này.
 - **SC-081**: 0% lượt hiển thị popup hoặc xử lý lựa chọn của người dùng làm thay đổi bất kỳ bản ghi nào
   ở `eutr_documents`, `eutr_references`, `eutr_purchase_attachments`, hay `eutr_templates`.
+- **SC-082**: 100% số dòng ở Overview hiển thị cột ETD đúng vị trí (ngay sau Delivery date) và đúng giá
+  trị hoặc trạng thái trống rõ ràng khi không có dữ liệu — 0% dòng hiển thị lỗi hoặc lệch vị trí cột.
+- **SC-083**: 100% lượt chọn Year (và tuỳ chọn thêm ETD Week) rồi nhấn Search trả về đúng tập sales
+  order có ETD khớp năm/tuần đã chọn — kiểm chứng khớp với kết quả lọc tương đương trên màn hình
+  Compliance View (`ref-type = 11`) cho cùng điều kiện Year/Week tại cùng thời điểm dữ liệu.
+- **SC-084**: 100% lượt kết hợp từ khóa Sales ID/Customer với Year/ETD Week trả về đúng giao của cả hai
+  điều kiện — 0% lượt chỉ áp dụng một trong hai điều kiện khi cả hai cùng có giá trị.
+- **SC-085**: 100% lượt nhấn Clear ở khung tìm kiếm mới xóa đồng thời Year/ETD Week/từ khóa, đưa bảng
+  về danh sách mặc định (không lọc, trang đầu).
+- **SC-086**: 100% nút View và nút Download trên mọi dòng Overview hiển thị đúng màu nâu đã định nghĩa
+  sẵn trong theme dùng chung — 0% dòng còn hiển thị màu mặc định/primary cũ.
+- **SC-087**: 100% lượt mở Overview lần đầu (hoặc sau Search/Clear) mà chưa chủ động chọn sắp theo cột
+  nào hiển thị danh sách theo đúng thứ tự Delivery date giảm dần — 0% lượt còn hiển thị theo thứ tự
+  Sales ID tăng dần như hành vi trước Update 24.
+- **SC-088**: 100% dòng ở Overview có `SalesStatus` trả về từ API là "Backorder" hiển thị nhãn
+  "Open order" ở cột Sales status — 0% dòng còn hiển thị nguyên văn "Backorder".
+- **SC-089**: 100% dòng có `SalesStatus` khác "Backorder" (kể cả rỗng/`null`) tiếp tục hiển thị đúng
+  như hành vi trước Update 25 (nguyên văn giá trị API, hoặc placeholder trống) — 0% dòng bị ánh xạ nhãn
+  ngoài ý muốn.
+- **SC-090**: 100% lượt nhập đúng một mã khách hàng (Customer ID) hợp lệ đang tồn tại vào ô tìm kiếm
+  hiện có trả về đúng (các) dòng có Customer khớp — người dùng tìm được sales order theo mã khách hàng
+  mà không cần thêm bất kỳ thao tác/ô nhập nào khác ngoài ô tìm kiếm sẵn có.
+- **SC-091**: 0% lượt tìm kiếm theo Sales ID hoặc Customer name hiện có bị thay đổi kết quả so với
+  trước Update 27 — việc mở rộng khớp thêm Customer ID chỉ bổ sung thêm dòng khớp (OR), không loại bỏ
+  hay thay đổi bất kỳ kết quả nào đã đúng trước đó.
+- **SC-092**: 100% user không có quyền Update trên menu `eutr-sales-orders` không nhìn thấy icon Map
+  File (Overview) hay nút Edit / Map File (View) ở bất kỳ dòng/màn hình nào.
+- **SC-093**: 100% user không có quyền Download trên menu `eutr-sales-orders` không nhìn thấy icon/nút
+  Download ở bất kỳ dòng/màn hình nào (Overview và View).
+- **SC-094**: 100% user có đủ quyền Update và/hoặc Download tiếp tục nhìn thấy và sử dụng được đúng
+  icon/nút tương ứng như hành vi trước Update 28 — không có lượt ẩn nhầm nào xảy ra với user có quyền.
+- **SC-095**: 100% user không có quyền `EutrDocuments.Create` không nhìn thấy nút Upload ở Map File
+  Step 2, và 100% user không có quyền `EutrDocuments.Update` không nhìn thấy nút Edit trên bất kỳ dòng
+  AVAILABLE FILES nào — trong khi user có đủ quyền tương ứng tiếp tục thấy và dùng được các nút này
+  đúng như hành vi trước Update 29.
 
 ## Assumptions
 
@@ -2951,3 +3487,79 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
   entry dạng `All/Forest/Plantation forest location map/File A`) là quyết định kỹ thuật ở giai đoạn
   plan, không thuộc phạm vi đặc tả nghiệp vụ ở đây — yêu cầu duy nhất là kết quả giải nén thể hiện đúng
   quan hệ cha/con của cây step đã mô tả.
+- (Update 24) "Giống màn hình Compliance View (`ref-type = 11`)" được hiểu là dùng lại đúng hành vi/cơ
+  chế nghiệp vụ đã có của khung tìm kiếm Year/ETD Week (danh sách năm/tuần khả dụng, cách quy đổi năm +
+  danh sách tuần ISO → khoảng ngày lọc trên trường ETD) và đúng thứ tự sắp xếp mặc định (Delivery date
+  giảm dần) của màn hình đó cho cùng loại dữ liệu sales order — không định nghĩa lại công thức/cơ chế
+  mới cho Overview; vị trí, kích thước, nhãn chữ chính xác của các control trong khung tìm kiếm là quyết
+  định thiết kế giao diện ở giai đoạn plan, miễn giữ đúng bố cục Year/ETD Week/ô tìm kiếm/Search/Clear
+  đã có ở màn hình tham chiếu.
+- (Update 24) "Màu nâu đã có sẵn trong theme dùng chung" được hiểu là tái sử dụng đúng 1 giá trị màu đã
+  tồn tại trong hệ thống thiết kế chung của ứng dụng (không phát sinh một mã màu nâu mới, không tự suy
+  đoán một mã màu tuỳ ý) — mã màu chính xác và cách áp dụng (class dùng chung/theme token) là quyết
+  định kỹ thuật ở giai đoạn plan, không thuộc phạm vi đặc tả nghiệp vụ ở đây; yêu cầu nghiệp vụ duy nhất
+  là kết quả hiển thị của nút View/Download phải là màu nâu, nhất quán với màu nâu đã dùng ở nơi khác
+  trong hệ thống (nếu có), không phải một sắc thái màu tự chọn riêng cho Update này.
+- (Update 24) Cột ETD được bổ sung bằng cách đọc thêm đúng 1 trường đã có sẵn trên cùng thực thể dữ liệu
+  đang cấp dữ liệu cho reference type = 11 hiện có (không giống trường hợp Delivery date ở FR-009, từng
+  cần đăng ký bổ sung trường mới cho nguồn tham chiếu) — vì vậy Update này không yêu cầu thay đổi gì ở
+  nguồn tham chiếu dùng chung, không có FR nào tương ứng như FR-009 cho ETD.
+- (Update 24) Việc đổi thứ tự sắp xếp mặc định (Delivery date giảm dần, FR-169) chỉ áp dụng cho trạng
+  thái mặc định khi người dùng chưa chủ động chọn sắp theo cột nào; nếu bảng Overview có hỗ trợ người
+  dùng chủ động đổi cột sắp xếp (ví dụ click tiêu đề cột, giống màn hình Compliance View), lựa chọn chủ
+  động đó của người dùng vẫn được tôn trọng — Update này không cấm hay khoá cứng thứ tự sắp xếp về đúng
+  1 cách duy nhất, chỉ đổi giá trị mặc định ban đầu.
+- (Update 24) Khung tìm kiếm Year/ETD Week là bộ lọc bổ sung, độc lập với cơ chế lọc theo Template khi ô
+  tìm kiếm đang trống (FR-107, Update 16) — hai cơ chế lọc này áp dụng đồng thời (AND) khi cùng có hiệu
+  lực; Update này không thay đổi quy tắc FR-107/FR-109 đã có.
+- (Update 25) "Backorder" được so khớp là giá trị nhãn gốc D365 (`SalesStatus` = "Backorder", đã xác
+  nhận trong dữ liệu D365 thật ở feature 013-compl-synchronize-data) — không phải mã số/enum numeric;
+  việc so khớp chuỗi thực hiện ở tầng hiển thị (frontend), không cần thay đổi DTO/backend vì
+  `SalesStatus` đã được truyền nguyên vẹn qua `reference type = 11` từ trước Update 25.
+- (Update 25) Đây là một ánh xạ nhãn hiển thị đơn lẻ ("Backorder" → "Open order"), không phải một bảng
+  ánh xạ trạng thái tổng quát cho mọi giá trị `SalesStatus` có thể có — nếu về sau cần thêm ánh xạ cho
+  giá trị khác, đó là phạm vi của một Update tiếp theo, không tự suy rộng ở đây.
+- (Update 26) Nhãn **"Purchase Order(s)"** cho ô header (thay "Template") được chọn theo đúng thuật ngữ
+  đầy đủ đã dùng sẵn ở tiêu đề bảng "Selected Purchase Orders" bên dưới trên cùng màn hình, thay vì rút
+  gọn thành "PO" hay giữ nguyên nhãn cũ "Template" — xác nhận qua Q&A của phiên làm rõ Update 26 (xem
+  Clarifications).
+- (Update 26) Việc ẩn (các) chip template riêng lẻ ở toolbar là ẩn hoàn toàn khỏi giao diện (không
+  render), không phải vô hiệu hoá/disable còn hiển thị mờ — người yêu cầu tính năng dùng từ "ẩn đi không
+  hiển thị", không nêu nhu cầu giữ lại dấu vết trực quan nào của các lựa chọn đã ẩn.
+- (Update 26) Tab **"Template"** duy nhất còn lại vẫn giữ hành vi bấm được (click để tải lại template
+  mặc định, đúng cơ chế FR-130 hiện có) thay vì trở thành nhãn tĩnh không tương tác — vì đây là thay đổi
+  tối thiểu, an toàn nhất so với hành vi đã kiểm chứng trước Update 26 (chỉ ẩn bớt lựa chọn, không đổi
+  cách tab còn lại phản hồi khi click); người yêu cầu tính năng không nêu yêu cầu nào khác về tương tác
+  của tab này.
+- (Update 26) Marker kỹ thuật `data-marker="template-tree-toolbar"` (dùng cho việc xác định vùng UI ở
+  các Update trước) được giữ nguyên trên toolbar dù nội dung bên trong chỉ còn 1 tab — không đổi tên
+  marker này, tránh phá vỡ các tham chiếu kỹ thuật đã có từ các Update trước.
+- (Update 26) Thứ tự hiển thị (các) chip PO ở ô header "Purchase Order(s)" theo đúng thứ tự đã có sẵn
+  của danh sách "Selected Purchase Orders" (`purchaseAttachments`/`poList`) — không định nghĩa một thứ
+  tự sắp xếp mới riêng cho ô header này.
+- (Update 28) "Quyền Update"/"Quyền Download" nghĩa là chuỗi quyền `permissionList` gắn với đúng menu
+  `eutr-sales-orders` của user hiện tại (không phải quyền của bất kỳ menu EUTR/menu khác nào), theo
+  đúng cơ chế `permissionList`/`getMenuDataFromStorage` đã dùng thống nhất cho mọi màn hình EUTR khác
+  trong hệ thống — Update này không phát minh hay đổi tên chuỗi quyền mới, chỉ tái sử dụng đúng 2 giá
+  trị `'Update'`/`'Download'` đã tồn tại sẵn.
+- (Update 28) "Ẩn" icon/nút nghĩa là ẩn hoàn toàn khỏi giao diện (không render), giống cách xử lý ẩn
+  đã áp dụng nhất quán cho các icon/nút Edit/Delete/Download theo quyền ở các màn hình EUTR khác trong
+  hệ thống (`eutr-documents`, `eutr-templates`, `compliance-view-so`) — không phải hiển thị dạng
+  disabled/mờ.
+- (Update 28) Update này chỉ thay đổi điều kiện hiển thị (ẩn/hiện) của 3 vị trí icon/nút đã nêu (FR-182
+  đến FR-185) trên giao diện; không thay đổi bất kỳ API/endpoint backend nào, không thêm policy/quyền
+  backend mới — nguồn `permissionList` tiếp tục lấy nguyên trạng từ menu/auth service bên ngoài đã có
+  sẵn, giống mọi màn hình EUTR khác.
+- (Update 29, sửa lại) `EutrDocuments.Create`/`EutrDocuments.Update` MUST được đọc từ `permissionList`
+  của menu `eutr-documents` (không phải menu `eutr-sales-orders` — khác đối tượng với Update 28, nhưng
+  cùng cơ chế `permissionList`/`getMenuDataFromStorage`) — đã xác nhận qua kiểm thử thực tế (DevTools
+  Network, response `GET .../menu-managements/permissions`) rằng `'Create'`/`'Update'` là 2 phần tử hợp
+  lệ trong `permissionList` của menu `eutr-documents`, không cần dò qua endpoint riêng nào.
+- (Update 29) "Ẩn" nút Upload/Edit nghĩa là ẩn hoàn toàn khỏi giao diện (không render), cùng tinh thần
+  đã áp dụng cho icon/nút Update/Download của menu `eutr-sales-orders` ở Update 28 — không phải hiển
+  thị dạng disabled/mờ.
+- (Update 29, sửa lại) Update này KHÔNG thêm endpoint backend nào — bản đầu từng thêm
+  `GET /api/eutr-documents/can-update` và gọi thêm `can-create`, nhưng cả hai bị xoá sau khi xác nhận
+  `permissionList` của menu `eutr-documents` đã đủ dữ liệu (không còn nơi nào gọi 2 endpoint đó); không
+  đổi hành vi của `POST /api/eutr-documents`/`PUT /api/eutr-documents/{id}` hay bất kỳ policy backend
+  nào — chỉ đổi nguồn dữ liệu quyết định hiển thị ở giao diện.

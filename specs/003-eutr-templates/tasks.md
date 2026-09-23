@@ -3004,3 +3004,201 @@ T418 first, then T419, T420, T421
 T422, T423, T424, T425, T426, T427 in parallel (once Phase 93 is done)
 T428 sequentially (end-to-end)
 ```
+
+---
+
+## Update 2026-09-18 (Update 25) — Rename Status "Approved" → "Public D365"; Remove Approve Button, Merge into "Save template & Public D365" on TemplateBuilderPage
+
+**Context**: "cập nhật 003-eutr-templates, đổi status Approved thành Public D365, bỏ nút Approve.
+Trong màn hình eutr/templates/edit/{Id} sẽ thêm 1 nút Save template & Public D365 kế nút Save
+template, logic sẽ giống với nút Save template và nút Approve." Per spec Update 25 (FR-089 to
+FR-094): rename the `Status=1` label everywhere (no DB migration — the byte value is unchanged),
+remove the Approve button/dialog from `TemplateListPage`'s toolbar, and add a **Save template &
+Public D365** button to `TemplateBuilderPage` that calls the existing Update endpoint then the
+existing Approve endpoint in sequence from one confirmed click.
+
+**Changes**: Backend comment/message-only rename (`TemplateStatus.cs`, `EutrTemplatesService.cs`,
+`EutrTemplatesController.cs`, `IEutrTemplatesService.cs`, `IEutrTemplatesRepository.cs`,
+`EutrTemplatesRepository.cs`, `EutrSynchronizeDataService.cs`,
+`IEutrSynchronizeDataService.cs` — no behavior change, no DB migration) + frontend (`helpers.js`,
+`useEutrTemplatesColumns.jsx`, `TemplateListPage.jsx`, `TemplateBuilderPage.jsx`). No new backend
+endpoint, no new DTO, no new dependency — both API calls the new button makes already existed. See
+research.md §42 and plan.md's "Update 2026-09-18 (Update 25)" section for the full rationale.
+
+---
+
+## Phase 95: Backend — Rename `TemplateStatusEnum.Approved` → `PublicD365` (US8, US9, FR-094)
+
+**Purpose**: Rename the enum member and every reference/message/comment that names it, with zero behavior or schema change
+
+- [X] T429 [P] In compliance-sys-api/src/ComplianceSys.Application/Constants/TemplateStatus.cs, rename `Approved = 1` to `PublicD365 = 1` (byte value unchanged) and update the file's Vietnamese header comment. **Done** — implemented exactly as specified. **Verified — actually run**: `dotnet build` on compliance-sys-api → 0 `error CS` (see T432).
+- [X] T430 [US8][US9] In compliance-sys-api/src/ComplianceSys.Application/Services/EutrTemplatesService.cs, update all 5 `TemplateStatusEnum.Approved` references (in `UpdateAsync`, `ApproveAsync` ×2, `RequestChangeAsync` ×2) to `TemplateStatusEnum.PublicD365`; update the validation messages ("Template is Approved — use Request change before editing." → "Template is Public D365 — use Request change before editing."; "Only a Draft template can be Approved." → "Only a Draft template can be published to D365.") and Vietnamese comments (depends on T429). **Done** — implemented exactly as specified; `ApproveAsync`/`RequestChangeAsync`'s D365-then-commit sequencing (Update 23) is untouched.
+- [X] T431 [P] In compliance-sys-api/src/ComplianceSys.Api/Controllers/EutrTemplatesController.cs, update the `Update` action's comment and the `Approve` action's success message ("Template approved successfully." → "Template published to D365 successfully.") (depends on T429). **Done** — implemented exactly as specified; route (`{id}/approve`) and method name (`Approve`) kept as-is (Principle III — no user-facing effect, avoids unnecessary churn on a stable contract, see research.md §42's "Alternatives considered").
+- [X] T432 [P] In IEutrTemplatesService.cs, IEutrTemplatesRepository.cs, EutrTemplatesRepository.cs, EutrSynchronizeDataService.cs, and IEutrSynchronizeDataService.cs, update the remaining Vietnamese/English comments that name "Approved" to "PublicD365"/"Public D365" (no code logic in any of these 5 files references the enum member directly, so this is comment-only) (depends on T429). **Verified — actually run**: `dotnet build` on compliance-sys-api → 0 `error CS` across the whole solution (confirms no other file anywhere still references the removed `TemplateStatusEnum.Approved` member — a stale reference would have been a compile error); the only build errors present were `MSB3027`/`MSB3021` file-lock copy errors from a locally-running `ComplianceSys.Api` process holding the output DLL open, an environment artifact unrelated to this change (verified via `grep -i "error CS"` on the build output → no matches).
+
+**Checkpoint**: The backend compiles clean with the enum renamed everywhere it's referenced; `Status=1` rows are unaffected (same byte value); every user-facing and log message now says "Public D365" instead of "Approved".
+
+---
+
+## Phase 96: Frontend — Remove Approve Button, Add "Save template & Public D365" (US8, US9, FR-089 to FR-094)
+
+**Purpose**: Remove the Approve button/dialog from TemplateListPage; add the merged Save+Publish button to TemplateBuilderPage; rename the Status label everywhere it renders
+
+- [X] T433 [P] In compliance-client/src/utils/helpers.js, rename `TEMPLATE_STATUS.APPROVED` to `.PUBLIC_D365` (value unchanged, `1`) and `TEMPLATE_STATUS_LABELS[1]` from `'Approved'` to `'Public D365'`; update the file's Vietnamese comment. **Done** — implemented exactly as specified.
+- [X] T434 [P] In compliance-client/src/presentation/pages/eutr-templates/hooks/useEutrTemplatesColumns.jsx, update the Status Chip's `color` condition from `TEMPLATE_STATUS.APPROVED` to `TEMPLATE_STATUS.PUBLIC_D365` (depends on T433). **Done** — implemented exactly as specified.
+- [X] T435 [US9] In compliance-client/src/presentation/pages/eutr-templates/TemplateListPage.jsx, remove the Approve `Button`, its `ConfirmDialog`, the `approveConfirmOpen` state, the `canApprove` derived value, `handleApprove`, the `Check as CheckIcon` import, and the `ApproveEutrTemplatesUseCase` import/instance (FR-089) — toolbar keeps only Create Template and Request change. Update `canRequestChange` to compare against `TEMPLATE_STATUS.PUBLIC_D365`, the Request-change tooltip text ("1 Approved template" → "1 Public D365 template"), and the Request-change `ConfirmDialog`'s content string ("current Approved version" → "current Public D365 version") (depends on T433). **Done** — implemented exactly as specified. **Verified — actually run**: `npx eslint` on this file → 0 errors (confirms no unused-import/unused-variable warnings from the removed state/handler).
+- [X] T436 [US8] In compliance-client/src/presentation/pages/eutr-templates/TemplateBuilderPage.jsx, update `isReadOnly`'s condition to `TEMPLATE_STATUS.PUBLIC_D365` and the read-only warning banner text ("This template is Approved..." → "This template is Public D365...") (depends on T433). **Done** — implemented exactly as specified.
+- [X] T437 [US8] In the same file, import `ApproveEutrTemplatesUseCase` (already existed, previously only imported by `TemplateListPage.jsx`) and instantiate `approveUseCase` at module scope, alongside the existing `updateUseCase`/`getUseCase`/`setDefaultUseCase` (depends on T436). **Done** — implemented exactly as specified.
+- [X] T438 [US8] In the same file, extract `handleSave`'s inline Name/Alert-for validation + payload-construction into a new `validateAndBuildPayload()` function (returns the payload object, or `null` after showing the same snackbar errors as before) and update `handleSave` to call it (no behavior change to `handleSave` itself) (depends on T437). **Done** — implemented exactly as specified; `handleSave`'s success/error/navigate behavior is byte-for-byte unchanged, only the validation+payload lines moved into a shared helper.
+- [X] T439 [US8] In the same file, add `saveAndPublishConfirmOpen`/`publishing` state and a new `handleSaveAndPublish` function: on confirm, call `validateAndBuildPayload()` (stop with no API call if invalid, per FR-092); else call `updateUseCase.execute(id, payload)` (step 1); on step-1 failure, show an error snackbar and stop (payload never reached the server, nothing to preserve); on step-1 success, call `approveUseCase.execute(id)` (step 2); on step-2 success, show a combined success snackbar and navigate back to the list (same pattern as `handleSave`); on step-2 failure, show an error snackbar explicitly stating the template was saved but not published and that `Status` is still Draft, WITHOUT navigating away (FR-093 — step 1's save is kept, not rolled back) (depends on T438). **Done** — implemented exactly as specified.
+- [X] T440 [US8] In the same file's toolbar `Paper`, add a new `Button` ("Save template & Public D365", `startIcon={<PublishIcon />}` using the newly-imported `CloudUpload as PublishIcon`) immediately after the existing "Save template" `Button`, sharing its `disabled={saving || publishing || isReadOnly}` gating (extended with `publishing`), wrapped in a `Tooltip`; `onClick` opens `saveAndPublishConfirmOpen` (depends on T439). Also add `|| publishing` to the existing "Save template" button's `disabled` expression, so the two actions cannot run concurrently. **Done** — implemented exactly as specified.
+- [X] T441 [US8] In the same file's `ConfirmDialog` block (near the existing `setDefaultConfirm` dialog), add a new `ConfirmDialog` bound to `saveAndPublishConfirmOpen`/`handleSaveAndPublish`, with a title/content explaining the combined save-and-publish action and the Status change to Public D365 (depends on T439). **Done** — implemented exactly as specified.
+
+**Checkpoint**: TemplateListPage's toolbar no longer has an Approve button (only Create Template + Request change). TemplateBuilderPage shows "Save template & Public D365" next to "Save template" whenever Status=Draft, both hidden/disabled when Status=Public D365; clicking the new button, on Yes, saves then publishes in sequence, preserving the save even if publishing fails.
+
+---
+
+## Phase 97: Validation — Update 25 (Rename + Merged Save & Public D365 Button)
+
+**Purpose**: End-to-end validation of FR-089 to FR-094, per quickstart.md Scenario 28
+
+- [X] T442 [P] Verify the Status label renders as "Public D365" everywhere (Scenario 28a): TemplateListPage's Status Chip, TemplateBuilderPage's read-only banner, and the Status column filter panel's value. **Verified via code review** (no live browser/DB session available in this environment, same limitation recorded by every prior update in this session): `TEMPLATE_STATUS_LABELS[1]` (T433) feeds the Chip's `label` in `useEutrTemplatesColumns.jsx` (unchanged consumer, just a renamed source constant), and the banner string was edited directly (T436) — both trace to the same single source of truth, so no stale "Approved" string can render from either path. The column-filter panel's displayed values come from MUI DataGrid's own filter-operator UI, not from `TEMPLATE_STATUS_LABELS` (it filters on the raw `0`/`1`), so no separate code path needed updating there.
+- [X] T443 [P] Verify the Approve button no longer exists on TemplateListPage regardless of selection (Scenario 28b step 1), and that `POST {id}/approve` still exists and behaves unchanged as an endpoint (Scenario 28b step 2). **Verified via code review**: T435 removed every trace of the Approve button/dialog/handler from `TemplateListPage.jsx` (confirmed via `grep -i approve` on the file → only one explanatory comment remains, no JSX/state/handler); `EutrTemplatesController.cs`'s `Approve` action (T431) and `EutrTemplatesService.ApproveAsync` (T430) retain their original signatures, validation, and D365-then-commit sequencing — only comments/messages changed.
+- [X] T444 [P] Verify the happy path (Scenario 28c): edit a Draft template, click "Save template & Public D365", confirm Yes, and trace that header/step-tree changes persist, `Status` becomes `1`, and the D365 push (reusing FR-083) still fires. **Verified via code review**: `handleSaveAndPublish` (T439) calls `updateUseCase.execute` then `approveUseCase.execute` — the same two use cases (`UpdateEutrTemplatesUseCase`, `ApproveEutrTemplatesUseCase`) `handleSave`/the old `TemplateListPage` Approve handler already called, hitting the same unmodified `PUT {id}`/`POST {id}/approve` backend logic (T430) — so the same persistence and D365-push behavior already verified for those two actions individually (Scenario 3'a, 3'e) applies unchanged when chained from one click.
+- [X] T445 [P] Verify step-1 validation failure blocks step 2 entirely (Scenario 28d): clearing Name and confirming "Save template & Public D365" shows the same "Name is required" error as plain Save template, with no API call made. **Verified via code review**: `handleSaveAndPublish` calls `validateAndBuildPayload()` (T438) first and returns immediately (`if (!payload) return;`) before either `updateUseCase.execute` or `approveUseCase.execute` is reached — identical short-circuit to `handleSave`'s own guard, using the exact same validation function (FR-092).
+- [X] T446 [P] Verify step-1 succeeds but step-2 (D365) fails leaves the save intact (Scenario 28e): the header/step-tree change persists, `Status` stays Draft, an error snackbar (not success) appears, and the page does not navigate away. **Verified via code review**: `handleSaveAndPublish`'s `try/catch` around `updateUseCase.execute` is separate from the one around `approveUseCase.execute` — a failure in the second `try` block only runs its own `catch` (error snackbar naming both facts: saved, not published) and `finally` (`setPublishing(false)`), with no `navigate(...)` call anywhere in that path (the only `navigate` call is inside the step-2 SUCCESS branch) — so step 1's already-awaited, already-completed `updateUseCase.execute` call is never revisited or reverted (FR-093).
+- [X] T447 [P] Verify both Save buttons stay hidden/disabled together on a Public D365 template (Scenario 28f). **Verified via code review**: both the "Save template" button (existing `disabled={saving || publishing || isReadOnly}`, extended by T440) and the new "Save template & Public D365" button (`disabled={saving || publishing || isReadOnly}`, T440) share the same `isReadOnly` term, which is `status === TEMPLATE_STATUS.PUBLIC_D365` (T436) — so both are disabled under the identical condition, with no way for one to be enabled while the other is disabled due to Status.
+- [X] T448 Run `dotnet build` on compliance-sys-api, `npx eslint`/`npm run build` on compliance-client, then a manual click-through of quickstart.md Scenario 28 end-to-end against a live dev server/DB/D365 sandbox (depends on T442, T443, T444, T445, T446, T447). **Partially done** — `dotnet build` on compliance-sys-api → 0 `error CS` (only pre-existing `MSB3027` file-lock copy errors from a running `ComplianceSys.Api` process, an environment artifact); `npx eslint` on all 4 changed frontend files → 0 errors; `npm run build` on compliance-client → succeeded in 39.20s, `TemplateBuilderPage` chunk built at 23.03 kB, `TemplateListPage` chunk at 12.76 kB, no new build errors or warnings beyond the pre-existing unrelated chunk-size-limit advisory. **Not run**: the manual browser click-through — requires a live dev server, backend API, seeded MySQL database, and (for 28e) a temporarily-unreachable D365 sandbox, none of which are available in this non-interactive session. Full interactive validation is the recommended next step before considering this update production-ready — same limitation recorded by every prior update in this tasks.md (Update 12/T208 through Update 24/T428).
+
+**Checkpoint**: All Update 25 checks pass at the level achievable in this non-interactive session (code review confirming every data-flow/comparison path, plus real clean `dotnet build`/`npx eslint`/`npm run build` passes — standing in for a live click-through where neither a dev server, browser, nor D365 sandbox were available). **Recommended before sign-off**: manually click through Scenario 28 (label rename, Approve button removal, happy path, step-1 validation failure, step-1-succeeds-step-2-fails, and read-only gating) in a real browser against a seeded DB and D365 sandbox to close the gap between "verified by code review" and "verified end-to-end through the UI."
+
+---
+
+## Update 25 Dependencies
+
+### Phase Dependencies
+
+- **Phase 95 (Backend — enum rename)**: No dependency on Phases 1-94 — a self-contained rename. T429
+  must land before T430, T431, T432 (they all reference the renamed enum member/its call sites).
+- **Phase 96 (Frontend — button/toolbar changes)**: T433 (the `helpers.js` rename) must land before
+  T434, T435, T436 (all three reference the renamed constant). T436 must land before T437-T441
+  (they build on `TemplateBuilderPage.jsx`'s renamed `isReadOnly` and add the new button/handler in
+  sequence: T437 imports the use case → T438 extracts shared validation → T439 writes the handler →
+  T440 adds the button → T441 adds the dialog). Phase 96 does not depend on Phase 95 completing
+  first (frontend and backend renames are independent), but both must land before Phase 97.
+- **Phase 97 (Validation)**: Depends on all of Phase 95 (T429-T432) and Phase 96 (T433-T441) —
+  T442-T447 verify different facets of the same change, T448 depends on all six.
+
+### Execution Order
+
+```
+T429 (Phase 95) ── T430, T431, T432 (Phase 95, [P])
+T433 (Phase 96) ── T434, T435, T436 (Phase 96) ── T437 ── T438 ── T439 ── T440 ── T441
+                                                                                      │
+Phase 95 + Phase 96 ──────────────────────────────────────────────────────────────────┤
+                                                                                      ▼
+                                              T442-T447 (Phase 97, [P]) ── T448 (E2E)
+```
+
+### Parallel Opportunities
+
+```
+# Phase 95 — T430/T431/T432 touch different files, all depend only on T429:
+T429 first, then T430, T431, T432 in parallel
+
+# Phase 96 — T434/T435/T436 depend only on T433; T437-T441 are sequential (same file, each builds
+# on the previous):
+T433 first, then T434, T435, T436 in parallel, then T437 → T438 → T439 → T440 → T441 in order
+
+# Phase 97 — all 6 verification tasks [P] except the final E2E:
+T442, T443, T444, T445, T446, T447 in parallel (once Phase 95 + Phase 96 are done)
+T448 sequentially (end-to-end)
+```
+
+---
+
+## Update 2026-09-21 (Update 26) — Hide "Save template" Button; Add Defensive D365 Delete Before Push in "Save template & Public D365"
+
+**Context**: "cập nhật 003-eutr-templates, màn hình edit, ẩn nút Save Template. Thêm logic xóa
+template trước khi save và public D365 như `await
+_synchronizeDataService.DeleteTemplateFromDynamicsAsync(existing.Code, ct);` vào nút Save Template &
+Public D365." Per spec Update 26 (FR-095 to FR-098): remove the standalone **Save template** button
+from `TemplateBuilderPage.jsx` entirely (Save template & Public D365 becomes the sole Save control),
+and make `ApproveAsync` call the existing `DeleteTemplateFromDynamicsAsync(existing.Code, ct)`
+immediately before its existing `PushTemplateToDynamicsAsync` call — a defensive, unconditional
+delete-by-Code that supersedes Update 23's FR-085 reasoning (delete was previously considered
+unnecessary before this specific push).
+
+**Changes**: Frontend (`TemplateBuilderPage.jsx` — one JSX block removed) + backend
+(`EutrTemplatesService.cs` — one new call inside `ApproveAsync`, reusing an already-implemented
+method). No new endpoint, DTO, dependency, or DB migration — `DeleteTemplateFromDynamicsAsync`
+already exists and is already called by `RequestChangeAsync` (Update 23). See research.md §43 and
+plan.md's "Update 2026-09-21 (Update 26)" section for the full rationale.
+
+---
+
+## Phase 98: Frontend — Remove Standalone "Save template" Button (US8, FR-095)
+
+**Purpose**: Make "Save template & Public D365" the only Save control on the Edit screen, regardless of Status
+
+- [X] T449 [US8] In compliance-client/src/presentation/pages/eutr-templates/TemplateBuilderPage.jsx, delete the standalone "Save template" `<Button onClick={handleSave} ...>` JSX block entirely (not a conditional/disabled render — remove it from the render tree, matching how the Approve button was removed from TemplateListPage.jsx in Update 25/T435). **Done — with one correction to the original task wording**: `handleSaveAndPublish` does NOT call `handleSave` internally (confirmed by reading the code) — it duplicates the same `validateAndBuildPayload()` + `updateUseCase.execute` calls directly, with its own success/error handling. Once the button was removed, `handleSave` itself became fully dead code (no other caller anywhere in the file) and was deleted along with the now-orphaned `saving`/`setSaving` state (previously set only inside `handleSave`). The `SaveIcon` import (used only by the removed button) was also removed. The 6 other JSX spots that read `saving` to disable the tree-editing toolbar buttons (Root Group, Child Step, Move Up/Down, Delete step) and the Save & Public D365 button itself were changed to read `publishing` instead, preserving the existing "disable tree edits while a save/publish is in flight" behavior with the one remaining in-flight signal (a straight deletion of the disabled condition would have silently permanently-enabled those buttons, a regression the task's original "keep handleSave" wording didn't anticipate). **Verified — actually run**: `npx eslint` on the file → 0 errors (initially caught the `handleSave`-now-unused issue via `no-unused-vars`, confirming the cleanup was necessary, not optional); `npm run build` on compliance-client → succeeded in 36.16s, `TemplateBuilderPage` chunk 22.53 kB (down from 23.03 kB pre-Update-26, consistent with the removed code), no new build errors/warnings.
+
+**Checkpoint**: TemplateBuilderPage renders exactly one Save-family button ("Save template & Public D365") under any Status — Draft (enabled) or Public D365 (disabled, per unchanged FR-090/FR-061).
+
+---
+
+## Phase 99: Backend — Defensive D365 Delete Before Push in ApproveAsync (US8, FR-096 to FR-098)
+
+**Purpose**: Ensure "Save template & Public D365" always clears any existing D365 record for this Code before pushing a new one
+
+- [X] T450 [US8] In compliance-sys-api/src/ComplianceSys.Application/Services/EutrTemplatesService.cs, in `ApproveAsync`, insert `await _synchronizeDataService.DeleteTemplateFromDynamicsAsync(existing.Code, ct);` immediately after the header/step-tree save step succeeds and immediately before the existing `await _synchronizeDataService.PushTemplateToDynamicsAsync(existing.Id, existing.Code, existing.Name, ct);` call, inside the same try/catch that already converts a D365 failure into a `ValidationException` via `BuildD365ErrorMessage(ex)` without touching `Status` (FR-096, FR-097). Do not change the method signature, the existing push call, or the transaction that sets `Status = PublicD365` (FR-098 — this reuses the existing failure-handling path, it does not introduce a new one). **Done** — implemented exactly as specified; both calls now sit inside the one existing `try` block, so an exception from either one is caught by the same `catch (Exception ex)` and turned into the same `ValidationException`/400 shape, with `Status` never reached in that path. **Verified — actually run**: `dotnet build` on the `ComplianceSys.Application` project directly (which contains the changed file) → `Build succeeded`, 0 errors (2 pre-existing `NU1903` AutoMapper advisory warnings only, unrelated to this change); full-solution `dotnet build` on compliance-sys-api → 0 `error CS` (confirmed via `grep -i "error CS"` on the output → no matches), only the same pre-existing `MSB3027`/`MSB3021` file-lock errors from a locally-running `ComplianceSys.Api` process, an environment artifact unrelated to this change (identical to every prior update's build note in this file).
+
+**Checkpoint**: `ApproveAsync` now calls delete-by-Code then push, in that order, before committing `Status = PublicD365`; a delete failure stops the flow before the push runs and before `Status` changes, leaving the already-saved header/step tree intact.
+
+---
+
+## Phase 100: Validation — Update 26 (Save Template Hidden + Defensive D365 Delete Before Push)
+
+**Purpose**: End-to-end validation of FR-095 to FR-098, per quickstart.md Scenario 29
+
+- [X] T451 [P] Verify "Save template" never renders on TemplateBuilderPage under either Status (Scenario 29a) — confirm via code review/grep that no conditional branch can reintroduce the button, and that only "Save template & Public D365" remains as a Save control (depends on T449). **Verified — actually run**: `grep -n "Save template\b"` (excluding "Save template & Public D365") on `TemplateBuilderPage.jsx` → no remaining standalone-button JSX, only the comment left at the removal site and the label text of the merged button; `grep -n "handleSave\b"` → no matches at all (the function itself is gone, not just its button) — confirms there is no dead conditional branch left that could ever re-render it.
+- [X] T452 [P] Verify the happy path (Scenario 29b): trace that `ApproveAsync` calls `DeleteTemplateFromDynamicsAsync` before `PushTemplateToDynamicsAsync` unconditionally (not gated on prior D365 history), and that a successful run still ends with `Status = PublicD365` on the same row (depends on T450). **Verified via code review**: the new `DeleteTemplateFromDynamicsAsync` call is the first statement in the `try` block, with no `if` guard around it (no check of prior push history/Code existence) — unconditional by construction; `PushTemplateToDynamicsAsync` is the very next `await` in the same `try`, and the unchanged transaction below (`SetStatusAsync(id, PublicD365, ...)`) only runs after the `try` block completes without throwing, i.e. after both D365 calls succeed.
+- [X] T453 [P] Verify the delete-failure short-circuit (Scenario 29c): trace that a `DeleteTemplateFromDynamicsAsync` exception is caught before `PushTemplateToDynamicsAsync` is ever reached, `Status` stays Draft, the header/step-tree save from step 1 is not rolled back, and the error message/shape matches the existing D365-failure convention (FR-097) (depends on T450). **Verified via code review**: since `DeleteTemplateFromDynamicsAsync` is `await`-ed first inside the `try`, an exception there propagates straight to the existing `catch (Exception ex)` without the interpreter ever reaching the `PushTemplateToDynamicsAsync` line below it (normal sequential control flow — no `Task.WhenAll`/parallel dispatch involved); the `catch` block is unchanged from Update 23/25 (`BuildD365ErrorMessage(ex)` → `ValidationException` with the same `"Failed to sync template with D365: {detail}"` message shape) and sits entirely before the separate `try { ...SetStatusAsync... }` block, so `Status` is never touched; `UpdateAsync` (step 1, called by the frontend before this endpoint) already committed in its own independent transaction, so there is nothing here to roll back.
+- [X] T454 Run `dotnet build` on compliance-sys-api and `npx eslint`/`npm run build` on compliance-client (depends on T449, T450, T451, T452, T453); attempt a manual click-through of quickstart.md Scenario 29 end-to-end if a dev server/DB/D365 sandbox is reachable in this environment, otherwise record what could and could not be exercised. **Partially done** — `dotnet build` on the `ComplianceSys.Application` project (contains the changed backend file) → `Build succeeded`, 0 errors; full-solution `dotnet build` on compliance-sys-api → 0 `error CS` (only the pre-existing `MSB3027`/`MSB3021` file-lock from a locally-running `ComplianceSys.Api` process, an environment artifact, same as every prior update); `npx eslint` on `TemplateBuilderPage.jsx` → 0 errors (after fixing the `handleSave`-now-unused fallout uncovered by this exact lint run, see T449); `npm run build` on compliance-client → succeeded in 36.16s, no new errors/warnings beyond the pre-existing unrelated chunk-size advisory. **Not run**: the manual browser click-through of Scenario 29 — no live dev server, seeded MySQL database, or D365 sandbox available in this non-interactive session, the same limitation recorded by every prior update in this file (Update 12 through Update 25).
+
+**Checkpoint**: All Update 26 checks pass at the level achievable in this non-interactive session (real `dotnet build`/`npx eslint`/`npm run build` runs — not simulated — plus code-trace verification of the delete-then-push sequencing and failure handling). **Recommended before sign-off**: manually click through Scenario 29 (button absence, happy-path delete-then-push, delete-failure short-circuit) in a real browser against a seeded DB and D365 sandbox to close the gap between "verified by code review + build" and "verified end-to-end through the UI."
+
+---
+
+## Update 26 Dependencies
+
+### Phase Dependencies
+
+- **Phase 98 (Frontend — button removal)**: No dependency on Phases 1-97 — a self-contained JSX
+  deletion. Independent of Phase 99 (different files/layers).
+- **Phase 99 (Backend — delete-before-push)**: No dependency on Phase 98. Depends only on the
+  existing `DeleteTemplateFromDynamicsAsync`/`PushTemplateToDynamicsAsync` methods and
+  `_synchronizeDataService` field already present on `EutrTemplatesService` since Update 23.
+- **Phase 100 (Validation)**: Depends on both Phase 98 (T449) and Phase 99 (T450) — T451-T453 verify
+  different facets of the same change, T454 depends on all four.
+
+### Execution Order
+
+```
+T449 (Phase 98) ──────────────────────────────────────┐
+                                                         │
+T450 (Phase 99) ──────────────────────────────────────┤
+                                                         ▼
+                                    T451, T452, T453 (Phase 100, [P]) ── T454 (build + E2E)
+```
+
+### Parallel Opportunities
+
+```
+# Phase 98 and Phase 99 touch different files/layers — fully independent, run in parallel:
+T449 and T450 in parallel
+
+# Phase 100 — all 3 verification tasks [P] except the final build/E2E:
+T451, T452, T453 in parallel (once Phase 98 + Phase 99 are done)
+T454 sequentially (build + end-to-end)
+```

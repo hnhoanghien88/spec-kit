@@ -33,6 +33,17 @@ endpoint, request field, or response field is introduced by this update.
 `Status` precondition: it succeeds whether the template is Draft or Approved. This is the sole,
 deliberate exception to Update 16's "Approved templates reject edits" rule (Section 4).
 
+**Update 25 (2026-09-18)**: Pure rename — `status` value `1`'s label becomes **"Public D365"**
+(was "Approved"); the numeric value is unchanged, so every response shape above still returns
+`"status": 1` for the same rows. **No new endpoint and no request/response shape change.**
+`POST api/eutr-templates/{id}/approve` (Section 11.1) keeps its route/method name but its response
+`message` text changed, and its frontend caller moved from a now-removed toolbar button on
+`TemplateListPage.jsx` to a new **Save template & Public D365** button on
+`TemplateBuilderPage.jsx`, which calls `PUT {id}` (Section 4) immediately followed by
+`POST {id}/approve` from one confirmed click. Everywhere below still reading "Approved" describes
+pre-Update-25 wording/history — the value/behavior is identical under the new label. See Sections 4
+and 11.1 for the specific updated message strings, and research.md §42 for the full rationale.
+
 ---
 
 ## 1. Get Paged List
@@ -313,11 +324,12 @@ PUT api/eutr-templates/{id}
 Note: `id`, `versionId`, and `status` are unchanged from before the update — this endpoint never
 creates a new row or changes `Status` anymore.
 
-**Response** (Update 16 — rejected, Status is Approved):
+**Response** (Update 16 — rejected, Status is Public D365; message text updated Update 25, was
+"Template is Approved — use Request change before editing."):
 ```json
 {
   "success": false,
-  "message": "Template is Approved — use Request change before editing."
+  "message": "Template is Public D365 — use Request change before editing."
 }
 ```
 HTTP 400, same `ValidationException` → 400 mapping this controller already uses elsewhere.
@@ -327,16 +339,19 @@ HTTP 400, same `ValidationException` → 400 mapping this controller already use
   row being updated: **≥ 24 hours** → creates a NEW row with `VersionId = old + 1`, old row
   `IsHide = 1`, details inserted under the new template ID; **< 24 hours** → updates the EXISTING row
   in place.~~
-- **(Update 16)** First checks `existing.Status`: if `1` (Approved), rejects with a validation error
-  (400) — no data is changed. If `0` (Draft), ALWAYS updates the EXISTING row in place — same `Id`,
-  same `VersionId`, same `Status`, `CreatedDate` unchanged; details for the current template ID are
-  replaced (deleted and re-inserted); returns the same `id`/`versionId`. No age check of any kind.
-  This endpoint never creates a new row anymore — that behavior moved to `POST {id}/request-change`
-  (Section 11).
-- **(Update 18)** The one exception to the Approved-rejection above is `isDefault` — but it is NOT
-  handled here. A template's default flag can still be changed while `Approved` via the separate
+- **(Update 16; renamed Update 25)** First checks `existing.Status`: if `1` (Public D365, was named
+  "Approved"), rejects with a validation error (400) — no data is changed. If `0` (Draft), ALWAYS
+  updates the EXISTING row in place — same `Id`, same `VersionId`, same `Status`, `CreatedDate`
+  unchanged; details for the current template ID are replaced (deleted and re-inserted); returns the
+  same `id`/`versionId`. No age check of any kind. This endpoint never creates a new row anymore —
+  that behavior moved to `POST {id}/request-change` (Section 11). **(Update 25)** This is also step
+  (1) of the new **Save template & Public D365** button on `TemplateBuilderPage.jsx` — the frontend
+  calls this endpoint first, and only on success calls `POST {id}/approve` (Section 11.1)
+  immediately after, from the same confirmed click.
+- **(Update 18)** The one exception to the Public-D365-rejection above is `isDefault` — but it is NOT
+  handled here. A template's default flag can still be changed while `Public D365` via the separate
   `POST {id}/set-default` endpoint (Section 12), which bypasses this endpoint's `Status` check
-  entirely. This `PUT {id}` endpoint's own Approved-rejection behavior is unchanged by Update 18.
+  entirely. This `PUT {id}` endpoint's own rejection behavior is unchanged by Update 18.
 - If `IsDefault = 1`: clears existing default **globally** across all templates (Update 13)
 - Free-solo step resolution (see Create Template, Update 6) applies as before
 - **Update 10 (2026-07-13)**: this endpoint is now called by `TemplateBuilderPage.jsx`'s Save
@@ -891,25 +906,39 @@ is a new **third** possible 400 case for both endpoints (alongside the existing 
 rejection below) — same response shape, no new HTTP status code, no request/response contract
 change.
 
+**(Update 26)** Section 11.1 (Approve) now makes TWO D365 calls in sequence before committing the
+Status change: `DeleteTemplateFromDynamicsAsync(existing.Code, ct)` first (unconditionally — same
+call `RequestChangeAsync`/Section 12 already makes, not gated on whether this template has ever
+been pushed before), then the existing `PushTemplateToDynamicsAsync`. Either call failing returns
+the same 400 "Failed to sync template with D365: ..." shape with no local data change — the response
+contract is unchanged; only the number/sequencing of D365 calls behind it changes (see research.md
+§43). Section 12 (Request change) itself is unaffected by this update.
+
 ### 11.1 Approve
 
 ```
 POST api/eutr-templates/{id}/approve
 ```
 
-**Response** (Status was Draft):
+Route/method name unchanged since Update 16 (Update 25 kept `Approve`/`/approve` as internal,
+non-user-facing identifiers — see research.md §42 — only the Status *label* and its UI trigger
+changed).
+
+**Response** (Status was Draft; message text updated Update 25, was "Template approved
+successfully."):
 ```json
 {
   "success": true,
   "data": { "id": 1, "code": "Templates-001", "versionId": 1, "status": 1 },
-  "message": "Template approved successfully."
+  "message": "Template published to D365 successfully."
 }
 ```
 `id`/`versionId`/`code` are unchanged — this is a same-row update, no new template is created.
 
-**Response — rejected** (400, Status was already Approved):
+**Response — rejected** (400, Status was already Public D365; message text updated Update 25, was
+"Only a Draft template can be Approved."):
 ```json
-{ "success": false, "message": "Only a Draft template can be Approved." }
+{ "success": false, "message": "Only a Draft template can be published to D365." }
 ```
 
 **Response — rejected** (400, **new Update 23** — D365 push failed):
@@ -922,22 +951,39 @@ POST api/eutr-templates/{id}/approve
 **Behavior**:
 - Loads the template; if `Status != 0` (Draft), rejects with a validation error (400) — no data
   changes.
-- **(Update 23)** Pushes this template's own data to D365 BEFORE anything else: resolves its
-  currently-active vendor mappings (`eutr_template_references`, `FromDate ≤ today ≤ ToDate`), then
-  POSTs one `RSVNEutrTemplates` record (`Code`, `Name`, that mapping's `VendorCode`) per active
-  mapping, or exactly one record with `VendorCode = ""` if none are active — the exact same request
-  shape 011-eutr-synchronize-data's `SyncTemplatesToDynamicsAsync` sends for this template in its own
-  batch run, just scoped to this one `TemplateId`. If ANY of these D365 calls fails, the endpoint
-  returns 400 immediately and `Status` stays `0` (Draft) — the step below never runs.
-- Otherwise, updates ONLY `Status = 1` (Approved) (+ `UpdatedBy`/`UpdatedDate`) on the same row via
-  `SetStatusAsync` — `Id`, `VersionId`, `CreatedDate`, `eutr_template_details`, and
-  `eutr_template_references` are all left untouched.
-- Frontend calling convention: the **Approve** button on `TemplateListPage.jsx`'s toolbar (enabled
-  only when exactly 1 row is selected via the existing bulk-delete checkbox state and that row's
-  `status` is `0` (Draft)) opens a `ConfirmDialog` Yes/No; **Yes** calls this endpoint via a new
-  `ApproveEutrTemplatesUseCase`, then clears the selection and refetches the list; **No** closes the
-  dialog with no request sent. **(Update 23)** No frontend change — a D365-failure 400 surfaces
-  through the exact same error-snackbar path this button's other 400 responses already use.
+- **(Update 26)** Calls `DeleteTemplateFromDynamicsAsync(existing.Code, ct)` BEFORE the push below —
+  the same ERP-side delete-by-Code call Section 12 (Request change) already makes, now also fired
+  here unconditionally (regardless of whether this Code has ever reached D365 before). If this call
+  fails, the endpoint returns 400 immediately and `Status` stays `0` (Draft) — neither the push below
+  nor the Status update runs.
+- **(Update 23)** Pushes this template's own data to D365: resolves its currently-active vendor
+  mappings (`eutr_template_references`, `FromDate ≤ today ≤ ToDate`), then POSTs one
+  `RSVNEutrTemplates` record (`Code`, `Name`, that mapping's `VendorCode`) per active mapping, or
+  exactly one record with `VendorCode = ""` if none are active — the exact same request shape
+  011-eutr-synchronize-data's `SyncTemplatesToDynamicsAsync` sends for this template in its own batch
+  run, just scoped to this one `TemplateId`. If ANY of these D365 calls fails, the endpoint returns
+  400 immediately and `Status` stays `0` (Draft) — the step below never runs.
+- Otherwise, updates ONLY `Status = 1` (Public D365, was named "Approved") (+
+  `UpdatedBy`/`UpdatedDate`) on the same row via `SetStatusAsync` — `Id`, `VersionId`,
+  `CreatedDate`, `eutr_template_details`, and `eutr_template_references` are all left untouched.
+- **(Superseded by Update 25)** ~~Frontend calling convention: the **Approve** button on
+  `TemplateListPage.jsx`'s toolbar (enabled only when exactly 1 row is selected via the existing
+  bulk-delete checkbox state and that row's `status` is `0` (Draft)) opens a `ConfirmDialog` Yes/No;
+  **Yes** calls this endpoint via a new `ApproveEutrTemplatesUseCase`, then clears the selection and
+  refetches the list; **No** closes the dialog with no request sent.~~ **(Update 25)** That toolbar
+  button/dialog was removed from `TemplateListPage.jsx` entirely (FR-089). This endpoint is now
+  called by `TemplateBuilderPage.jsx`'s new **Save template & Public D365** button — on `Yes` in its
+  own `ConfirmDialog`, the frontend first calls `PUT api/eutr-templates/{id}` (Section 4) via
+  `UpdateEutrTemplatesUseCase`, and only if that succeeds calls THIS endpoint via the same
+  pre-existing `ApproveEutrTemplatesUseCase` (unchanged file, now imported by
+  `TemplateBuilderPage.jsx` too). A 400 from either call surfaces through an error snackbar; if only
+  this second call fails, the frontend's snackbar explicitly says the save succeeded but publishing
+  did not (FR-093) — `Status` stays `0` (Draft) exactly as this endpoint's own behavior above
+  guarantees. **(Update 26)** The standalone **Save template** button next to it is removed from
+  `TemplateBuilderPage.jsx` entirely — **Save template & Public D365** is now the only Save control,
+  calling the same `PUT` then `POST .../approve` sequence unchanged from the frontend's perspective
+  (the new D365 delete call above is entirely inside `ApproveAsync`, invisible to the client beyond
+  the existing 400-on-D365-failure shape).
 
 ### 11.2 Request Change
 

@@ -270,6 +270,14 @@ transaction) was verified by code review and a clean `dotnet build` (0 `error CS
 
 ### Scenario 3': Status-Driven Editing — Draft Always In-Place, Approve, Request Change (FR-055 to FR-062, Update 16)
 
+**(Update 25)** The separate **Approve** button/dialog on `TemplateListPage` described in 3'b/3'd/3'e
+below no longer exists — it was replaced by the **Save template & Public D365** button on
+`TemplateBuilderPage`, and the "Approved" Status label is now "Public D365" (value unchanged). See
+**Scenario 28** for the current validation steps; this scenario is kept for historical reference
+(what was true through Update 23) plus 3'a/3'c/3'd's Request-change coverage, which is otherwise
+still accurate (only its Status label reads "Approved" instead of "Public D365" and its trigger for
+reaching that Status has moved).
+
 **3'a. Draft edits always save in-place, regardless of age**
 
 1. Create a new template via Scenario 2 (quick-create) — **Verify in DB**: `Status = 0` (Draft)
@@ -1113,6 +1121,139 @@ EUTR step (e.g. "Certificate check") to a DIFFERENT reference type (e.g. "Upload
   dismissed: **Expected** the second click either has no effect until the first dialog is resolved,
   or opens a second dialog reflecting the latest intended value — no duplicate/conflicting requests
   fire concurrently
+
+### Scenario 28: Save template & Public D365 — Rename + Merged Button (FR-089 to FR-094, Update 25)
+
+**28a. Status label renamed everywhere**
+
+1. Open `TemplateListPage`; **Expected**: any row with `Status=1` shows a Chip reading **"Public
+   D365"** (not "Approved")
+2. Open `TemplateBuilderPage` for a `Status=1` template; **Expected**: the read-only warning banner
+   reads "This template is Public D365 and cannot be edited directly..." (not "Approved")
+3. On `TemplateListPage`, open the Status column's filter panel; **Expected**: the filterable Status
+   values reflect "Public D365" wherever a label is shown
+
+**28b. Approve button removed from TemplateListPage**
+
+1. On `TemplateListPage`'s toolbar, with any row selected (Draft or Public D365): **Expected**: no
+   **Approve** button exists anywhere in the toolbar — only **Request change** (gated on exactly 1
+   Public D365 row selected, same as before) and **Create Template** remain
+2. **API check**: `POST api/eutr-templates/{id}/approve` still exists and behaves exactly as before
+   (Scenario 3'b/3'e) — only the UI trigger moved, not the endpoint
+
+**28c. "Save template & Public D365" — happy path**
+
+1. Edit a Draft template; change the Name, add/remove a step (do NOT click Save template yet)
+2. **Expected**: a second button, **Save template & Public D365**, appears immediately to the right
+   of **Save template**, both enabled
+3. Click **Save template & Public D365**; **Expected**: a Yes/No confirmation dialog appears,
+   mentioning saving AND publishing to D365
+4. Click **No**; **Expected**: dialog closes, **verify in DB**: no changes were persisted (Name/step
+   tree still show the PRE-edit values), `Status` still `0` (Draft)
+5. Click **Save template & Public D365** again, then **Yes**; **Expected**: a single success
+   snackbar appears, then redirect to the template list
+6. **Verify in DB**: same `Id`/`VersionId` as before (no new row); the Name/step-tree changes from
+   step 1 are persisted; `Status = 1` (Public D365); grid shows Chip "Public D365"
+7. **Verify in D365** (same prerequisite as Scenario 3'e): the expected `RSVNEutrTemplates`
+   record(s) for this template's Code now exist, matching its currently-active vendor mapping(s) —
+   confirms the D365 push (FR-083, reused as-is) still runs as part of this new button
+
+**28d. "Save template & Public D365" — step 1 (save) validation failure**
+
+1. Edit a Draft template; clear the Name field entirely
+2. Click **Save template & Public D365**, then **Yes**
+3. **Expected**: the SAME "Name is required" error shown by plain **Save template** appears; NO
+   confirmation of success; **verify in DB**: nothing changed, `Status` still `0` (Draft)
+4. **Network check**: confirm neither `PUT api/eutr-templates/{id}` nor `POST .../approve` fired
+   (DevTools Network tab) — validation stopped the flow before any API call, per FR-092
+
+**28e. "Save template & Public D365" — step 1 succeeds, step 2 (D365) fails**
+
+Prerequisite: same D365-unreachable setup as Scenario 3'e step 9.
+
+1. Edit a Draft template; change the Name to a new value
+2. Click **Save template & Public D365**, then **Yes**
+3. **Expected**: an error snackbar appears (NOT the success snackbar), explaining the template was
+   saved but publishing to D365 failed; the page does NOT redirect away
+4. **Verify in DB**: the Name change from step 1 IS persisted (same `Id`/`VersionId`), but `Status`
+   is still `0` (Draft) — confirms FR-093 (step 1's save is kept even though step 2 failed)
+5. Restore `Dynamics:ApiUrl`, click **Save template & Public D365** again, then **Yes**; **Expected**:
+   succeeds this time without needing to re-enter the Name change from step 1 (it was already saved)
+
+**28f. Read-only mode still blocks both Save buttons**
+
+1. Open `TemplateBuilderPage` for a `Status=1` (Public D365) template
+2. **Expected**: BOTH **Save template** and **Save template & Public D365** are hidden/disabled,
+   consistent with the rest of the read-only behavior from Scenario 3'b step 6 — only the "Set as
+   default" checkbox remains interactive (Update 18, unchanged)
+
+**Outcome**: **Verified — actually run**: `dotnet build` on `compliance-sys-api` → 0 `error CS` (only
+pre-existing `MSB3027` file-lock copy errors from a locally-running `ComplianceSys.Api` process, an
+environment artifact unrelated to this change). `npx eslint` on `helpers.js`,
+`useEutrTemplatesColumns.jsx`, `TemplateListPage.jsx`, `TemplateBuilderPage.jsx` → 0 errors. `npm run
+build` on `compliance-client` → succeeded in 39.20s, no new errors/warnings. **Not run**: the manual
+browser click-through of 28a-28f above — no live dev server/DB/D365 sandbox available in this
+non-interactive session, the same limitation recorded by every prior update in this file (Update
+12 through Update 24). **Recommended before sign-off**: click through 28a-28f in a real browser
+against a seeded DB (and, for 28e, a temporarily-unreachable `Dynamics:ApiUrl`).
+
+**Note (Update 26)**: step 2 of 28f is now trivially true for **Save template** regardless of
+Status — it is removed from the DOM entirely (FR-095), not conditionally hidden. See Scenario 29
+for the new behavior; re-run 28a, 28c-28e as-is (still valid — only the button/DOM shape changed,
+not the save/push/status semantics they check), and treat "Save template" as absent, not "hidden",
+wherever this scenario references it.
+
+### Scenario 29: Save Template Hidden + Defensive D365 Delete Before Push (FR-095 to FR-098, Update 26)
+
+**29a. "Save template" button never renders**
+
+1. Open `TemplateBuilderPage` for a Draft (`Status=0`) template
+2. **Expected**: only ONE Save-family button is visible — **Save template & Public D365** — with no
+   separate **Save template** button anywhere on the page (not even disabled/greyed out)
+3. Open `TemplateBuilderPage` for a Public D365 (`Status=1`) template
+4. **Expected**: still no **Save template** button anywhere (consistent with step 2 — the button is
+   gone regardless of Status); **Save template & Public D365** is disabled, same as Scenario 28f
+
+**29b. Save & Public D365 now issues a delete-by-Code before the push — happy path**
+
+Prerequisite: same D365 access as Scenario 28c/3'e.
+
+1. Edit a Draft template whose Code has never been pushed to D365 before; change the Name
+2. Click **Save template & Public D365**, then **Yes**
+3. **Expected**: succeeds exactly as Scenario 28c (single success snackbar, redirect to list,
+   `Status = 1`, same `Id`/`VersionId`)
+4. **API/log check**: confirm (via backend logs or a D365 request trace, if available) that a delete
+   call (`.../deleteTemplate` with this template's `Code`) fired immediately before the push
+   call(s) — even though there was nothing in D365 to delete yet, the call still fires (FR-096 is
+   unconditional, not gated on prior D365 history)
+
+**29c. Delete-by-Code fails — the whole action is blocked, save is kept**
+
+Prerequisite: same D365-unreachable setup as Scenario 28e, but simulate the failure on the DELETE
+call specifically (e.g. point `Dynamics:ApiUrl` at an endpoint that rejects the delete verb, or use
+the same "unreachable host" setup as 28e — since the delete call now runs first, an unreachable host
+fails there before the push is ever attempted).
+
+1. Edit a Draft template; change the Name to a new value
+2. Click **Save template & Public D365**, then **Yes**
+3. **Expected**: an error snackbar appears (NOT the success snackbar) — same "Failed to sync
+   template with D365: ..."-style message as a push failure (Scenario 28e); page does NOT redirect
+4. **Verify in DB**: the Name change IS persisted (same `Id`/`VersionId`), but `Status` is still `0`
+   (Draft) — confirms FR-097 (the header/step-tree save from step 1 is kept even though the new
+   delete call failed)
+5. **Network/log check**: confirm the push call never fired — the delete failure short-circuited
+   before `PushTemplateToDynamicsAsync` was reached
+6. Restore D365 reachability, click **Save template & Public D365** again, then **Yes**; **Expected**:
+   succeeds this time without needing to re-enter the Name change from step 1 (already saved), and
+   the retry runs the full delete-then-push sequence again from the start
+
+**Outcome**: **Not run** — no live dev server/DB/D365 sandbox available in this non-interactive
+session, consistent with every prior scenario in this file (Update 12 through Update 25).
+**Recommended before sign-off**: click through 29a-29c in a real browser against a seeded DB, with a
+temporarily-unreachable `Dynamics:ApiUrl` for 29c; additionally confirm via `dotnet build`/`npx
+eslint`/`npm run build` once the code changes for Update 26 land (no code changes exist yet at
+planning time — this scenario documents the validation to run once FR-095 to FR-098 are
+implemented).
 
 ## Post-Validation Checks
 

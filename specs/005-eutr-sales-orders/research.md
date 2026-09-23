@@ -2630,3 +2630,391 @@ only cloned.
 - No change to View's mount-time default-template fetch (Update 20) — it continues to fire unconditionally
   regardless of Download, since the always-visible All chip/Template Checklist depend on it independently
   of Download.
+
+## Update 24 (2026-09-18): Overview gains an ETD column, a Year/ETD Week search block, brown View/Download buttons, and a Delivery-date-descending default sort — matching `compliance-view`'s `ref-type = 11` screen
+
+> Covers spec FR-161..FR-169. Investigation confirmed `SalesOrderOverviewPage.jsx` fetches its rows via
+> a **different** backend path (`DynController`/`ComplDynamicsService`, the generic dynamics-reference
+> lookup) than `compliance-view` (`AllCompliancesController`/`AllCompliancesService`), even though both
+> read the same D365 entity `RSVNSalesOrderOpenInvoiceCogs` and both happen to key it as "`11`". So this
+> update cannot simply copy `compliance-view`'s request payload verbatim into Overview's existing
+> `getReferenceDataUseCase` call — the year/week operators (`inyear`/`inweeks`) and the `RsVnETD` field
+> are meaningful to `AllCompliancesService` but not (yet) to `ComplDynamicsService`. Decisions 74-76 close
+> that gap by reusing the exact same underlying utilities (`EtdWeekFilterBuilder`/`IsoWeekRange`,
+> `DynamicModelService`) from a second call site, not by re-deriving the date math.
+
+### Decision 74 — Add `RsVnETD` to `ComplDynReferenceResponseDto` and case-11 mapping; zero migration, zero new entity field
+
+- **Decision**: `RSVNSalesOrderOpenInvoiceCogs.RsVnETD` (`Domain/Dynamics/RSVNSalesOrderOpenInvoiceCogs.cs:37`)
+  already exists and is already declared in that entity's `FilterableFields` (line 24) — it is simply not
+  yet copied onto the response DTO. Add one new nullable property, `public DateTime? RsVnETD { get; set; }`,
+  to `ComplDynReferenceResponseDto` (same file/pattern as the existing `DeliveryDate` property), and add
+  one new assignment, `RsVnETD = so.RsVnETD`, to `MapDynamicsResponse`'s `case 11:` branch
+  (`ComplDynamicsService.cs:406-419`), alongside the existing `DeliveryDate = so.DeliveryDate` line.
+- **Rationale**: this is the exact "already-returned-by-the-entity, not-yet-projected-onto-the-DTO" gap
+  class this feature has already found and fixed twice (Update 5's `stepIds`/`refType`/`typeName` widening
+  of `EutrDocumentsPoReferenceItemDto`; Update 8's discovery that `poCode` was already available but
+  unread) — Principle III (reuse existing backend) is satisfied by projection, not by adding a new query,
+  join, or D365 field.
+- **Alternatives considered**:
+  - *Register a second `EntityMappings`/response-DTO pair scoped only to this new column*: rejected — the
+    existing `case 11:` mapping already reads every other field this screen needs from the same `so`
+    object; a second mapping would duplicate the entire case for one extra field.
+  - *Have the frontend read ETD from a separate call (e.g. reuse `AllCompliancesService`'s own response
+    shape)*: rejected — would require Overview to call a second, unrelated backend service just to get one
+    field already present on the same row its existing call already fetches.
+
+### Decision 75 — Year/ETD Week filter: reuse `EtdWeekFilterBuilder`/`IsoWeekRange` (backend) and `isoWeek.js` (frontend) from a second call site — not a second date-range implementation
+
+- **Decision**: `ComplDynamicsService` gains one new constructor dependency, `DynamicModelService`
+  (already registered in DI and already injected into the sibling `AllCompliancesService` —
+  `AllCompliancesService.cs:30`) — no new registration needed. Inside `GetDynRefePagedAsync`, before
+  calling the existing `BuildFilterString`, split `request.Filters` into ETD year/week filters
+  (`EtdWeekFilterBuilder.IsYearFilter`/`IsWeekFilter`, unchanged, `Utils/EtdWeekFilterBuilder.cs:44-59`)
+  and every other filter, fetch `var modelInstance = await _dynamicModelService.GetModelInstance(refType)`,
+  and — when any ETD filter is present — build `etdCondition` via `EtdWeekFilterBuilder.Build(modelInstance,
+  weekFilters)` (weeks chosen) or `.BuildYear(modelInstance, yearFilters)` (year-only), then AND it onto
+  the string `BuildFilterString` already returns for the remaining filters — the exact same
+  extract-then-AND shape `AllCompliancesService.GetDataAsync` already uses (lines 77-114 of that file),
+  cloned to a second call site. `EtdWeekFilterBuilder.Build`/`.BuildYear` require no changes: both already
+  guard on `model.FilterableFields.TryGetValue("RsVnETD", ...)`, and `RSVNSalesOrderOpenInvoiceCogs`
+  already declares that key (line 24) — the same row `ComplReferenceTypes` already seeds for refType 11
+  (proven working today, since `AllCompliancesService`'s own `ref-type=11` compliance-view screen already
+  resolves `GetModelInstance(11)` to this exact entity). Frontend: `SalesOrderOverviewPage.jsx` imports
+  `getYearOptions`, `getWeekOptions`, `buildEtdWeekFilters` directly from
+  `@presentation/pages/compliance-view/utils/isoWeek` (cross-feature import; the same alias-based import
+  `compliance-missing/index.jsx:43` already uses to reuse this same util file) — no new frontend date-math
+  file. `buildEtdWeekFilters(year, weeks)`'s existing output shape (`{column:"RsVnETD",
+  operator:"inyear"|"inweeks", value}`) is sent unchanged, concatenated with the existing
+  `buildSearchFilters(searchValue)` array (both arrays' entries AND together in `BuildFilterString`'s
+  "other" bucket once ETD filters are pulled out first, per Decision above) — satisfying FR-165's AND
+  requirement with no new combining logic.
+- **Rationale**: Principle II (reference-pattern reuse) in its most literal form — the isoWeek.js file's
+  own header comment states the date-range math intentionally lives in exactly one place
+  (`IsoWeekRange.cs`) "để tránh lệch quy tắc giữa hai phía" (to avoid the two sides drifting apart); adding
+  a second, frontend-only date-range calculation for Overview would directly violate that stated invariant.
+  `EtdWeekFilterBuilder.Build`/`.BuildYear` already return a complete, ready-to-AND OData condition string
+  (`ComplianceSys.Application/Utils/EtdWeekFilterBuilder.cs:71-158`), so the new call site needs no
+  understanding of ISO week boundaries at all.
+- **Alternatives considered**:
+  - *Teach `ODataOperatorConverter.ToODataOperator` to recognize `inyear`/`inweeks` directly, formatting a
+    computed range inline in `BuildFilterString`*: rejected — would duplicate `IsoWeekRange`'s leap-year/
+    ISO-week-boundary math a second time inside a generic, entity-agnostic converter that has no business
+    knowing about ETD-specific semantics; `EtdWeekFilterBuilder` already exists precisely to keep that
+    logic in one place.
+  - *Have the frontend compute concrete date boundaries itself and send plain `ge`/`le` filters*: rejected
+    — `isoWeek.js`'s own design explicitly avoids this ("Frontend chỉ gửi ... không tự tính biên ngày"),
+    and `ODataOperatorConverter.FormatValue`'s `Edm.DateTimeOffset` case (already implemented,
+    `ODataOperatorConverter.cs:77-81`) would need a `dataType="Edm.DateTimeOffset"` hint threaded through
+    `BuildFilterString`'s generic "other" branch — solvable, but reinvents exactly what
+    `EtdWeekFilterBuilder.BuildConditions` already does (including OR-merging adjacent/overlapping weeks,
+    `EtdWeekFilterBuilder.cs:166-208`), for no benefit over calling it directly.
+  - *Register a brand-new dedicated endpoint for Overview's filtered list*: rejected — the existing
+    `POST /api/dynamics/reference?refType=11` call already returns exactly the rows/columns this screen
+    needs; a second endpoint would duplicate `EntityMappings`/`MapDynamicsResponse`'s case-11 logic.
+
+### Decision 76 — Default sort (`DeliveryDate desc`) needs zero backend change; brown buttons reuse the existing `chip-brown` theme class
+
+- **Decision**: `SalesOrderOverviewPage.jsx`'s existing fetch call (`getReferenceDataUseCase.execute(page,
+  pageSize, sortColumn, sortOrder, refType, filters)`, currently hardcoded `'Code'`/`'asc'`) changes its
+  literal sort arguments to `'DeliveryDate'`/`'desc'`. `MapSortColumn`'s switch
+  (`ComplDynamicsService.cs:246-297`) has no case for `("deliverydate", "RSVNSalesOrderOpenInvoiceCogs")`,
+  so it falls to the existing default arm (`_ => sortColumn`, confirmed present at the end of the switch),
+  passing `"DeliveryDate"` straight through as the literal D365 field name it already is — the exact same
+  passthrough Update 17's own investigation already relied on being present. Zero backend change. For the
+  two Actions-column buttons, `SalesOrderOverviewPage.jsx`'s View/Download `IconButton`s add the already-
+  existing `chip-brown` CSS class (`presentation/themes/custom.css:1-4`, `background-color: #ba7351;
+  color: white;`) — today defined but unused anywhere in the client — instead of their current `color=
+  "primary"`/default MUI color prop.
+- **Rationale**: Principle III — both changes are pure reuse of something already present (a passthrough
+  code path already exercised by Update 17's investigation; a CSS class already shipped in the shared
+  theme file) with zero new backend surface.
+- **Alternatives considered**:
+  - *Add an explicit `("deliverydate", "RSVNSalesOrderOpenInvoiceCogs") => "DeliveryDate"` case to
+    `MapSortColumn`*: considered for symmetry with the other explicit cases, but rejected as unnecessary —
+    the default arm already produces the identical result for this literal column name, and adding a
+    same-result case would be dead code, not a behavior change.
+  - *Pick a new color value instead of `chip-brown`*: rejected — spec FR-168/Assumption (Update 24)
+    explicitly calls for reusing an existing theme color, not inventing a new one; `#ba7351` is the only
+    "brown" value anywhere in the client's theme files.
+
+## Updated non-goals (Update 24)
+
+- No new backend endpoint, controller, entity, table, or migration — the ETD field is a projection
+  addition to an already-returned entity; the Year/Week filter reuses `EtdWeekFilterBuilder`/
+  `IsoWeekRange`/`DynamicModelService` unchanged from a second call site; the default sort needs no new
+  `MapSortColumn` case (existing passthrough already handles it).
+- No change to `ODataOperatorConverter`'s recognized operator set (`eq`/`ne`/`gt`/`ge`/`lt`/`le`) — ETD
+  year/week filters are intercepted and resolved by `EtdWeekFilterBuilder` before `BuildFilterString`
+  ever calls `ToODataOperator` on them, so `inyear`/`inweeks` never reach that converter.
+- No change to any other `refType`'s behavior — `DynamicModelService`/`EtdWeekFilterBuilder` are only
+  exercised when the incoming `Filters` actually contain an ETD year/week entry (guarded by
+  `EtdWeekFilterBuilder.IsEtdPeriodFilter`), which only `SalesOrderOverviewPage.jsx` will ever send.
+- No change to the existing Sales ID/Customer search behavior (FR-011/FR-109) or the Update 16 Template
+  whitelist default-view filter (FR-107) — both continue to combine with the new Year/ETD Week filter via
+  the same AND-joined "other" bucket `BuildFilterString` already produces.
+- No new CSS file/token — `chip-brown`/`#ba7351` is reused exactly as already defined; no other button or
+  screen changes color as a result of this update.
+
+## Update 25 (2026-09-18): Sales status column — "Backorder" → "Open order" display-label mapping
+
+### Decision 77 — One client-side string-comparison label mapping; no mapping table, no backend change
+
+**Decision**: Change `SalesOrderOverviewPage.jsx`'s existing Sales status cell (currently
+`row.salesStatus || '-'`, confirmed at line 857) to render `"Open order"` when
+`row.salesStatus?.toLowerCase() === 'backorder'`, else keep the existing `row.salesStatus || '-'`
+expression unchanged.
+
+**Rationale**: Codebase research (Explore agent, confirmed by direct file reads before drafting this
+update) established that the Sales status column already exists end to end — `SalesOrderOverviewPage.jsx`
+already renders it, `ComplDynReferenceResponseDto.SalesStatus` already carries it, and
+`ComplDynamicsService`'s `case 11:` already assigns it from `RSVNSalesOrderOpenInvoiceCogs.SalesStatus` —
+with zero label mapping applied anywhere in the codebase (backend or frontend). The user's request is
+scoped to exactly one raw value ("Backorder") mapping to exactly one display label ("Open order"); a
+single inline comparison is proportionate and matches this feature's own established precedent for
+small, one-off value→label render decisions (Update 5's "Mapped"/"No map" chip labels are computed
+inline, not via a shared mapping table).
+
+**Alternatives considered**:
+- *Backend-side mapping (translate `SalesStatus` before it reaches the DTO)* — rejected: would silently
+  change the API's contract for any other future consumer of `refType=11`'s `salesStatus` field (Principle
+  III/data-integrity concern — the raw D365 label is a fact about the order, the display text is a
+  presentation choice); also inconsistent with how every other "value → badge text" decision in this
+  feature (Update 5) is made at the point of render, not at the data-fetch layer.
+- *A general `SALES_STATUS_LABELS` lookup object/shared util* — rejected as over-engineering for a
+  single-value mapping with no second value in scope today; would also imply this update has classified
+  every possible D365 `SalesStatus` value, which the spec's own Assumption explicitly disclaims. Easy to
+  introduce later if a second mapping is ever requested, without needing to revisit this update.
+- *Case-sensitive exact match only* — rejected: D365 data occasionally varies in casing across
+  environments/sync runs (see `013-compl-synchronize-data`'s own note that `SalesStatus` is copied
+  verbatim as a string, not normalized); a case-insensitive compare is a one-line addition that avoids a
+  silent miss with no downside.
+
+### Updated non-goals (Update 25)
+
+- No new backend endpoint, controller, entity, table, migration, or DTO field — `SalesStatus` is already
+  fully delivered by the existing, unmodified `refType=11` response.
+- No general status-mapping table/enum for values other than "Backorder" — a future request to map a
+  different value is a new, separate update, not pre-built here.
+- No change to `ComplDynamicsService`, `DynController`, `ODataOperatorConverter`, `EntityMappings`, or
+  `MapSortColumn`.
+- No change to any other Overview column/control established by Updates 1-24 (Sales ID, Customer,
+  Customer name, Delivery date, ETD, Template, Progress, search, Year/ETD Week filter, sort, pagination,
+  Back-navigation restore, View/Download/Map File actions).
+
+### Decision 78 — View header/toolbar swap reuses `poList`/`templatesData` already in state; toolbar array literal shrinks to 1 entry
+
+**Decision**: On `ViewSalesOrderPage.jsx` only: (1) the header's `Template` field
+(`templatesData.map(t => <Chip label={t.templateCode} .../>)`) is replaced with a `Purchase Order(s)`
+field iterating `poList` (`poList.map(po => <Chip label={po.purchId} .../>)`) instead — `poList` is the
+exact array already powering the "Selected Purchase Orders" table (`data-marker="selected-po-table"`),
+not a new derivation; (2) the toolbar's chip source array,
+`[{ templateCode: null, templateName: 'All' }, ...templatesData]`, is shortened to
+`[{ templateCode: null, templateName: 'Template' }]` — dropping the `...templatesData` spread entirely
+— so only the one entry (previously "All") renders, and its label reads "Template" instead of "All".
+
+**Rationale**: Re-reading the current `ViewSalesOrderPage.jsx` (this session) confirms both `poList`
+(built from `purchaseAttachments` + `allPos`, `useMemo` near the top of the component) and
+`templatesData` (the saved templates' tree data) are already fully computed before either the header or
+the toolbar renders — this is a pure "read a different already-computed array, render fewer array
+entries" change, not a new data requirement. The toolbar's `onClick` handler (which sets
+`selectedTemplateCode`/clears `selectedStepId`, and for the `templateCode === null` entry additionally
+calls `loadDefaultTemplate()` per Update 19/20) is attached to each rendered array entry generically —
+shrinking the array to one entry does not require touching the handler itself, only the array literal it
+maps over.
+
+**Alternatives considered**:
+- *Keep rendering all chips but hide the per-template ones with CSS (`display:none`)* — rejected: leaves
+  dead interactive elements in the DOM (still clickable via keyboard/automation), contradicts the spec's
+  explicit "ẩn đi không hiển thị" (hidden, not displayed) framing and this feature's own Update 26
+  Assumption (full removal from render, not a disabled/hidden-but-present state).
+- *Introduce a new `selectedPOs`-style derived array for the header instead of reusing `poList`* —
+  rejected as unnecessary duplication (Principle III/reuse) — `poList` already has exactly the
+  `purchId` values needed, in the same order already shown in the table below it, so a second computation
+  would only risk the two areas silently drifting out of sync.
+- *Rename the `data-marker="template-tree-toolbar"` attribute to something PO/Template-neutral* —
+  rejected: this attribute is referenced by this feature's own `quickstart.md` verification steps across
+  many prior updates (5/8/15/19 and others) by its literal string; renaming it would be a breaking,
+  purely-cosmetic change with no spec-mandated benefit (spec Assumption, Update 26).
+
+### Updated non-goals (Update 26)
+
+- No new backend endpoint, controller, entity, table, migration, or DTO field — both `poList` and
+  `templatesData` are already delivered by existing, unmodified endpoints/use cases.
+- No change to the toolbar's click/reload mechanism (FR-130 to FR-141) — only which array it maps over
+  and that array's single entry's label.
+- No change to any other View screen behavior (Selected Purchase Orders table, Template Checklist tree
+  content, AVAILABLE FILES, Download/popup, Validation Summary, Edit/Map File, Back) — spec FR-178.
+- No change to `MapFilePage.jsx` or `SalesOrderOverviewPage.jsx` — this update is scoped to
+  `ViewSalesOrderPage.jsx` only, per the spec's explicit "trong màn hình này" (in this screen) framing.
+
+### Decision 79 — Overview search OR-matches `CustAccount`: clone the existing `"vendorcode"` entity-guarded case in `BuildFilterString`, not a new filter mechanism
+
+**Decision**: Extend `ComplDynamicsService.BuildFilterString`'s column-grouping switch (the same method
+Update 24 already extended for ETD year/week) with one new case:
+`"custaccount" when mapping.Entity == "RSVNSalesOrderOpenInvoiceCogs" => "custaccount"`, resolved to the
+OData column `"CustAccount"` alongside the existing `code`→`mapping.CodeColumn`/`name`→
+`mapping.NameColumn` resolution, and included in the existing OR-bucket check
+(`group.Key is "code" or "name" or "vendorcode"` → `... or "custaccount"`). On the frontend,
+`SalesOrderOverviewPage.jsx`'s `buildSearchFilters(search)` (lines 106-113) gains one more array entry:
+`{ column: 'CustAccount', operator: 'like', value }`, alongside its existing `Code`/`Name` entries.
+
+**Rationale**: Codebase research (confirmed by reading `ComplDynamicsService.cs` directly) found this
+exact pattern already exists for a sibling screen: the Purchase Orders overview (`refType = 15`) already
+sends an extra `{ column: 'VendorCode', ... }` filter (`PurchaseOrderOverviewPage.jsx`), matched by a
+`"vendorcode"` case in the same switch, guarded to `mapping.Entity == "RSVNEutrPurchOrders"` so it has no
+effect on any other `refType`. `CustAccount` is already a real property on
+`RSVNSalesOrderOpenInvoiceCogs` and is already projected onto `ComplDynReferenceResponseDto.custAccount`
+(feature Update 1, FR-004's Customer column) — the only gap is that `BuildFilterString` never resolved a
+column name for it. Cloning the `"vendorcode"` case's exact shape (Constitution Principle II) for
+`custaccount`/`RSVNSalesOrderOpenInvoiceCogs` closes this gap with the smallest possible diff: one new
+`switch` arm, one new resolved-column mapping, and `"custaccount"` added to the OR-bucket membership
+check — no new filter-combination logic, no new endpoint, no new DTO field (already exists), no new UI
+element (the existing single search `TextField` is reused unchanged).
+
+**Alternatives considered**:
+- *Add `CustAccount` to the generic "other column" (AND-joined) `filterParts` bucket instead of the
+  OR-joined `searchFilters` bucket* — rejected: this would silently change the search box from "match
+  Sales ID OR Customer OR Customer name" to "match Sales ID AND Customer AND Customer name," breaking
+  every existing single-field search (e.g. typing just a Sales ID would then require Customer/Customer
+  name to also literally contain that same string) — directly contradicts spec FR-179/FR-180's explicit
+  OR requirement.
+- *Make the new case ungated (apply to every `refType`, not just `RSVNSalesOrderOpenInvoiceCogs`)* —
+  rejected: `EntityMappings`'s other 20-ish `refType` entries have no `CustAccount` property on their
+  underlying D365 entities at all, so an ungated case would either no-op unpredictably or throw depending
+  on `ODataOperatorConverter`'s handling of an unknown column for that entity — the existing
+  `"vendorcode"` precedent already established the entity-guard pattern precisely to avoid this class of
+  cross-`refType` risk (spec FR-181).
+- *Register a second, dedicated `EntityMappings`/response-DTO pair or a new endpoint scoped to this one
+  extra column* — rejected: `CustAccount` is already fully delivered by the existing `case 11:` mapping
+  used by every other column on this screen; a second mapping/endpoint would duplicate that entire case
+  for one extra filterable column, the same reasoning already rejected for `RsVnETD` in Decision 74.
+
+### Updated non-goals (Update 27)
+
+- No new backend endpoint, controller, entity, DTO field, or migration — `CustAccount` is already
+  delivered end to end since this feature's own Update 1; only the search-filter column set changes.
+- No change to `EntityMappings[11]`'s `(CodeColumn, NameColumn)` tuple or `MapDynamicsResponse`'s
+  `case 11:` — Sales ID/Customer name filtering and mapping stay exactly as they were (spec FR-180).
+- No change to any other `refType`'s filtering behavior — the new case is guarded to
+  `RSVNSalesOrderOpenInvoiceCogs` only, cloning the existing `"vendorcode"`/Purchase-Orders guard shape
+  (spec FR-181).
+- No new UI element — the existing single search `TextField` (placeholder "Tìm theo Sales ID,
+  Customer...") is reused unchanged; no new input, button, or label.
+- No change to how the search keyword combines with Year/ETD Week (Update 24, AND) or with the
+  Template-whitelist default-view filter (Update 16) — this update only widens which columns the
+  existing keyword is OR-matched against.
+
+## Update 28 (2026-09-22): Map File/Edit/Download icons gated by `permissionList` ('Update'/'Download') on menu `eutr-sales-orders`
+
+### Decision 80 — Reuse the existing `permissionList`/`getMenuDataFromStorage` pattern verbatim; no new permission helper, string, or backend policy
+
+**Decision**: On both `SalesOrderOverviewPage.jsx` and `ViewSalesOrderPage.jsx`, add
+`import { getMenuDataFromStorage } from '@utils/helpers'` and a `permissionList` `useMemo`:
+`getMenuDataFromStorage().find(m => m.code === 'eutr-sales-orders')?.permissionList || []` — the exact
+shape `eutr-documents/index.jsx` (lines 26-31) already uses for its own menu. Wrap the Map File icon
+(Overview)/Edit-Map-File button (View) in `permissionList.includes('Update') && (...)`, and the Download
+icon/button (both screens) in `permissionList.includes('Download') && (...)`. The View summary icon and
+Back button are left unwrapped.
+
+**Rationale**: Codebase research (confirmed by reading `SalesOrderOverviewPage.jsx` ~lines 954-1011 and
+`ViewSalesOrderPage.jsx` ~lines 1098-1118) found these 3 icons/buttons render unconditionally today, with
+zero `permissionList` check — a real, verified gap relative to every other EUTR screen in this codebase
+(`eutr-documents`, `eutr-templates`, `compliance-view-so`, `eutr-reference-types`), which already gate
+their own Edit/Delete/Download actions the same way. Menu code `eutr-sales-orders` is already the code
+this feature's route/menu registration uses (confirmed in `RouteResolver.jsx`); no new menu code, no new
+permission string (`'Update'`/`'Download'` already exist and are already assignable per menu through the
+existing menu-admin mechanism), no new helper function, no backend call of any kind (Constitution
+Principle II/III — clone the existing reference pattern, don't invent a parallel one).
+
+**Alternatives considered**:
+- *Add a shared `hasPermission(menu, action)` helper instead of inline `.includes()` calls* — rejected:
+  no such helper exists anywhere in this codebase today (confirmed by research); every other EUTR screen
+  inlines the same `.includes()` check locally rather than through a shared utility, so introducing one
+  now would be a new abstraction this update doesn't need and no other screen would adopt retroactively
+  (scope creep beyond what the request asks for).
+- *Disable (grey out) the icons/buttons instead of hiding them* — rejected: every existing precedent in
+  this codebase (`eutr-documents`, `eutr-templates`) fully unmounts the gated element (conditional render,
+  not a `disabled` prop) rather than showing a disabled control; matching that precedent keeps this
+  update consistent with the rest of the system rather than introducing a second visual convention for
+  "no permission."
+- *Add a backend-side check (e.g. reject the Map File navigation or Download call server-side if the
+  user lacks the permission)* — out of scope for this update: the request is specifically about
+  icon/button visibility ("hiển thị icon"), and no other EUTR screen in this codebase enforces its
+  per-action `permissionList` server-side either (menu-level `canAccessMenu` is the only
+  backend-enforced gate) — adding server-side enforcement now would be an inconsistent, unrequested
+  scope expansion relative to the established pattern this update is asked to replicate.
+
+### Updated non-goals (Update 28)
+
+- No new backend endpoint, controller, entity, DTO, migration, or authorization policy — `permissionList`
+  is already delivered end to end by the existing external menu/auth service.
+- No new frontend helper/hook (e.g. `hasPermission()`) — reuses the exact inline
+  `permissionList.includes(...)` pattern every other EUTR screen already uses.
+- No change to the View summary icon (Overview) or Back button (View) — both stay unconditionally
+  visible, unaffected by this update (spec FR-187).
+- No change to what Map File/Edit/Download/View summary/Back actually *do* once shown — this update only
+  changes whether 2 of them render, never their `onClick`/navigation/download behavior (spec FR-188).
+- No change to any other Overview/View control — search, pagination, sort, Year/ETD Week filter,
+  Progress/Template columns, Template Checklist, AVAILABLE FILES, Validation Summary, and the Download
+  popup's own internal folder/file rules are all untouched.
+
+## Update 29 (2026-09-23): Map File Step 2 Upload/Edit buttons gated by `EutrDocuments.Create`/`EutrDocuments.Update`
+
+### Decision 81 — Gate on `permissionList` of menu `eutr-documents` (Update 28's exact mechanism, new menu code), not a live backend probe
+
+**Decision (as shipped, after correction)**: `MapFilePage.jsx` reads `permissionList` for menu code
+`'eutr-documents'` via the exact `getMenuDataFromStorage()` mechanism `SalesOrderOverviewPage.jsx`/
+`ViewSalesOrderPage.jsx` already use for menu `eutr-sales-orders` (Update 28), and derives
+`canUploadDocuments = permissionList.includes('Create')` /
+`canEditDocuments = permissionList.includes('Update')` as plain `useMemo`-derived values — no state, no
+effect, no network call. `PurchaseOrderViewPage.jsx` (`012-eutr-purchase-orders`) was corrected the same
+way in the same session, replacing its Update 4 `can-create` probe.
+
+**What was tried first, and why it was wrong**: An earlier draft of this Update assumed
+`EutrDocuments.Create`/`EutrDocuments.Update` were *not* obtainable from `permissionList` — reasoning
+by analogy from `012-eutr-purchase-orders` Update 4's own Decision 11, which stated the frontend "only
+has menu-level access data" and that action-level policies like `EutrDocuments.Create` were a different
+domain unreachable without a live probe. That draft added two new backend endpoints
+(`GET /api/eutr-documents/can-create` reused, `GET /api/eutr-documents/can-update` new) and had both
+`MapFilePage.jsx`/`PurchaseOrderViewPage.jsx` call them on mount. The person requesting the feature
+tested this live and reported both buttons still visible after revoking the permissions — a browser
+DevTools capture of `GET .../menu-managements/permissions?appCode=ComplApi&email=...`'s response showed
+the menu entry for `eutr-documents` (id 242) already carries a `permissionList` array (in that capture:
+`['Download', 'ReadAll', 'ReadOne', 'ViewMenu']`, missing `'Create'`/`'Update'` for the test role) — the
+exact same shape Update 28 already reads for menu `eutr-sales-orders`. This directly falsified Decision
+11's premise for this specific menu: `'Create'`/`'Update'` **are** valid `permissionList` entries for
+`eutr-documents`, they just weren't granted to the test role. (Separately, live testing also surfaced
+that `appsettings.Development.json`'s pre-existing `AuthZ:EnablePolicyCheck: false` bypasses the real
+`[Authorize(Policy = ...)]` checks in Development entirely — a real, independent config issue, but not
+the cause here once `permissionList` was confirmed to already carry the right data.)
+
+**Rationale**: `permissionList` is simpler (no new endpoint, no network round trip, no loading-state
+window where the button is wrongly hidden/shown before the probe resolves), consistent with the one
+proven working pattern already used for every other menu-gated action in this codebase, and confirmed
+correct by direct observation rather than by inference. The two now-dead probe endpoints/use cases
+(`can-create`'s brand-new `can-update` sibling, `CheckEutrDocumentsCanCreateUseCase.js`,
+`CheckEutrDocumentsCanUpdateUseCase.js`, and the `canCreate`/`canUpdate` repository/API methods) were
+deleted per the requester's explicit choice, rather than left unused, consistent with this repo's
+no-dead-code convention.
+
+**Alternatives considered**:
+- *Keep both mechanisms (permissionList for instant UI gating, live probe as a secondary confirmation)*
+  — rejected: `permissionList` already reflects the same underlying role/permission data; a second,
+  redundant network round trip adds latency and a loading-state race for no additional correctness,
+  and the requester explicitly asked to remove the now-unused probe code rather than keep it dormant.
+- *Disable (grey out) Upload/Edit instead of hiding them* — rejected, same reasoning as Update 28: every
+  precedent in this codebase fully unmounts the gated element.
+
+### Updated non-goals (Update 29)
+
+- No backend change of any kind (as shipped) — `EutrDocuments.Create`/`EutrDocuments.Update` remain
+  exactly the policies already protecting `POST /api/eutr-documents`/`PUT /api/eutr-documents/{id}`,
+  unaffected by this update; the two probe endpoints from the earlier draft were added and then removed
+  within this same session, net zero backend surface change.
+- No change to Update 28's `permissionList` gating of menu `eutr-sales-orders` (Map File/Edit-Map-File/
+  Download icons) — independent menu code, independent condition (spec FR-192 edge-case note).
+- No change to the View button, Step 1 (PO selection/Save PO Mapping), template tree, or any other part
+  of Map File — only Upload's and each row's Edit's visibility condition changes.
+- No change to Upload/Edit's own behavior once shown (popup contents, save flow, AVAILABLE FILES
+  refresh) — purely a visibility gate.

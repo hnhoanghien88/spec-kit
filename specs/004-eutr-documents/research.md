@@ -2034,3 +2034,89 @@ Phase 0 — chốt các quyết định kỹ thuật. Các điểm nghiệp vụ
   `eutr_references`, không phải `eutr_documents`) — sẽ cần round-trip đọc lại Type hiện tại của
   document ngay trong validator, vi phạm nguyên tắc validator không side-effect/không I/O của
   FluentValidation trong codebase này.
+
+## Quyết định 70 — Nhánh Type = "PO": chọn bản ghi `eutr_master_documents` có Prefix DÀI NHẤT (tie-break Id nhỏ nhất) làm nguồn đặt tên, không ảnh hưởng danh sách `eutr_references` ghi ra (spec Update 25, FR-063)
+
+- **Decision**: Sau khi `GetMatchingPrefixesAsync` (FR-020, không đổi) trả về danh sách bản ghi khớp
+  Prefix của tên file gốc, bước đặt tên chọn đúng 1 bản ghi "thắng cuộc" bằng
+  `matchedMasters.Where(m => m.StepId.HasValue).OrderByDescending(m => m.Prefix!.Length).ThenBy(m => m.Id).First()`
+  — hoàn toàn tính trong bộ nhớ trên danh sách đã có sẵn, KHÔNG query lại DB. Việc chọn bản ghi này chỉ
+  quyết định `Prefix`/`StepId` dùng để tính `eutr_documents.Name`; danh sách `stepIds` dùng để ghi
+  `eutr_references` (mỗi `StepId` phân biệt một dòng, FR-023) giữ nguyên không đổi — 2 mối quan tâm
+  (đặt tên vs. ghi reference) tách bạch hoàn toàn.
+- **Rationale**: Người dùng xác nhận trực tiếp qua `AskUserQuestion` (3 lựa chọn: Prefix dài nhất /
+  Id nhỏ nhất / không đổi tên khi khớp nhiều Step) — chọn "Prefix dài nhất", vì đây là bản ghi khớp
+  **cụ thể/đặc hiệu nhất** với tên file gốc (ví dụ Prefix "INV2026" đặc hiệu hơn "INV" cho cùng 1 file
+  khớp cả hai) — tie-break Id nhỏ nhất khi bằng độ dài mượn nguyên quy ước "Id nhỏ nhất" đã dùng cho
+  tình huống tương tự ở FR-032 (Step hiện tại của document khi Edit có nhiều `eutr_references` khác
+  `StepId`), giữ tính nhất quán trong toàn feature.
+- **Alternatives considered**: (1) Id nhỏ nhất trong số các bản ghi khớp (không xét độ dài Prefix) —
+  bị loại vì thứ tự `Id` không phản ánh mức độ "đặc hiệu" của Prefix, có thể chọn nhầm Prefix ngắn/
+  chung chung hơn dù có Prefix cụ thể hơn khớp cùng lúc; (2) không đổi tên khi khớp ≥2 Step, giữ
+  nguyên tên gốc — bị loại vì làm hành vi đổi tên không nhất quán/khó đoán giữa các file PO khác nhau
+  (một số đổi tên, một số không, tùy số Step khớp) — người dùng chọn phương án luôn đổi tên để hành vi
+  đồng nhất trên mọi file.
+
+## Quyết định 71 — Không tạo class/utility sanitize tên file dùng chung; giữ 2 method `private static` mới ngay trong `EutrUploadService.cs` (spec Update 25, FR-064)
+
+- **Decision**: `SanitizeNamePart`/`BuildRenamedFileName` là 2 method `private static` mới, khai báo
+  trực tiếp trong `EutrUploadService.cs` — KHÔNG tạo class `Shared`/`Common` utility mới, KHÔNG tái sử
+  dụng `SanitizeFileNamePart` (`AllCompliancesController.cs`) hay `SanitizeZipNamePart`
+  (`EutrDocumentsController.cs`, cùng logic, đã tự nhận là bản clone của cái trước theo comment của
+  chính nó).
+- **Rationale**: Codebase hiện **chưa có tiền lệ** một sanitize-filename utility dùng chung — cả 2
+  helper hiện có đều là `private static` cục bộ trong đúng 1 controller, phục vụ đúng 1 luồng (zip
+  download), không được extract thành lớp dùng chung dù logic giống hệt nhau. Tạo 1 utility class mới
+  chỉ để dùng chung cho đúng 1 trường hợp thứ 3 (Upload) sẽ là over-engineering không có tiền lệ trong
+  feature/codebase này — giữ nguyên `private static` cục bộ trong `EutrUploadService.cs` (nơi duy nhất
+  gọi nó) nhất quán với cách 2 helper hiện có đã được viết.
+- **Alternatives considered**: Extract `Shared.Utils.FileNameSanitizer` (hoặc tương tự) dùng chung cho
+  cả 3 nơi (2 helper cũ + method mới) — cân nhắc nhưng loại bỏ vì nằm ngoài phạm vi yêu cầu gốc (chỉ
+  yêu cầu đổi tên khi Upload, không yêu cầu refactor 2 luồng zip download hiện có) và sẽ đụng tới 2
+  file không liên quan tới feature `004-eutr-documents` (`AllCompliancesController.cs` thuộc
+  `all-compliances`, ngoài phạm vi).
+
+## Quyết định 72 — 0 thay đổi frontend cho toàn bộ Update 25 (spec Update 25)
+
+- **Decision**: Không sửa bất kỳ file `compliance-client` nào — cả ở `004-eutr-documents` lẫn 2 đặc tả
+  kế thừa (`005-eutr-sales-orders`, `012-eutr-purchase-orders`).
+- **Rationale**: Popup Add (`EutrDocumentsFormDialog.jsx`) không hiển thị tên file đã chọn ở bất kỳ
+  đâu trước khi Upload (input file ẩn), và sau khi Upload chỉ hiển thị snackbar tổng hợp
+  thành công/thất bại (không liệt kê tên file đã đổi) — không có phần tử UI nào cần cập nhật để phản
+  ánh tên file mới. File name mới chỉ hiển thị gián tiếp qua cột **File name** của bảng danh sách
+  chính (User Story 1), vốn đã đọc thẳng `row.name`/`eutr_documents.Name` từ trước — tự động phản ánh
+  giá trị mới mà không cần sửa `useEutrDocumentsColumns.jsx`. 2 đặc tả kế thừa gọi đúng cùng
+  `UploadToSharePointUseCase.executeEutrMulti`/`executeEutrMultiByType` đã có, không có logic đặt tên
+  file nào ở tầng frontend của riêng chúng.
+- **Alternatives considered**: Thêm preview "tên file sau khi đổi" trong popup trước khi Upload — nằm
+  ngoài phạm vi yêu cầu gốc (chỉ yêu cầu đổi tên, không yêu cầu thêm UI xem trước), ghi nhận là
+  Assumption trong spec thay vì triển khai.
+
+## Quyết định 73 — Dùng tập ký tự không hợp lệ CỐ ĐỊNH (`\ / : * ? " < > |`), KHÔNG dùng `Path.GetInvalidFileNameChars()` (spec Update 25, FR-064)
+
+- **Decision**: `SanitizeNamePart` lọc theo mảng `char[]` khai báo tường minh trong code
+  (`{ '\\', '/', ':', '*', '?', '"', '<', '>', '|' }`), không gọi `Path.GetInvalidFileNameChars()`.
+- **Rationale**: `Path.GetInvalidFileNameChars()` trả về tập ký tự **phụ thuộc hệ điều hành đang chạy
+  runtime** — trên Windows gồm khoảng 40 ký tự (bao gồm `\`), nhưng trên Linux gần như **trống** (chỉ
+  gồm ký tự NUL và `/`). Vì `Target Platform` của feature này là "Web (SPA phục vụ qua nginx) + API
+  .NET 8" (khả năng cao chạy trên Linux ở production), dùng API này có nguy cơ **không loại bỏ được
+  `\`** đúng như spec yêu cầu tường minh (FR-064) nếu server chạy Linux — một lỗi im lặng, khó phát
+  hiện qua test trên máy dev Windows. Tập ký tự cố định loại bỏ hoàn toàn rủi ro này, đảm bảo hành vi
+  giống nhau bất kể hệ điều hành host.
+- **Alternatives considered**: `Path.GetInvalidFileNameChars()` — bị loại vì lý do trên; kết hợp cả 2
+  (`Path.GetInvalidFileNameChars().Union(tập cố định)`) — cân nhắc nhưng loại vì thêm độ phức tạp
+  không cần thiết khi tập cố định đã bao trùm mọi ký tự spec quan tâm.
+
+## Quyết định 74 — `EutrUploadFileResultDto.FileName` trên response tiếp tục là tên file GỐC, không đổi sang tên đã tính lại (spec Update 25)
+
+- **Decision**: Cả 2 luồng Upload tiếp tục gán `FileName = file.FileName` (tên gốc) vào
+  `EutrUploadFileResultDto` trả về cho mọi file (thành công lẫn thất bại) — không đổi sang
+  `renamedFileName` dù `entity.Name`/`eutr_documents.Name` đã dùng tên mới.
+- **Rationale**: `FileName` trên response dùng để đối chiếu với **danh sách file người dùng vừa chọn**
+  ở dialog chọn file của hệ điều hành (đặc biệt quan trọng cho thông báo lỗi — liệt kê đúng tên file
+  nào bị từ chối, theo đúng tên người dùng nhìn thấy trên máy họ) — đổi sang tên mới sẽ khiến người
+  dùng không nhận ra file nào tương ứng với dòng nào trong thông báo kết quả Upload.
+- **Alternatives considered**: Đổi `FileName` trên response sang tên mới đã tính — bị loại vì phá vỡ
+  khả năng đối chiếu nêu trên, đồng thời không có yêu cầu nào trong spec đòi hỏi response phải phản
+  ánh tên mới (tên mới chỉ cần đúng trong `eutr_documents.Name`, đọc lại được qua danh sách chính ngay
+  sau đó).

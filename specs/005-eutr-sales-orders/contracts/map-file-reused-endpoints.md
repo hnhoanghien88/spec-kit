@@ -98,3 +98,19 @@ filter sent, the same class of "entity/case shipped, registration missing" bug t
 third instance of that same one-line pattern: `{ 20, ("RSVNEutrSalesOrderPurchLines",
 "InterCompanyOriginalSalesId", "ProductVariant") },`. See `research.md` Decision 63 and `data-model.md`'s
 "Update 17" section.
+
+## Update 29 (2026-09-23) — Upload/Edit gated by `permissionList` of menu `eutr-documents` (FR-189..FR-193); zero endpoint change
+
+Spec Update 29 (FR-189..FR-193) introduces **no new and no changed endpoint at all**. An earlier draft
+of this update added two new permission-probe endpoints (`GET /api/eutr-documents/can-create`/
+`can-update`); both were removed after live testing (browser DevTools) confirmed the existing
+`GET .../menu-managements/permissions` response — already cached client-side via
+`getMenuDataFromStorage()`, the same mechanism `SalesOrderOverviewPage.jsx`/`ViewSalesOrderPage.jsx`
+already use for menu `eutr-sales-orders` (Update 28) — already carries a `permissionList` array for
+menu `eutr-documents` (id 242) that includes `'Create'`/`'Update'` whenever the role is granted them.
+`MapFilePage.jsx` now reads that already-available array directly (no network call) to decide the
+Upload button's visibility (`permissionList.includes('Create')`, FR-189) and each AVAILABLE FILES row's
+Edit button visibility (`permissionList.includes('Update')`, FR-190) — see `data-model.md`'s "Update 29"
+section and `research.md` Decision 81. `PurchaseOrderViewPage.jsx` (`012-eutr-purchase-orders`) was
+corrected the same way in the same session (that feature's own spec Update 5, superseding its earlier
+Update 4 `can-create` mechanism) — see that feature's `contracts/eutr-templates-and-documents-reused.md`.

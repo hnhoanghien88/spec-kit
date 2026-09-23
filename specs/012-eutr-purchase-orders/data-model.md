@@ -90,6 +90,24 @@ re-derived from data already held in `PurchaseOrderViewPage` state:
 Nothing new is read, written, or stored — both branches reuse state the page already fetches for its
 header/existence-check and Vendor-name lookup. See research.md Decision 10.
 
+## 7. Upload/Edit button visibility by permission (spec Update 4/Update 5, FR-030..FR-036) — UI-derived value only, not persisted; sourced from `permissionList`, not a live probe
+
+No new entity or field. `PurchaseOrderViewPage` derives two plain `const`s each render,
+`canUploadDocuments`/`canEditDocuments`, from `permissionList.includes('Create')`/
+`permissionList.includes('Update')`, where `permissionList` is the already-existing array for the menu
+record whose `code === 'eutr-documents'` (read via `getMenuDataFromStorage()`, the same mechanism
+`005-eutr-sales-orders` Update 28 already uses for menu `eutr-sales-orders`). No state, no effect, no
+network call — this value is read-only, derived from data already cached in `localStorage`; it is never
+written back anywhere and has no relationship to any persisted entity — it only gates whether the
+existing Upload button (§5/§6) and per-row Edit button render.
+
+**Superseded design (Update 4's original Upload gate, and an early draft of Update 5's Edit gate)**:
+both buttons were originally gated by a live backend probe (`GET /api/eutr-documents/can-create` /
+`can-update`, `200`/`403` → `true`/`false` — see contracts addendum for the removed endpoints). Live
+testing during Update 5 showed `permissionList` already carries the same `'Create'`/`'Update'` data, so
+both probes were removed and both buttons rewired to read `permissionList` directly (research.md
+Decision 11) — same visibility outcome, zero network calls instead of 2 per page load.
+
 ## Entity Relationship (conceptual, no new persisted relationships)
 
 ```text

@@ -227,3 +227,60 @@ Type names (`PO`, `Vendor`, `Invoice`, `Delivery note`) as a shared constant imp
 but rejected to avoid coupling `PurchaseOrderViewPage.jsx` to that component's internal (non-exported)
 constants; the resolver duplicates just the three literal strings needed, which is simpler than
 exporting new internals from a component whose props contract is otherwise closed.
+
+## Decision 11 — Hide Upload/Edit without permission (spec Update 4/Update 5, FR-030..FR-036): gate on `permissionList` of menu `eutr-documents`, not a live backend probe
+
+**Problem**: `PurchaseOrderViewPage.jsx` needs to know whether the current user holds
+`EutrDocuments.Create` (gates Upload) and `EutrDocuments.Update` (gates Edit) — the exact policies
+already guarding `POST /api/eutr-documents`/`PUT /api/eutr-documents/{id}`.
+
+**What was tried first, and why it was wrong**: The original Decision 11 (Update 4) reasoned that the
+frontend "currently only has menu-level access data" (`permissionList` keyed by menu code) and that
+action-level policies like `EutrDocuments.Create` were a separate domain unreachable without asking the
+backend live — so it added a narrowly-scoped probe endpoint:
+
+```csharp
+[HttpGet("can-create")]
+[Authorize(Policy = "EutrDocuments.Create")]
+public IActionResult CanCreate() => Ok(ApiResponse<bool>.Ok(true));
+```
+
+`PurchaseOrderViewPage.jsx` called this once on mount and rendered Upload only on `200`. Update 5 first
+extended this with a mirror `can-update` for Edit. The person requesting the feature tested this live
+(`/eutr/purchase-orders/PO00000059/view`, revoking both permissions for a test role) and reported both
+buttons still visible — a browser DevTools capture of
+`GET .../menu-managements/permissions?appCode=ComplApi&email=...`'s response showed the menu record for
+`eutr-documents` (id 242) already carries a `permissionList` array (in that capture:
+`['Download', 'ReadAll', 'ReadOne', 'ViewMenu']`, missing `'Create'`/`'Update'` for the test role) — the
+exact same shape `005-eutr-sales-orders` Update 28 already reads for menu `eutr-sales-orders`. This
+directly falsified the original premise: `'Create'`/`'Update'` **are** valid `permissionList` entries
+for `eutr-documents`, they just weren't granted to the test role.
+
+**Decision (corrected)**: `PurchaseOrderViewPage.jsx` reads `permissionList` for menu code
+`'eutr-documents'` via the exact `getMenuDataFromStorage()` mechanism Update 28 already established,
+and derives `canUploadDocuments = permissionList.includes('Create')` /
+`canEditDocuments = permissionList.includes('Update')` as plain `useMemo`-derived `const`s — no state,
+no effect, no network call. Both `can-create` and `can-update` were deleted (no remaining callers
+anywhere in the codebase, confirmed by grep) per the requester's explicit choice, consistent with this
+repo's no-dead-code convention.
+
+**Rationale**: `permissionList` is simpler (no new endpoint, no network round trip, no loading-state
+window where the button is wrongly hidden/shown before the probe resolves) and confirmed correct by
+direct observation. It also matches the one proven-working pattern already used for every other
+menu-gated action in this codebase, rather than a second, parallel gating mechanism for one specific
+document-action pair.
+
+**Alternatives considered** (superseded, kept for context — these were the original Update 4 analysis
+before the `permissionList` finding):
+(a) A generic, cross-feature "check any policy by name" endpoint — rejected as unnecessarily broad.
+(b) Extending the external AuthZ microservice's `menu/permissions` response to also carry resource-
+action grants — moot once it was confirmed the response *already* carries `'Create'`/`'Update'` in
+`permissionList` for this menu.
+(c) Inferring "no permission" purely from a `403` on the real write endpoint (let the user click and
+fail) — still rejected: the button must not be shown/clickable at all when the user lacks permission.
+(d) A new dedicated permission resource just for the Purchase Order screen — still rejected, same
+reasoning as before (reuse the real capability, don't invent a parallel one).
+(e) *Keep both mechanisms (permissionList for instant UI gating, live probe as a secondary
+confirmation)* — rejected: redundant network round trip for no additional correctness once
+`permissionList` is confirmed to reflect the same underlying data; the requester explicitly asked to
+remove the now-unused probe code.

@@ -1232,3 +1232,304 @@ get sent, not any folder's own content, so the same fixture exercises both forma
 - SC-080 (closing the popup without choosing triggers no download) → frontend step 2.
 - SC-081 (the popup/choice writes nothing to `eutr_documents`/`eutr_references`/
   `eutr_purchase_attachments`/`eutr_templates`) → frontend step 10.
+
+## Update 24 (2026-09-18) — ETD column, Year/ETD Week search, brown View/Download buttons, Delivery-date-descending default sort
+
+This update needs one small backend change (`RsVnETD` projected onto the shared `refType=11` response +
+one new call to the already-existing `EtdWeekFilterBuilder`/`DynamicModelService` inside
+`ComplDynamicsService`, research.md Decisions 74-75) and a frontend-only change for the default sort/button
+color (Decision 76).
+
+### Fixture setup
+
+At least 3 Sales Orders with distinct `RsVnETD`/`DeliveryDate` values spanning 2 different calendar years
+and at least 2 different ISO weeks within one of those years (e.g. one in week 3/2026, one in week 9/2026,
+one in a different year entirely) — some with `RsVnETD = null` to exercise the empty-state rule.
+
+### Backend verification
+
+1. Call `POST /api/dynamics/reference?refType=11` with no filters. **Expected**: each item in the response
+   now includes an `rsVnETD` field (ISO datetime or `null`), matching the fixture's known values.
+2. Call the same endpoint with `Filters = [{ column: "RsVnETD", operator: "inyear", value: "2026" }]`.
+   **Expected**: only Sales Orders whose `RsVnETD` falls within 2026-01-01–2026-12-31 are returned.
+3. Call the same endpoint with `Filters = [{ column: "RsVnETD", operator: "inweeks", value: "2026:3,9" }]`.
+   **Expected**: only Sales Orders whose `RsVnETD` falls within ISO weeks 3 or 9 of 2026 are returned —
+   narrower than the year-only result in step 2.
+4. Combine an ETD week filter with an existing Code/Name search filter in one request.
+   **Expected**: results satisfy both conditions (AND), not either alone.
+5. Call the same endpoint with `sortColumn=DeliveryDate&sortOrder=desc` and no filters.
+   **Expected**: items are ordered by `deliveryDate` descending (most recent first).
+6. Call the same endpoint for a `refType` other than 11 (e.g. 16). **Expected**: response items carry no
+   `rsVnETD` field/`null`, unaffected by this update; sending an `inyear`/`inweeks` filter against a
+   non-ETD-aware entity is silently ignored (no error, no filtering effect).
+
+### Frontend verification (manual)
+
+1. Open **EUTR Sales Orders** (Overview). **Expected**: the table shows a new **ETD** column immediately
+   after **Delivery Date**; rows with no ETD show a clear placeholder ("-"), not blank/error (SC-082).
+2. With no filter applied, confirm the list's default order is by Delivery date, most recent first — not
+   Sales ID ascending as before (SC-087).
+3. Select a **Year** in the new search block (leave ETD Week at "All weeks in {Year}") and click
+   **Search**. **Expected**: only Sales Orders with ETD in that calendar year appear (SC-083).
+4. With the same Year selected, pick one or more specific weeks in **ETD Week**, click **Search**.
+   **Expected**: the result narrows further to only those ISO weeks (SC-083).
+5. Additionally type a known Sales ID/Customer keyword into the free-text search box, click **Search**.
+   **Expected**: results satisfy both the keyword and the Year/ETD Week condition together (SC-084).
+6. Click **Clear**. **Expected**: Year, ETD Week, and the keyword all reset, and the table returns to the
+   default unfiltered list (SC-085).
+7. Choose a Year/Week combination with no matching Sales Orders, click Search. **Expected**: the table
+   shows the existing "No data" empty state, not an error.
+8. Observe the **View** and **Download** icon buttons on any row. **Expected**: both render in the same
+   brown color already used elsewhere in the app's theme (`#ba7351`/`chip-brown`) — not the previous blue/
+   primary color; the **Map File** button/icon on the same row is unchanged (SC-086).
+9. Confirm existing behavior is unaffected: search-by-keyword (User Story 2), pagination (User Story 3),
+   Template-column/Progress-column display (Update 1/12), and Download's zip contents (Update 10/13/21/22)
+   all continue to work exactly as before this update.
+
+### Success criteria mapping (Update 24)
+
+- SC-082 (ETD column shows correct position/value/empty-state) → frontend step 1.
+- SC-083 (Year/ETD Week filtering returns the correct narrowed set) → backend steps 2-3, frontend steps
+  3-4.
+- SC-084 (Year/ETD Week combines with keyword search via AND) → backend step 4, frontend step 5.
+- SC-085 (Clear resets Year/ETD Week/keyword together) → frontend step 6.
+- SC-086 (View/Download buttons render brown; Map File unchanged) → frontend step 8.
+- SC-087 (default sort is Delivery date descending) → backend step 5, frontend step 2.
+
+## Update 25 (2026-09-18) — Sales status column: "Backorder" → "Open order" display-label mapping
+
+Zero backend change — `SalesStatus` is already delivered end to end by the existing `refType=11`
+response (retro-documented in data-model.md's Update 25 section). This update is a pure frontend
+verification: one client-side label substitution inside `SalesOrderOverviewPage.jsx`'s existing Sales
+status cell.
+
+### Fixture setup
+
+At least 3 Sales Orders with distinct `SalesStatus` values: one with `SalesStatus = "Backorder"`
+(exact casing), one with a mixed/lower-case variant (e.g. `"backorder"`, if the source data allows it,
+to confirm the match is case-insensitive), one with a different, unrelated status (e.g. `"Invoiced"`),
+and one with `SalesStatus` empty/`null`.
+
+### Frontend verification (manual)
+
+1. Open **EUTR Sales Orders** (Overview). **Expected**: the table shows a **Sales status** column (no
+   position change from before this update).
+2. Find the row whose `SalesStatus` is `"Backorder"`. **Expected**: the cell renders **"Open order"**,
+   not "Backorder" (SC-088).
+3. If a fixture exists with a differently-cased variant (e.g. `"backorder"`), confirm it also renders
+   **"Open order"** (case-insensitive match, FR-171).
+4. Find the row whose `SalesStatus` is `"Invoiced"` (or any other non-"Backorder" value). **Expected**:
+   the cell renders that value verbatim, unchanged from before this update (SC-089).
+5. Find the row whose `SalesStatus` is empty/`null`. **Expected**: the cell renders the existing empty
+   placeholder ("-"), unchanged from before this update (SC-089).
+6. Confirm existing behavior is unaffected: every other Overview column/control (Sales ID, Customer,
+   Customer name, Delivery date, ETD, Template, Progress, search, Year/ETD Week filter, sort,
+   pagination, View/Download/Map File actions) continues to work exactly as before this update.
+
+### Success criteria mapping (Update 25)
+
+- SC-088 ("Backorder" renders as "Open order") → frontend steps 2-3.
+- SC-089 (every other value renders unchanged) → frontend steps 4-5.
+
+## Update 26 (2026-09-21) — View screen: header shows selected PO(s) instead of Template; toolbar collapses to a single "Template" tab
+
+Zero backend change — both `poList` and `templatesData` are already fetched by `ViewSalesOrderPage.jsx`'s
+existing effects. This update is a pure frontend verification, scoped to `/eutr/sales-orders/:salesId/view`
+only.
+
+### Fixture setup
+
+A Sales Order (e.g. `SO005134`) that has Save PO Mapping done with **2 or more** selected PO(s), across
+**2 or more** distinct saved `TemplateCode`s — the same shape already used to verify Update 8/19/20.
+Separately, a second Sales Order with **no** saved PO Mapping at all (empty state).
+
+### Frontend verification (manual)
+
+1. Open View for the fixture Sales Order. **Expected**: the header shows a field labeled **"Purchase
+   Order(s)"** (not "Template"), with one chip per selected `PurchId` (e.g. `PO1`, `PO2`) — matching the
+   `PurchId` values already listed in the "Selected Purchase Orders" table below it. No `TemplateCode`
+   chip appears anywhere in the header.
+2. Open View for the Sales Order with no saved PO Mapping. **Expected**: the "Purchase Order(s)" field
+   shows a clear empty state (no chips), not an error.
+3. On the fixture Sales Order's View screen, look at the Template Checklist toolbar
+   (`data-marker="template-tree-toolbar"`). **Expected**: exactly **1** tab is visible, labeled
+   **"Template"** — no chip for either of the 2+ saved `TemplateCode`s from the fixture appears.
+4. Click the **"Template"** tab. **Expected**: the Template Checklist shows the same merged/default-
+   template tree this screen already showed by default before this update (the old "All" view, Update
+   19/20/21 behavior unchanged) — including the AVAILABLE FILES panel's already-established union-of-all-
+   templates file list.
+5. Confirm every other existing behavior is unaffected: Selected Purchase Orders table (Variants/
+   Materials columns, Update 17/18), clicking a step node in the tree still filters AVAILABLE FILES
+   (Update 15), Download still opens the Combined/By Template popup and produces the same zip contents as
+   before this update (Update 21/22), Validation Summary numbers are unchanged, and Edit / Map File/Back
+   navigate exactly as before.
+6. Confirm `MapFilePage.jsx` and `SalesOrderOverviewPage.jsx` are completely unaffected by this update —
+   their own template-tree toolbars/header fields (if any) render exactly as before.
+
+### Success criteria mapping (Update 26)
+
+- FR-173/FR-174 (header shows Purchase Order(s) chips / empty state) → frontend steps 1-2.
+- FR-175/FR-176 (toolbar shows exactly 1 "Template" tab, same underlying data) → frontend steps 3-4.
+- FR-177/FR-178 (no other behavior changes) → frontend steps 5-6.
+
+## Update 27 (2026-09-22) — Overview search box OR-matches Customer ID (`CustAccount`)
+
+One guarded backend switch-case addition (`ComplDynamicsService.BuildFilterString`'s `"custaccount"`
+case, cloned from the existing `"vendorcode"` case) plus a one-line frontend addition
+(`SalesOrderOverviewPage.jsx`'s `buildSearchFilters`). Scoped entirely to `/eutr/sales-orders`
+(Overview) only.
+
+### Fixture setup
+
+At least 2 Sales Orders with distinct, known `CustAccount` values (e.g. `10676` and a different
+customer's code), and at least one Sales Order whose Sales ID or Customer name happens to contain the
+same digits as another row's `CustAccount` (to verify OR-matching doesn't over- or under-match). Reuse
+the existing "Livique"-named Customer fixture already used to verify FR-011/User Story 2 if available.
+
+### Backend verification
+
+1. Call `POST /api/dynamics/reference?refType=11` with
+   `Filters = [{ column: "CustAccount", operator: "like", value: "10676" }]`. **Expected**: only Sales
+   Orders whose `custAccount` contains "10676" (case-insensitive) are returned.
+2. Call the same endpoint with the existing `Code`/`Name` filters unchanged (no `CustAccount` filter).
+   **Expected**: results are byte-for-byte identical to the pre-Update-27 behavior — no regression.
+3. Call the same endpoint for a `refType` other than 11 (e.g. 15, 16, 20) with a `CustAccount` filter
+   entry. **Expected**: the filter has no effect on that `refType`'s results (falls through to the
+   generic "other column" AND bucket, or is a no-op) — not an error, and not applied as a
+   Sales-Orders-style OR-search.
+4. Combine a `CustAccount` search keyword with an ETD Year/Week filter in one request (Update 24 shape).
+   **Expected**: results satisfy both conditions (AND) — a Customer-ID match still narrows further when
+   combined with Year/Week.
+
+### Frontend verification (manual)
+
+1. Open **EUTR Sales Orders** (Overview) with the full default list showing. Type a known Customer ID
+   (e.g. "10676") into the existing search box and press Enter/click Search. **Expected**: the table
+   narrows to only that customer's Sales Order rows (SC-090).
+2. Clear the search box. **Expected**: the table returns to the default unfiltered list.
+3. Type a known Sales ID into the search box, exactly as before this update. **Expected**: results are
+   identical to pre-Update-27 behavior (SC-091).
+4. Type a known Customer name (e.g. "Livique") into the search box, exactly as before this update.
+   **Expected**: results are identical to pre-Update-27 behavior (SC-091).
+5. Type a keyword that matches a Customer ID on one row and a Sales ID substring on a different row.
+   **Expected**: both rows appear in the result (OR across all 3 columns), not just one.
+6. Type a Customer ID search keyword, then select a Year in the Year/ETD Week block and click Search.
+   **Expected**: results satisfy both conditions together (AND), same combining rule already verified
+   for Sales ID/Customer name search in Update 24.
+7. Type a keyword with no match in any of Sales ID/Customer/Customer name. **Expected**: the table shows
+   the existing "No data" empty state, not an error.
+8. Confirm existing behavior is unaffected: pagination (User Story 3), Template/Progress columns
+   (Update 1/12), Back-navigation search/page restore (Update 14), and Download's zip contents (Update
+   10/13/21/22) all continue to work exactly as before this update.
+
+### Success criteria mapping (Update 27)
+
+- SC-090 (valid Customer ID search returns matching rows) → backend step 1, frontend step 1.
+- SC-091 (existing Sales ID/Customer name search results unchanged) → backend step 2, frontend steps
+  3-4.
+- FR-179 (OR-match across Sales ID/Customer/Customer name) → frontend step 5.
+- FR-180 (AND with Year/ETD Week; Template-whitelist rule unchanged) → backend step 4, frontend step 6.
+- FR-181 (scoped to refType = 11 only) → backend step 3.
+
+## Update 28 (2026-09-22) — Map File/Edit/Download icons gated by `permissionList` ('Update'/'Download') on menu `eutr-sales-orders`
+
+100% frontend, zero backend change — edits confined to `SalesOrderOverviewPage.jsx` and
+`ViewSalesOrderPage.jsx`, each reading `permissionList` for menu `eutr-sales-orders` via the existing
+`getMenuDataFromStorage()` util. Scoped to both `/eutr/sales-orders` (Overview) and
+`/eutr/sales-orders/:salesId/view` (View).
+
+### Fixture setup
+
+A test user account whose menu permissions for `eutr-sales-orders` can be toggled through the same
+menu-admin mechanism already used to grant/revoke `Update`/`Download` on other EUTR menus (e.g.
+`eutr-documents`). At least one Sales Order with a saved Template (so Map File/Download have something
+to act on) for use while testing each permission combination.
+
+### Frontend verification (manual)
+
+1. Grant the test user both `Update` and `Download` on menu `eutr-sales-orders`. Open Overview.
+   **Expected**: every row shows all 3 action icons — Map File, Download, View summary.
+2. Open View for a Sales Order. **Expected**: the toolbar shows all 3 buttons — Edit / Map File,
+   Download, Back.
+3. Revoke `Update` only (keep `Download`), reload Overview. **Expected**: Map File icon is gone from
+   every row; Download and View summary icons still show.
+4. Reload View for the same Sales Order. **Expected**: the Edit / Map File button is gone; Download and
+   Back buttons still show.
+5. Restore `Update`, revoke `Download` instead, reload Overview. **Expected**: Download icon is gone
+   from every row; Map File and View summary icons still show.
+6. Reload View. **Expected**: the Download button is gone; Edit / Map File and Back buttons still show.
+7. Revoke both `Update` and `Download`, reload Overview. **Expected**: only the View summary icon shows
+   on every row (Map File and Download both gone).
+8. Reload View. **Expected**: only the Back button shows (Edit / Map File and Download both gone).
+9. Restore both permissions, confirm Map File still navigates to Map File and Download still opens the
+   format-choice popup and downloads a zip exactly as before this update (FR-188) — no behavior change
+   to either action beyond its own visibility.
+10. Confirm every other Overview/View control (search, pagination, sort, Year/ETD Week filter, Sales
+    status label, Template/Progress columns, Template Checklist, AVAILABLE FILES, Validation Summary,
+    Back-navigation search/page restore) is unaffected by any permission combination above.
+
+### Success criteria mapping (Update 28)
+
+- SC-092 (no Update permission → Map File/Edit hidden everywhere) → frontend steps 3, 4, 7, 8.
+- SC-093 (no Download permission → Download hidden everywhere) → frontend steps 5, 6, 7, 8.
+- SC-094 (users with permission keep working as before) → frontend steps 1, 2, 9.
+- FR-182..FR-185 (each icon/button gated by its own permission) → frontend steps 3-8.
+- FR-186 (Update/Download are independent conditions) → frontend steps 3-6 (each toggled alone).
+- FR-187 (View summary/Back unaffected) → frontend steps 1-8 (both always shown).
+- FR-188 (no behavior change to the actions themselves) → frontend step 9.
+
+## Update 29 (2026-09-23) — Map File Step 2 Upload/Edit buttons gated by `permissionList` of menu `eutr-documents`
+
+100% frontend, zero backend change (as shipped) — edits confined to `MapFilePage.jsx`, reading
+`permissionList` for menu `eutr-documents` via the existing `getMenuDataFromStorage()` util (the same
+mechanism Update 28 already uses for menu `eutr-sales-orders`). Scoped to
+`/eutr/sales-orders/:salesId/map-file` Step 2 only — does not touch Step 1, the View screen, or Update
+28's own `permissionList` gating of menu `eutr-sales-orders`.
+
+**Correction note**: an earlier draft of this update added a live backend probe
+(`GET /api/eutr-documents/can-create`/`can-update`) instead of reading `permissionList`. Live testing
+(browser DevTools, see research.md Decision 81) showed the probe approach did not reflect the test
+user's actual permission and that `permissionList` for menu `eutr-documents` already carries
+`'Create'`/`'Update'` — the probe endpoints were removed and this section rewritten accordingly.
+
+### Fixture setup
+
+A test role whose `permissionList` for menu `eutr-documents` can be toggled through the same
+menu-admin mechanism already used to grant/revoke `Update`/`Download` on menu `eutr-sales-orders`
+(Update 28) — this time for the `eutr-documents` menu's `'Create'`/`'Update'` entries. This role MUST
+also have Update-permission access on menu `eutr-sales-orders` (Update 28) so it can reach Map File at
+all. At least one Sales Order with a saved PO/Template and at least one existing document in AVAILABLE
+FILES (so the Edit button has something to gate).
+
+### Frontend verification (manual)
+
+1. Grant the test role both `'Create'` and `'Update'` on menu `eutr-documents`. Open Map File Step 2
+   for the fixture Sales Order. **Expected**: the Upload button and every row's Edit button are
+   visible; View is visible on every row too.
+2. Revoke `'Create'` only (keep `'Update'`), reload. **Expected**: Upload button is gone; every row's
+   Edit and View buttons still show.
+3. Restore `'Create'`, revoke `'Update'` only, reload. **Expected**: every row's Edit button is gone;
+   Upload and every row's View button still show.
+4. Revoke both, reload. **Expected**: only View shows on each row; Upload and Edit are both gone; the
+   template tree, header, and Step 1 (navigate back and check) are all unaffected.
+5. Restore both permissions, confirm Upload still opens the Add popup and successfully uploads a file,
+   and Edit still opens the Edit popup and successfully saves a change — exactly as before this update
+   (FR-193), with AVAILABLE FILES refreshing immediately either way.
+6. With `'Update'` revoked on menu `eutr-documents` but Update permission granted on menu
+   `eutr-sales-orders` (Update 28), confirm the user can still reach Map File (Edit / Map File
+   button/icon visible per Update 28) even though the Edit button inside Step 2 is hidden — the two
+   permission layers (2 different menu codes) are independent (spec Edge Cases).
+7. Confirm the browser makes no `can-create`/`can-update` network call when opening Map File (DevTools
+   Network tab) — the visibility check reads `localStorage` only, no round trip.
+
+### Success criteria mapping (Update 29)
+
+- SC-095 (Create/Update permission independently gates Upload/Edit, unaffected users keep working) →
+  frontend steps 1-5.
+- FR-189 (Upload gated by `permissionList.includes('Create')` of menu `eutr-documents`) → frontend
+  step 2.
+- FR-190 (Edit gated by `permissionList.includes('Update')` of menu `eutr-documents`) → frontend
+  step 3.
+- FR-191 (independent conditions) → frontend steps 2-3 (each toggled alone).
+- FR-192 (View/Step 1/template tree unaffected) → frontend steps 1, 4.
+- FR-193 (no behavior change to Upload/Edit once shown) → frontend step 5.

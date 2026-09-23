@@ -508,11 +508,44 @@ Mở SPA, đăng nhập, vào menu **EUTR documents** (đường dẫn `/eutr/do
     Type = "Invoice" đã có `Invoice` (kịch bản 22/22c), xác nhận cột hiển thị đúng giá trị dạng văn
     bản đơn thuần (không phải chip). Với document Type khác "Invoice" (`Invoice = null`), xác nhận cột
     này hiển thị trống — không lỗi, không ảnh hưởng các cột khác.
+24. **Add — File name tự động đổi theo Step + Prefix của master (Update 25, FR-062/FR-064)**: Ở màn
+    Assign Steps (`006-eutr-reference-types`) hoặc `002-eutr-masters`, chuẩn bị 1 Step (ví dụ
+    "Invoice") có 1 bản ghi `eutr_master_documents` với `Prefix = "INV"`. Mở popup Add → chọn Type
+    khác "PO" (ví dụ "Invoice") → chọn Step đó → nhập 1 chip Value → Upload 1 file bất kỳ (ví dụ
+    `scan001.pdf`). Sau khi Upload xong, quay lại danh sách chính → xác nhận cột **File name** của
+    document mới = `"INVInvoice.pdf"` (Prefix + Step Name + đuôi file gốc) — **không phải**
+    `scan001.pdf`.
+24a. **Step KHÔNG có cấu hình trong master (Update 25, FR-062)**: Lặp lại kịch bản 24 nhưng chọn 1
+    Step KHÔNG có bản ghi nào trong `eutr_master_documents` (ví dụ "Delivery") → xác nhận File name =
+    đúng `Name` của Step đó + đuôi file gốc (ví dụ `"Delivery.docx"`) — không có Prefix ở đầu.
+24b. **Type = "PO" — Prefix dài nhất khi khớp nhiều Step (Update 25, FR-063)**: Chuẩn bị 2 bản ghi
+    `eutr_master_documents`: `Prefix = "INV"` (Step A) và `Prefix = "INV2026"` (Step B, cùng là tiền
+    tố của cùng 1 tên file). Ở popup Add, chọn Type = "PO", nhập 1 chip PO hợp lệ, Upload 1 file có
+    tên bắt đầu bằng `"INV2026"` (ví dụ `INV2026_PO000123.pdf`) → xác nhận: (a) kiểm tra DB —
+    `eutr_references` có đủ 2 dòng (`StepId` của Step A và Step B, cùng `RefValue` = mã PO); (b) trên
+    danh sách chính, File name của document đó = Prefix "INV2026" (dài hơn) + Step Name của Step B +
+    đuôi file gốc — không dùng Step A.
+24c. **Sanitize ký tự đặc biệt (Update 25, FR-064)**: Ở `001-eutr-steps`, tạo tạm 1 Step có `Name`
+    chứa ký tự đặc biệt (ví dụ `"A\B"`), không cấu hình Prefix nào cho Step đó. Mở popup Add, chọn
+    Type khác "PO", chọn Step vừa tạo, Upload 1 file bất kỳ → xác nhận File name của document mới =
+    `"AB.pdf"` (đã loại bỏ `\`) — không lỗi khi upload lên SharePoint.
+24d. **Nhiều file cùng Step → File name trùng nhau (Update 25, FR-067)**: Ở popup Add, chọn Type khác
+    "PO" + 1 Step bất kỳ, Upload 2 file khác tên nhau (cùng định dạng, ví dụ `a.pdf`/`b.pdf`) trong
+    cùng 1 lượt → xác nhận cả 2 document mới trên danh sách chính có File name **giống hệt nhau** —
+    hệ thống lưu bình thường, không báo lỗi trùng tên.
+24e. **Edit không tính lại File name (Update 25, FR-066)**: Mở popup Edit của 1 document vừa tạo ở
+    kịch bản 24, đổi Step sang giá trị khác, Save → xác nhận File name trên danh sách chính **không
+    đổi** (vẫn giữ tên đã tính lúc Upload) dù Step hiển thị đã đổi.
 
 ## Tiêu chí đạt
 
-- Tất cả 23 kịch bản trên (cùng các kịch bản phụ 9a-9s, 10a, 11a-11b, 15a-15e, 16a-16b, 17a, 18a-18i,
-  19a-19b, 20a-20b, 21a-21d, 22a-22d, 1a, 5a-5c, 6a) hoạt động đúng.
+- Tất cả 24 kịch bản trên (cùng các kịch bản phụ 9a-9s, 10a, 11a-11b, 15a-15e, 16a-16b, 17a, 18a-18i,
+  19a-19b, 20a-20b, 21a-21d, 22a-22d, 24a-24e, 1a, 5a-5c, 6a) hoạt động đúng.
+- **(Update 25)** File name (`eutr_documents.Name`) của mọi document tạo mới qua Upload không còn là
+  tên file gốc — tính theo Prefix (nếu Step có cấu hình trong `eutr_master_documents`) + Step Name, đã
+  loại bỏ ký tự đặc biệt (`\`, chuỗi `..`), giữ đuôi file gốc — xem SC-016/FR-062 đến FR-067. Type =
+  "PO" giữ nguyên toàn bộ logic khớp Prefix/ghi `eutr_references` hiện có (FR-020/FR-023), chỉ thêm
+  bước chọn bản ghi Prefix dài nhất để đặt tên. Edit không tính lại File name của document hiện có.
 - **(Update 24)** Bảng danh sách chính hiển thị cột **Invoice** ngay sau cột Step name, đọc trực tiếp
   `eutr_documents.Invoice` (không JOIN `eutr_references`) — xem SC-015/FR-061; document `Invoice =
   null` hiển thị cột này ở trạng thái trống.

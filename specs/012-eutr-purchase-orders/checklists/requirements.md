@@ -60,3 +60,33 @@
   hiện có (đã xác nhận qua code thực tế: `PurchaseOrderViewPage.jsx` là trang chi tiết 1 PO cố định).
 - Re-validated toàn bộ checklist: tất cả mục vẫn PASS, không phát sinh chi tiết triển khai hay yêu cầu
   không kiểm chứng được.
+
+### Update 3 (2026-09-18) — Kế thừa đổi tên file theo Step/Prefix master từ 004-eutr-documents Update 25
+
+- Ghi lại (chỉ 1 Clarifications entry, không cần FR/Key Entity/Success Criteria mới) rằng nút
+  Upload/Edit ở `PurchId/View` dùng chung đúng popup Add/Edit và luồng Upload với `004-eutr-documents`
+  nên tự động kế thừa hành vi đổi tên file theo Step/Prefix master (Update 25, FR-062–FR-067 của đặc
+  tả đó) mà không cần thay đổi gì ở đặc tả này.
+- Không cần [NEEDS CLARIFICATION] — câu hỏi duy nhất đáng cân nhắc (Type tự điền sẵn = "PO" theo
+  Update 1 có làm thay đổi cách áp dụng logic đổi tên không) được trả lời trực tiếp trong Clarifications
+  entry: người dùng vẫn đổi được Type trước khi Upload, nên cả hai nhánh (PO/không PO) của Update 25 đều
+  áp dụng đúng như đặc tả gốc, không cần quy tắc riêng.
+- Re-validated toàn bộ checklist: tất cả mục vẫn PASS, không phát sinh chi tiết triển khai hay yêu cầu
+  không kiểm chứng được.
+
+### Update 4 (2026-09-22) — Ẩn nút Upload khi user không có quyền tạo tài liệu
+
+- Bổ sung FR-030/FR-031/FR-032 và 2 acceptance scenario (User Story 2, #15-16): nút Upload ở
+  `PurchId/View` chỉ hiển thị khi người dùng có quyền tạo tài liệu mới (cùng quyền đang kiểm soát
+  Upload dùng chung với 004-eutr-documents); ẩn hoàn toàn (không disable) khi không có quyền; không
+  ảnh hưởng tới nút Edit hay phần còn lại của màn hình.
+- 1 [NEEDS CLARIFICATION] phát sinh khi soạn thảo: yêu cầu gốc nói "quyền Update" nhưng hành động
+  Upload thực chất gọi luồng tạo tài liệu (Create), không phải luồng sửa (Update, vốn là của nút
+  Edit) — cần xác nhận map "quyền Update" vào quyền thật nào. Đã hỏi người dùng qua câu hỏi lựa chọn;
+  người dùng chọn: dùng đúng quyền thật đang bảo vệ hành động Upload (tạo tài liệu mới, dùng chung với
+  004-eutr-documents) — "Update" trong yêu cầu được hiểu theo nghĩa nghiệp vụ chung, không phải tên
+  quyền kỹ thuật. Đã ghi lại thành Decision trong Clarifications và FR-030.
+- Assumptions bổ sung: giao diện hiện chưa có cơ chế lấy quyền theo từng hành động cụ thể (chỉ có
+  quyền theo menu) — việc bổ sung cơ chế này để phục vụ FR-030 nằm trong phạm vi cập nhật này.
+- Re-validated toàn bộ checklist: tất cả mục vẫn PASS sau khi giải quyết clarification, không phát
+  sinh chi tiết triển khai hay yêu cầu không kiểm chứng được.

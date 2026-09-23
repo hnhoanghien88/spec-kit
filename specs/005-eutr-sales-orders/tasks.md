@@ -4881,3 +4881,921 @@ picking **Combined (All)** downloads a zip with only the All folder, for the sam
 the browser's network tab, confirm the default-template 2-call fetch is skipped entirely on Overview when
 By Template is picked, and does fire when Combined is picked; (4) confirm closing the popup via
 Cancel/backdrop-click triggers no network call and no download.
+
+---
+
+## Phase 69: Backend — ETD Field Projection + Year/ETD Week Filter Support (Update 24)
+
+**Purpose**: Project the already-existing `RsVnETD` field onto the shared `refType=11` response, and
+teach `ComplDynamicsService` to resolve ETD Year/Week filters by reusing `EtdWeekFilterBuilder`/
+`IsoWeekRange`/`DynamicModelService` — the exact same utilities `AllCompliancesService` already uses for
+`compliance-view`'s own Year/ETD Week dropdown — spec FR-161, FR-163, FR-164, FR-167. No migration, no
+new D365 field, no new entity (research.md Decisions 74-75).
+
+- [X] T356 [P] Add `public DateTime? RsVnETD { get; set; }` to
+  `compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/ComplDynReferenceResponseDto.cs`,
+  alongside the existing `DeliveryDate`/`CustAccount` properties.
+  *(Done.)*
+- [X] T357 In `compliance-sys-api/src/ComplianceSys.Application/Services/ComplDynamicsService.cs`'s
+  `MapDynamicsResponse`, add `RsVnETD = so.RsVnETD` to the `case 11:` branch, alongside the existing
+  `DeliveryDate = so.DeliveryDate` assignment (depends on T356).
+  *(Done.)*
+- [X] T358 In the same file: add a `DynamicModelService` constructor dependency to `ComplDynamicsService`
+  (already registered in DI, already injected into the sibling `AllCompliancesService` — no new
+  registration needed).
+  *(Done.)*
+- [X] T359 In the same file's `GetDynRefePagedAsync`: before calling `BuildFilterString`, split
+  `request.Filters` into ETD filters (`EtdWeekFilterBuilder.IsYearFilter`/`IsWeekFilter`) and the
+  remaining ("other") filters; when any ETD filter is present, fetch
+  `var modelInstance = await _dynamicModelService.GetModelInstance(refType)` and resolve
+  `etdCondition = weekFilters.Any() ? EtdWeekFilterBuilder.Build(modelInstance, weekFilters) :
+  EtdWeekFilterBuilder.BuildYear(modelInstance, yearFilters)`; AND `etdCondition` onto the string
+  `BuildFilterString` returns for the remaining filters (`filterString = string.IsNullOrEmpty(filterString)
+  ? etdCondition : $"({filterString}) and ({etdCondition})"`) — the exact same extract-then-AND shape
+  `AllCompliancesService.GetDataAsync` already uses (depends on T358, research.md Decision 75).
+  *(Done — `dotnet build src/ComplianceSys.Application/ComplianceSys.Application.csproj` succeeded, 0
+  errors; `git diff` confirms only `ComplDynReferenceResponseDto.cs`/`ComplDynamicsService.cs` changed,
+  and only inside the new constructor param/`case 11:`/`GetDynRefePagedAsync` branch — no other
+  `EntityMappings` entry, `MapSortColumn` case, or `ODataOperatorConverter` code touched.)*
+
+**Checkpoint**: `POST /api/dynamics/reference?refType=11` returns `rsVnETD` per item and correctly narrows
+results when an `inyear`/`inweeks` filter entry is sent on column `RsVnETD`; every other `refType`'s
+behavior is unaffected.
+
+---
+
+## Phase 70: Frontend — ETD Column + Year/ETD Week Search + Brown Buttons + Default Sort (Update 24)
+
+**Purpose**: Wire `SalesOrderOverviewPage.jsx` to the Phase 69 backend changes and reuse
+`compliance-view`'s existing Year/ETD Week util/UI pattern, apply the existing `chip-brown` theme class to
+the View/Download buttons, and change the default sort to Delivery-date-descending — spec FR-161..FR-169.
+
+- [X] T360 [P] [US1] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/SalesOrderOverviewPage.jsx`: import
+  `getYearOptions`, `getWeekOptions`, `buildEtdWeekFilters` from
+  `@presentation/pages/compliance-view/utils/isoWeek` (cross-feature import, same precedent as
+  `compliance-missing/index.jsx`); add `etdYear`/`etdWeeks` state (`useState(null)`/`useState([])`).
+  *(Done — implemented `etdYear` as `useState('')` instead of `useState(null)`, matching
+  `compliance-view/index_new.jsx`'s own convention where `''` means "All years"/no filter, consistent
+  with the reused `Select`'s empty-string `MenuItem` and with `buildEtdWeekFilters`'s own `!year` falsy
+  check; also added an `etdFiltersRef` (`useRef([])`) alongside the state so `fetchSalesOrders` reads the
+  latest computed filter synchronously without waiting for a `useEffect`.)*
+- [X] T361 [US1] In the same file: add a Year `Select` (options from `getYearOptions()`) and an ETD
+  Week multi-select `Select` (options from `getWeekOptions(etdYear)`, label reading "All weeks in
+  {etdYear}" when `etdWeeks` is empty) with a "Clear week" control, placed above the table alongside the
+  existing free-text search box — same layout/behavior as `compliance-view`'s own Year/ETD Week block
+  (depends on T360).
+  *(Done — markup cloned from `compliance-view/index_new.jsx`'s Year/ETD Week `FormControl`s; unlike
+  that screen, selecting Year/Week here only updates local state/`etdFiltersRef` — it does not
+  auto-fetch, since this update uses a single explicit Search button for both the keyword and Year/Week
+  conditions (spec FR-162/FR-165), rather than compliance-view's apply-on-change-for-Year/Week pattern.)*
+- [X] T362 [US1] In the same file: add an **ETD** column to the table header and row rendering,
+  positioned immediately after **Delivery Date**, rendering `row.rsVnETD` with the same empty-placeholder
+  rule ("-") already used for `row.deliveryDate` (depends on Phase 69).
+  *(Done — also bumped both empty/loading-state `colSpan` values from 7 to 8 to account for the new
+  column, preserving the same pre-existing off-by-one relative to the true 9-column header that this
+  file already had before this update — not a regression introduced here.)*
+- [X] T363 [US1] In the same file: change the **Search** button's handler to concatenate
+  `buildEtdWeekFilters(etdYear, etdWeeks)`'s output onto the existing `buildSearchFilters(searchValue)`
+  array before calling `getReferenceDataUseCase.execute(...)` (both arrays combine via the same AND-joined
+  "other" bucket `BuildFilterString` already produces once ETD filters are extracted); change the
+  **Clear** button's handler to also reset `etdYear`/`etdWeeks` to their empty defaults alongside the
+  existing search-keyword reset (depends on T360, T361).
+  *(Done — added explicit `handleSearchClick`/`handleClearClick` handlers plus a Search/Clear `Button`
+  pair in the new toolbar; `fetchSalesOrders` itself concatenates `buildSearchFilters(searchValue)` with
+  `etdFiltersRef.current` on every call, so pagination/page-size changes also keep whatever Year/ETD Week
+  condition is currently applied, not just the initial Search click.)*
+- [X] T364 [P] [US1] In the same file: change the default fetch call's sort arguments (mount effect and
+  the Clear handler) from `'Code'`/`'asc'` to `'DeliveryDate'`/`'desc'` (independent of T360-T363 — the
+  existing `MapSortColumn` passthrough already supports this literal with zero backend change).
+  *(Done — changed inside `fetchSalesOrders` itself, so every call site — mount, Search, Clear,
+  pagination, page-size change — uses the new default sort; this page has no interactive column-sort UI
+  of its own, so there is no separate "user's active choice" to preserve.)*
+- [X] T365 [P] [US1] In the same file: add the existing `chip-brown` CSS class
+  (`presentation/themes/custom.css`) to the View and Download `IconButton`s in the Actions cell, replacing
+  their current `color="primary"`/default MUI color; leave the Map File button/icon unchanged.
+  *(Done, revised after visual review: applying the `.chip-brown` class (`background-color: #ba7351`)
+  rendered the two buttons as solid brown filled squares, which does not match the reference screenshot
+  (Compliance View's Actions icons are flat — icon-colored only, no background fill). Switched to
+  `sx={{ color: '#ba7351' }}` on each `IconButton` instead — same brown value, tints only the icon glyph,
+  no background box — matching the reference's flat-icon look; Map File's icon is unaffected. The
+  now-unused `themes/custom.css` import added earlier was removed.)*
+
+**Checkpoint**: Overview shows an ETD column after Delivery Date; Year/ETD Week filtering combines with
+keyword search via AND and Clear resets all three; the default (unfiltered) list is sorted by Delivery
+date descending; View/Download buttons render brown, Map File does not.
+
+---
+
+## Phase 71: Polish & Cross-Cutting Concerns (Update 24)
+
+**Purpose**: Final validation for the Update 24 changes; no new functionality.
+
+- [ ] T366 [P] Run the backend verification steps in `specs/005-eutr-sales-orders/quickstart.md`
+  "Update 24" section (steps 1-6: `rsVnETD` present in the response, `inyear`/`inweeks` filters narrow
+  results correctly, AND-combines with an existing search filter, `DeliveryDate desc` sort works, other
+  `refType`s unaffected) (depends on T356-T359).
+  *(NOT run — requires a live, D365-connected `compliance-sys-api` process with known Sales Order/ETD
+  fixtures, unavailable in this environment (same constraint as every prior update's live-verification
+  task, e.g. T353 in Update 22). As a proxy check: `dotnet build
+  src/ComplianceSys.Application/ComplianceSys.Application.csproj` succeeded with 0 errors; a full
+  solution build compiled all changed code with 0 errors (the only failures were file-copy locks from an
+  already-running `ComplianceSys.Api` process on this machine, unrelated to this change). A human with
+  D365/backend access must complete quickstart.md's Update 24 backend steps before sign-off.)*
+- [ ] T367 [P] Run the frontend manual verification steps in the same file's "Update 24" section (steps
+  1-9: ETD column position/placeholder, default sort order, Year-only filter, Year+Week filter, combined
+  keyword+Year/Week filter, Clear resets all three, no-match empty state, brown button rendering, no
+  regression to search/pagination/Template/Progress/Download) (depends on T360-T365).
+  *(NOT run — requires a browser session against a live, D365-connected backend with real fixture Sales
+  Orders, unavailable in this environment (same constraint as every prior update's live-verification
+  task). As a proxy check: `npx vite build --mode production` succeeded, producing a new
+  `SalesOrderOverviewPage` chunk (and a shared `isoWeek` chunk, confirming the cross-feature import
+  resolved correctly) with 0 build errors; `npx eslint` on the changed file reports 0 problems. A human
+  with browser/D365 access must complete quickstart.md's Update 24 frontend steps before sign-off.)*
+- [X] T368 [P] Review new/changed lines in `ComplDynReferenceResponseDto.cs`/`ComplDynamicsService.cs`
+  to confirm added comments are Vietnamese, matching each file's existing comment style, per Constitution
+  Principle IV; confirm the frontend's new UI text ("Year", "ETD Week", "ETD" column header) reuses
+  `compliance-view`'s existing labels verbatim rather than introducing a parallel translation (depends on
+  T356-T365).
+  *(Verified: every new backend comment is Vietnamese (unaccented ASCII), matching each file's existing
+  comment style. New frontend English UI text is exactly: "Year"/"ETD Week"/"All years"/"Clear week"
+  (verbatim from `compliance-view/index_new.jsx`), "ETD" column header (verbatim from
+  `useAllCompliancesColumnsSaleOrder.jsx`'s own column label), and "Search"/"Clear" button labels — no
+  other existing label/placeholder text was changed.)*
+- [X] T369 Confirm zero change to `ODataOperatorConverter.cs`, `MapSortColumn`'s explicit case list,
+  `EntityMappings`, `DynController.cs`, and every `refType` other than 11's filter/sort/response behavior
+  — reuse-only verification (depends on T356-T365).
+  *(Verified via `git diff`: `ODataOperatorConverter.cs` and `DynController.cs` show zero changes;
+  `ComplDynamicsService.cs`'s diff touches only the constructor (+1 param), `case 11:` (+1 field
+  assignment), and one new branch inside `GetDynRefePagedAsync` — no other `EntityMappings` entry,
+  `MapSortColumn` case, or existing `case N:` block in `MapDynamicsResponse` was touched.)*
+
+**Checkpoint**: Update 24 code complete and compiles/lints clean (backend: `dotnet build` on
+`ComplianceSys.Application` succeeds with 0 errors; frontend: `vite build` succeeds, `eslint` reports 0
+problems). Live-backend/browser verification (T366/T367) remains for a human with D365/browser access,
+consistent with every prior update's live-verification task in this feature.
+
+### Status (2026-09-18)
+
+Phases 69-71 done in code (T356-T365, T368, T369 all `[X]`). Backend: `dotnet build
+src/ComplianceSys.Application/ComplianceSys.Application.csproj` succeeded, 0 errors; a full solution
+build compiled every changed file with 0 compiler errors (only unrelated file-copy-lock warnings from an
+already-running `ComplianceSys.Api` process on this machine, not a code issue). `git diff` confirms only
+`ComplDynReferenceResponseDto.cs` (+1 property) and `ComplDynamicsService.cs` (+1 constructor param, +1
+`case 11:` field, +1 filter branch inside `GetDynRefePagedAsync`) changed — `ODataOperatorConverter.cs`,
+`DynController.cs`, `MapSortColumn`, and every other `EntityMappings`/`case N:` entry are untouched.
+Frontend: `npx vite build --mode production` succeeded, producing a new `SalesOrderOverviewPage` chunk
+and a shared `isoWeek` chunk (confirming the cross-feature import from `compliance-view/utils/isoWeek.js`
+resolved correctly); `npx eslint` on the changed file reports 0 problems. `git diff --stat` confirms only
+`SalesOrderOverviewPage.jsx` changed on the frontend — `isoWeek.js`, `custom.css`, and
+`compliance-missing/index.jsx` are all byte-for-byte unchanged, confirming pure reuse. The two live-data
+verification tasks (T366/T367) are **NOT run**: this environment has no live, D365-connected
+`compliance-sys-api` process or browser session available (same constraint as every prior update's
+live-verification task in this feature). Before sign-off, a human with backend/D365/browser access
+should complete `quickstart.md`'s Update 24 backend and frontend verification steps.
+
+---
+
+## Update 24 Dependencies
+
+### Phase Dependencies
+
+- **Phase 69** (Backend): T356 has no dependency. T357 depends on T356. T358 has no dependency (adds a
+  constructor parameter). T359 depends on T358.
+- **Phase 70** (Frontend): T360 has no dependency. T361 depends on T360. T362 depends on Phase 69 (needs
+  `rsVnETD` in the response to render meaningfully, though the column can be scaffolded beforehand). T363
+  depends on T360, T361. T364 has no dependency (independent literal change). T365 has no dependency
+  (independent CSS class addition).
+- **Phase 71** (Polish): depends on Phase 69 and Phase 70 being complete.
+
+### Parallel Opportunities
+
+- T356 (DTO field) and T358 (constructor dependency) can start in parallel — different edit locations in
+  the same file, no shared state.
+- T364 (default sort literals) and T365 (button color class) are independent of the Year/ETD Week UI work
+  (T360-T363) and of each other — all three can proceed in parallel once the file is open for editing.
+- T366, T367, T368 (Polish) are independent verification passes and can run in parallel; T369 is a quick
+  reuse-only review best done last.
+
+### Implementation Strategy
+
+1. Complete Phase 69 (T356-T359) — backend DTO/mapping/filter-resolution changes.
+2. Complete Phase 70 (T360-T365) — frontend column/filter-UI/sort/color changes, in parallel where noted.
+3. Complete Phase 71 (polish/validation) — full `quickstart.md` "Update 24" pass, specifically confirming
+   Year/ETD Week combines correctly with keyword search (SC-084) and that no other `refType`/screen
+   regressed (SC-082..SC-087).
+
+---
+
+## Update 2026-09-18 — Sales Status Column: "Backorder" → "Open Order" Display-Label Mapping (User Story 1 continued)
+
+**Context**: Per spec Update 25 (FR-170..FR-172, SC-088/SC-089), the Overview screen's already-existing
+**Sales status** column (`SalesOrderOverviewPage.jsx:815` header, `:857` cell — confirmed by direct file
+read, currently `row.salesStatus || '-'`) MUST render the label **"Open order"** when the API's raw
+`SalesStatus` value is `"Backorder"` (case-insensitive exact match); every other value, including
+empty/`null`, keeps rendering exactly as today. This is a **100% frontend-only, zero-backend-change**
+fix — `SalesStatus` is already fully delivered end to end by the existing `refType=11` response
+(retro-documented, not newly added, per data-model.md's Update 25 correction) — confined to one cell
+render inside one already-existing file (research.md Decision 77).
+
+**Prerequisites for this update**: [research.md "Update 25" Decision 77](./research.md),
+[data-model.md "Update 25"](./data-model.md),
+[contracts/dynamics-reference-refType-11.md `salesStatus` note](./contracts/dynamics-reference-refType-11.md),
+[quickstart.md "Update 25"](./quickstart.md).
+
+---
+
+## Phase 72: User Story 1 (continued) — Sales status cell renders "Open order" for "Backorder"
+
+**Goal**: The Overview grid's existing Sales status column shows a friendlier label for the one raw
+API value "Backorder", with no other column/control affected and no backend change.
+
+**Independent Test**: With a fixture Sales Order whose `SalesStatus` is exactly `"Backorder"`, open
+Overview and confirm that row's Sales status cell reads "Open order"; confirm every other row's Sales
+status cell (including a differently-cased "backorder" fixture, a different status like "Invoiced", and
+an empty/`null` status) renders exactly as it did before this update.
+
+- [X] T370 [US1] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/SalesOrderOverviewPage.jsx`, edit the
+  Sales status cell (currently `<Typography variant="body2">{row.salesStatus || '-'}</Typography>` at
+  line 857) to render `"Open order"` when `row.salesStatus` case-insensitively equals `"Backorder"`,
+  else keep the existing `row.salesStatus || '-'` expression unchanged — e.g.
+  `{row.salesStatus?.toLowerCase() === 'backorder' ? 'Open order' : (row.salesStatus || '-')}`. Add a
+  short Vietnamese comment above the cell referencing spec FR-171, matching this file's own existing
+  comment style (e.g. the Update 24 comments already in this file). Do **not** change the column header
+  (line 815), the column's position, or any other cell/column in this table.
+  *(Done — added a small `getSalesStatusLabel(rawStatus)` pure function next to `buildSearchFilters`
+  (same top-of-file helper-function area), with a 3-line Vietnamese comment above it referencing spec
+  FR-171/FR-172, matching this file's own comment style; the cell at line 857 now calls
+  `getSalesStatusLabel(row.salesStatus)` instead of the inline `row.salesStatus || '-'`. Column header
+  (line 815) and every other cell/column untouched.)*
+
+**Checkpoint**: Overview's Sales status column shows "Open order" for every row whose raw API value is
+"Backorder" (any casing), and is unchanged for every other row (spec SC-088/SC-089).
+
+---
+
+## Phase 73: Polish & Cross-Cutting Concerns (Update 25)
+
+**Purpose**: Final validation for the Update 25 change; no new functionality.
+
+- [ ] T371 [P] Run the frontend manual verification steps in `specs/005-eutr-sales-orders/quickstart.md`
+  "Update 25" section (steps 1-6: Sales status column present and unmoved, "Backorder" renders as "Open
+  order", a differently-cased variant also maps, a different status renders verbatim, an empty/`null`
+  status renders "-", no regression to any other Overview column/control) (depends on T370).
+  *(NOT run — requires a live, D365-connected `compliance-sys-api` process with known Sales Order
+  `SalesStatus` fixtures and a browser session, unavailable in this environment (same constraint as
+  every prior update's live-verification task, e.g. T366/T367 in Update 24). As a proxy check: `npx vite
+  build --mode production` succeeded producing a new `SalesOrderOverviewPage.CBvKcYjR.js` chunk with 0
+  build errors; `npx eslint` on the changed file reports 0 problems. A human with browser/D365 access
+  must complete quickstart.md's Update 25 steps before sign-off.)*
+- [X] T372 [P] Review the new/changed lines in `SalesOrderOverviewPage.jsx` (T370) to confirm the added
+  comment is Vietnamese, matching this file's own existing comment style, and that the one new
+  user-facing string ("Open order") is English, consistent with this column's own existing behavior
+  (rendering raw English D365 status values) and this feature's precedent (Update 5's "Mapped"/"No map"
+  labels), per Constitution Principle IV (depends on T370).
+  *(Verified via `git diff`: the 3-line comment above `getSalesStatusLabel` is Vietnamese, unaccented
+  ASCII, matching this file's existing comment style (e.g. the Update 24 comments in the same file). The
+  only new user-facing string, "Open order", is English — consistent with this column already rendering
+  raw English D365 values ("Backorder", "Invoiced", etc.) and with Update 5's "Mapped"/"No map"
+  precedent.)*
+- [X] T373 Confirm `git diff`/`git status` for this update touches only
+  `compliance-client/src/presentation/pages/eutr-sales-orders/SalesOrderOverviewPage.jsx` — no backend
+  file (`ComplDynReferenceResponseDto.cs`, `ComplDynamicsService.cs`, `DynController.cs` all unchanged),
+  no new DTO field, no change to any other frontend file (depends on T370).
+  *(Verified: `compliance-sys-api`'s `git status --short` shows only pre-existing modifications from
+  prior, already-uncommitted work (`EutrTemplatesController.cs`, `ComplDynReferenceResponseDto.cs`,
+  `ComplDynamicsService.cs`, and others) — none touched by this session; `git diff` for
+  `ComplDynReferenceResponseDto.cs`/`ComplDynamicsService.cs` shows no new hunks introduced now.
+  `compliance-client`'s own `git diff` for `SalesOrderOverviewPage.jsx` shows exactly one new function
+  (`getSalesStatusLabel`, 6 lines incl. comment) and one changed render line (857) attributable to this
+  session — confirmed by isolating the `getSalesStatusLabel`/`salesStatus` diff hunks specifically; the
+  file's other pre-existing uncommitted diff (from prior, already-completed updates) predates this
+  session and was not touched. No other frontend file was edited.)*
+
+**Checkpoint**: All Update 25 quickstart.md checks pass — the Sales status column correctly relabels
+"Backorder" as "Open order" with zero regression to any prior update's behavior.
+
+### Status (2026-09-18)
+
+Phase 72 done in code (T370). Frontend: `npx vite build --mode production` succeeded, producing a new
+`SalesOrderOverviewPage.CBvKcYjR.js` chunk with 0 build errors; `npx eslint` on the changed file reports
+0 problems. `git diff` (inside `compliance-client`'s own repo) confirms the only Update-25-attributable
+change is the new `getSalesStatusLabel` helper function plus its one call site at the Sales status cell
+render — no backend file touched (`compliance-sys-api`'s `git status --short` shows only pre-existing,
+already-uncommitted modifications from earlier work, none from this session). The one live-data
+verification task (T371) is **NOT run**: this environment has no live, D365-connected
+`compliance-sys-api` process or browser session available (same constraint as every prior update's
+live-verification task in this feature). Before sign-off, a human with browser/D365 access should
+complete `quickstart.md`'s Update 25 verification steps.
+
+---
+
+## Update 25 Dependencies
+
+### Phase Dependencies
+
+- **Phase 72**: T370 has no dependency (single-cell edit in an already-existing file).
+- **Phase 73** (Polish): depends on Phase 72 being complete.
+
+### Parallel Opportunities
+
+- T371 and T372 (Polish) are independent verification passes and can run in parallel; T373 is a quick
+  diff-scope review best done last.
+
+### Implementation Strategy
+
+1. Complete Phase 72 (T370) — the one-line label-mapping edit.
+2. Complete Phase 73 (polish/validation) — full `quickstart.md` "Update 25" pass, specifically confirming
+   the case-insensitive match (SC-088) and zero regression to any other value/column (SC-089).
+
+---
+
+## Update 2026-09-21 — View Screen: Header Shows Selected PO(s) Instead of Template; Toolbar Collapses to a Single "Template" Tab (User Story 5 continued)
+
+**Context**: Per spec Update 26 (FR-173..FR-178), on `ViewSalesOrderPage.jsx` only: (1) the header field
+currently labeled **"Template"** (chips of `templatesData`'s `TemplateCode`) MUST become a **"Purchase
+Order(s)"** field showing chips of the selected `PurchId`s (`poList`, the same array already powering
+the "Selected Purchase Orders" table); (2) the toolbar (`data-marker="template-tree-toolbar"`) MUST
+collapse from `[All chip, one chip per saved TemplateCode]` down to exactly **1** tab, relabeled from
+**"All"** to **"Template"** — the per-`TemplateCode` chips (FR-058) no longer render. This is a **100%
+frontend-only, zero-backend-change** update — both `poList` and `templatesData` are already computed in
+this file's existing `useMemo`s (research.md Decision 78); the toolbar's existing `onClick` handler
+(`setSelectedTemplateCode`/`setSelectedStepId(null)`/`loadDefaultTemplate()` for the `null`-code entry,
+per Update 19/20) is unchanged — only the array it maps over shrinks to one entry.
+
+**Prerequisites for this update**: [research.md "Decision 78"](./research.md),
+[plan.md "Update 26"](./plan.md), [quickstart.md "Update 26"](./quickstart.md).
+
+---
+
+## Phase 74: User Story 5 (continued) — Header Purchase Order(s) Field + Single "Template" Toolbar Tab
+
+**Goal**: `ViewSalesOrderPage.jsx`'s header shows the selected PO(s) instead of the saved Template
+code(s), and its Template Checklist toolbar shows exactly one tab, labeled "Template", with no other
+behavior of the View screen affected.
+
+**Independent Test**: Open View for a Sales Order with 2+ saved PO(s) across 2+ saved `TemplateCode`s;
+confirm the header shows a "Purchase Order(s)" field listing exactly the selected `PurchId`s (no
+`TemplateCode` chip), confirm the toolbar shows exactly 1 tab labeled "Template" (no per-template
+chips), and confirm clicking that tab still shows the same merged/default-template tree this screen
+already showed as "All" before this update.
+
+- [X] T374 [US5] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/ViewSalesOrderPage.jsx`, edit the header's
+  `Template` field (the `Box` currently rendering the `Typography` label "Template" followed by
+  `templatesData.length > 0 ? <Stack>...templatesData.map(t => <Chip label={t.templateCode} .../>)</Stack>
+  : <Typography>No template saved</Typography>`) to instead render label **"Purchase Order(s)"** and, when
+  `poList.length > 0`, a `Stack` of `Chip`s built from `poList.map(po => <Chip key={po.purchId}
+  label={po.purchId} size="small" color="primary" />)` (same `Stack`/`Chip` props/wrapping already used
+  for the Template chips), else an empty-state `Typography` (e.g. "No PO selected", consistent with the
+  existing "No PO selected yet." wording already used by the Selected Purchase Orders table's empty
+  `Alert` on this same page). Do not change any other header field (Sales ID, Customer, Delivery Date) or
+  the progress bar.
+  *(Done — header `Box` (line ~1052) now renders label "Purchase Order(s)" + `poList.map(po => <Chip
+  key={po.purchId} label={po.purchId} size="small" color="primary" />)`, empty state "No PO selected".
+  Added a 3-line Vietnamese comment above referencing spec FR-173/FR-174. Sales ID/Customer/Delivery
+  Date/progress bar untouched.)*
+- [X] T375 [US5] In the same file, edit the toolbar's chip-source array (currently
+  `[{ templateCode: null, templateName: 'All' }, ...templatesData].map(t => { ... })` inside the
+  `data-marker="template-tree-toolbar"` `Stack`) to `[{ templateCode: null, templateName: 'Template'
+  }].map(t => { ... })` — dropping the `...templatesData` spread so only the one entry renders. Update the
+  chip's rendered label (currently `{isAll ? 'All' : t.templateCode}`) to render `'Template'` for this
+  sole remaining entry (the `isAll`/`t.templateCode` branch is now dead since every entry is the `null`
+  one, but the existing `onClick` body — `setSelectedTemplateCode`, `setSelectedStepId(null)`,
+  `loadDefaultTemplate()` when `isAll` — MUST be left unchanged). Do not touch the Template Checklist
+  tree render, AVAILABLE FILES, Download, or Validation Summary logic.
+  *(Done — toolbar array literal (line ~1271) shortened to
+  `[{ templateCode: null, templateName: 'Template' }]`; chip label render (line ~1315) changed to the
+  literal `'Template'`. `onClick` body (setSelectedTemplateCode/setSelectedStepId(null)/
+  loadDefaultTemplate() when isAll) left byte-for-byte unchanged. Added a 3-line Vietnamese comment above
+  referencing spec FR-175/FR-176. Template Checklist tree render, AVAILABLE FILES, Download, Validation
+  Summary untouched.)*
+
+**Checkpoint**: View's header shows only PO chips under "Purchase Order(s)"; the toolbar shows exactly 1
+"Template" tab; clicking it still shows the merged default-template tree (spec FR-173..FR-176).
+
+---
+
+## Phase 75: Polish & Cross-Cutting Concerns (Update 26)
+
+**Purpose**: Final validation for the Update 26 change; no new functionality.
+
+- [ ] T376 [P] Run the frontend manual verification steps in `specs/005-eutr-sales-orders/quickstart.md`
+  "Update 26" section (steps 1-6: header shows Purchase Order(s) chips / empty state, toolbar shows
+  exactly 1 "Template" tab, clicking it shows the unchanged merged tree, no regression to Selected
+  Purchase Orders/AVAILABLE FILES/Download/Validation Summary/Edit-Map File/Back, and no regression to
+  `MapFilePage.jsx`/`SalesOrderOverviewPage.jsx`) (depends on T374, T375).
+  *(NOT run — requires a live, D365-connected `compliance-sys-api` process with known Sales Order/PO/
+  template fixtures and a browser session, unavailable in this environment (same constraint as every
+  prior update's live-verification task, e.g. T371 in Update 25). As a proxy check: `npx vite build
+  --mode production` succeeded producing a new `ViewSalesOrderPage.B72IMhUr.js` chunk with 0 build
+  errors; `npx eslint` on the changed file reports the same 2 pre-existing, unrelated errors this file
+  already had before this session (`canSubmit`/`isMapped` unused vars at lines 931/1534, confirmed by
+  `git diff` to be outside both changed hunks) and 0 new problems. A human with browser/D365 access must
+  complete quickstart.md's Update 26 steps before sign-off.)*
+- [X] T377 [P] Review the new/changed lines in `ViewSalesOrderPage.jsx` (T374, T375) to confirm any new
+  comment is Vietnamese, matching this file's own existing comment style, and that the two new
+  user-facing strings ("Purchase Order(s)", "Template") are English, consistent with this screen's
+  existing header/toolbar labels ("Sales ID", "Customer", "Delivery Date", the prior "All" label) per
+  Constitution Principle IV (depends on T374, T375).
+  *(Verified via `git diff`: both new comment blocks are Vietnamese, unaccented ASCII, matching this
+  file's existing comment style (e.g. the Update 15/19 comments already in this file). The two new
+  user-facing strings, "Purchase Order(s)" and "Template", are English — consistent with this screen's
+  existing English header/toolbar labels.)*
+- [X] T378 Confirm `git diff`/`git status` for this update touches only
+  `compliance-client/src/presentation/pages/eutr-sales-orders/ViewSalesOrderPage.jsx` — no backend file,
+  no new DTO/endpoint, no change to `MapFilePage.jsx` or `SalesOrderOverviewPage.jsx` (depends on T374,
+  T375).
+  *(Verified: `compliance-client`'s own `git diff --stat` for this session's changes shows exactly one
+  file touched, `ViewSalesOrderPage.jsx` (2 hunks: header `Box`, toolbar array/label); `MapFilePage.jsx`
+  and `SalesOrderOverviewPage.jsx` are untouched. `compliance-sys-api`'s `git status --short` is
+  unaffected by this session (no backend file touched) — consistent with spec Update 26's "100%
+  frontend-only, zero-backend-change" framing.)*
+
+**Checkpoint**: All Update 26 quickstart.md checks pass — the View screen's header/toolbar match spec
+FR-173..FR-178 with zero regression to any prior update's behavior.
+
+### Status (2026-09-21)
+
+Phase 74 done in code (T374, T375). Frontend: `npx vite build --mode production` succeeded, producing a
+new `ViewSalesOrderPage.B72IMhUr.js` chunk with 0 build errors; `npx eslint` on the changed file reports
+only the same 2 pre-existing, unrelated errors this file already had before this session — 0 new
+problems introduced. `git diff` (inside `compliance-client`'s own repo) confirms the only Update-26-
+attributable changes are the header field swap (Template chips → Purchase Order(s) chips) and the
+toolbar array collapse (`[All, ...templatesData]` → `[Template]`) — no backend file touched, no change to
+`MapFilePage.jsx`/`SalesOrderOverviewPage.jsx`. The one live-data verification task (T376) is **NOT
+run**: this environment has no live, D365-connected `compliance-sys-api` process or browser session
+available (same constraint as every prior update's live-verification task in this feature). Before
+sign-off, a human with browser/D365 access should complete `quickstart.md`'s Update 26 verification
+steps.
+
+---
+
+## Update 26 Dependencies
+
+### Phase Dependencies
+
+- **Phase 74**: T374 and T375 are independent edits within the same file (different JSX blocks — header
+  vs. toolbar) and can be done in either order, but both must land before Phase 75.
+- **Phase 75** (Polish): depends on Phase 74 being complete.
+
+### Parallel Opportunities
+
+- T374 and T375 touch different JSX blocks in the same file — sequence them to avoid edit conflicts, but
+  neither depends on the other's output.
+- T376 and T377 (Polish) are independent verification passes and can run in parallel; T378 is a quick
+  diff-scope review best done last.
+
+### Implementation Strategy
+
+1. Complete Phase 74 (T374, T375) — the header field swap and the toolbar array collapse.
+2. Complete Phase 75 (polish/validation) — full `quickstart.md` "Update 26" pass, specifically confirming
+   no chip for any `TemplateCode` appears anywhere in the header or toolbar, and that the sole remaining
+   tab still reproduces the exact merged-tree behavior the old "All" chip had.
+
+---
+
+## Phase 76: Backend — Customer ID (`CustAccount`) OR-Search Filter (Update 27)
+
+**Purpose**: Close a verified gap: `CustAccount` (the Customer column, spec FR-004) is already returned
+by `refType=11` but was never part of the search box's OR-searched column set — only `Code`/`Name` are.
+Clone the existing `"vendorcode"` entity-guarded case in `BuildFilterString` (already used by Purchase
+Orders/`refType=15`) rather than inventing a new filter mechanism — spec FR-179..FR-181, research.md
+Decision 79.
+
+- [X] T379 [P] In
+  `compliance-sys-api/src/ComplianceSys.Application/Services/ComplDynamicsService.cs`'s
+  `BuildFilterString` column-grouping `switch`, add a new case:
+  `"custaccount" when mapping.Entity == "RSVNSalesOrderOpenInvoiceCogs" => "custaccount"`, placed next
+  to the existing `"vendorcode" when mapping.Entity == "RSVNEutrPurchOrders" => "vendorcode"` case (same
+  guard shape, different entity/column).
+  *(Done — added the case plus a 4-line Vietnamese comment above it referencing feature
+  005-eutr-sales-orders/Update 27/research.md Decision 79, matching the style of the existing
+  `"vendorcode"` comment immediately above it.)*
+- [X] T380 In the same method, extend the OData-column-name resolution step (the one already mapping
+  `"code"` → `mapping.CodeColumn`, `"name"` → `mapping.NameColumn`, `"vendorcode"` → the literal
+  `"OrderAccount"`) to also resolve `"custaccount"` → the literal `"CustAccount"` (depends on T379).
+  *(Done.)*
+- [X] T381 In the same method, extend the OR-bucket membership check (currently
+  `group.Key is "code" or "name" or "vendorcode"`) to also include `"custaccount"` (depends on T379,
+  T380) — without this the new filter would be routed into the AND-joined `filterParts` bucket instead
+  of the OR-joined `searchFilters` bucket, silently breaking FR-179's OR requirement (a keyword would
+  then have to match Sales ID **and** Customer **and** Customer name simultaneously instead of any one
+  of them).
+  *(Done — `dotnet build src/ComplianceSys.Application/ComplianceSys.Application.csproj` succeeded, 0
+  errors (440 pre-existing warnings, unrelated); `git diff` confirms only `ComplDynamicsService.cs`
+  changed, and only inside `BuildFilterString`'s column-grouping switch/column-resolution/OR-bucket
+  check — no other `EntityMappings` entry, `MapSortColumn` case, or `ODataOperatorConverter` code
+  touched.)*
+
+**Checkpoint**: `POST /api/dynamics/reference?refType=11` with
+`Filters = [{ column: "CustAccount", operator: "like", value: "10676" }]` returns only rows whose
+`custAccount` contains "10676"; sending the same filter for `refType=15`/`16`/`20` has no effect (falls
+through to the generic "other column" AND bucket, not an error); existing `Code`/`Name` search results
+are unaffected.
+
+---
+
+## Phase 77: Frontend — Extend Overview's `buildSearchFilters` (Update 27)
+
+**Goal**: The existing Overview search box (no new UI element) also matches Customer ID, combined via OR
+with the existing Sales ID/Customer name match — spec FR-179.
+
+**Independent Test**: Type a known Customer ID (e.g. "10676") into the existing search box and confirm
+the table narrows to that customer's rows; clear it and confirm the default list returns; confirm
+existing Sales ID/Customer name searches are unaffected.
+
+- [X] T382 [US2] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/SalesOrderOverviewPage.jsx`'s
+  `buildSearchFilters(search)` (lines ~106-113), append one more entry to the array it already returns:
+  `{ column: 'CustAccount', operator: 'like', value }`, alongside the existing `{ column: 'Code', ... }`/
+  `{ column: 'Name', ... }` entries — same `value`, same `operator: 'like'`, no new function/state/UI
+  element (depends on Phase 76).
+  *(Done — added the entry plus a 2-line Vietnamese comment above it referencing spec FR-179. `npx vite
+  build --mode production` succeeded, producing a new `SalesOrderOverviewPage.bc6DINAk.js` chunk with 0
+  build errors; `npx eslint` on the changed file reported 0 problems. `git diff` confirms only this one
+  file changed, and only inside `buildSearchFilters`'s returned array — no new state/handler/UI element,
+  no other function touched.)*
+
+**Checkpoint**: Typing a known Customer ID into Overview's existing search box returns only that
+customer's rows; a keyword matching a Sales ID substring on one row and a Customer ID substring on a
+different row returns both rows (OR); existing Sales ID/Customer name search behavior is byte-for-byte
+unchanged (spec FR-179..FR-181).
+
+---
+
+## Phase 78: Polish & Cross-Cutting Concerns (Update 27)
+
+**Purpose**: Final validation for the Update 27 change; no new functionality.
+
+- [ ] T383 [P] Run the backend and frontend manual verification steps in
+  `specs/005-eutr-sales-orders/quickstart.md` "Update 27" section (steps 1-4 backend, 1-8 frontend) —
+  Customer ID search returns matching rows, existing Sales ID/Customer name search results are
+  unchanged, OR-matching across all 3 columns, AND-combining with Year/ETD Week, and no effect on any
+  other `refType` (depends on T381, T382).
+  *(NOT run — requires a live, D365-connected `compliance-sys-api` process with known Sales Order/
+  Customer fixtures and a browser session, unavailable in this environment (same constraint as every
+  prior update's live-verification task, e.g. T376 in Update 26, T371 in Update 25). As a proxy check:
+  both the backend (`dotnet build`) and frontend (`npx vite build --mode production`) built successfully
+  with 0 errors, and `npx eslint` on the changed frontend file reported 0 problems — see T381/T382. A
+  human with browser/D365 access must complete quickstart.md's Update 27 steps before sign-off.)*
+- [X] T384 [P] Confirm `git diff`/`git status` for this update touches only
+  `ComplDynamicsService.cs` (backend, one new guarded `switch` case + its column resolution + OR-bucket
+  membership) and `SalesOrderOverviewPage.jsx` (frontend, one new array entry in `buildSearchFilters`) —
+  no new endpoint/controller/DTO field, no change to `EntityMappings[11]`'s `(CodeColumn, NameColumn)`
+  tuple, `MapDynamicsResponse`'s `case 11:`, `DynController.cs`, `ODataOperatorConverter.cs`, or any
+  other `refType`'s `EntityMappings`/`BuildFilterString` behavior (depends on T381, T382).
+  *(Verified: `compliance-sys-api`'s own `git diff --stat` shows exactly one file changed
+  (`ComplDynamicsService.cs`, 1 file, +7/-1); `compliance-client`'s own `git diff --stat` shows exactly
+  one file changed (`SalesOrderOverviewPage.jsx`, 1 file, +3/-0). No `EntityMappings`, `MapSortColumn`,
+  `MapDynamicsResponse`, `DynController.cs`, or `ODataOperatorConverter.cs` line touched by either diff.
+  Each repo's other modified/untracked files shown by `git status --short` predate this session and are
+  unrelated to this task (pre-existing local changes in `compliance-sys-api`/`compliance-client`).)*
+- [X] T385 Confirm any new backend comment is Vietnamese, matching this file's own existing comment
+  style, per Constitution Principle IV; confirm no new user-facing string or UI element was introduced
+  by this update — the existing search `TextField` and its placeholder are unchanged (depends on T381,
+  T382).
+  *(Verified via `git diff`: both new comments (backend `ComplDynamicsService.cs`, frontend
+  `SalesOrderOverviewPage.jsx`) are Vietnamese, unaccented ASCII, matching each file's existing comment
+  style (e.g. the `"vendorcode"` comment immediately above the backend change, the Update 25 comment in
+  the frontend file). No new user-facing string, input, button, or label was added — the existing search
+  `TextField` and its placeholder ("Tìm theo Sales ID, Customer...") are byte-for-byte unchanged.)*
+
+**Checkpoint**: All Update 27 quickstart.md checks pass — Overview's search box matches spec
+FR-179..FR-181 with zero regression to any prior update's behavior.
+
+### Status (2026-09-22)
+
+Phases 76-77 done in code (T379-T382). Backend: `dotnet build
+src/ComplianceSys.Application/ComplianceSys.Application.csproj` succeeded, 0 errors (440 pre-existing
+warnings, unrelated). Frontend: `npx vite build --mode production` succeeded, producing a new
+`SalesOrderOverviewPage.bc6DINAk.js` chunk with 0 build errors; `npx eslint` on the changed file reported
+0 problems. `git diff` (inside each repo's own working tree) confirms the only Update-27-attributable
+changes are the new `"custaccount"` case/column-resolution/OR-bucket entry in
+`ComplDynamicsService.BuildFilterString` and the new `CustAccount` entry in
+`SalesOrderOverviewPage.jsx`'s `buildSearchFilters` — no other file touched, no `EntityMappings`/
+`MapDynamicsResponse`/`DynController.cs`/`ODataOperatorConverter.cs` change. The one live-data
+verification task (T383) is **NOT run**: this environment has no live, D365-connected
+`compliance-sys-api` process or browser session available (same constraint as every prior update's
+live-verification task in this feature). Before sign-off, a human with browser/D365 access should
+complete `quickstart.md`'s Update 27 verification steps.
+
+---
+
+## Update 27 Dependencies
+
+### Phase Dependencies
+
+- **Phase 76** (Backend): T379 → T380 → T381, strictly sequential edits to the same `switch`/method.
+- **Phase 77** (Frontend): T382 depends on Phase 76 being complete (the backend must recognize
+  `CustAccount` as a searchable column before the frontend starts sending it).
+- **Phase 78** (Polish): depends on Phase 77 being complete.
+
+### Parallel Opportunities
+
+- None within Phase 76 (T379/T380/T381 edit the same method in sequence). T383 and T384 (Polish) are
+  independent verification passes and can run in parallel; T385 is a quick comment/UI-scope review best
+  done last.
+
+### Implementation Strategy
+
+1. Complete Phase 76 (T379-T381) — register `CustAccount` as an OR-searchable column for `refType=11`
+   only, cloning the existing `VendorCode`/`refType=15` pattern.
+2. Complete Phase 77 (T382) — send the new filter entry from Overview's existing search box.
+3. Complete Phase 78 (polish/validation) — full `quickstart.md` "Update 27" pass, specifically confirming
+   the OR-match across all 3 columns and zero regression to Sales ID/Customer name search, Year/ETD Week
+   AND-combining, and every other `refType`'s behavior.
+
+---
+
+## Phase 79: Frontend — Overview Map File/Download icon gating by `permissionList` (Update 28)
+
+**Goal**: The per-row **Map File** icon only renders when `permissionList` for menu `eutr-sales-orders`
+includes `'Update'`; the per-row **Download** icon only renders when it includes `'Download'` — spec
+FR-182, FR-184, FR-186.
+
+**Independent Test**: With a test user lacking `Update`, confirm the Map File icon is absent from every
+Overview row (View summary/Download unaffected by that alone); with a test user lacking `Download`,
+confirm the Download icon is absent from every row (Map File/View summary unaffected).
+
+- [X] T386 [P] [US1] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/SalesOrderOverviewPage.jsx`, add
+  `import { getMenuDataFromStorage } from '@utils/helpers';` (same import
+  `eutr-documents/index.jsx` already uses) and a new `permissionList` `useMemo`:
+  `getMenuDataFromStorage().find(m => m.code === 'eutr-sales-orders')?.permissionList || []` — no
+  other change in this task.
+  *(Done.)*
+- [X] T387 [US1] In the same file, wrap the per-row **Map File** `Tooltip`/`IconButton` (currently
+  ~lines 956-971) in `permissionList.includes('Update') && (...)` — the icon must not mount at all
+  (not merely `disabled`) when the user lacks `Update` (depends on T386).
+  *(Done.)*
+- [X] T388 [US1] In the same file, wrap the per-row **Download** `Tooltip`/`IconButton` (currently
+  ~lines 972-994) in `permissionList.includes('Download') && (...)` — same not-mounted rule as T387;
+  the **View summary** icon (~lines 995-1009) is explicitly left unwrapped/unchanged (spec FR-187)
+  (depends on T386).
+  *(Done — `npx vite build --mode production` succeeded, producing a new
+  `SalesOrderOverviewPage.DftOD__j.js` chunk with 0 build errors; `npx eslint` on the changed file
+  reported 0 problems. `git diff` confirms only the new import/useMemo and the 2 new conditional
+  wrappers were added — the Map File/Download `IconButton`s' own `onClick`/content are byte-for-byte
+  unchanged, and the View summary icon is untouched.)*
+
+**Checkpoint**: Toggling a test user's `Update`/`Download` permissions for menu `eutr-sales-orders` and
+reloading Overview shows/hides exactly the Map File/Download icons per row, independently of each
+other, with View summary always visible.
+
+---
+
+## Phase 80: Frontend — View Edit/Map File and Download button gating by `permissionList` (Update 28)
+
+**Goal**: The **Edit / Map File** toolbar button only renders when `permissionList` for menu
+`eutr-sales-orders` includes `'Update'`; the **Download** toolbar button only renders when it includes
+`'Download'` — spec FR-183, FR-185, FR-186.
+
+**Independent Test**: With a test user lacking `Update`, confirm the Edit / Map File button is absent
+from the View toolbar (Download/Back unaffected by that alone); with a test user lacking `Download`,
+confirm the Download button is absent (Edit / Map File/Back unaffected).
+
+- [X] T389 [P] [US5] In
+  `compliance-client/src/presentation/pages/eutr-sales-orders/ViewSalesOrderPage.jsx`, add the same
+  `import { getMenuDataFromStorage } from '@utils/helpers';` and the same `permissionList` `useMemo`
+  (menu code `'eutr-sales-orders'`) as T386 — independent of Phase 79 (different file, can run in
+  parallel).
+  *(Done.)*
+- [X] T390 [US5] In the same file, wrap the **Edit / Map File** `Button` (currently ~lines 1100-1107)
+  in `permissionList.includes('Update') && (...)` — not mounted at all when the user lacks `Update`
+  (depends on T389).
+  *(Done.)*
+- [X] T391 [US5] In the same file, wrap the **Download** `Button` (currently ~lines 1108-1118) in
+  `permissionList.includes('Download') && (...)` — same not-mounted rule as T390; the **Back** `Button`
+  (~lines 1119-1126) is explicitly left unwrapped/unchanged (spec FR-187) (depends on T389).
+  *(Done — `npx vite build --mode production` succeeded, producing a new `ViewSalesOrderPage.CA0kfGt0.js`
+  chunk with 0 build errors; `npx eslint` reported the same 2 pre-existing `no-unused-vars` errors this
+  file already had before this update (`canSubmit`/`isMapped`, confirmed via `git stash`/`git stash pop`
+  against the unmodified base — unrelated to and unaffected by this change), 0 new problems. `git diff`
+  confirms only the new import/useMemo and the 2 new conditional wrappers were added — the Edit / Map
+  File/Download `Button`s' own `onClick`/content are byte-for-byte unchanged, and the Back button is
+  untouched.)*
+
+**Checkpoint**: Toggling a test user's `Update`/`Download` permissions for menu `eutr-sales-orders` and
+reloading View shows/hides exactly the Edit / Map File/Download buttons, independently of each other,
+with Back always visible.
+
+---
+
+## Phase 81: Polish & Cross-Cutting Concerns (Update 28)
+
+**Purpose**: Final validation for the Update 28 change; no new functionality.
+
+- [ ] T392 [P] Run the frontend manual verification steps in
+  `specs/005-eutr-sales-orders/quickstart.md` "Update 28" section (steps 1-10) — all 4
+  Update/Download permission combinations render exactly the icons/buttons FR-182..FR-187 specify, and
+  Map File/Download's own behavior once shown is unchanged (depends on T387, T388, T390, T391).
+  *(NOT run — requires a live menu-admin mechanism to toggle a test user's `Update`/`Download`
+  permissions for menu `eutr-sales-orders`, plus a browser session, unavailable in this environment
+  (same constraint as every prior update's live-verification task, e.g. T383 in Update 27, T376 in
+  Update 26). As a proxy check: `npx vite build --mode production` built both changed files
+  successfully with 0 errors, and `npx eslint` reported 0 new problems (2 pre-existing, unrelated
+  errors confirmed via `git stash` against the unmodified base) — see T388/T391. A human with
+  menu-admin/browser access must complete quickstart.md's Update 28 steps before sign-off.)*
+- [X] T393 [P] Confirm `git diff`/`git status` for this update touches only
+  `SalesOrderOverviewPage.jsx` and `ViewSalesOrderPage.jsx` (frontend-only) — no backend
+  file/endpoint/policy/migration touched, no other frontend file changed (depends on T387, T388, T390,
+  T391).
+  *(Verified: `compliance-client`'s own `git status --short` shows exactly these 2 files modified
+  (plus unrelated pre-existing local `certs/` changes predating this session). `compliance-sys-api`'s
+  own `git status --short` shows only unrelated pre-existing local changes (none of them touched by
+  this session) — zero backend files were edited for Update 28.)*
+- [X] T394 Confirm no new user-facing label/icon/tooltip text was introduced — this update only wraps 4
+  already-existing, already-labeled controls in a visibility condition; confirm the View summary icon
+  and Back button remain unconditionally visible in every permission combination (spec FR-187) (depends
+  on T387, T388, T390, T391).
+  *(Verified via `git diff`: no new `Tooltip`/`Button` text, no changed icon component, no changed
+  `onClick`/navigation target — only 2 new `{permissionList.includes(...) && (...)}` wrappers per file
+  plus the shared import/useMemo. The View summary `Tooltip`/`IconButton` (Overview) and Back `Button`
+  (View) are outside both wrappers, unconditionally rendered exactly as before this update.)*
+
+**Checkpoint**: All Update 28 quickstart.md checks pass — Map File/Edit and Download visibility on both
+Overview and View match spec FR-182..FR-188 with zero regression to any prior update's behavior.
+
+### Status (2026-09-22)
+
+Phases 79-80 done in code (T386-T391). Frontend: `npx vite build --mode production` succeeded, producing
+new `SalesOrderOverviewPage.DftOD__j.js`/`ViewSalesOrderPage.CA0kfGt0.js` chunks with 0 build errors;
+`npx eslint` on both changed files reported 0 new problems (`ViewSalesOrderPage.jsx`'s 2 pre-existing
+`no-unused-vars` errors were confirmed unrelated/pre-existing via `git stash`/`git stash pop` against the
+unmodified base). `git diff` (inside `compliance-client`'s own working tree) confirms the only
+Update-28-attributable changes are the new `getMenuDataFromStorage` import + `permissionList` useMemo and
+the 4 new `permissionList.includes(...) &&` conditional wrappers around the Map File/Download icons
+(Overview) and Edit / Map File/Download buttons (View) — no other file touched, no backend file touched
+(`compliance-sys-api`'s own `git status --short` shows only unrelated pre-existing local changes). The one
+live-permission-toggle verification task (T392) is **NOT run**: this environment has no live menu-admin
+mechanism or browser session available to actually toggle a test user's permissions (same constraint as
+every prior update's live-verification task in this feature). Before sign-off, a human with menu-admin/
+browser access should complete `quickstart.md`'s Update 28 verification steps.
+
+---
+
+## Update 28 Dependencies
+
+### Phase Dependencies
+
+- **Phase 79** (Overview): T386 → {T387, T388} — T387/T388 both depend only on T386 (the shared
+  `permissionList` useMemo), not on each other (different `IconButton`s).
+- **Phase 80** (View): T389 → {T390, T391} — same shape as Phase 79, independent of it (different
+  file).
+- **Phase 81** (Polish): depends on Phase 79 and Phase 80 both being complete.
+
+### Parallel Opportunities
+
+- T386 and T389 touch different files and can run in parallel. Within each phase, the two wrap tasks
+  (T387/T388, T390/T391) touch the same file but different, non-overlapping `IconButton`/`Button`
+  blocks — safe to do in either order but not literally simultaneously in the same file. T392/T393/T394
+  (Polish) are independent verification passes and can run in parallel.
+
+### Implementation Strategy
+
+1. Complete Phase 79 (T386-T388) — gate Overview's Map File/Download icons.
+2. Complete Phase 80 (T389-T391) — gate View's Edit / Map File/Download buttons (independent of Phase
+   79, can be done in parallel or in either order).
+3. Complete Phase 81 (polish/validation) — full `quickstart.md` "Update 28" pass across all 4
+   Update/Download permission combinations on both screens.
+
+---
+
+## Phase 82: Map File Step 2 Upload/Edit buttons gated by `permissionList` of menu `eutr-documents` (Update 29)
+
+**Goal**: The Step 2 **Upload** button only renders when `permissionList` for menu `eutr-documents`
+includes `'Create'`; each AVAILABLE FILES row's **Edit** button only renders when it includes
+`'Update'` — spec FR-189, FR-190, FR-191. Also closes the same gap for `012-eutr-purchase-orders`'
+`PurchId/View` Edit button (spec 012 FR-033..FR-036).
+
+**Independent Test**: With a test role lacking `'Create'` on menu `eutr-documents`, confirm the Upload
+button is absent from Map File Step 2 (Edit/View unaffected by that alone); with a test role lacking
+`'Update'`, confirm every row's Edit button is absent on both Map File Step 2 and `PurchId/View`
+(Upload/View unaffected).
+
+**Correction note (same session)**: the first pass at this phase (T395-T404, now superseded) added a
+new backend `can-update` endpoint plus a `CheckEutrDocumentsCanUpdateUseCase.js` live probe, mirroring
+`012` Update 4's pre-existing `can-create`. The person requesting the feature tested it live and
+reported both Upload and Edit still visible after revoking the permissions; a DevTools capture showed
+`permissionList` for menu `eutr-documents` already carries `'Create'`/`'Update'` (same mechanism as
+Update 28). The tasks below (T409-T415) replace T395-T404 with the corrected, permissionList-based
+implementation and remove the now-dead probe code the requester asked to delete.
+
+- [X] T409 [P] In `compliance-client/src/presentation/pages/eutr-sales-orders/MapFilePage.jsx`, remove
+  the `CheckEutrDocumentsCanCreateUseCase`/`CheckEutrDocumentsCanUpdateUseCase` imports/instantiations
+  and the `canUploadDocuments`/`canEditDocuments` state + mount-only `useEffect` from T400; add
+  `import { getMenuDataFromStorage } from '@utils/helpers'` and an `eutrDocumentsPermissionList`
+  `useMemo` (`getMenuDataFromStorage().find(m => m.code === 'eutr-documents')?.permissionList || []`),
+  then derive `canUploadDocuments = eutrDocumentsPermissionList.includes('Create')` and
+  `canEditDocuments = eutrDocumentsPermissionList.includes('Update')` as plain `const`s — cloning
+  `SalesOrderOverviewPage.jsx`'s own `permissionList` pattern from Update 28, scoped to a different
+  menu code.
+  *(Done.)*
+- [X] T410 [US2] Confirm the Step 2 **Upload** `Button` (still wrapped in `canUploadDocuments && (...)`
+  from T401) and each AVAILABLE FILES row's **Edit** `Tooltip`/`IconButton` (still wrapped in
+  `canEditDocuments && (...)` from T402) now read the `const`s from T409 — no JSX change needed, only
+  the derivation upstream changed (depends on T409).
+  *(Done — verified via `git diff`: the two conditional wrappers are byte-for-byte unchanged from
+  T401/T402; only their upstream `canUploadDocuments`/`canEditDocuments` derivation changed.)*
+- [X] T411 [P] [US2] In `compliance-client/src/presentation/pages/eutr-purchase-orders/PurchaseOrderViewPage.jsx`,
+  same correction as T409: remove the `CheckEutrDocumentsCanCreateUseCase`/
+  `CheckEutrDocumentsCanUpdateUseCase` imports/instantiations and the `canUploadDocuments`/
+  `canEditDocuments` state + 2 mount-only `useEffect`s (T041 from `012` Update 4, plus T403 from this
+  session), including the pre-existing `012` Update 4 probe (superseded — not just this session's
+  Update 5 addition); add the same `getMenuDataFromStorage` import + `eutrDocumentsPermissionList`
+  `useMemo` + 2 derived `const`s as T409 (independent of T409 — different file).
+  *(Done.)*
+- [X] T412 [US2] Confirm the **Upload** `Button` (wrapped in `canUploadDocuments && (...)` since `012`
+  Update 4) and the AVAILABLE FILES **Edit** `Tooltip`/`IconButton` (wrapped in
+  `canEditDocuments && (...)` from T404) now read the `const`s from T411 — no JSX change needed
+  (depends on T411).
+  *(Done — verified via `git diff`.)*
+- [X] T413 [P] Delete the now-unused backend/frontend probe code per the requester's explicit choice
+  (no remaining callers anywhere in the codebase, confirmed via `grep -rl "CheckEutrDocumentsCan\|
+  canCreate(\|canUpdate("` across `src`): remove `CanCreate()`/`CanUpdate()` from
+  `compliance-sys-api/src/ComplianceSys.Api/Controllers/EutrDocumentsController.cs`; delete
+  `compliance-client/src/application/usecases/eutr-documents/CheckEutrDocumentsCanCreateUseCase.js` and
+  `CheckEutrDocumentsCanUpdateUseCase.js`; remove `canCreate`/`canUpdate` from
+  `eutrDocumentsApi.js`/`IEutrDocumentsRepository.js`/`RestEutrDocumentsRepository.js` (depends on T409,
+  T411 — both consumers must be migrated off these first).
+  *(Done.)*
+- [X] T414 [P] Lint the 7 changed/deleted-from frontend files (`npx eslint` on `MapFilePage.jsx`,
+  `PurchaseOrderViewPage.jsx`, `eutrDocumentsApi.js`, `RestEutrDocumentsRepository.js`,
+  `IEutrDocumentsRepository.js`) — 0 new problems (depends on T413).
+  *(Done — `npx eslint` reported exactly the same 5 pre-existing `no-unused-vars` errors
+  `MapFilePage.jsx` already had before this update (`saveError`, `setFileSearch`, `selectedDetail`,
+  `selectedDetailFiles`, `selectedPOCount` — none touched by this change), 0 new problems; the other
+  files reported 0 problems.)*
+- [X] T415 [P] Build the backend (`dotnet build src/ComplianceSys.Api/ComplianceSys.Api.csproj`) and
+  frontend (`npx vite build --mode production`) — 0 new compile/build errors from the T413 removal
+  (depends on T413).
+  *(Done — backend: 0 `error CS` (the only failure was the unrelated locked-`.exe` copy step from the
+  currently-running dev API process); frontend: `✓ built in ~22s`, both `MapFilePage`/
+  `PurchaseOrderViewPage` chunks produced successfully.)*
+
+**Checkpoint**: Toggling a test role's `'Create'`/`'Update'` grant on menu `eutr-documents` and
+reloading Map File Step 2 and `PurchId/View` shows/hides exactly the Upload/Edit buttons per
+FR-189..FR-191 (005) and FR-033..FR-036 (012), independently of each other and of Update 28's
+`permissionList` gating of menu `eutr-sales-orders`, with View always visible.
+
+---
+
+## Phase 83: Polish & Cross-Cutting Concerns (Update 29)
+
+**Purpose**: Final validation for the Update 29 change (corrected version); no new functionality.
+
+- [ ] T407 [P] Run the frontend manual verification steps in
+  `specs/005-eutr-sales-orders/quickstart.md` "Update 29" section and
+  `specs/012-eutr-purchase-orders/quickstart.md` "Update 5" section — confirm all `'Create'`/`'Update'`
+  `permissionList` combinations render exactly the buttons the spec's FRs specify on both screens
+  (depends on T410, T412, T415).
+  *(NOT run — requires a live menu-admin mechanism to toggle a test role's `permissionList` for menu
+  `eutr-documents`, plus a browser session, unavailable in this environment (same constraint as every
+  prior update's live-verification task in this feature, e.g. T392 in Update 28). As a proxy check:
+  `dotnet build`, `npx eslint`, and `npx vite build` all passed with 0 new errors — see T414/T415. A
+  human with menu-admin/browser access must complete both quickstart.md Update 29/Update 5 sections
+  before sign-off.)*
+- [X] T408 [P] Confirm `git status`/`git diff` for this update touches only `EutrDocumentsController.cs`
+  (backend, net change: 2 actions added then removed) and, on the frontend,
+  `MapFilePage.jsx`/`PurchaseOrderViewPage.jsx`/`eutrDocumentsApi.js`/`IEutrDocumentsRepository.js`/
+  `RestEutrDocumentsRepository.js` (modified) with no new frontend file remaining (the 2 use-case files
+  added in T399/T045 were deleted in T413) — plus the spec/contract/plan/research/data-model/quickstart/
+  tasks docs for `005-eutr-sales-orders` and `012-eutr-purchase-orders` (depends on T413).
+  *(Verified: `compliance-client`'s own `git status --short` shows exactly `MapFilePage.jsx`,
+  `PurchaseOrderViewPage.jsx`, `IEutrDocumentsRepository.js`, `eutrDocumentsApi.js`,
+  `RestEutrDocumentsRepository.js` modified, no `CheckEutrDocumentsCan*UseCase.js` files remaining
+  (plus unrelated pre-existing local changes predating this session, e.g. `certs/`,
+  `SalesOrderOverviewPage.jsx`, `ViewSalesOrderPage.jsx`, from Update 28's already-pending work).
+  `compliance-sys-api`'s own `git status --short` shows `EutrDocumentsController.cs` modified (net
+  change: back to its pre-session `Create`/`Update` actions only, no `CanCreate`/`CanUpdate`), plus
+  unrelated pre-existing local changes predating this session.)*
+
+**Checkpoint**: All Update 29 quickstart.md checks pass — Upload/Edit visibility on Map File Step 2 and
+`PurchId/View` match spec FR-189..FR-193 (005) and FR-033..FR-036 (012) with zero regression to any
+prior update's behavior, and zero dead code remains from the superseded probe-based first pass.
+
+---
+
+## Update 29 Dependencies
+
+### Phase Dependencies
+
+- **Phase 82**: T409 and T411 are independent (different files). T409 → T410 (verification of the same
+  file's JSX). T411 → T412 (same). {T409, T411} → T413 (deletion needs both consumers migrated first).
+  T413 → {T414, T415} (lint/build need the deletion done first).
+- **Phase 83** (Polish): depends on Phase 82 being complete.
+
+### Parallel Opportunities
+
+- T409 (`MapFilePage.jsx`) and T411 (`PurchaseOrderViewPage.jsx`) can run in parallel — different files.
+  T414/T415/T408 (Polish) are independent verification passes and can run in parallel.
+
+### Implementation Strategy
+
+1. Complete T409 and T411 in parallel — migrate both pages from the live-probe mechanism to
+   `permissionList`.
+2. Complete T413 — delete the now-dead backend/frontend probe code.
+3. Complete Phase 83 (polish/validation) — full `quickstart.md` "Update 29"/"Update 5" pass across all 4
+   `'Create'`/`'Update'` `permissionList` combinations on both screens.

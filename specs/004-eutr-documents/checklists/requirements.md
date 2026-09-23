@@ -143,3 +143,32 @@
   literal scope. All checklist items pass after this update — no regressions; downstream artifacts
   (plan.md, tasks.md, data-model.md, contracts, quickstart.md, research.md) still reflect the
   pre-Update-24 design and should be regenerated via `/speckit-plan` and `/speckit-tasks`.
+- 2026-09-18 `/speckit-specify` update 25: per direct user request, every file uploaded through the
+  shared Add popup now gets an **automatically computed File name** instead of keeping the user's
+  original file name: (Prefix from `eutr_master_documents`, if the relevant Step has a configured row
+  there) + the Step's `Name`, sanitized (invalid filename characters and any `..` sequence stripped,
+  falling back to `Step{StepId}` if the result would be empty) + the original file's extension. For
+  Type other than "PO" this uses the explicitly chosen Step; for Type = "PO" the existing prefix-match
+  logic that can resolve multiple Steps (FR-020/FR-023, unchanged) is kept exactly as-is, with one new
+  step added afterward that picks the master row with the **longest matching Prefix** to source the
+  name. Added FR-062 through FR-067, SC-016, six new acceptance scenarios under User Story 2, five new
+  Edge Cases, six new Assumptions, and updated FR-021 plus the EUTR Document / EUTR Master Document Key
+  Entities. Also documented (in the new "Session 2026-09-18 (Update 25)" Clarifications entry and in
+  the Assumptions) that `005-eutr-sales-orders` and `012-eutr-purchase-orders` inherit this behavior
+  automatically since both call the exact same shared Upload/Add-popup flow with no naming logic of
+  their own — matching one-line cross-reference notes were added to those two specs' own Clarifications
+  sections rather than duplicating any requirement text there. Three clarifying questions were asked via
+  `AskUserQuestion` before drafting (real product-impact forks with no safe default): (1) whether the
+  new rename logic applies to Type = "PO" at all, given Step there is inferred rather than user-chosen
+  — resolved to "yes, as an additional step after the existing prefix-match, not a replacement for it";
+  (2) whether the new name fully replaces the original file name or keeps it as a traceability suffix —
+  resolved to full replacement; (3) for Type = "PO" matching multiple Steps at once, which Step/Prefix
+  to use for the single physical file's name — resolved to the longest-matching Prefix (most specific
+  match), with lowest-`Id` as the tie-breaker. Lower-impact mechanics (no separator between Prefix and
+  Step Name; picking the lowest-`Id` master row when one Step has several Prefix rows; keeping the
+  original extension casing as-is; Edit never recomputing an existing document's File name) were
+  resolved as informed defaults and recorded as Assumptions rather than asked. All checklist items pass
+  after this update — no regressions; downstream artifacts (plan.md, tasks.md, data-model.md, contracts,
+  quickstart.md, research.md) still reflect the pre-Update-25 design (including the sanitize/rename
+  logic itself, which has no existing implementation to reuse per research) and should be regenerated
+  via `/speckit-plan` and `/speckit-tasks`.

@@ -2104,3 +2104,144 @@ Save button disabled expression).
    shape/validation is unaffected — this is a client-side-only guard preventing certain payloads from
    ever being constructed).
 3. No new dependency, no new component, no new hook.
+
+## 42. Rename Status "Approved" → "Public D365"; Merge Approve into "Save template & Public D365" on TemplateBuilderPage (spec Update 25)
+
+**Decision**: Two independent sub-changes, both reusing what already exists rather than adding new
+backend surface area:
+
+1. **Pure rename**: `TemplateStatusEnum.Approved` (backend, byte value 1) and
+   `TEMPLATE_STATUS.APPROVED`/`TEMPLATE_STATUS_LABELS[1]` (frontend) become `PublicD365`/
+   `PUBLIC_D365`/`'Public D365'`. The stored byte value (1) is unchanged, so this requires **no DB
+   migration** — every existing row with `Status = 1` is already correct under the new name/label.
+2. **Move the trigger, not the logic**: the new **Save template & Public D365** button on
+   `TemplateBuilderPage.jsx` calls the *existing* `UpdateEutrTemplatesUseCase` (→ `PUT
+   /api/eutr-templates/{id}`) and then the *existing* `ApproveEutrTemplatesUseCase` (→ `POST
+   /api/eutr-templates/{id}/approve`) as two sequential client-side calls from one confirmed click,
+   instead of the old flow where a user (a) saved on TemplateBuilderPage, then (b) separately
+   navigated to TemplateListPage, selected the row, and clicked the now-removed Approve button.
+   Neither backend endpoint's behavior changes — `ApproveAsync` still validates `Status == Draft`,
+   still pushes to D365 before committing the Status change, still throws `ValidationException` (→
+   HTTP 400) on D365 failure without touching `Status` (FR-083/FR-084, unchanged from Update 23).
+
+**Rationale**: Constitution Principle III ("Reuse Existing Backend... regenerating working backend
+code risks divergence") argues directly against adding a new combined backend endpoint (e.g. a
+hypothetical `POST /api/eutr-templates/{id}/save-and-publish`) — doing so would duplicate
+`UpdateAsync`'s and `ApproveAsync`'s already-correct, already-tested transaction/validation/D365
+logic behind a third code path, for a requirement ("logic sẽ giống với nút Save template và nút
+Approve" — spec's own words) that is satisfied exactly by calling the two existing endpoints in
+sequence. The failure-mode requirement (FR-093: if the D365 push fails, the header/step-tree save
+must still be kept, not rolled back) falls out of this design for free — `UpdateAsync` already
+commits its own transaction independently of `ApproveAsync`, so there is no shared transaction to
+roll back; sequencing two independently-committing calls from the client is the *simplest* way to
+get exactly the "keep the save, only Status stays Draft" semantics the spec asks for, not a
+workaround.
+
+**Alternatives considered**:
+- **New backend endpoint `POST /{id}/save-and-publish`** wrapping both steps in one server-side
+  transaction — rejected per Principle III (duplicates two already-correct, already-D365-integrated
+  methods) and because a single shared transaction would make FR-093's "keep step 1, don't roll back"
+  requirement *harder* to satisfy (a single transaction naturally wants to roll back everything on
+  any later failure, which is the opposite of what the spec asks for) rather than easier.
+- **Rename the `Approve`/`ApproveAsync`/`/approve` identifiers themselves** (to `Publish`/
+  `PublishAsync`/`/publish`) to match the new "Public D365" terminology end-to-end — rejected for this
+  update: these are internal method/route names, not user-facing text (the controller's response
+  `message` string was updated since it's plausible future UI surfaces it, but nothing currently
+  reads it — see `TemplateListPage.jsx`'s old `handleApprove`, which always used its own hardcoded
+  snackbar text, never the backend's `message`). Renaming a stable, already-shipped route is a larger,
+  purely-cosmetic blast radius (route registration, any API client/Postman collection, log searches by
+  route name) for zero behavior or spec-visible change; FR-090 to FR-093 only require the *frontend
+  button and Status label* to say "Public D365", not the backend's internal names.
+- **Roll back the header/step-tree save (step 1) if the D365 push (step 2) fails**, to keep the
+  overall action feeling atomic — rejected: the spec's FR-093 explicitly requires the opposite (keep
+  step 1's save), reasoning that the user's original request ("logic giống Save template VÀ Approve")
+  describes two chained, independently-successful steps rather than one atomic transaction, and that
+  losing a user's edits because of an unrelated D365 network blip would be a worse UX than "saved, but
+  not yet published — try publishing again."
+
+**Implementation**:
+1. **`ComplianceSys.Application/Constants/TemplateStatus.cs`**: `Approved = 1` → `PublicD365 = 1`.
+2. **`EutrTemplatesService.cs`**: 5 call sites + comments/messages updated to `PublicD365`;
+   `ApproveAsync`/`RequestChangeAsync` method bodies otherwise byte-for-byte unchanged.
+3. **`EutrTemplatesController.cs`**: comment + response message text only.
+4. **`helpers.js`**: `TEMPLATE_STATUS.APPROVED` → `.PUBLIC_D365`; label `'Approved'` → `'Public D365'`.
+5. **`useEutrTemplatesColumns.jsx`**: Chip color condition updated to the renamed constant.
+6. **`TemplateListPage.jsx`**: Approve button/dialog/state/handler/imports removed entirely;
+   `canRequestChange` and dialog copy use the renamed constant/label.
+7. **`TemplateBuilderPage.jsx`**: `isReadOnly` condition + banner text renamed; new
+   `validateAndBuildPayload()` helper shared by `handleSave` and the new
+   `handleSaveAndPublish`; new button + `ConfirmDialog` + `saveAndPublishConfirmOpen`/`publishing`
+   state; `handleSaveAndPublish` sequences `updateUseCase.execute` then `approveUseCase.execute`,
+   surfacing a distinct error message (and leaving `Status` as Draft) if only the second call fails.
+8. No new use case files — `ApproveEutrTemplatesUseCase` already existed (used by
+   `TemplateListPage.jsx` pre-Update-25) and is now imported by `TemplateBuilderPage.jsx` too; no new
+   dependency, no new backend endpoint, no DB migration.
+
+## 43. Hide "Save template" Button; Add Defensive D365 Delete Before Push in "Save template & Public D365" (spec Update 26)
+
+**Decision**: Two independent, minimal sub-changes:
+
+1. **Hide via DOM removal, not a disabled/hidden prop**: the standalone **Save template** `Button`
+   JSX block in `TemplateBuilderPage.jsx` is deleted from the render output entirely, matching how
+   the **Approve** button was removed from `TemplateListPage.jsx` in Update 25 (FR-089) rather than
+   given a permanently-false `disabled`/visibility condition. `handleSave`/`validateAndBuildPayload`
+   stay in the file — `handleSaveAndPublish` still calls them internally as step 1 of its own flow.
+2. **New delete call inside the existing backend handler, not a new frontend call**: `ApproveAsync`
+   gains `await _synchronizeDataService.DeleteTemplateFromDynamicsAsync(existing.Code, ct);`
+   immediately before its existing `PushTemplateToDynamicsAsync` call — reusing the exact method
+   `RequestChangeAsync` already calls for the same purpose (Update 23), inside the same try/catch
+   that already turns a D365 failure into a 400 `ValidationException` without touching `Status`.
+
+**Rationale**: Constitution Principle III favors reusing already-correct, already-tested code over
+adding new surface area. `DeleteTemplateFromDynamicsAsync(string code, CancellationToken ct)` is a
+generic, idempotent-by-Code delete already implemented and exercised by `RequestChangeAsync` — the
+spec's own request supplies the exact call (`DeleteTemplateFromDynamicsAsync(existing.Code, ct)`)
+and its target location (the Save & Public D365 flow, i.e. `ApproveAsync`), leaving no reasonable
+alternative placement. Doing the delete from the frontend (a second sequential API call, mirroring
+how Update 25 sequences `Update` then `Approve` from the client) was considered and rejected: unlike
+Update 25's two calls (each independently useful and already exposed as separate use cases pre-
+Update-25), a bare "delete this template from D365" endpoint has no standalone frontend caller and
+would only exist to be immediately followed by the push — putting it inside `ApproveAsync` keeps
+the "delete-then-push" sequence atomic from the caller's perspective (one HTTP call, one place where
+FR-096/FR-097's ordering and failure handling live) and avoids inventing a new controller
+action/route/use case for an operation that is only ever meaningful as a sub-step of the existing
+Approve flow.
+
+Hiding the button as a DOM removal (rather than reusing the existing `isReadOnly`-style
+disabled/hidden condition) follows directly from the spec's Assumptions (Update 26): there is no
+Status under which "Save template" should ever reappear once Update 26 ships, so a conditional
+render would carry dead branches: matches the Update 25 precedent for the removed Approve button.
+
+**Alternatives considered**:
+- **New dedicated `DeleteTemplateFromDynamicsAsync`-calling endpoint, called by the frontend before
+  `PUT`/`approve`** — rejected: adds a new controller action + use case for a call that only ever
+  makes sense immediately before the existing push, splitting one logical "publish" sequence across
+  two round-trips and two places to keep FR-096/FR-097's ordering/failure-handling in sync, for no
+  benefit (Principle III argues for the opposite — fewer, not more, new endpoints for essentially
+  glue logic).
+- **Disable/hide "Save template" only when some future condition reappears** (e.g. keep the
+  Status=Draft/Public D365 conditional structure of FR-090, just also folding in a new "always
+  hidden" flag) — rejected as unnecessary indirection: the spec (FR-095) is unconditional ("ẩn hoàn
+  toàn... không phân biệt Status"), so a static JSX removal is simpler and cannot regress into
+  reappearing under an untested condition.
+- **Swallow the new delete call's failure and continue to push anyway** (best-effort delete) —
+  rejected: FR-097 explicitly requires the same "block and report" handling as every other D365 call
+  in this feature (FR-082/FR-084/FR-093); silently continuing on delete failure would risk the push
+  creating a duplicate/conflicting D365 record instead of a clean overwrite, defeating the purpose of
+  adding the delete step in the first place.
+
+**Implementation**:
+1. **`TemplateBuilderPage.jsx`**: delete the **Save template** `<Button onClick={handleSave}>` JSX
+   block. `handleSaveAndPublish` was found (on reading the code directly) to duplicate
+   `validateAndBuildPayload()` + `updateUseCase.execute` itself rather than calling `handleSave`, so
+   once the button is gone `handleSave` has no caller left and is deleted as dead code, along with
+   the `saving`/`setSaving` state only it mutated; the 6 other `disabled={saving || ...}` spots
+   (tree-editing toolbar + the Save & Public D365 button) switch to the still-live `publishing` flag
+   so the "disable while a save is in flight" behavior is preserved rather than silently dropped.
+   `validateAndBuildPayload()` itself is kept — `handleSaveAndPublish` still calls it directly.
+2. **`EutrTemplatesService.cs`**: `ApproveAsync` — insert the `DeleteTemplateFromDynamicsAsync`
+   call between the header/step-tree save succeeding and the existing `PushTemplateToDynamicsAsync`
+   call, inside the existing D365 try/catch.
+3. No new use case, controller action, DTO, DB migration, or dependency — `_synchronizeDataService`
+   and `DeleteTemplateFromDynamicsAsync` both already exist on `EutrTemplatesService`/
+   `IEutrSynchronizeDataService` since Update 23.

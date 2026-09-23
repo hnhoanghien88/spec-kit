@@ -21,14 +21,22 @@ Dynamics/RSVNSalesOrderOpenInvoiceCogs.cs`), surfaced through
 | Field (spec column) | Source property (D365 entity) | Response DTO property | Type | Notes |
 |---|---|---|---|---|
 | Sales ID | `SalesId` | `Code` (and `Id`) | string | Also used as the `CodeColumn` for search-by-code filtering (`BuildFilterString`). |
-| Customer | `CustAccount` | `CustAccount` (new) | string | Customer account/code — distinct from `Code`. |
+| Customer | `CustAccount` | `CustAccount` (new) | string | Customer account/code — distinct from `Code`. **Update 27**: also used for search-by-Customer-ID filtering (`BuildFilterString`'s `"custaccount"` case, OR-joined with `Code`/`Name`), same role `CodeColumn`/`NameColumn` already play for the other two search columns. |
 | Customer name | `CustName` | `Name` | string | Used as the `NameColumn` for search-by-name filtering. |
 | Delivery date | `DeliveryDate` | `DeliveryDate` (new) | date/null | Nullable — grid MUST show a placeholder ("-") when absent (spec FR-006). |
+| Sales status | `SalesStatus` | `SalesStatus` (existing, retro-documented Update 25) | string | D365 enum **label** (e.g. `"Backorder"`, `"Invoiced"`), not numeric (confirmed via `013-compl-synchronize-data` research). Frontend renders it verbatim, except `"Backorder"` (case-insensitive) which MUST render as **"Open order"** (spec FR-171). |
 
 Not surfaced to the frontend for this feature (present on the D365 entity but out of scope):
-`PurchId`, `RSVNSalesId`, `CustGroup`, `SalesStatus`, `InvoiceDate`, `CustomerRef`,
+`PurchId`, `RSVNSalesId`, `CustGroup`, `InvoiceDate`, `CustomerRef`,
 `TotalCompliances`, `TotalMissing`, `TotalApplied`, `TotalOverdue`, `ResponsibleEmails`,
 `AlertEmails`.
+
+**Correction (Update 25)**: `SalesStatus` was listed above as "not surfaced" at this doc's original
+writing (Update 1), but codebase research for Update 25 confirmed it was surfaced to the frontend at
+some point after that without a corresponding data-model update — `ComplDynReferenceResponseDto`
+already has a `SalesStatus` property, `ComplDynamicsService`'s `case 11:` already assigns it, and
+`SalesOrderOverviewPage.jsx` already renders it as the **Sales status** column. See the `SalesStatus`
+row now added to the table below and the "Response DTO change" section's retro-documentation.
 
 Read-only: this entity is never created/updated/deleted by this system; it is queried live from
 D365 on every request (subject to the same paging/filter/sort mechanics as every other `refType`).
@@ -43,6 +51,8 @@ Code          string   // existing — SalesId for refType=11 (CodeColumn)
 Name          string   // existing — CustName for refType=11 (NameColumn)
 CustAccount   string?  // NEW — populated only for refType=11; null for every other refType
 DeliveryDate  DateTime? // NEW — populated only for refType=11; null for every other refType
+SalesStatus   string?  // existing — populated only for refType=11; null for every other refType
+                        // (retro-documented Update 25; no code change — this property already exists)
 ```
 
 Additive-only change: existing consumers of other `refType`s are unaffected (fields default to
@@ -59,7 +69,8 @@ Additive-only change: existing consumers of other `refType`s are unaffected (fie
 `MapDynamicsResponse` switch: new `case 11:` branch deserializes items as
 `List<RSVNSalesOrderOpenInvoiceCogs>` and projects each into `ComplDynReferenceResponseDto` with
 `Id`/`Code` = `SalesId`, `Name` = `CustName`, `CustAccount` = `CustAccount`, `DeliveryDate` =
-`DeliveryDate`.
+`DeliveryDate`, `SalesStatus` = `SalesStatus` (retro-documented Update 25 — this assignment already
+exists in code).
 
 ## Frontend row shape (`SalesOrderOverviewPage.jsx`)
 
@@ -72,13 +83,19 @@ Each grid row, after fetching page(s) via `GetReferenceDataUseCase.execute(page,
 | Customer | `item.custAccount` | "-" |
 | Customer name | `item.name` | "-" |
 | Delivery date | `item.deliveryDate` | "-" (spec FR-006 / Edge Cases) |
+| Sales status | `item.salesStatus`, with `"Backorder"` (case-insensitive) rendered as `"Open order"` (spec FR-171, Update 25) | "-" |
 | Template | list of template names for this row's Sales ID (see below) | "-" (no attachment record — FR-007b) |
 | Progress | fixed demo constant (e.g. a static `%` + fixed bar value) | n/a — always the same value |
 
 Search (spec FR-011) reuses the existing generic filter payload shape already sent by
 `useReferenceObjects`/`GetReferenceDataUseCase` — one filter on the `Code` column and one on the
 `Name` column (both `like`), which `BuildFilterString`/`EntityMappings` resolve to `SalesId`/
-`CustName` respectively for `refType=11`.
+`CustName` respectively for `refType=11`. **Update 27** (spec FR-179..FR-181): a third filter on the
+`CustAccount` column (also `like`) is added to the same array, OR-joined with `Code`/`Name` via a new
+`"custaccount"` case in `BuildFilterString` guarded to `mapping.Entity ==
+"RSVNSalesOrderOpenInvoiceCogs"` (cloning the shape of the existing `refType=15`/`"vendorcode"` case,
+research.md Decision 79) — resolves to D365 `CustAccount`, the same field already returned as
+`custAccount` above.
 
 Pagination (spec FR-010): standard `page`/`pageSize` request params already supported by
 `GetReferenceDataUseCase`/`dynamicsApi.getReferenceData`; page size chosen at implementation time
@@ -1277,3 +1294,182 @@ mount (Update 20) for the always-visible All chip/Template Checklist, independen
 - No persisted "last chosen format" — `format` resets to `null` every time the dialog reopens.
 - No change to `downloadingSalesIds` (Update 13) or to View's mount-time default-template auto-load
   (Update 20) — both are unaffected by this update.
+
+## Update 24 (2026-09-18): Overview gains an ETD column + Year/ETD Week filter, brown View/Download buttons, Delivery-date-descending default sort
+
+### Field addition: `ComplDynReferenceResponseDto.RsVnETD` (refType = 11 only)
+
+| Field | Type | Source | Notes |
+|---|---|---|---|
+| `rsVnETD` (camelCase on the wire) | `DateTime?` | `RSVNSalesOrderOpenInvoiceCogs.RsVnETD` (already exists, `Domain/Dynamics/RSVNSalesOrderOpenInvoiceCogs.cs:37`) | New nullable property on `ComplDynReferenceResponseDto`, assigned in `MapDynamicsResponse`'s `case 11:` alongside the existing `DeliveryDate` assignment (research.md Decision 74). `null`/absent for every `refType` other than 11, same convention as `custAccount`/`deliveryDate` (Update 1/9 of this doc). |
+
+No new entity, no new table, no migration — this is a projection of a field the entity has always had.
+
+### Filter addition: ETD Year/Week on `RsVnETD` (refType = 11 only)
+
+| Filter shape (unchanged from `compliance-view`) | Resolved by |
+|---|---|
+| `{ column: "RsVnETD", operator: "inyear", value: "2026" }` | `EtdWeekFilterBuilder.BuildYear` (unchanged, `Utils/EtdWeekFilterBuilder.cs`) — new call site inside `ComplDynamicsService.GetDynRefePagedAsync` (research.md Decision 75) |
+| `{ column: "RsVnETD", operator: "inweeks", value: "2026:3,5,9" }` | `EtdWeekFilterBuilder.Build` (unchanged) — same new call site |
+
+Both filter entries are intercepted **before** `BuildFilterString`/`ODataOperatorConverter.ToODataOperator`
+ever sees them (which would otherwise throw on the unrecognized `inyear`/`inweeks` operator strings), then
+AND-ed onto whatever condition `BuildFilterString` produces for the remaining ("other"-bucket) filters —
+mirroring `AllCompliancesService.GetDataAsync`'s existing extract-then-AND shape exactly. No new
+`FilterRequest` shape, no new response field for this part (the filter narrows `items`, it does not add a
+column).
+
+### Sort addition: `sortColumn = "DeliveryDate"`, `sortOrder = "desc"` (new default, refType = 11 only)
+
+No DTO/entity change — `MapSortColumn`'s existing default arm (`_ => sortColumn`) already passes this
+literal D365 field name straight through to `SetOrderBy` for `RSVNSalesOrderOpenInvoiceCogs`; only the
+frontend's hardcoded call-site literals change (`'Code'`/`'asc'` → `'DeliveryDate'`/`'desc'`).
+
+### Non-goals confirmed (Update 24)
+
+- No new backend endpoint, controller, entity, table, or migration.
+- No new `ComplDynReferenceResponseDto` field beyond `rsVnETD` — Progress/Template columns (Update 1/12)
+  and every other existing field are unaffected.
+- No change to `ODataOperatorConverter`'s recognized operators, and no change to any `refType` other than
+  11's filter/sort/response behavior.
+- No persisted UI-side "last chosen Year/Week" — each Overview page load/Clear resets to no filter, per
+  spec FR-166.
+
+## Update 25 (2026-09-18): Sales status column — "Backorder" → "Open order" display-label mapping (frontend-only, no entity/DTO change)
+
+### Retro-documentation: `SalesStatus` (refType = 11, existing field)
+
+`SalesStatus` was omitted from this doc's original (Update 1) field table and never added despite
+already existing in code — see the correction and the new `SalesStatus` row added to the "Entity: Sales
+Order" and "Response DTO change" sections above, and the new row added to "Frontend row shape" above.
+No code changes accompany the retro-documentation itself.
+
+### Display-label mapping (new behavior, Update 25)
+
+| Raw `SalesStatus` value (case-insensitive) | Rendered label |
+|---|---|
+| `"Backorder"` | **"Open order"** |
+| any other value (including empty/`null`) | unchanged — raw value verbatim, or `"-"` if empty/`null` |
+
+Implementation is a single client-side comparison inside `SalesOrderOverviewPage.jsx`'s existing Sales
+status cell render — no new component, util file, or shared mapping table. This is intentionally a
+single label substitution (spec FR-171/FR-172, Assumption), not a general `SalesStatus` → display-label
+lookup table; extending it to other values is out of scope for this update.
+
+### Non-goals confirmed (Update 25)
+
+- No new backend endpoint, controller, entity, table, migration, or DTO field — `SalesStatus` is already
+  fully delivered by the existing `refType=11` response.
+- No change to `ComplDynamicsService`, `DynController`, `ODataOperatorConverter`, `EntityMappings`, or
+  `MapSortColumn`.
+- No change to any other Overview column/control (Sales ID, Customer, Customer name, Delivery date, ETD,
+  Template, Progress, search, Year/ETD Week filter, sort, pagination, Back-navigation restore, View/
+  Download/Map File actions).
+
+## Update 27 (2026-09-22): Overview search box OR-matches Customer ID (`CustAccount`), in addition to Sales ID/Customer name (frontend one-line addition + backend one guarded switch-case, no entity/DTO change)
+
+### Search filter addition (refType = 11 only)
+
+| Filter entry | Resolves to (D365) | Join with other search entries |
+|---|---|---|
+| `{ column: "Code", operator: "like", value }` (existing) | `SalesId` | OR |
+| `{ column: "Name", operator: "like", value }` (existing) | `CustName` | OR |
+| `{ column: "CustAccount", operator: "like", value }` (**new, Update 27**) | `CustAccount` | OR |
+
+All three entries are sent together by `SalesOrderOverviewPage.jsx`'s `buildSearchFilters(search)`
+whenever the search box is non-empty, and are OR-joined by `BuildFilterString` into the same search
+bucket the first two already use — a single keyword now matches if it is a "contains" substring
+(case-insensitive) of Sales ID, Customer (`CustAccount`), or Customer name (`CustName`), on any one of
+the three, not requiring all three (spec FR-179).
+
+`CustAccount` requires no new D365 field, no new `ComplDynReferenceResponseDto` property, and no new
+`EntityMappings[11]` entry — it has been read and returned as `custAccount` since this feature's own
+Update 1 (Customer column, FR-004); the only change is registering it as a **searchable** column, via a
+new `"custaccount"` case in `BuildFilterString`'s column-grouping switch, guarded to
+`mapping.Entity == "RSVNSalesOrderOpenInvoiceCogs"` — the same entity-guarded-case shape `refType = 15`
+(Purchase Orders) already established for its own `VendorCode` OR-search extension (research.md
+Decision 79).
+
+### Non-goals confirmed (Update 27)
+
+- No new backend endpoint, controller, entity, table, migration, or DTO field — `CustAccount` is already
+  fully delivered by the existing `refType=11` response since Update 1.
+- No change to `EntityMappings[11]`'s `(CodeColumn, NameColumn)` tuple or `MapDynamicsResponse`'s
+  `case 11:` — Sales ID/Customer name filtering and mapping are unchanged (spec FR-180).
+- No change to any other `refType`'s filtering behavior — the new `"custaccount"` case is guarded to
+  `RSVNSalesOrderOpenInvoiceCogs` only (spec FR-181).
+- No change to how the search keyword combines with Year/ETD Week (Update 24, AND) or with the
+  Template-whitelist default-view filter (Update 16) — only the set of columns one existing keyword is
+  OR-matched against widens.
+- No change to any other Overview column/control (Sales ID, Customer name, Delivery date, ETD, Sales
+  status, Template, Progress, sort, pagination, Back-navigation restore, View/Download/Map File actions).
+
+## Update 28 (2026-09-22): Map File/Edit/Download icon visibility gated by `permissionList` ('Update'/'Download') on menu `eutr-sales-orders` (frontend-only, no entity/DTO/API change)
+
+### No new entity or field — this update introduces zero data-model surface
+
+`permissionList` is not a new entity/field owned by this feature: it is an existing array of permission-
+name strings already attached to each menu record delivered by the external menu/auth service and
+already cached client-side in `localStorage['userMenu']`. This feature does not define, store, or
+transport `permissionList` itself — it only reads the already-existing value for its own menu record
+(`code === 'eutr-sales-orders'`).
+
+| Icon/button | Screen | Gating condition (Update 28) |
+|---|---|---|
+| Map File | Overview (per row) | `permissionList.includes('Update')` |
+| Edit / Map File | View | `permissionList.includes('Update')` |
+| Download | Overview (per row) | `permissionList.includes('Download')` |
+| Download | View | `permissionList.includes('Download')` |
+| View summary | Overview (per row) | none (unchanged) |
+| Back | View | none (unchanged) |
+
+### Non-goals confirmed (Update 28)
+
+- No new backend endpoint, controller, entity, table, migration, DTO, or authorization policy —
+  `permissionList` is already delivered end to end by the existing external menu/auth service; this
+  update makes zero backend calls.
+- No new frontend domain entity/model — `permissionList` stays a plain array of strings, read via the
+  already-existing `getMenuDataFromStorage()` util, exactly as every other EUTR screen already consumes
+  it for its own menu.
+- No change to any existing entity/DTO field used elsewhere in this feature (Sales ID, Customer,
+  Customer name, Delivery date, ETD, Sales status, Template, Progress, `eutr_purchase_attachments`,
+  `eutr_references`, `eutr_documents`, `eutr_templates`, etc.).
+- No change to the View summary icon (Overview) or Back button (View) — both remain unconditional
+  (spec FR-187).
+
+## Update 29 (2026-09-23): Map File Step 2 Upload/Edit buttons gated by `permissionList` of menu `eutr-documents` (frontend-only, no entity/DTO/API change)
+
+### No new entity or field — same mechanism as Update 28, new menu code
+
+Like Update 28, `permissionList` is not a new entity/field owned by this feature: it is the existing
+array of permission-name strings already attached to each menu record delivered by the external
+menu/auth service (`GET .../menu-managements/permissions`) and already cached client-side in
+`localStorage['userMenu']`. This update reads that already-available array for the menu record whose
+`code === 'eutr-documents'` (not `'eutr-sales-orders'`, since Upload/Edit here are actions on
+`EutrDocuments`, not on the Sales Order itself) — confirmed via live testing that this menu's
+`permissionList` already carries `'Create'`/`'Update'` as valid entries.
+
+An earlier draft of this update instead added a new backend endpoint (`GET /api/eutr-documents/can-update`,
+mirroring the pre-existing `can-create`) and had both `MapFilePage.jsx` and `PurchaseOrderViewPage.jsx`
+(`012-eutr-purchase-orders`) call it live on mount. Both that endpoint and the pre-existing `can-create`
+were removed after confirming `permissionList` already answers the same question with data already in
+memory — see `research.md` Decision 81 for the full before/after.
+
+| Button | Screen | Gating condition (Update 29) |
+|---|---|---|
+| Upload | Map File Step 2 | `permissionList.includes('Create')` (menu `eutr-documents`) |
+| Edit (per row) | Map File Step 2, AVAILABLE FILES | `permissionList.includes('Update')` (menu `eutr-documents`) |
+| View (per row) | Map File Step 2, AVAILABLE FILES | none (unchanged) |
+
+### Non-goals confirmed (Update 29)
+
+- No new backend endpoint, controller, entity, table, migration, DTO, or authorization policy —
+  `permissionList` is already delivered end to end by the existing external menu/auth service; this
+  update makes zero backend calls (a net decrease from the earlier draft's 2 new calls per page load).
+- No new frontend domain entity/model — `permissionList` stays a plain array of strings, read via the
+  already-existing `getMenuDataFromStorage()` util.
+- No change to any existing entity/DTO used elsewhere in this feature (`eutr_purchase_attachments`,
+  `eutr_references`, `eutr_documents`, `eutr_templates`, etc.) or to Update 28's `permissionList` gating
+  of menu `eutr-sales-orders` (independent menu code, independent of this update).
+- No change to the View button (read-only preview) or Step 1 (PO selection/Save PO Mapping) — both
+  remain unconditional.

@@ -383,3 +383,104 @@
   evaluate both formats or only the one the user picked — is resolved as an explicit FR (FR-158:
   evaluate only the picked format), since checking the unpicked format would block a valid download for
   no reason a user could see on screen.
+- **2026-09-18 (Update 23)**: Documented that the Upload/Edit buttons at Step 2 (AVAILABLE FILES,
+  Update 6) inherit the new automatic File-name-by-Step/master-Prefix behavior specified in
+  `004-eutr-documents` Update 25 (FR-062–FR-067 there) at no cost to this spec — they call the exact
+  same shared Add/Edit popup and Upload flow, with no naming logic of their own. No FR/Key Entity/Success
+  Criteria changes were needed here; only a cross-reference Clarifications entry was added. No
+  [NEEDS CLARIFICATION] markers — the one question worth confirming (whether renaming affects Map
+  File/View's file-to-step matching) was resolved as an informed default: matching is based on
+  `eutr_references.StepId`, never on `eutr_documents.Name`, so it is unaffected.
+- **2026-09-18 (Update 24)**: Re-validated after adding FR-161..FR-169, SC-082..SC-087, and related
+  acceptance scenarios/assumptions — brings the Overview screen (`SalesOrderOverviewPage.jsx`) in line
+  with three behaviors already present on the Compliance View screen filtered to `ref-type = 11` (same
+  underlying sales-order data source, `RSVNSalesOrderOpenInvoiceCogs`): (1) a new **ETD** column right
+  after Delivery date, sourced from `RsVnETD` — already present on the same D365 entity backing
+  reference type = 11 (confirmed by codebase research), so unlike Delivery date's own FR-009 gap, no
+  reference-source change is required, only a display column; (2) a new Year + ETD Week search block
+  reusing the same year/ISO-week-range filtering mechanism Compliance View already applies to the same
+  `RsVnETD` field, combined with the existing Sales ID/Customer search (FR-011) via AND; (3) the View
+  and Download row-action buttons recolored to the one brown value already defined in the shared theme
+  (`chip-brown` / `#ba7351`) rather than a newly invented shade; (4) the default sort order changed from
+  fixed Sales ID ascending to Delivery date descending, matching Compliance View's own backend default
+  for Sale Order rows. No new [NEEDS CLARIFICATION] markers introduced: the one point with more than one
+  reasonable reading — whether the new default sort should override a user's own column-sort choice if
+  the grid supports clicking a header to sort — is resolved as an explicit Assumption (a user's active
+  choice is respected; only the initial/no-selection default changes), consistent with how this spec has
+  always scoped "default" behavior changes (e.g. Update 20's All-as-default for View) to not clobber an
+  active user choice. Exact color token wiring (reusing the existing `chip-brown` CSS class vs. a new
+  theme token with the same `#ba7351` value) and exact Year/Week UI subcomponent reuse are left to the
+  plan phase as documented Assumptions, consistent with how this spec has always deferred
+  implementation-mechanism choices.
+- **2026-09-18 (Update 25)**: Re-validated after adding FR-170..FR-172, SC-088..SC-089, and related
+  Clarifications/Assumptions — adds a display-label mapping to the Overview screen's **Sales status**
+  column (`SalesOrderOverviewPage.jsx:815/857`, backed by `ComplDynReferenceResponseDto.SalesStatus`
+  from the same `reference type = 11` source): when the API returns `"Backorder"`, the UI shows
+  **"Open order"** instead; every other value (including empty/`null`) keeps rendering exactly as
+  before. Codebase research confirmed this column already exists and already renders the raw API value
+  verbatim with zero label mapping today, and that this column had never been documented in this spec's
+  own Requirements section despite existing in code since before Update 24 — FR-170 closes that
+  documentation gap (an existing-behavior fact, not a new capability) so the mapping requirement
+  (FR-171/FR-172) has a base FR to sit next to, consistent with how Update 14 similarly retro-documented
+  View's pre-existing Back button (FR-093) the same way. No new [NEEDS CLARIFICATION] markers
+  introduced: this is a single, narrowly-scoped label substitution with an unambiguous trigger value
+  ("Backorder", case-insensitive exact match) and an unambiguous replacement ("Open order"), requiring
+  no new data source, no backend/DTO change, and no interpretation choice left open — an explicit
+  Assumption records that this is one label mapping, not a general status-mapping table, to prevent
+  scope creep into unrelated `SalesStatus` values in a future update.
+- **2026-09-21 (Update 26)**: Re-validated after adding FR-173..FR-178 and related Clarifications/
+  acceptance scenarios/edge cases/assumptions — on the View Sales Order screen only, replaces the
+  header's **"Template"** field (chips of `TemplateCode`) with a **"Purchase Order(s)"** field showing
+  chips of the selected `PurchId`s (same data source as the existing "Selected Purchase Orders" table,
+  FR-037), and collapses the template-tree toolbar (`data-marker="template-tree-toolbar"`) down to a
+  single tab — renamed from **"All"** to **"Template"** — hiding the per-template chips that FR-058
+  previously specified. This is a UI-visibility change only: the underlying default-template/merged-tree
+  mechanism (FR-130..FR-141) is explicitly unchanged, only its label and the fact that it is now the
+  only reachable option. FR-058/FR-059/FR-060 are marked superseded in place (per this spec's
+  established practice, e.g. FR-149 in Update 22), not deleted, to preserve history without leaving
+  contradictory active text. One clarification question was asked and resolved directly with the
+  requester before drafting (per the "resolve when possible" rule): the new header label reads
+  **"Purchase Order(s)"** (matching the existing table's terminology) rather than the shorter "PO" or
+  the unchanged "Template" label — recorded in the Update 26 Clarifications session, not left as a
+  [NEEDS CLARIFICATION] marker. No new markers introduced: the remaining points (chip wrap on overflow,
+  behavior when zero POs are selected, whether the sole remaining tab stays clickable) are resolved as
+  explicit FR/Assumption text using this spec's own established defaults (reuse existing chip-wrap
+  styling; reuse the existing empty-state pattern; keep the click-to-reload behavior already specified
+  for the "All" chip in FR-130) rather than left open.
+- **2026-09-22 (Update 27)**: Re-validated after adding FR-179..FR-181, SC-090..SC-091, and related
+  Clarifications/acceptance scenarios/edge cases — extends the Overview screen's existing search box
+  (FR-011) to also match the **Customer** column (`CustAccount`, e.g. "10676"), not just Sales ID and
+  Customer name. Codebase research confirmed this is a real, verified gap: `SalesOrderOverviewPage.jsx`'s
+  `buildSearchFilters()` only ever sends `Code`/`Name` filter entries, and the shared backend
+  `BuildFilterString` (`ComplDynamicsService.cs`)/`EntityMappings` for `refType = 11` only resolves
+  those same two columns — `CustAccount` is already returned and displayed (FR-004) but was never part
+  of the OR-searched column set. A directly applicable precedent already exists in the same shared
+  filter builder: the Purchase Orders screen (`refType = 15`) already OR-searches an extra
+  `VendorCode` column, scoped to that one entity only — this update applies the identical
+  add-one-more-OR-column-scoped-to-one-entity pattern to Sales Orders/`CustAccount` (Constitution
+  Principle II, reference-pattern reuse) rather than inventing a new filtering mechanism. FR-011 is
+  edited in place with a "Cập nhật từ Update 27" note (same established practice as FR-060/FR-138/
+  FR-149 in prior updates) rather than left contradictory, since it already referenced "Customer"
+  ambiguously. No new [NEEDS CLARIFICATION] markers introduced: this is a narrowly-scoped, unambiguous
+  gap-closing fix with a single reasonable interpretation (OR-match, entity-scoped, no new UI element),
+  matching wording the spec's own User Story 2 Independent Test already used ("mã/tên Customer") since
+  before this update.
+- **2026-09-22 (Update 28)**: Re-validated after adding FR-182..FR-188, SC-092..SC-094, and related
+  Clarifications/acceptance scenarios/edge cases/assumptions — gates the **Map File** icon (Overview),
+  the combined **Edit / Map File** button (View), and the **Download** icon/button (both screens)
+  behind the current user's `permissionList` for the `eutr-sales-orders` menu: Map File/Edit requires
+  `'Update'`, Download requires `'Download'`. Codebase research confirmed a real, verified gap:
+  `SalesOrderOverviewPage.jsx` (~lines 954-1011) and `ViewSalesOrderPage.jsx` (~lines 1098-1118) render
+  these icons unconditionally today, with zero `permissionList` check, unlike every other EUTR screen in
+  this codebase (`eutr-documents`, `eutr-templates`, `compliance-view-so`, `eutr-reference-types`), which
+  already gate their own Edit/Delete/Download actions the same way via
+  `getMenuDataFromStorage().find(m => m.code === <menu code>)?.permissionList` +
+  `permissionList.includes('Update' | 'Download')`. This update applies that exact, already-established
+  reference pattern (Constitution Principle II/III) to `eutr-sales-orders` rather than inventing a new
+  permission mechanism, naming string, or backend policy. The **View summary** icon and **Back** button
+  are explicitly left unchanged (FR-187), since they are not Update/Download actions. No new
+  [NEEDS CLARIFICATION] markers introduced: the two points with more than one reasonable reading — what
+  to show when `permissionList` fails to load/is empty, and whether Update/Download are independent or
+  coupled conditions — are resolved as explicit Edge Cases/FR-186 (fail-closed default, matching every
+  other EUTR screen's existing behavior when `permissionList` is missing; each icon depends only on its
+  own permission, not the other) rather than left open.

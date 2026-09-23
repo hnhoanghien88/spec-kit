@@ -388,3 +388,114 @@ from before this update.
 - [X] T037 [P] Confirm `compliance-client/src/presentation/pages/eutr-sales-orders/MapFilePage.jsx`'s own `<EutrDocumentsFormDialog mode="add" ...>` call sites still pass no `resolveAddDefaultChips` (or `addDefaultChips`) prop, so their Type-change handler keeps clearing Value to `[]` on every Type change exactly as before (FR-029) — no code change expected, verification only. (Confirmed via grep: no match for `addDefaultChips|resolveAddDefaultChips|addDefaultTypeName` in `MapFilePage.jsx` — unaffected.)
 
 **Checkpoint**: Update 2 is independently testable — `PurchId/View`'s Upload popup re-fills Value on every Type change per the PO/Vendor mapping above, while Map File's Upload popup keeps clearing Value on Type change, unaffected. Verified via `eslint` (clean, both changed files) and `vite build` (succeeds, 0 errors) after the change. **Not run**: live click-through in `quickstart.md`'s "Validate the detail screen (US2)" steps 6b–6e (**not run by this pass** — needs a live backend + real D365 data, same constraint as T024/T026/Update 1's checkpoint).
+
+---
+
+## Phase 9: Spec Update 4 — Hide Upload button without permission on `PurchId/View` (FR-030/FR-031/FR-032)
+
+**Goal**: The **Upload** button on `PurchId/View` only renders when the current user holds the
+permission that already guards the real Upload action (`EutrDocuments.Create` — the same policy
+`POST /api/eutr-documents` is already gated by). When the user lacks it, the button is fully hidden
+(not disabled); the **Edit** button and the rest of the screen (step tree, AVAILABLE FILES, header)
+are unaffected. Out of scope: `005-eutr-sales-orders`'s Map File screen (unchanged).
+
+**Independent Test**: As a user with `EutrDocuments.Create`, open any `PurchId/View` — Upload button
+shows and works as before. Temporarily revoke that permission from the test role, reload the same
+screen — Upload button is gone entirely, Edit/tree/AVAILABLE FILES still work normally. Re-grant the
+permission, reload — Upload button reappears.
+
+### Implementation for Update 4
+
+- [X] T038 [P] [US2] In `compliance-sys-api/src/ComplianceSys.Api/Controllers/EutrDocumentsController.cs`, add a new `GET("can-create")` action guarded by the existing `[Authorize(Policy = "EutrDocuments.Create")]` attribute (same policy as the `Create` action already on this controller), doing no business logic and returning `Ok(ApiResponse<bool>.Ok(true))` — the framework's own `[Authorize]` pipeline is what actually answers the permission question via its standard `403` on failure (contracts/eutr-templates-and-documents-reused.md, research.md Decision 11). (Done — `dotnet build` on `ComplianceSys.Api` produced 0 `error CS`; the only build errors were file-lock copy failures from a currently-running dev instance of the API, unrelated to this change.)
+- [X] T039 [P] [US2] Wire the new endpoint through the existing repository layers: add `canCreate: () => axiosInstance.get('/eutr-documents/can-create')` to `compliance-client/src/infrastructure/api/eutrDocumentsApi.js`; add `async canCreate() { throw new Error('Not implemented') }` to `compliance-client/src/domain/interfaces/IEutrDocumentsRepository.js`; add `async canCreate() { return await eutrDocumentsApi.canCreate() }` (return the raw axios response/promise, let non-2xx reject as usual) to `compliance-client/src/infrastructure/repositories/RestEutrDocumentsRepository.js`.
+- [X] T040 [US2] Create `compliance-client/src/application/usecases/eutr-documents/CheckEutrDocumentsCanCreateUseCase.js`, constructor takes `eutrDocumentsRepository`, `execute()` calls `this.eutrDocumentsRepository.canCreate()` inside a try/catch: resolve `true` on success, resolve `false` on any rejection (403 for "no permission", or a transient network/5xx error — FR-030's "hide unless confirmed allowed" default per research.md Decision 11). Depends on: T039. (Done — uses a bare `catch {}`, not `catch (err)`, to satisfy this repo's `no-unused-vars` eslint rule.)
+- [X] T041 [US2] In `compliance-client/src/presentation/pages/eutr-purchase-orders/PurchaseOrderViewPage.jsx`: instantiate `new CheckEutrDocumentsCanCreateUseCase(repositories.eutrDocuments)`; add a `canUploadDocuments` state (default `false`); call the use case once on mount, in parallel with the existing PO-existence check (T013), and set the state from its result; wrap the existing `<Button startIcon={<UploadIcon />} onClick={() => setAddDialogOpen(true)}>Upload</Button>` (around the AVAILABLE FILES header, ~line 791-799) in `{canUploadDocuments && (...)}` so it renders nothing (not `disabled`) when `false` (FR-030). Do not change the Edit `IconButton`, the step tree, or any other part of the screen (FR-031) — do not change the Upload popup's own defaults/behavior from Updates 1/2 (FR-032) when the button is shown. Depends on: T038, T040.
+- [X] T042 [P] Confirm `compliance-client/src/presentation/pages/eutr-sales-orders/MapFilePage.jsx` is untouched by this Update — its own Upload button visibility (if any) is out of scope; verification only, no code change expected. (Confirmed via grep: no match for `canUploadDocuments|CheckEutrDocumentsCanCreateUseCase|can-create` in `MapFilePage.jsx` — unaffected.)
+
+**Checkpoint**: Update 4 is independently testable per the Independent Test above and
+`quickstart.md`'s new "Validate Upload button visibility by permission" section. Verified via
+`eslint` (clean, all 5 changed/added files) and `vite build` (succeeds, 0 errors) after the change.
+**Not run**: live click-through against a real environment with a role that can have
+`EutrDocuments.Create` granted/revoked — same constraint as T024/T026.
+
+**Operational follow-up (not a code task)**: this Update introduces no new permission/policy —
+`EutrDocuments.Create` already exists and is already granted/denied per role in the DB for the real
+Upload action (004/005/012 all reuse it). No new DB seeding is required for this Update specifically;
+only confirm the roles that should/shouldn't see the Upload button already have the expected
+`EutrDocuments.Create` grant.
+
+Note (superseded by Phase 10 below): T042 confirmed `MapFilePage.jsx` was untouched by Update 4. This
+session's sibling update to `005-eutr-sales-orders` (that spec's own Update 29) now *does* gate
+`MapFilePage.jsx`'s Upload/Edit buttons, using the corrected `permissionList` mechanism Phase 10 below
+also adopts — see that feature's own tasks.md Phase 82.
+
+---
+
+## Phase 10: Spec Update 5 — Gate Upload/Edit on `permissionList` of menu `eutr-documents` (FR-030 corrected, FR-033/FR-034/FR-035/FR-036)
+
+**Goal**: The per-row **Edit** button on `PurchId/View` only renders when `permissionList` for menu
+`eutr-documents` includes `'Update'`; the **Upload** button (FR-030, originally Update 4's
+`can-create` probe) is corrected to read the same `permissionList` for `'Create'` instead. Independent
+conditions. When either is absent, that button is fully hidden (not disabled); the other button and the
+rest of the screen are unaffected.
+
+**Independent Test**: With a test role holding both `'Create'` and `'Update'` on menu
+`eutr-documents`, open any `PurchId/View` with an existing document — Upload and every row's Edit
+button show and work as before. Revoke either permission alone, reload — only the corresponding button
+disappears, the other and the rest of the screen (tree/AVAILABLE FILES/header) are unaffected. Revoke
+both — both buttons disappear. Re-grant — both reappear immediately, no stale state.
+
+**Correction note (same session)**: the first pass at this phase (T043-T046, now superseded) added a
+new backend `can-update` endpoint (owned by `005-eutr-sales-orders`'s own Update 29) plus a
+`CheckEutrDocumentsCanUpdateUseCase.js` live probe, mirroring Update 4's pre-existing `can-create`. The
+person requesting the feature tested it live and reported both Upload and Edit still visible after
+revoking the permissions; a DevTools capture showed `permissionList` for menu `eutr-documents` already
+carries `'Create'`/`'Update'` (same mechanism as `005` Update 28). The tasks below (T047-T051) replace
+T038-T046 with the corrected, `permissionList`-based implementation and remove the now-dead probe code
+the requester asked to delete (shared with `005-eutr-sales-orders`'s own Phase 82 correction — see that
+feature's tasks.md T409/T413/T415 for the deletion, done once for both features).
+
+### Implementation for Update 5 (corrected)
+
+- [X] T047 [US2] In `compliance-client/src/presentation/pages/eutr-purchase-orders/PurchaseOrderViewPage.jsx`,
+  remove the `CheckEutrDocumentsCanCreateUseCase`/`CheckEutrDocumentsCanUpdateUseCase` imports/
+  instantiations and the `canUploadDocuments`/`canEditDocuments` state + 2 mount-only `useEffect`s
+  (T041 from Update 4, T046 from this Update's superseded draft); add
+  `import { getMenuDataFromStorage } from '@utils/helpers'` and an `eutrDocumentsPermissionList`
+  `useMemo` (`getMenuDataFromStorage().find(m => m.code === 'eutr-documents')?.permissionList || []`),
+  then derive `canUploadDocuments = eutrDocumentsPermissionList.includes('Create')` and
+  `canEditDocuments = eutrDocumentsPermissionList.includes('Update')` as plain `const`s — cloning
+  `005-eutr-sales-orders`'s own `permissionList` pattern from Update 28.
+  *(Done — same edit as `005-eutr-sales-orders` tasks.md T409, applied to this file.)*
+- [X] T048 [US2] Confirm the **Upload** `Button` (still wrapped in `canUploadDocuments && (...)` from
+  T041) and the AVAILABLE FILES **Edit** `Tooltip`/`IconButton` (still wrapped in
+  `canEditDocuments && (...)` from T046) now read the `const`s from T047 — no JSX change needed, only
+  the derivation upstream changed (depends on T047).
+  *(Done — verified via `git diff`: both conditional wrappers are byte-for-byte unchanged; only their
+  upstream `canUploadDocuments`/`canEditDocuments` derivation changed.)*
+- [X] T049 [P] Delete the now-unused backend/frontend probe code per the requester's explicit choice —
+  performed once, shared with `005-eutr-sales-orders`'s own Phase 82 (T413): `CanCreate()`/`CanUpdate()`
+  removed from `EutrDocumentsController.cs`; `CheckEutrDocumentsCanCreateUseCase.js`/
+  `CheckEutrDocumentsCanUpdateUseCase.js` deleted; `canCreate`/`canUpdate` removed from
+  `eutrDocumentsApi.js`/`IEutrDocumentsRepository.js`/`RestEutrDocumentsRepository.js` (depends on T047
+  and `005-eutr-sales-orders` tasks.md T411, both consumers migrated first).
+  *(Done — see `005-eutr-sales-orders` tasks.md T413 for the actual deletion.)*
+- [X] T050 [P] Lint `PurchaseOrderViewPage.jsx` (`npx eslint`) — 0 new problems (depends on T049).
+  *(Done — 0 problems.)*
+- [X] T051 [P] Build the backend (`dotnet build src/ComplianceSys.Api/ComplianceSys.Api.csproj`) and
+  frontend (`npx vite build --mode production`) — 0 new compile/build errors from the T049 removal
+  (depends on T049).
+  *(Done — backend: 0 `error CS` (only failure: unrelated locked-`.exe` copy from the currently-running
+  dev API process); frontend: `✓ built`, `PurchaseOrderViewPage` chunk produced successfully.)*
+
+**Checkpoint**: Update 5 is independently testable per the Independent Test above and
+`quickstart.md`'s "Validate Upload/Edit button visibility by `permissionList` of menu `eutr-documents`"
+section. Verified via `eslint`/`dotnet build`/`vite build`, all 0 new errors. **Not run**: live
+click-through against a real environment with a role whose `permissionList` for menu `eutr-documents`
+can be toggled — same constraint as T024/T026/Update 4's checkpoint.
+
+**Operational follow-up (not a code task)**: this Update introduces no new permission/policy —
+`'Create'`/`'Update'` on menu `eutr-documents` are existing `permissionList` entries, granted/denied
+per role via the same menu-admin mechanism already used for menu `eutr-sales-orders`. No new DB seeding
+is required; only confirm the roles that should/shouldn't see Upload/Edit already have the expected
+`permissionList` entries for menu `eutr-documents`.

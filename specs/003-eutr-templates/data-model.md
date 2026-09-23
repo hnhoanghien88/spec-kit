@@ -34,6 +34,16 @@ already established (Update 15) instead of the old age-based branch's payload-re
 `Status=1` (Approved) is read-only — `UpdateAsync` rejects direct edits server-side, not just via a
 disabled frontend control.
 
+**Update 25 (2026-09-18)**: Pure rename, no schema/value change — `Status=1`'s display name/label
+becomes **"Public D365"** (was "Approved"); the backend `TemplateStatusEnum` member is renamed
+`PublicD365` and the frontend `TEMPLATE_STATUS` key becomes `PUBLIC_D365`, both still storing the
+byte value `1`. No migration needed (existing rows are unaffected). The **Approve** action itself
+(`Status: 0→1`) is unchanged server-side; it is now triggered from a new **Save template & Public
+D365** button on TemplateBuilderPage (which calls Update then Approve in sequence) instead of a
+separate Approve button on the template list. The rest of this document's prose below still says
+"Approved" in places describing pre-Update-25 history — read it as "Public D365" throughout; the
+value/behavior is identical, only the label changed.
+
 ## Entities
 
 ### 1. EutrTemplates
@@ -46,9 +56,9 @@ disabled frontend control.
 | Code | VARCHAR(255) | NO | — | — | Auto-generated code (e.g., Templates-001). Readonly. |
 | Name | VARCHAR(255) | YES | NULL | — | Template name. Required by validation. |
 | ~~VendorCode~~ | ~~VARCHAR(50)~~ | — | — | — | **Removed (Update 13)**. Existing values discarded, no migration. Vendor↔Template linkage now lives in `EutrTemplateReferences` (time-bound, many-to-many) instead of a single field on the template. |
-| IsDefault | TINYINT | YES | 0 | Max 1 **globally** among active records (Update 13 — was max 1 per VendorCode) | Default template flag. **(Update 18)**: editable via a dedicated `POST {id}/set-default` endpoint even when `Status=Approved` — the one field NOT subject to Update 16's Approved-rejects-edits rule (see State Transitions below). |
-| VersionId | TINYINT | NO | 1 | — | Version counter. Starts at 1. **(Superseded by Update 16)** ~~increments on edit only if CreatedDate is >24h old~~ → increments ONLY when Request change transitions the row from Approved to Draft (see Status below and State Transitions). |
-| Status | TINYINT | YES | 0 | Values: `0`=Draft, `1`=Approved (Update 16; `TemplateStatusEnum` backend, `TEMPLATE_STATUS`/`TEMPLATE_STATUS_LABELS` frontend `helpers.js`) | Approval lifecycle flag. Defaults to `0` (Draft) on Create and Clone. `1` (Approved) rows are read-only (server-enforced) until Request change moves them back to `0` (Draft) on a NEW version row. Column pre-existed on the dev DB (unused, no prior migration) — see Update 16 note above. |
+| IsDefault | TINYINT | YES | 0 | Max 1 **globally** among active records (Update 13 — was max 1 per VendorCode) | Default template flag. **(Update 18)**: editable via a dedicated `POST {id}/set-default` endpoint even when `Status=Public D365` — the one field NOT subject to Update 16's PublicD365-rejects-edits rule (see State Transitions below). |
+| VersionId | TINYINT | NO | 1 | — | Version counter. Starts at 1. **(Superseded by Update 16)** ~~increments on edit only if CreatedDate is >24h old~~ → increments ONLY when Request change transitions the row from Public D365 to Draft (see Status below and State Transitions). |
+| Status | TINYINT | YES | 0 | Values: `0`=Draft, `1`=Public D365 (Update 16; renamed from "Approved" at Update 25 — value unchanged; `TemplateStatusEnum` backend, `TEMPLATE_STATUS`/`TEMPLATE_STATUS_LABELS` frontend `helpers.js`) | Approval lifecycle flag. Defaults to `0` (Draft) on Create and Clone. `1` (Public D365) rows are read-only (server-enforced) until Request change moves them back to `0` (Draft) on a NEW version row. Column pre-existed on the dev DB (unused, no prior migration) — see Update 16 note above. |
 | AlertFor | BIGINT UNSIGNED | YES | NULL | Logical ref → compl_group_email.Id (no DB FK — see Update 7) | Selected Alert group's Id. Required by validation (must be > 0). Was VARCHAR(50) free text before Update 7 (2026-07-07). |
 | IsDeleted | TINYINT | YES | 0 | — | Soft delete flag (0=active, 1=deleted) |
 | IsHide | TINYINT | YES | 0 | — | Version hide flag (0=current, 1=superseded) |

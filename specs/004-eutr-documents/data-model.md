@@ -1430,3 +1430,120 @@ document chỉ có đúng 1 giá trị `Invoice` (khác Step name/Conditions, v�
   nhật này chỉ dừng ở thu thập + hiển thị cột riêng.
 - Đóng popup Add/Edit mà không Upload/Save không ghi bất kỳ giá trị `Invoice` nào — kế thừa quy tắc
   chung đã có cho mọi trường khác của popup này.
+
+## Update 25 — Tự động đổi tên file theo Step + Prefix của master khi Upload (FR-062 đến FR-067)
+
+Hoàn toàn **backend-only** — `eutr_documents.Name` không còn là tên file gốc ở cả 2 luồng Upload.
+Không migration/entity/DTO/endpoint/route mới; **0 file frontend** cần sửa (xem research Quyết định
+72 cho lý do).
+
+### Method mới — `IEutrMastersRepository.GetPrefixByStepIdAsync` (nhánh Type khác "PO")
+
+```csharp
+// IEutrMastersRepository.cs
+Task<string?> GetPrefixByStepIdAsync(long stepId, CancellationToken ct = default);
+
+// EutrMastersRepository.cs
+public async Task<string?> GetPrefixByStepIdAsync(long stepId, CancellationToken ct = default)
+{
+    var sql = @"
+SELECT Prefix
+FROM eutr_master_documents
+WHERE StepId = @stepId AND Prefix IS NOT NULL AND Prefix <> ''
+ORDER BY Id ASC
+LIMIT 1;";
+
+    return await Connection.QueryFirstOrDefaultAsync<string?>(
+        new CommandDefinition(sql, new { stepId }, transaction: Transaction, cancellationToken: ct));
+}
+```
+
+Trả `Prefix` của bản ghi `Id` nhỏ nhất khi 1 `StepId` có nhiều bản ghi `eutr_master_documents` (1-N,
+xem entity `EutrMastersDocument` ở trên — `Prefix` chỉ duy nhất theo cặp `(StepId, Prefix)`, không
+duy nhất theo `StepId`); `null` khi Step chưa "có cấu hình trong master".
+
+### `EutrUploadService.cs` — dependency mới + 2 helper `private static` mới
+
+```csharp
+private readonly IRepository<EutrStep, long> _stepsRepository;   // MOI - constructor param, generic co san
+
+private static readonly char[] InvalidNameChars = { '\\', '/', ':', '*', '?', '"', '<', '>', '|' };
+
+private static string SanitizeNamePart(string? value)
+{
+    if (string.IsNullOrEmpty(value)) return string.Empty;
+    var filtered = new string(value.Where(c => !InvalidNameChars.Contains(c)).ToArray());
+    while (filtered.Contains("..")) filtered = filtered.Replace("..", string.Empty);
+    return filtered.Trim();
+}
+
+private static string BuildRenamedFileName(string? prefix, string? stepName, long stepId, string originalFileName)
+{
+    var extension = Path.GetExtension(originalFileName);
+    var basePart = SanitizeNamePart((prefix ?? string.Empty) + (stepName ?? string.Empty));
+    if (string.IsNullOrWhiteSpace(basePart)) basePart = $"Step{stepId}";
+    return basePart + extension;
+}
+```
+
+### Nhánh Type khác "PO" — `UploadMultipleForReferenceTypeAsync`
+
+```csharp
+// Truoc vong lap file (Step khong doi trong ca luot Upload) - 1 lan duy nhat:
+var stepPrefix = await _eutrMastersRepository.GetPrefixByStepIdAsync(request.StepId, ct);
+var step = await _stepsRepository.GetByIdAsync(request.StepId, ct);
+
+// Trong vong lap, moi file:
+var renamedFileName = BuildRenamedFileName(stepPrefix, step?.Name, request.StepId, file.FileName);
+var uniqueFileName = GetUniqueFileName(renamedFileName);   // doi input tu file.FileName
+// ...
+var entity = new EutrDocuments { Name = renamedFileName, /* ... */ };   // doi tu file.FileName
+```
+
+### Nhánh Type = "PO" — `UploadMultipleToSharePointAndSaveDataAsync`
+
+Logic khớp Prefix hiện có (`GetMatchingPrefixesAsync` → `stepIds` distinct, FR-020/FR-023) **không
+đổi 1 dòng nào**. Thêm đúng 1 bước sau khi khớp xong, trong `try` (không tính vào điều kiện loại
+file — file đã chắc chắn có ≥1 match ở bước trên):
+
+```csharp
+var winningMaster = matchedMasters
+    .Where(m => m.StepId.HasValue)
+    .OrderByDescending(m => m.Prefix!.Length)
+    .ThenBy(m => m.Id)
+    .First();
+var winningStep = await _stepsRepository.GetByIdAsync(winningMaster.StepId!.Value, ct);
+var renamedFileName = BuildRenamedFileName(winningMaster.Prefix, winningStep?.Name, winningMaster.StepId!.Value, file.FileName);
+
+var uniqueFileName = GetUniqueFileName(renamedFileName);
+// ...
+var entity = new EutrDocuments { Name = renamedFileName, /* ... */ };
+
+// Vong lap ghi eutr_references KHONG doi - van dung `stepIds` (moi StepId khop), khong phai
+// winningMaster.StepId - moi StepId khop van co 1 dong eutr_references rieng (FR-023).
+```
+
+### Ví dụ cụ thể
+
+- Type khác "PO", Step "Invoice" (`Id=7`) có 1 bản ghi `eutr_master_documents` (`Prefix="INV"`), file
+  gốc bất kỳ tên `scan001.pdf` → `eutr_documents.Name = "INVInvoice.pdf"`.
+- Type khác "PO", Step "Delivery" (`Id=9`, KHÔNG có bản ghi nào trong `eutr_master_documents`), file
+  gốc `abc.docx` → `eutr_documents.Name = "Delivery.docx"` (không có Prefix ở đầu).
+- Type = "PO", file gốc `INV2026_PO000123.pdf` khớp cả `Prefix="INV"` (`StepId=5`) lẫn
+  `Prefix="INV2026"` (`StepId=7`) → vẫn ghi 2 dòng `eutr_references` (`StepId=5` và `StepId=7`, cùng
+  `RefValue`) như trước; `eutr_documents.Name` dùng bản ghi `Prefix="INV2026"` (dài hơn) →
+  `"INV2026<Name của Step 7>.pdf"`.
+- Step Name = `"A\B"` (dữ liệu lịch sử/nhập nhầm ở `001-eutr-steps`), không Prefix → làm sạch thành
+  `"AB"` → `eutr_documents.Name = "AB.pdf"`. Step Name toàn ký tự bị loại (ví dụ `"\\"`) → sau làm
+  sạch rỗng → fallback `"Step{StepId}"` → ví dụ `eutr_documents.Name = "Step7.pdf"`.
+
+### Quy tắc nghiệp vụ bổ sung (Update 25)
+
+- Việc chọn `Prefix` dài nhất (nhánh PO) hoàn toàn tách biệt khỏi danh sách `StepId` dùng ghi
+  `eutr_references` — không làm giảm số dòng `eutr_references` được ghi so với trước Update 25.
+- Đổi tên chỉ chạy tại thời điểm Upload — `PUT /api/eutr-documents/{id}` (Save trong Edit) không đọc/
+  tính lại `Name`, dù Step bị đổi ở Edit (FR-029/FR-033 không đổi).
+- Nhiều document cùng Type/Step (hoặc cùng bản ghi master thắng cuộc ở PO) có `Name` trùng nhau —
+  không ràng buộc duy nhất trên File name (kế thừa quy tắc đã có, FR-007b).
+- `EutrUploadFileResultDto.FileName` trên response (dùng cho thông báo thành công/lỗi) tiếp tục là
+  tên file **gốc**, không đổi sang tên mới (research Quyết định 74).

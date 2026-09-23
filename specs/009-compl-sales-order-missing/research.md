@@ -398,3 +398,55 @@ public async Task SendMailAndNotificationForSalesOrderMissing(
 - A single enum parameter (e.g. `SalesOrderAlertRecipientMode { Both, ExcludeResponsible, ExcludeAlert }`) instead of two independent booleans — rejected: the two exclusions are per-trigger constants, never combined or toggled together at runtime by any caller; two independently-defaulted booleans are simpler to read at each call site (`includeAlertEmails: false` is self-explanatory) and match the existing `includeSalesOrderColumn` precedent's style.
 - Filtering `allRecipientEmails`/`ccRecipientEmails` after the fact (e.g. removing the excluded group's addresses from the already-joined strings) instead of gating the list-building step — rejected: `responsibleEmails` and `alertEmails` could overlap with `additionEmails` or with each other for some records (both are `Distinct()`-ed independently, not against each other), so post-hoc string filtering risks accidentally dropping an address that also legitimately belongs via `additionEmails`; gating at the source list avoids that ambiguity entirely.
 - Passing separate `bool sendToResponsible`/`bool sendToAlert` all the way from the two controller actions down through the two `SendSalesOrderAlertAsync`/`SendSalesOrderAlertWithoutSalesIdAsync` methods as their own parameters — rejected: per spec.md, which group is excluded is a fixed, per-trigger constant (FR-026/FR-027), not something a caller of the manual test endpoints chooses at request time; hardcoding the boolean at each of the two existing internal call sites (as `includeSalesOrderColumn: false` already does for the column omission) is simpler and matches the no-request-parameters shape both `[HttpGet]` actions already have.
+
+## R18. Addressing the without-Sales-order trigger's remaining Alert emails group via To instead of Cc (2026-09-22)
+
+**Decision**: Add one more trailing optional boolean parameter, `alertEmailsInTo = false`, to `SendMailAndNotificationForSalesOrderMissing` (`ComplNotificationService.cs:950-953`), and use it to decide which of the two already-existing lists (`allEmailList` = To, `ccEmailList` = Cc) the already-computed, already-filtered `alertEmails` value feeds into:
+```csharp
+public async Task SendMailAndNotificationForSalesOrderMissing(
+    IEnumerable<ComplSoMissingResponseDto> compliances, string? userEmail, SendAlertType sendAlerType,
+    List<string>? additionEmails = null, string? additionMessage = null, string uri = "/compliance-management",
+    bool includeSalesOrderColumn = true, bool includeResponsibleEmails = true, bool includeAlertEmails = true,
+    bool alertEmailsInTo = false)
+{
+    // ... unchanged: complianceList/customHeaders projection, htmlTable, emailTitle/emailContent,
+    // responsibleEmails/alertEmails resolution (research.md R4/R17) ...
+
+    List<string> allEmailList = [];
+    if (additionEmails is { Count: > 0 })
+    {
+        allEmailList.AddRange(additionEmails);
+    }
+    if (includeResponsibleEmails)
+    {
+        allEmailList.AddRange(responsibleEmails);
+    }
+
+    var filteredAlertEmails = alertEmails
+        .Select(e => e.Trim())
+        .Where(e => !string.IsNullOrWhiteSpace(e))
+        .Distinct()
+        .ToList();
+
+    if (includeAlertEmails && alertEmailsInTo)
+    {
+        allEmailList.AddRange(filteredAlertEmails);
+    }
+
+    var ccEmailList = (includeAlertEmails && !alertEmailsInTo)
+        ? filteredAlertEmails
+        : new List<string>();
+
+    // ... unchanged: allRecipientEmails/ccRecipientEmails join, allEmailList.AddRange(ccEmailList),
+    // the !allEmailList.Any() empty-recipient guard, attachments, mailAlert.SendMailV2, and the
+    // finalRecipientEmails/notifications loop, all still built from the same allEmailList ...
+}
+```
+At the call site, `SendSalesOrderAlertWithoutSalesIdAsync` (`ComplNotificationService.cs:299`) changes from `..., includeSalesOrderColumn: false, includeResponsibleEmails: false)` to `..., includeSalesOrderColumn: false, includeResponsibleEmails: false, alertEmailsInTo: true)` — its one remaining recipient group (Alert emails, since Responsible emails is already excluded per FR-027/R17) now lands in `allEmailList` (To) instead of `ccEmailList` (Cc). `SendSalesOrderAlertAsync`'s call site (`ComplNotificationService.cs:269`) is untouched — it already passes `includeAlertEmails: false`, so `filteredAlertEmails` stays empty for that trigger regardless of `alertEmailsInTo`'s default `false`, and its own remaining group (Responsible emails) already lands in To via the unrelated `includeResponsibleEmails` branch, unaffected by this change.
+
+**Rationale**: This is the same "one shared method, caller-controlled boolean parameter" shape already established twice (`includeSalesOrderColumn` in R16, `includeResponsibleEmails`/`includeAlertEmails` in R17) — it keeps both triggers on the one implementation instead of forking a second copy of the method, and only changes which of the two existing lists (`allEmailList`/`ccEmailList`) the already-filtered `alertEmails` value is added to, not how that value itself is computed or filtered. Deduplicating the trim/blank-filter/distinct logic into a local `filteredAlertEmails` variable (previously inlined once, directly inside the `ccEmailList` ternary) is necessary because the same filtered list can now feed either target list depending on `alertEmailsInTo`; it changes no behavior for the existing `includeAlertEmails: false` case (still an empty `ccEmailList`/no contribution to `allEmailList` either way). The existing `!allEmailList.Any()` empty-recipient guard, `allRecipientEmails`/`ccRecipientEmails` join, and `finalRecipientEmails` in-app-notification list (still built from `allEmailList` after `ccEmailList` is appended to it) all continue to work unchanged, since `alertEmailsInTo` only affects which of the two lists a given address starts out in — not the total set of recipients, and not the in-app notification path (which already merges both To and Cc addresses into one list regardless of this parameter, so it needs no separate change here).
+
+**Alternatives considered**:
+- Hardcoding the To-vs-Cc placement of `alertEmails` directly inside `SendSalesOrderAlertWithoutSalesIdAsync` by having it call a different, trigger-specific mail-sending code path instead of the shared `SendMailAndNotificationForSalesOrderMissing` — rejected: would duplicate the entire recipient-aggregation, HTML-table, Excel-attachment, and in-app-notification logic that method already builds for both triggers, breaking Constitution Principle II/III's reuse precedent this feature has followed at every prior update.
+- Making `alertEmailsInTo` default to `true` instead of `false` (rather than adding a new parameter with a safe default) — rejected: `true` would silently change `SendSalesOrderAlertAsync`'s and any other existing/future caller's behavior even though `includeAlertEmails: false` already makes `alertEmailsInTo` a no-op for that call site today; a `false` default keeps this change strictly additive and scoped to the one call site that opts in, consistent with how `includeSalesOrderColumn`/`includeResponsibleEmails`/`includeAlertEmails` were all added with defaults that preserve prior behavior for every caller that doesn't pass them.
+- Swapping the *meaning* of `includeResponsibleEmails`/`includeAlertEmails` so that whichever group is "the sole remaining group" is inferred to always go to To — rejected: this would be an implicit, harder-to-read rule coupling two independent toggles' values together; an explicit `alertEmailsInTo` boolean, set only at the one call site that needs it, keeps each parameter's effect visible at its own call site (matching how `includeAlertEmails: false` and `includeResponsibleEmails: false` are each already set explicitly and independently at their respective call sites, per R17).

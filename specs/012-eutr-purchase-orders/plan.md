@@ -256,3 +256,120 @@ compliance-client/src/presentation/pages/
 ```
 
 No files added, no files removed, no backend files touched.
+
+## Update 3 (2026-09-18) — Inherited file-rename-by-Step behavior from `004-eutr-documents` Update 25
+
+No code change in this feature — Upload/Edit on `PurchId/View` already call the shared
+`004-eutr-documents` Add/Edit flow unchanged, so the Step/Prefix file-rename behavior added there is
+inherited automatically. See spec.md Update 3 and `004-eutr-documents`'s own plan for the actual
+change. No Project Structure delta.
+
+## Update 4 (2026-09-22) — Hide Upload button without permission (`PurchId/View`)
+
+**Spec delta**: FR-030/FR-031/FR-032 (spec.md Update 4). The **Upload** button on `PurchId/View`
+MUST only render when the current user holds the permission that already guards the real Upload
+action — the same `EutrDocuments.Create` policy `POST /api/eutr-documents` is already gated by
+(clarified with the user: "quyền Update" in the original request maps to this real capability, not a
+literal `EutrDocuments.Update` policy or a new PO-specific permission — see spec.md Clarifications).
+When absent, the button is fully hidden (not disabled); the Edit button and the rest of the screen are
+unaffected.
+
+**Summary**: One small additive backend endpoint plus one small additive frontend check —
+`GET /api/eutr-documents/can-create` (`EutrDocumentsController`, new action, guarded by the existing
+`[Authorize(Policy = "EutrDocuments.Create")]`) is called once by `PurchaseOrderViewPage.jsx` on
+mount, alongside the existing PO-existence check; the resulting boolean (`canUploadDocuments`, default
+`false` until resolved) conditionally renders the Upload button. See research.md Decision 11 for why a
+dedicated, policy-scoped endpoint was chosen over a generic policy-check endpoint or extending the
+external AuthZ microservice.
+
+**Technical Context delta**: No change to Language/Version, Primary Dependencies, Storage, Testing,
+Target Platform, or Project Type. One new lightweight backend endpoint (no new controller, no new
+DTO/table/migration — reuses `ApiResponse<bool>`) and one new frontend network call per page load (no
+new dependency).
+
+**Constitution Check (re-evaluated)**: Still PASS on all five principles.
+- **I. Layered Clean Architecture**: PASS — the new action lives directly on the existing
+  `EutrDocumentsController` (Api layer), delegating entirely to the framework's own authorization
+  pipeline; no new Application/Domain/Infrastructure classes are needed since the action performs no
+  business logic beyond the `[Authorize]` check itself.
+- **II. Reference-Pattern Reuse**: PASS — follows the exact `[Authorize(Policy = "...")]` attribute
+  convention every other action on `EutrDocumentsController` already uses; no new pattern introduced.
+- **III. Reuse Existing Backend**: PASS, most directly of any Update so far — the new endpoint reuses
+  the *exact* pre-existing `EutrDocuments.Create` policy (already seeded/granted per role for the real
+  Upload action across `004`/`005`/`012`); zero new AuthZ resource/DB seeding.
+- **IV. Vietnamese Comments; Localizable UI Labels**: PASS — no new user-facing text is introduced
+  (the button simply does not render; no new label/message needed).
+- **V. Routing & Menu Registration**: N/A — no new route or menu entry.
+
+No violations requiring Complexity Tracking.
+
+### Project Structure delta
+
+```text
+compliance-sys-api/
+└── src/ComplianceSys.Api/Controllers/
+    └── EutrDocumentsController.cs      # + one new GET action, can-create, guarded by the existing
+                                          #   [Authorize(Policy = "EutrDocuments.Create")] — no new
+                                          #   DTO, no business logic, returns ApiResponse<bool>.Ok(true)
+
+compliance-client/
+└── src/presentation/pages/eutr-purchase-orders/
+    └── PurchaseOrderViewPage.jsx        # + one new state field (canUploadDocuments, default false)
+                                          #   resolved by a new call to GET /api/eutr-documents/can-create
+                                          #   on mount (parallel to the existing PO-existence check);
+                                          #   the Upload button's render is now guarded by this flag —
+                                          #   the Edit button and everything else are unaffected
+```
+
+No files removed. `MapFilePage.jsx` (005-eutr-sales-orders) is not touched — this Update's scope is
+limited to `PurchId/View`'s Upload button only (spec.md Update 4 Decision).
+
+## Update 5 (2026-09-23) — Gate Upload/Edit on `permissionList` of menu `eutr-documents` (corrects Update 4's mechanism too)
+
+**Spec delta**: FR-030 (mechanism corrected), FR-033/FR-034/FR-035/FR-036 (spec.md Update 5). The
+per-row **Edit** button on `PurchId/View` MUST only render when `permissionList` for menu
+`eutr-documents` includes `'Update'`; the **Upload** button (FR-030, originally Update 4) is corrected
+to use the same mechanism instead of a live backend probe. Independent conditions. When either is
+absent, that button is fully hidden (not disabled); the other button and the rest of the screen are
+unaffected.
+
+**Summary — as shipped, after correction**: an early draft of this Update added a new backend endpoint
+(`GET /api/eutr-documents/can-update`, owned by `005-eutr-sales-orders`'s own Update 29) mirroring
+Update 4's pre-existing `can-create`. Live testing (browser DevTools) showed both probes were
+unnecessary: the menu `eutr-documents`'s `permissionList` — already delivered by the same external
+menu/auth service `005-eutr-sales-orders` Update 28 already reads for menu `eutr-sales-orders` — already
+carries `'Create'`/`'Update'` whenever the role is granted them. Both `can-create` (Update 4) and
+`can-update` (this Update's early draft) were removed; `PurchaseOrderViewPage.jsx` now derives
+`canUploadDocuments`/`canEditDocuments` from `permissionList` directly (research.md Decision 11).
+
+**Technical Context delta**: No change to Language/Version, Primary Dependencies, Storage, Testing,
+Target Platform, or Project Type. Net **zero** backend files (both probe endpoints were added and then
+removed within this session) and **zero** new network calls per page load (a decrease from Update 4's
+original 1 call — `permissionList` is read from `localStorage`, already cached at login/menu-load time).
+
+**Constitution Check (re-evaluated)**: Still PASS on all five principles — **II. Reference-Pattern
+Reuse** applies more directly now than either prior draft: this Update reuses the exact
+`permissionList`/`getMenuDataFromStorage` pattern already established by Update 28, rather than
+introducing a second, parallel live-probe convention.
+
+No violations requiring Complexity Tracking.
+
+### Project Structure delta
+
+```text
+compliance-client/
+└── src/presentation/pages/eutr-purchase-orders/
+    └── PurchaseOrderViewPage.jsx        # Upload/Edit gating reworked: removed
+                                          #   CheckEutrDocumentsCanCreateUseCase/CanUpdateUseCase
+                                          #   imports+state+effects; added getMenuDataFromStorage import
+                                          #   + eutrDocumentsPermissionList useMemo + 2 derived consts
+                                          #   (canUploadDocuments, canEditDocuments) — the Upload Button
+                                          #   and per-row Edit IconButton's own conditional wrappers are
+                                          #   unchanged, only what feeds them changed
+```
+
+No new file in `compliance-sys-api` — the `can-create`/`can-update` actions this Update's early draft
+depended on (one pre-existing from Update 4, one added by `005-eutr-sales-orders`'s Update 29) were both
+removed from `EutrDocumentsController.cs`; `CheckEutrDocumentsCanCreateUseCase.js`/
+`CheckEutrDocumentsCanUpdateUseCase.js` and the `canCreate`/`canUpdate` repository/API methods were
+deleted (no remaining callers).

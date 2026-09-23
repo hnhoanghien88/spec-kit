@@ -73,3 +73,21 @@ unaffected by this addendum.
 
 `EutrFileViewerDialog.jsx` (owner: `004-eutr-documents`) is reused for the AVAILABLE FILES "View"
 action, backed by the existing `GET /api/eutr-documents/get-file-by-idref` — unchanged.
+
+## `GET /api/eutr-documents/can-create` / `can-update` — added in Update 4/Update 5, removed in Update 5 (superseded by `permissionList`)
+
+Spec Update 4 added `GET /api/eutr-documents/can-create` (guarded by
+`[Authorize(Policy = "EutrDocuments.Create")]`) to gate the Upload button; an early draft of Update 5
+added a mirror `can-update` (guarded by `[Authorize(Policy = "EutrDocuments.Update")]`, owned by
+`005-eutr-sales-orders`) to gate the Edit button the same way. Live testing during Update 5 (browser
+DevTools capture of `GET .../menu-managements/permissions?appCode=ComplApi&...`) showed the menu record
+for `eutr-documents` already carries a `permissionList` array containing `'Create'`/`'Update'` whenever
+the role is granted them — the same `permissionList`/`getMenuDataFromStorage()` mechanism
+`005-eutr-sales-orders` Update 28 already uses for menu `eutr-sales-orders`. Both probe endpoints were
+therefore removed (per the requester's explicit choice — no remaining callers) and
+`PurchaseOrderViewPage.jsx` was rewired to read `permissionList` directly instead: no network call, no
+loading-state window, `Upload` gated by `permissionList.includes('Create')` and `Edit` gated by
+`permissionList.includes('Update')` (spec FR-030/FR-033, `research.md` Decision 11). See
+`005-eutr-sales-orders`'s `research.md` Decision 81 for the full before/after, and this feature's own
+`data-model.md` §7 for the corrected design (superseding the original `can-create`/`can-update`-based
+gating).

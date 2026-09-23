@@ -1155,6 +1155,35 @@ trên danh sách chính; không ảnh hưởng cột nào khác, không ảnh h�
 
 ---
 
+## Phase 30: Update 25 - Tự động đổi tên file theo Step + Prefix của master khi Upload (User Story 2)
+
+**Goal**: Mỗi file upload thành công qua popup Add (cả 2 luồng: Type khác "PO" và Type = "PO") KHÔNG
+còn giữ tên file gốc làm `eutr_documents.Name` — hệ thống tự tính tên mới = (Prefix từ
+`eutr_master_documents`, nếu Step đó có cấu hình) + Step Name, đã làm sạch ký tự đặc biệt (`\`, chuỗi
+`..`), giữ nguyên đuôi file gốc (spec FR-062 đến FR-067). Hoàn toàn **backend-only** — 0 task frontend,
+0 migration/entity/DTO/endpoint mới.
+
+**Independent Test**: Xem [quickstart.md](./quickstart.md) kịch bản 24/24a-24e — Upload với Step có/
+không cấu hình Prefix trong master cho ra đúng File name tương ứng; Type = "PO" khớp nhiều Step vẫn
+ghi đủ `eutr_references` nhưng đặt tên theo Prefix dài nhất; ký tự đặc biệt trong Step Name bị loại bỏ
+khỏi tên; nhiều file cùng Step cho File name trùng nhau (chấp nhận được); Edit không tính lại tên.
+
+### Backend (mở rộng `IEutrMastersRepository`/`EutrMastersRepository`/`EutrUploadService` đã có — KHÔNG migration DB mới, KHÔNG entity/DTO/endpoint/route mới)
+
+- [X] T313 [P] Sửa `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrMastersRepository.cs`: thêm khai báo `Task<string?> GetPrefixByStepIdAsync(long stepId, CancellationToken ct = default);`.
+- [X] T314 Sửa `compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrMastersRepository.cs`: implement `GetPrefixByStepIdAsync` — `SELECT Prefix FROM eutr_master_documents WHERE StepId=@stepId AND Prefix IS NOT NULL AND Prefix<>'' ORDER BY Id ASC LIMIT 1` qua `Connection.QueryFirstOrDefaultAsync<string?>` (sau T313, cùng interface).
+- [X] T315 [P] Sửa `compliance-sys-api/src/ComplianceSys.Application/Services/EutrUploadService.cs`: thêm field/constructor param `IRepository<EutrStep, long> _stepsRepository` (generic đã đăng ký sẵn — không sửa DI); thêm hằng `InvalidNameChars` (`\ / : * ? " < > |`) và 2 method `private static` mới `SanitizeNamePart(string? value)` / `BuildRenamedFileName(string? prefix, string? stepName, long stepId, string originalFileName)` (fallback `Step{StepId}` khi rỗng sau khi làm sạch).
+- [X] T316 [US2] Sửa `UploadMultipleForReferenceTypeAsync` trong `EutrUploadService.cs`: trước vòng lặp file, gọi 1 lần `_eutrMastersRepository.GetPrefixByStepIdAsync(request.StepId, ct)` + `_stepsRepository.GetByIdAsync(request.StepId, ct)`; trong vòng lặp, `renamedFileName = BuildRenamedFileName(stepPrefix, step?.Name, request.StepId, file.FileName)`, dùng cho `entity.Name` và `GetUniqueFileName(renamedFileName)` thay `file.FileName` (sau T314/T315).
+- [X] T317 [US2] Sửa `UploadMultipleToSharePointAndSaveDataAsync` trong `EutrUploadService.cs`: sau khi tính `stepIds` (không đổi, FR-020/FR-023), thêm bước chọn `winningMaster = matchedMasters.Where(m => m.StepId.HasValue).OrderByDescending(m => m.Prefix!.Length).ThenBy(m => m.Id).First()`, gọi `_stepsRepository.GetByIdAsync(winningMaster.StepId!.Value, ct)`, tính `renamedFileName` qua `BuildRenamedFileName`, dùng cho `entity.Name`/`GetUniqueFileName` thay `file.FileName` (sau T314/T315; **không đổi** vòng lặp ghi `eutr_references` bên dưới, vẫn dùng `stepIds` đầy đủ).
+- [X] T318 Build verify: `dotnet build compliance-sys-api/src/ComplianceSys.Application/ComplianceSys.Application.csproj` và `.../ComplianceSys.Infrastructure/ComplianceSys.Infrastructure.csproj` (sau T313-T317) — 0 lỗi biên dịch.
+- [ ] T319 [US2] Kiểm thử thủ công theo [quickstart.md](./quickstart.md) kịch bản 24/24a-24e trên `/eutr/documents` (Upload thật với DB/SharePoint thật) — **CHƯA chạy trong trình duyệt** (build `ComplianceSys.Api` bị chặn bởi DLL khóa do dev server đang chạy khi T318 thực hiện; cần restart server để nạp code mới trước khi kiểm thử).
+
+**Checkpoint**: File name trên danh sách chính (cột File name, User Story 1 — không đổi hiển thị,
+chỉ đổi giá trị nguồn) phản ánh đúng công thức Prefix + Step Name cho mọi document tạo mới sau Update
+này; document tạo trước Update 25 giữ nguyên tên cũ (không có migration/backfill nào chạm dữ liệu cũ).
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -1342,6 +1371,14 @@ trên danh sách chính; không ảnh hưởng cột nào khác, không ảnh h�
 - **Update 24 (Phase 29)**: T311 (cột mới trong `useEutrDocumentsColumns.jsx`, sau Phase 28 T302 để có
   dữ liệu thật kiểm thử) → T312 (kiểm thử, sau T311). Độc lập với mọi phase khác ngoài Phase 28 (không
   đụng file backend/frontend nào khác ngoài `useEutrDocumentsColumns.jsx`).
+- **Update 25 (Phase 30)**: T313 (interface, độc lập) → T314 (implement, sau T313) → T315
+  (`EutrUploadService.cs` — dependency + 2 helper, độc lập với T313/T314 vì chưa gọi chúng) → T316/T317
+  (wiring vào 2 method Upload, cả hai sau T314 **và** T315, khác đoạn code trong cùng file nên khuyến
+  nghị tuần tự) → T318 (build verify, sau T313-T317) → T319 (kiểm thử, sau T318 **và** restart dev
+  server để nạp code mới). **0 file frontend** — độc lập hoàn toàn với mọi phase khác kể cả Phase 21-29
+  (không đụng `EutrDocumentsFormDialog.jsx`/`useEutrDocumentsColumns.jsx`/bất kỳ file
+  `compliance-client` nào); chỉ phụ thuộc hạ tầng đã có từ Phase 14/20 (`EutrMastersRepository.cs`,
+  `IRepository<EutrStep,long>` generic).
 - **Update 20 (Phase 25)**: **Không có task backend nào** — chỉ 1 file frontend, sửa tuần tự vì cùng
   file: T276 (import + instantiate use case đã có sẵn) → T277 (hàm `loadFilteredSteps` dùng chung cho
   cả 2 mode) → T278 (mode add: gọi khi Type đổi + mặc định dòng đầu) và T279 (mode edit: gọi 1 lần khi
@@ -1637,6 +1674,14 @@ trên danh sách chính; không ảnh hưởng cột nào khác, không ảnh h�
   là task duy nhất phải chờ CẢ backend (T293, để endpoint hoạt động khi test) LẪN chuỗi frontend
   T294→T297 LẪN Phase 25 (T279, cùng file) — không thể làm song song với các task khác trong phase
   này. T299 (kiểm thử) sau cùng.
+- Update 25 (Phase 30): T313 (interface) độc lập, có thể làm song song với bất kỳ task nào không đụng
+  `IEutrMastersRepository.cs`. T315 (`EutrUploadService.cs` — dependency + helper) độc lập với T313/
+  T314 (chưa gọi tới chúng) nên có thể làm song song. Toàn bộ Phase 30 **không đụng file nào** của bất
+  kỳ phase Update 15-24 nào (0 file frontend, không sửa `EutrDocumentsFormDialog.jsx`/
+  `useEutrDocumentsColumns.jsx`/`EutrDocumentsFilterBar.jsx`) — có thể làm **song song với toàn bộ
+  Phase 21-29** nếu cần, chỉ thực sự phụ thuộc `EutrMastersRepository.cs` (đã ổn định từ Phase 14) và
+  `EutrUploadService.cs` (đã ổn định từ Phase 28, chỉ thêm không sửa logic ghi `eutr_references` hiện
+  có).
 
 ---
 
@@ -1984,3 +2029,19 @@ file) → **Update 21 / US6** (search box Type/Step name/Conditions/Search phía
   `EutrUpdateReferenceStepRequestDto.cs`) và Phase 25 (T279, cùng file
   `EutrDocumentsFormDialog.jsx`); độc lập với Phase 3-23, 26 (không đụng US1/US2/US4-US6, Update
   3-18/21).
+- Phase 30 (T313-T319) là phần bổ sung cho spec Session Update 25 (User Story 2) — mỗi file upload
+  thành công qua popup Add không còn giữ tên file gốc làm `eutr_documents.Name`; hệ thống tự tính
+  (Prefix từ `eutr_master_documents`, nếu Step có cấu hình) + Step Name, đã làm sạch ký tự đặc biệt
+  (`\`, chuỗi `..`), giữ đuôi file gốc. **Không endpoint/entity/DTO/migration/route mới** — 1 method
+  mới trên `IEutrMastersRepository`/`EutrMastersRepository` (đã tồn tại từ Phase 3, cùng hạ tầng
+  `002-eutr-masters` dùng để validate prefix từ Phase 14) + 1 dependency mới (`IRepository<EutrStep,
+  long>`, generic đã đăng ký sẵn, có tiền lệ ở `EutrMastersImportService`) + 2 method `private static`
+  mới, toàn bộ trong `EutrUploadService.cs` (đã tồn tại từ Phase 14/Update 6/7). Nhánh Type = "PO" giữ
+  nguyên logic khớp Prefix/ghi `eutr_references` (Phase 14, Update 7/FR-020/FR-023) không đổi, chỉ
+  thêm bước chọn bản ghi Prefix dài nhất để đặt tên (research Quyết định 70). **0 task frontend** —
+  không đụng `EutrDocumentsFormDialog.jsx` hay bất kỳ file `compliance-client` nào (popup Add không
+  hiển thị tên file trước/sau Upload để cần đồng bộ, research Quyết định 72); `005-eutr-sales-orders`/
+  `012-eutr-purchase-orders` tự động kế thừa vì gọi đúng 2 endpoint Upload dùng chung, không cần task
+  riêng ở 2 đặc tả đó. Phụ thuộc Phase 14 (`EutrMastersRepository.cs`) và Phase 28 (`EutrUploadService.cs`
+  đã có `Invoice`/2 method Upload ổn định từ Update 23); độc lập với Phase 15-27, 29 (không đụng file
+  nào của các phase đó).

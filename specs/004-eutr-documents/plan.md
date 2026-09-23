@@ -516,6 +516,57 @@ sau cột `stepName`, trước `conditions`, đúng thứ tự spec yêu cầu),
 `defaultColumnVisibility`. Không đổi `EutrDocumentsFilterBar.jsx`/search box (spec xác nhận không mở
 rộng điều kiện lọc theo Invoice ở cập nhật này).
 
+**Cập nhật (spec Session Update 25 — tự động đổi tên file theo Step + Prefix của master khi Upload,
+FR-062 đến FR-067)**: File name lưu vào `eutr_documents.Name` KHÔNG còn là tên file gốc người dùng
+chọn ở **cả hai** luồng Upload backend hiện có — hoàn toàn **backend-only**, **0 thay đổi frontend**
+(popup Add không hiển thị tên file trước/trong lúc Upload, không có gì để sửa phía client — xem
+research Quyết định 72).
+
+Với luồng **Type khác "PO"** (`POST /api/sharepoint/eutr-upload-multi-by-type` →
+`EutrUploadService.UploadMultipleForReferenceTypeAsync`, `StepId` đã có sẵn tường minh từ
+`request.StepId`): trước vòng lặp file (Step không đổi trong cả lượt Upload), gọi 1 lần
+`IEutrMastersRepository.GetPrefixByStepIdAsync(stepId)` (method **mới**, SQL
+`WHERE StepId=@stepId ... ORDER BY Id ASC LIMIT 1` — ưu tiên `Id` nhỏ nhất khi 1 Step có nhiều
+`Prefix`) và `IRepository<EutrStep,long>.GetByIdAsync(stepId)` (generic **có sẵn**, đã dùng ở
+`EutrMastersImportService` — không cần repository/entity mới) để lấy `Prefix`/`Name`; mỗi file trong
+vòng lặp chỉ gọi hàm thuần `BuildRenamedFileName(prefix, stepName, stepId, file.FileName)` (0 DB call
+thêm mỗi file) để ghép đúng đuôi file riêng của nó.
+
+Với luồng **Type = "PO"** (`POST /api/sharepoint/eutr-upload-multi` →
+`UploadMultipleToSharePointAndSaveDataAsync`): logic khớp Prefix hiện có
+(`GetMatchingPrefixesAsync`, FR-020) **không đổi 1 dòng nào** — vẫn ghi đủ N bản ghi `eutr_references`
+cho N `StepId` khớp (FR-023). Thêm đúng 1 bước **sau** khi khớp xong: từ danh sách `matchedMasters`
+đã có sẵn trong bộ nhớ (không query lại), chọn bản ghi thắng cuộc bằng
+`OrderByDescending(m => m.Prefix.Length).ThenBy(m => m.Id).First()` (Prefix dài nhất, tie-break Id
+nhỏ nhất — research Quyết định 70), gọi `_stepsRepository.GetByIdAsync` cho đúng `StepId` của bản ghi
+đó, rồi dùng chung hàm `BuildRenamedFileName`.
+
+`BuildRenamedFileName`/`SanitizeNamePart` (2 method **mới**, `private static`, cùng file
+`EutrUploadService.cs` — dùng chung cho cả 2 luồng, KHÔNG tạo class/utility riêng vì codebase chưa có
+tiền lệ shared sanitizer, mỗi controller hiện có tự nhân bản helper riêng của nó — xem research Quyết
+định 71): nối `Prefix + StepName` (không dấu phân cách), loại bỏ tập ký tự cố định
+`\ / : * ? " < > |` (**KHÔNG dùng** `Path.GetInvalidFileNameChars()` vì tập ký tự đó phụ thuộc hệ điều
+hành runtime — trên Linux gần như trống, không chắc chắn chặn được `\` như spec yêu cầu tường minh —
+xem research Quyết định 73) và mọi chuỗi `..`, fallback `Step{StepId}` nếu rỗng sau khi làm sạch, rồi
+nối đuôi file gốc (`Path.GetExtension`, không đổi). Tên dùng để tải lên SharePoint
+(`GetUniqueFileName`, cơ chế hậu tố ngẫu nhiên 6 ký tự có sẵn) đổi input từ `file.FileName` sang tên
+đã tính — comment XML của hàm này được cập nhật theo (không còn đúng "KHÔNG ảnh hưởng Name lưu trong
+eutr_documents" như trước Update 25).
+
+Backend: `EutrUploadService` thêm 1 dependency **mới** `IRepository<EutrStep, long>` qua constructor
+(generic đã đăng ký sẵn, không cần sửa DI); `IEutrMastersRepository`/`EutrMastersRepository` thêm 1
+method mới `GetPrefixByStepIdAsync`. **Không migration DB mới, không entity/DTO/endpoint/route mới**
+— cả 2 request DTO (`EutrMultiUploadFileRequest`/`EutrTypeMultiUploadFileRequest`) không đổi field
+nào, response `EutrUploadFileResultDto.FileName` vẫn giữ tên file **gốc** (dùng để đối chiếu lỗi/
+thành công theo lượt chọn của người dùng — không đổi sang tên mới, xem research Quyết định 74).
+**Đã build và verify tĩnh**: `dotnet build` cho `ComplianceSys.Application`/`ComplianceSys.Infrastructure`
+— 0 lỗi biên dịch (build `ComplianceSys.Api` bị chặn bởi file DLL đang khóa do tiến trình dev server
+đang chạy — không liên quan tới thay đổi của Update này).
+
+Frontend: **0 file sửa** — `005-eutr-sales-orders`/`012-eutr-purchase-orders` gọi đúng 2 endpoint
+trên qua cùng use case/repository dùng chung với `004-eutr-documents`, tự động kế thừa hành vi đổi
+tên mà không cần thay đổi gì ở tầng feature của chúng (đã xác nhận trong spec Update 25 của cả hai).
+
 ## Technical Context
 
 **Language/Version**: .NET 8 (backend); JavaScript (ES modules), React 18 + Vite (frontend)
@@ -1139,6 +1190,22 @@ nhãn "Invoice"/"Invoice number" bằng tiếng Anh theo FR-038 (Nguyên tắc I
 policy/menu mới — Save tiếp tục qua `EutrDocuments.Update`, Upload tiếp tục qua policy hiện có của
 `SharePointController` (Nguyên tắc V không đổi).
 
+**Re-check sau Update 25** (tự động đổi tên file theo Step + Prefix của master khi Upload): vẫn PASS
+cả 5 nguyên tắc — 2 method mới (`BuildRenamedFileName`/`SanitizeNamePart`) và dependency mới
+(`IRepository<EutrStep,long>`) đều nằm đúng `Application/Services/EutrUploadService.cs`, method
+repository mới (`GetPrefixByStepIdAsync`) nằm đúng `Infrastructure/Repositories/
+EutrMastersRepository.cs` sau `IEutrMastersRepository`, không SQL/business logic nào lọt lên
+`SharePointController` (Nguyên tắc I); tái dùng nguyên vẹn `IRepository<EutrStep,long>` generic đã
+có tiền lệ ở `EutrMastersImportService` thay vì tạo repository/entity Step riêng, và tái dùng cấu
+trúc `GetMatchingPrefixesAsync`/`matchedMasters` đã có từ Update 7 cho nhánh PO thay vì query lại
+(Nguyên tắc II); mở rộng đúng 2 method service hiện có (`UploadMultipleForReferenceTypeAsync`/
+`UploadMultipleToSharePointAndSaveDataAsync`) + 1 method repository mới trên hạ tầng
+`eutr_master_documents` đã tồn tại từ Update 7, không tạo entity/controller/route/endpoint mới cho
+nhu cầu giải quyết được bằng cách mở rộng service hiện có (Nguyên tắc III); không route/policy/menu
+mới — cả 2 endpoint Upload dùng chung policy hiện có của `SharePointController`, không có UI label
+tiếng Việt/Anh nào phát sinh vì thay đổi hoàn toàn ở backend (Nguyên tắc IV/V không đổi, không áp
+dụng vì 0 thay đổi frontend/route).
+
 ## Project Structure
 
 ### Documentation (this feature)
@@ -1712,6 +1779,26 @@ compliance-client/src/
 > đây). Không sửa `EutrDocumentsFilterBar.jsx` (search box không mở rộng lọc theo Invoice, spec Update
 > 24 xác nhận ngoài phạm vi).
 
+Backend — **Update 25** (tự động đổi tên file theo Step + Prefix của master khi Upload — sửa 3 file
+hiện có, KHÔNG migration/entity/DTO/endpoint/route mới):
+
+```text
+compliance-sys-api/src/
+├── ComplianceSys.Application/Interfaces/Repositories/
+│   └── IEutrMastersRepository.cs   # (SỬA) + Task<string?> GetPrefixByStepIdAsync(long stepId, ct)
+├── ComplianceSys.Infrastructure/Repositories/
+│   └── EutrMastersRepository.cs    # (SỬA) + GetPrefixByStepIdAsync: SELECT Prefix ... WHERE StepId=@stepId ORDER BY Id ASC LIMIT 1
+└── ComplianceSys.Application/Services/
+    └── EutrUploadService.cs        # (SỬA) + dependency IRepository<EutrStep,long> _stepsRepository (constructor); + private static SanitizeNamePart/BuildRenamedFileName; UploadMultipleForReferenceTypeAsync: tra Prefix/Step 1 lan truoc vong lap, entity.Name = BuildRenamedFileName(...) thay file.FileName; UploadMultipleToSharePointAndSaveDataAsync: sau khi khop stepIds (khong doi), chon ban ghi Prefix dai nhat (tie-break Id nho nhat) tu matchedMasters da co, entity.Name = BuildRenamedFileName(...); ca 2 nhanh doi input GetUniqueFileName(renamedFileName) thay file.FileName
+```
+
+> Không sửa `EutrMultiUploadFileRequest.cs`/`EutrTypeMultiUploadFileRequest.cs`/
+> `EutrUploadFileResultDto.cs` (không field mới nào — `FileName` trên response tiếp tục là tên file
+> **gốc**, dùng để đối chiếu với lượt chọn file của người dùng, không đổi sang tên mới). Không sửa
+> `SharePointController.cs` (không route/action mới, cùng 2 endpoint hiện có gọi thẳng 2 method đã
+> mở rộng). **Không có file frontend nào cần sửa** — cả `compliance-client` lẫn 2 đặc tả kế thừa
+> (`005-eutr-sales-orders`, `012-eutr-purchase-orders`) không cần thay đổi gì (xem Summary).
+
 Frontend — **CÁC FILE MỚI** (clone `eutr-masters` cho list/Edit-popup; clone routing `eutr-templates` cho Add):
 
 ```text
@@ -1783,6 +1870,7 @@ chiếu chuẩn: **EutrStep** (backend CRUD, không JOIN/không repository riên
 | Lọc Step theo Assign Steps của Type (Update 20) | Masters/Templates/Steps: không có khái niệm "Step được gán cho 1 Type cụ thể" — mọi Step hiển thị đều là toàn bộ `eutr_steps` | Duy nhất trong feature này combobox Step phụ thuộc dữ liệu cấu hình của **một feature khác** (`006-eutr-reference-types`, bảng `eutr_reference_type_details`) — nếu Type chưa được gán Step nào ở màn Assign Steps thì popup Add/Edit của feature này không có Step nào để chọn (Upload bị chặn); đây cũng là lần đầu tiên feature **tiêu thụ** (không phải tạo) hạ tầng CRUD của feature `006` cho mục đích lọc dữ liệu (trước đó Update 14/15/16 chỉ tiêu thụ dropdown Type nguyên khối, không lọc theo quan hệ) — 0 dòng backend mới, giống mức tái sử dụng cao nhất đã đạt ở Update 17 |
 | Search box lọc danh sách theo Type/Step name/Conditions (Update 21) | Masters/Templates/Steps: lọc chỉ qua cột filter của DataGrid, luôn trên cột vật lý của chính entity | Duy nhất trong feature này endpoint `get-all` lọc theo 3 "cột ảo" không tồn tại trên `EutrDocuments` (`TypeId`/`StepId`/`Conditions` — thực chất nằm ở bảng `eutr_references` liên kết) bằng cách tính trước danh sách `DocumentId` khớp (SQL EXISTS) rồi tái dùng cơ chế `Operator="in"` sẵn có để IN-filter chính query phân trang gốc — chưa từng có cơ chế "lọc bảng cha theo bảng con" nào trong lịch sử feature này (khác Update 8, chỉ *hiển thị* dữ liệu JOIN, không *lọc* theo nó) |
 | Trường + cột `Invoice` trên `eutr_documents` (Update 23/24) | Mọi cột động khác của feature này (Step name/Type/Conditions, Update 8/14/19) đều JOIN từ `eutr_references` | Duy nhất trong feature này (và duy nhất trong lịch sử `eutr_documents`) một trường Type-điều-kiện được lưu **trực tiếp trên chính `eutr_documents`** thay vì bảng liên kết `eutr_references` — quyết định đảo ngược ngay trong phiên làm việc: bản nháp đầu định lưu trên `eutr_references` (đòi hỏi đồng bộ nhiều dòng, quy tắc "Id nhỏ nhất" giống Step) nhưng bị người dùng yêu cầu đổi sang `eutr_documents` trước khi plan/implementation bắt đầu — kết quả đơn giản hơn hẳn mọi cập nhật Type-điều-kiện trước đó (không transaction, không diff insert/delete, không round-trip JOIN nào cho cột list) |
+| File name tự động đổi theo Step + Prefix của master (Update 25) | Mọi Update trước đó (kể cả Update 7, validate prefix) đều giữ nguyên tên file **gốc** làm `eutr_documents.Name` — Prefix chỉ dùng để validate/suy Step, không bao giờ ghi đè tên hiển thị | Duy nhất trong lịch sử feature này `eutr_documents.Name` **không còn phản ánh** file người dùng thực sự chọn — 100% do hệ thống tính lại; cũng là Update **duy nhất chỉ chạm backend** (0 file frontend, kể cả ở 2 đặc tả kế thừa 005/012) vì popup Add chưa từng hiển thị tên file trước/sau Upload để cần đồng bộ theo tên mới |
 
 > **Lưu ý**: Dòng "Edit rẽ nhánh theo Type" (Update 12) ở trên mô tả kiến trúc **đã bị thay thế hoàn
 > toàn** bởi Update 19 — giữ lại trong bảng vì đây là tài liệu lịch sử theo từng Update, không phải

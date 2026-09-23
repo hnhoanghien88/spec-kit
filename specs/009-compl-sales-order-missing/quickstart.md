@@ -69,6 +69,8 @@
    - Re-run step 8 (`test-sales-order-alert-without-salesId`) and inspect the sent email's To/Cc headers: confirm every Alert emails group address is present, and confirm **no** Responsible emails group address appears in either the To or Cc line (FR-027, SC-015). Confirm the Responsible emails *column* inside the email table/Excel attachment still shows each row's responsible emails as data, unchanged — only the addressing is affected (FR-028).
    - If in-app notifications are reachable (`compl_notifications` table or the notification bell), confirm the same exclusion holds there too for each trigger's own run: no notification row is created for an address belonging to the trigger's excluded group.
 
+10. **Verify the without-Sales-order trigger addresses To instead of Cc** (2026-09-22, FR-029, SC-016): re-run step 8 (`test-sales-order-alert-without-salesId`) again with the same non-empty Alert emails group used in step 9, and inspect the sent email's To/Cc headers directly (not just presence/absence as in step 9): confirm every Alert emails group address now appears in the **To** field, and the Cc field is empty (previously that trigger's email had those addresses in Cc with an empty To). Confirm this does not change the set of addresses that receive the alert (still exactly the Alert emails group, same as step 9) or the alert's content. Re-run step 2 (`test-sales-order-alert`) once more and confirm its own To/Cc placement (Responsible emails group in To, per FR-026) is unaffected.
+
 ## Expected outcomes (ties back to spec.md Success Criteria)
 
 - SC-001: every sales order returned in step 1 appears exactly once, evaluated, in the run's logs (`Log.Information`/`Log.Error` per sales order, per research.md R6) — none silently skipped.
@@ -85,3 +87,4 @@
 - SC-013: step 8's title check shows the diagnostic trigger's alert titled "Missing compliance Information", while `test-sales-order-alert` continues to show "Sales orders with missing compliance".
 - SC-014: step 9's `test-sales-order-alert` check shows zero Alert emails group addresses in the sent email's To/Cc or the in-app notification recipients, while Responsible emails group addresses continue to receive it.
 - SC-015: step 9's `test-sales-order-alert-without-salesId` check shows zero Responsible emails group addresses in the sent email's To/Cc or the in-app notification recipients, while Alert emails group addresses continue to receive it.
+- SC-016: step 10's `test-sales-order-alert-without-salesId` check shows the Alert emails group addresses populating the email's To field (not solely Cc) whenever that trigger's current record set resolves at least one.
