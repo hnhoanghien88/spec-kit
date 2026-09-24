@@ -373,3 +373,77 @@ depended on (one pre-existing from Update 4, one added by `005-eutr-sales-orders
 removed from `EutrDocumentsController.cs`; `CheckEutrDocumentsCanCreateUseCase.js`/
 `CheckEutrDocumentsCanUpdateUseCase.js` and the `canCreate`/`canUpdate` repository/API methods were
 deleted (no remaining callers).
+
+## Update 6 (2026-09-24) — Inherited Prefix-removal from `004-eutr-documents` Update 26
+
+No code change in this feature — Upload/Edit on `PurchId/View` already call the shared
+`004-eutr-documents` Add/Edit flow unchanged, so dropping the Prefix component from the file-rename
+formula (`004-eutr-documents` Update 26, FR-068–FR-070, superseding the Update 25 formula this feature
+already inherited at its own Update 3) applies automatically. See spec.md Update 6 and
+`004-eutr-documents`'s own plan for the actual change. No Project Structure delta.
+
+## Update 7 (2026-09-24) — Inherited expanded upload-format whitelist from `004-eutr-documents` Update 27
+
+No code change in this feature — Upload/Edit on `PurchId/View` already call the shared
+`004-eutr-documents` Add/Edit flow unchanged, so allowing `.xml`/`.json`/`.geojson` uploads
+(`004-eutr-documents` Update 27, FR-071) applies automatically. Confirmed via codebase research that
+the "multiple files per Step, clearly shown" half of the originating request needs no change here
+either — `PurchaseOrderViewPage.jsx`'s Step tree is a clone of `005-eutr-sales-orders`'s `TreeNode`
+logic (already noted at this feature's own Update 3/plan.md) and already renders the same "(+N)"
+badge/full-name tooltip for multiple files mapped to one Step. See spec.md Update 7 and
+`004-eutr-documents`'s own plan for the actual change. No Project Structure delta.
+
+## Update 8 (2026-09-24) — Inherited raised size limit from `004-eutr-documents` Update 28
+
+No code change in this feature — Upload/Edit on `PurchId/View` already call the shared
+`004-eutr-documents` Add/Edit flow unchanged, so the raised per-file size limit (10MB → 20MB,
+`004-eutr-documents` Update 28, FR-073) applies automatically. See spec.md Update 8 and
+`004-eutr-documents`'s own plan for the actual change. No Project Structure delta.
+
+## Update 9 (2026-09-24) — New per-row Download button on AVAILABLE FILES; download file name = Step Name (FR-037/FR-038)
+
+Unlike Update 3/6/7/8 above, this update has **real code of its own** — `PurchaseOrderViewPage.jsx`'s
+AVAILABLE FILES rows are this feature's own duplicated copy of the tree/row UI (not a call into a
+shared `005-eutr-sales-orders` component), so the Download button and the download-time file-name
+recompute (decided at `005-eutr-sales-orders` Update 33 — see that feature's research.md Decision
+82/83 for full rationale) had to be applied here too:
+
+```text
+compliance-client/
+└── src/presentation/pages/eutr-purchase-orders/
+    └── PurchaseOrderViewPage.jsx   # EDIT: new `Download as DownloadIcon` + `GetEutrDocumentsFileByIdRefUseCase`
+                                     #   + `buildStepOnlyFileName` (from `005-eutr-sales-orders` Update 33's
+                                     #   new shared `eutr-documents/utils/buildStepOnlyFileName.js`) imports;
+                                     #   module-level `getEutrDocumentsFileByIdRefUseCase` instance; new
+                                     #   `handleDownloadFile(file)` callback (same shape as
+                                     #   `MapFilePage.jsx`'s); new Download `IconButton` after Edit on each
+                                     #   AVAILABLE FILES row; `stepNames` added to `viewerFile` state,
+                                     #   `setViewerFile(...)` call, and `<EutrFileViewerDialog stepNames={...}>`
+```
+
+`compliance-client/src/presentation/pages/eutr-documents/utils/buildStepOnlyFileName.js` and
+`compliance-client/src/presentation/pages/eutr-documents/components/EutrFileViewerDialog.jsx` are
+**shared** with `005-eutr-sales-orders` — both were added/edited once (tracked in that feature's own
+plan.md, Update 33) and reused here verbatim, not duplicated. Zero backend change — reuses the
+existing `GET /eutr-documents/get-file-by-idref` endpoint.
+
+## Update 10 (2026-09-24) — Explicit Search button next to the search box on the Purchase Orders list (FR-039)
+
+Same pattern already established at `005-eutr-sales-orders`'s Overview (`SalesOrderOverviewPage.jsx`,
+Update 24) — a `<Button variant="contained">Search</Button>` next to the existing `TextField`, calling
+the same fetch function the debounced `onChange` already uses, just without waiting for the 500ms
+debounce. No URL query-param sync was added (unlike the Sales Orders version), since this screen has
+no existing Back-restore infrastructure and the request didn't ask for one.
+
+```text
+compliance-client/src/presentation/pages/eutr-purchase-orders/
+└── PurchaseOrderOverviewPage.jsx   # EDIT: add `Stack`/`Button` imports; wrap the existing search
+                                     #   `TextField` in a `Stack` (row); new `handleSearchClick`
+                                     #   (resets page to 0, calls `fetchPurchaseOrders(0, pageSize,
+                                     #   search)` directly — bypasses the 500ms debounce); new
+                                     #   `<Button variant="contained">Search</Button>` next to the field
+```
+
+Unchanged: the debounced auto-search on every keystroke (`handleSearchChange`/`debouncedFetch`), the
+backend `GetReferenceDataUseCase`/`buildSearchFilters` query — no new/changed endpoint, entity, DTO, or
+route.

@@ -1184,6 +1184,77 @@ này; document tạo trước Update 25 giữ nguyên tên cũ (không có migra
 
 ---
 
+## Phase 31: Update 26 - Bỏ Prefix khỏi công thức File name (chỉ giữ Step Name) (User Story 2)
+
+**Goal**: Sửa tiếp trên hạ tầng Phase 30 — File name tự tính khi Upload KHÔNG còn ghép Prefix của
+`eutr_master_documents` vào đầu tên; chỉ còn `Name` của Step (đã làm sạch) + đuôi file gốc (spec
+FR-068 đến FR-070). Xóa hẳn `GetPrefixByStepIdAsync` (không còn dùng). Hoàn toàn **backend-only** — 0
+task frontend, 0 migration/entity/DTO/endpoint mới.
+
+**Independent Test**: Xem [quickstart.md](./quickstart.md) kịch bản 24/24b/24f (đã cập nhật) — Upload
+với Step có/không cấu hình Prefix trong master đều cho File name chỉ gồm Step Name; Type = "PO" khớp
+nhiều Step vẫn dùng Prefix dài nhất để CHỌN Step nhưng không ghép Prefix vào tên; document tạo trước
+Update 26 giữ nguyên tên cũ.
+
+### Backend (thu hẹp `IEutrMastersRepository`/`EutrMastersRepository`/`EutrUploadService` đã có ở Phase 30 — KHÔNG migration DB mới, KHÔNG entity/DTO/endpoint/route mới)
+
+- [X] T320 [P] Sửa `compliance-sys-api/src/ComplianceSys.Application/Interfaces/Repositories/IEutrMastersRepository.cs`: xóa khai báo `Task<string?> GetPrefixByStepIdAsync(long stepId, CancellationToken ct = default);` (thêm ở T313, Phase 30 — không còn nơi nào gọi).
+- [X] T321 Sửa `compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrMastersRepository.cs`: xóa implementation `GetPrefixByStepIdAsync` tương ứng (sau T320, cùng interface).
+- [X] T322 [P] Sửa `compliance-sys-api/src/ComplianceSys.Application/Services/EutrUploadService.cs`: đổi chữ ký `BuildRenamedFileName(string? prefix, string? stepName, long stepId, string originalFileName)` → `BuildRenamedFileName(string? stepName, long stepId, string originalFileName)` — bỏ tham số `prefix`, `basePart = SanitizeNamePart(stepName ?? string.Empty)` (không đổi fallback `Step{stepId}`).
+- [X] T323 [US2] Sửa `UploadMultipleForReferenceTypeAsync` trong `EutrUploadService.cs`: bỏ lời gọi `_eutrMastersRepository.GetPrefixByStepIdAsync(...)` (thêm ở T316) — chỉ giữ `_stepsRepository.GetByIdAsync(request.StepId, ct)`; đổi lời gọi thành `BuildRenamedFileName(step?.Name, request.StepId, file.FileName)` (sau T320-T322).
+- [X] T324 [US2] Sửa `UploadMultipleToSharePointAndSaveDataAsync` trong `EutrUploadService.cs`: giữ nguyên bước chọn `winningMaster` bằng `matchedMasters.FirstOrDefault(m => m.StepId.HasValue)` (thực tế trong code, khác mô tả "OrderByDescending" của Update 25/T317 trong tài liệu — `GetMatchingPrefixesAsync` đã tự thu hẹp về đúng 1 bản ghi Prefix dài nhất) để xác định `winningMaster.StepId`, nhưng đổi lời gọi thành `BuildRenamedFileName(winningStep?.Name, winningMaster.StepId!.Value, file.FileName)` — không còn truyền `winningMaster.Prefix` (sau T322).
+- [X] T325 Build verify: `dotnet build compliance-sys-api/src/ComplianceSys.Application/ComplianceSys.Application.csproj`, `.../ComplianceSys.Infrastructure/ComplianceSys.Infrastructure.csproj` **và** `.../ComplianceSys.Api/ComplianceSys.Api.csproj` (sau T320-T324) — 0 lỗi biên dịch trên cả 3 project (chỉ warning có sẵn từ trước, không liên quan thay đổi này).
+- [ ] T326 [US2] Kiểm thử thủ công theo [quickstart.md](./quickstart.md) kịch bản 24/24a-24f trên `/eutr/documents` (Upload thật với DB/SharePoint thật) — **CHƯA chạy** (cần môi trường DB/SharePoint thật + trình duyệt, ngoài phạm vi phiên làm việc này).
+
+**Checkpoint**: File name trên danh sách chính phản ánh đúng công thức chỉ-Step-Name (không còn
+Prefix) cho mọi document tạo mới sau Update 26; document tạo trước Update 26 giữ nguyên tên cũ (không
+có migration/backfill nào chạm dữ liệu cũ); `GetPrefixByStepIdAsync` không còn tồn tại trong codebase.
+
+---
+
+## Phase 32: Update 27 - Mở rộng whitelist định dạng file: .xml/.json/.geojson (User Story 2)
+
+**Goal**: Cho phép Upload file `.xml`/`.json`/`.geojson` (bên cạnh PDF/DOC/DOCX/XLS/XLSX/JPG/PNG hiện
+có) — gỡ rào cản duy nhất khiến kịch bản "nhiều file khác đuôi cùng 1 Prefix/Step" (đã hoạt động đúng
+sẵn ở backend + cây Step) chưa từng kiểm thử được với `.xml`. KHÔNG có logic mới nào về khớp Step/ghi
+`eutr_references`/hiển thị cây Step (spec FR-071/FR-072, research Quyết định 76).
+
+**Independent Test**: Xem [quickstart.md](./quickstart.md) kịch bản 25/25a — file `.xml`/`.json`/
+`.geojson` được chấp nhận; 2 file khác đuôi cùng Prefix/Step hiển thị đủ trên cây Step (badge "+1" +
+tooltip).
+
+### Backend + Frontend (chỉ đổi 2 hằng số whitelist đã có — KHÔNG migration DB mới, KHÔNG entity/DTO/endpoint/route mới)
+
+- [X] T327 [P] Sửa `compliance-sys-api/src/ComplianceSys.Application/Services/EutrUploadService.cs`: thêm `".xml"`, `".json"`, `".geojson"` vào `AllowedExtensions` (dòng 20-23).
+- [X] T328 [P] Sửa `compliance-client/src/presentation/pages/eutr-documents/components/EutrDocumentsFormDialog.jsx`: thêm `'.xml'`, `'.json'`, `'.geojson'` vào `ALLOWED_EUTR_UPLOAD_EXTENSIONS` (dòng 51-60) — độc lập với T327 (file khác nhau).
+- [X] T329 Build verify: `dotnet build compliance-sys-api/src/ComplianceSys.Application/ComplianceSys.Application.csproj` (sau T327) — 0 lỗi biên dịch; `npx eslint` trên `EutrDocumentsFormDialog.jsx` (sau T328) — 0 lỗi.
+- [ ] T330 [US2] Kiểm thử thủ công theo [quickstart.md](./quickstart.md) kịch bản 25/25a trên `/eutr/documents`, Map File (`005-eutr-sales-orders`), và `PurchId/View` (`012-eutr-purchase-orders`) (Upload thật với DB/SharePoint thật) — **CHƯA chạy** (cần môi trường DB/SharePoint thật + trình duyệt, ngoài phạm vi phiên làm việc này).
+
+**Checkpoint**: Upload `.xml`/`.json`/`.geojson` không còn bị từ chối "Invalid file type"; 2 file khác
+đuôi cùng khớp 1 Prefix/Step hiển thị đủ trên cây Step (badge "+N"/tooltip, hành vi có sẵn từ trước).
+
+---
+
+## Phase 33: Update 28 - Tăng giới hạn kích thước file lên 20MB (User Story 2)
+
+**Goal**: Nâng giới hạn kích thước file được phép Upload từ 10MB lên 20MB (spec FR-018/FR-073). Đúng 2
+hằng số cần đổi, không có logic mới nào khác.
+
+**Independent Test**: Xem [quickstart.md](./quickstart.md) kịch bản 26 — file 10MB-20MB được chấp
+nhận (trước đây bị từ chối); file > 20MB vẫn bị loại.
+
+### Backend + Frontend (chỉ đổi 2 hằng số giới hạn đã có — KHÔNG migration DB mới, KHÔNG entity/DTO/endpoint/route/cấu hình server mới)
+
+- [X] T331 [P] Sửa `compliance-sys-api/src/ComplianceSys.Application/Services/EutrUploadService.cs`: đổi `MaxFileSizeBytes` từ `10 * 1024 * 1024` sang `20 * 1024 * 1024` (dòng 26); **phát sinh thêm khi soạn thảo** — cũng sửa chuỗi thông báo lỗi hardcode `"File exceeds 10MB limit"` → `"File exceeds 20MB limit"` trong `ValidateFile` (dòng 382, không có trong tasks gốc nhưng cần sửa để thông báo lỗi khớp giới hạn thật).
+- [X] T332 [P] Sửa `compliance-client/src/presentation/pages/eutr-documents/components/EutrDocumentsFormDialog.jsx`: đổi `MAX_EUTR_UPLOAD_SIZE_BYTES` từ `10 * 1024 * 1024` sang `20 * 1024 * 1024` (dòng 64) — độc lập với T331 (file khác nhau); **phát sinh thêm khi soạn thảo** — cũng sửa chuỗi thông báo lỗi hardcode `` `${file.name} (exceeds 10MB limit)` `` → `` `${file.name} (exceeds 20MB limit)` `` (dòng 341).
+- [X] T333 Build verify: `dotnet build compliance-sys-api/src/ComplianceSys.Application/ComplianceSys.Application.csproj` (sau T331) — 0 lỗi biên dịch; `npx eslint` trên `EutrDocumentsFormDialog.jsx` (sau T332) — 0 lỗi.
+- [ ] T334 [US2] Kiểm thử thủ công theo [quickstart.md](./quickstart.md) kịch bản 26 trên `/eutr/documents`, Map File (`005-eutr-sales-orders`), và `PurchId/View` (`012-eutr-purchase-orders`) (Upload thật với DB/SharePoint thật) — **CHƯA chạy** (cần môi trường DB/SharePoint thật + trình duyệt, ngoài phạm vi phiên làm việc này).
+
+**Checkpoint**: File 10MB-20MB được chấp nhận (trước Update 28 sẽ bị từ chối); file > 20MB tiếp tục bị
+loại kèm thông báo lỗi rõ ràng.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -1379,6 +1450,20 @@ này; document tạo trước Update 25 giữ nguyên tên cũ (không có migra
   (không đụng `EutrDocumentsFormDialog.jsx`/`useEutrDocumentsColumns.jsx`/bất kỳ file
   `compliance-client` nào); chỉ phụ thuộc hạ tầng đã có từ Phase 14/20 (`EutrMastersRepository.cs`,
   `IRepository<EutrStep,long>` generic).
+- **Update 26 (Phase 31)**: sau Phase 30 (thu hẹp code thêm ở đó). T320 (xóa khai báo interface, độc
+  lập) → T321 (xóa implementation, sau T320) → T322 (`BuildRenamedFileName` bỏ tham số `prefix`, độc
+  lập với T320/T321 — khác method trong cùng file) → T323/T324 (wiring, cả hai sau T321 **và** T322,
+  khuyến nghị tuần tự vì cùng file) → T325 (build verify, sau T320-T324) → T326 (kiểm thử, sau T325).
+  **0 file frontend** — độc lập hoàn toàn với mọi phase khác ngoài phụ thuộc trực tiếp vào Phase 30.
+- **Update 27 (Phase 32)**: độc lập hoàn toàn với Phase 30/31 (đổi hằng số whitelist, không đụng
+  `BuildRenamedFileName`/logic khớp Step). T327 (backend) và T328 (frontend) độc lập với nhau (khác
+  file, khác repo) — có thể làm song song → T329 (build verify, sau T327) → T330 (kiểm thử, sau T328
+  **và** T329).
+- **Update 28 (Phase 33)**: độc lập hoàn toàn với mọi phase khác (đổi hằng số giới hạn kích thước,
+  khác biến với Phase 32's `AllowedExtensions`/`ALLOWED_EUTR_UPLOAD_EXTENSIONS` dù cùng 2 file). T331
+  (backend) và T332 (frontend) độc lập với nhau — có thể làm song song, kể cả song song với T327/T328
+  (khác hằng số trong cùng file) → T333 (build verify, sau T331) → T334 (kiểm thử, sau T332 **và**
+  T333).
 - **Update 20 (Phase 25)**: **Không có task backend nào** — chỉ 1 file frontend, sửa tuần tự vì cùng
   file: T276 (import + instantiate use case đã có sẵn) → T277 (hàm `loadFilteredSteps` dùng chung cho
   cả 2 mode) → T278 (mode add: gọi khi Type đổi + mặc định dòng đầu) và T279 (mode edit: gọi 1 lần khi
@@ -2045,3 +2130,25 @@ file) → **Update 21 / US6** (search box Type/Step name/Conditions/Search phía
   riêng ở 2 đặc tả đó. Phụ thuộc Phase 14 (`EutrMastersRepository.cs`) và Phase 28 (`EutrUploadService.cs`
   đã có `Invoice`/2 method Upload ổn định từ Update 23); độc lập với Phase 15-27, 29 (không đụng file
   nào của các phase đó).
+- Phase 31 (T320-T326) là phần bổ sung cho spec Session Update 26 (User Story 2) — sửa tiếp trên hạ
+  tầng Phase 30: bỏ tham số `prefix` khỏi `BuildRenamedFileName` (File name nay chỉ gồm Step Name đã
+  làm sạch + đuôi file gốc), xóa hẳn method `GetPrefixByStepIdAsync` trên
+  `IEutrMastersRepository`/`EutrMastersRepository` (không còn nơi nào gọi tới sau khi bỏ Prefix khỏi
+  công thức). Nhánh Type = "PO" giữ nguyên bước chọn bản ghi Prefix dài nhất (research Quyết định 70,
+  không đổi) để xác định Step thắng cuộc — chỉ đổi việc KHÔNG còn đọc giá trị `Prefix` của bản ghi đó
+  khi ghép tên (research Quyết định 75). **Không endpoint/entity/DTO/migration/route mới, 0 task
+  frontend** — `005-eutr-sales-orders`/`012-eutr-purchase-orders` tự động kế thừa, không cần task riêng
+  ở 2 đặc tả đó. Phụ thuộc trực tiếp Phase 30; độc lập với mọi phase khác.
+- Phase 32 (T327-T330) là phần bổ sung cho spec Session Update 27 (User Story 2) — mở rộng whitelist
+  định dạng file được phép Upload (`.xml`/`.json`/`.geojson`), 1 dòng backend + 1 dòng frontend, không
+  sửa logic khớp Prefix/Step, ghi `eutr_references`, đổi tên file, hay cây Step ở
+  `005-eutr-sales-orders`/`012-eutr-purchase-orders` — đã xác nhận qua rà soát mã nguồn (research Quyết
+  định 76) rằng "nhiều file khác đuôi cùng 1 Step" đã hoạt động đúng từ trước (không ràng buộc unique
+  theo `StepId`) và cây Step đã hiển thị sẵn qua badge "(+N)"/tooltip; gap thực sự duy nhất là whitelist
+  định dạng chặn `.xml` từ trước. Không endpoint/entity/DTO/migration/route mới, độc lập hoàn toàn với
+  mọi phase khác (T327/T328 đổi 2 file khác nhau, không đụng file nào của Phase 1-31).
+- Phase 33 (T331-T334) là phần bổ sung cho spec Session Update 28 (User Story 2) — tăng giới hạn kích
+  thước file được phép Upload từ 10MB lên 20MB, 1 dòng backend + 1 dòng frontend (khác hằng số với
+  Phase 32 dù cùng 2 file), không sửa logic nào khác, đã xác nhận Kestrel `MaxRequestBodySize` (200MB)
+  đủ dùng nên không cần sửa cấu hình server (research Quyết định 77). Không endpoint/entity/DTO/
+  migration/route mới, độc lập hoàn toàn với mọi phase khác.

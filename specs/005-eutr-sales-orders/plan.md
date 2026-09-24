@@ -2565,6 +2565,51 @@ Unchanged (verified reusable as-is, no edits needed) for Update 28:
   and every other control on either screen — none of these are touched; this update only changes whether
   2 already-working icons/buttons render, never what they do once rendered.
 
+# Update 33 (2026-09-24) — New per-row Download button on AVAILABLE FILES; download file name recomputed
+# as Step Name (not read from `eutr_documents.Name`). Zero backend change (reuses the existing
+# `get-file-by-idref` endpoint); frontend-only, edits confined to 3 files (1 new shared util, 2 existing
+# pages):
+```
+compliance-client/
+└── src/
+    └── presentation/
+        └── pages/
+            └── eutr-documents/
+                ├── utils/
+                │   └── buildStepOnlyFileName.js   # NEW (Update 33): (originalFileName, stepNames) ->
+                │                                   #   sanitizeFolderName(stepNames[0]) + extension from
+                │                                   #   originalFileName; falls back to originalFileName
+                │                                   #   (minus extension) when stepNames is empty (FR-197)
+                └── components/
+                    └── EutrFileViewerDialog.jsx    # EDIT (Update 33): new `stepNames` prop; `handleDownload`
+                                                      #   now builds `link.download` via
+                                                      #   `buildStepOnlyFileName(...)` instead of the raw
+                                                      #   `loadedFile.fileName`/`fileName` prop (FR-195)
+            └── eutr-sales-orders/
+                └── MapFilePage.jsx                 # EDIT (Update 33): new `Download as DownloadIcon` +
+                                                      #   `GetEutrDocumentsFileByIdRefUseCase` +
+                                                      #   `buildStepOnlyFileName` imports; module-level
+                                                      #   `getEutrDocumentsFileByIdRefUseCase` instance
+                                                      #   (mirrors `EutrFileViewerDialog.jsx`'s pattern); new
+                                                      #   `handleDownloadFile(file)` callback (fetch by
+                                                      #   `file.fileId`, build Blob, `link.download =
+                                                      #   buildStepOnlyFileName(...)`); new Download
+                                                      #   `IconButton` after the Edit button on each
+                                                      #   AVAILABLE FILES row (FR-194); `stepNames` added to
+                                                      #   `viewerFile` state + `setViewerFile(...)` call +
+                                                      #   `<EutrFileViewerDialog stepNames={...}>` prop
+```
+
+Unchanged (verified reusable as-is, no edits needed) for Update 33:
+- Every backend file in `compliance-sys-api/` — reuses the existing `GET /eutr-documents/get-file-by-idref`
+  endpoint verbatim (already used by the View popup); no new endpoint/entity/DTO/route/policy.
+- `eutr_documents.Name` in the database — the recomputed download file name (FR-195) only affects the
+  `download` attribute of the browser download link; nothing is written back to the DB, and the File name
+  column shown on AVAILABLE FILES (or anywhere else) is unaffected.
+- `PurchaseOrderViewPage.jsx` (`012-eutr-purchase-orders`) — same change applied there too, but tracked in
+  that feature's own plan.md since it owns a separate copy of this row/dialog wiring (not a shared
+  component call, unlike the Upload/Edit popup).
+
 ## Complexity Tracking
 
 *No entries — Constitution Check passed without violations.*

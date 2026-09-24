@@ -10,6 +10,101 @@
 
 ## Clarifications
 
+### Session 2026-09-24 (Update 10) — Thêm nút Search rõ ràng kế bên ô tìm kiếm ở danh sách Purchase Orders
+
+- Input: "Thêm nút search kế bên text search để user có thể click rồi danh sách hiển thị theo điều
+  kiện nhập vào ở 012-eutr-purchase-orders" (kèm ảnh chụp màn hình Overview với ô tìm kiếm đã nhập
+  "CC01226", danh sách đã lọc đúng theo Vendor code đó).
+- Bối cảnh: Ô tìm kiếm hiện có ở `PurchaseOrderOverviewPage.jsx` đã hoạt động (tìm theo Purch id/Vendor
+  code, khớp "chứa", User Story 3 hiện có) nhưng chỉ có cơ chế tự động lọc lại sau 500ms kể từ lần gõ
+  cuối (debounce) — chưa có nút bấm rõ ràng nào để chủ động áp dụng ngay điều kiện đang nhập. Đã tìm
+  thấy đúng mẫu (nút **Search** cạnh ô tìm kiếm) đã có sẵn ở `005-eutr-sales-orders` Overview
+  (`SalesOrderOverviewPage.jsx`, Update 24) — tái sử dụng cùng cách bố trí/hành vi cho nhất quán.
+- Change: Thêm nút **Search** (kiểu `variant="contained"`) ngay bên phải ô tìm kiếm hiện có ở màn hình
+  danh sách Purchase Orders — nhấn nút MUST áp dụng ngay từ khóa đang nhập trong ô tìm kiếm, về lại
+  trang đầu, không cần đợi debounce 500ms.
+- Change: Cơ chế tự động lọc sau debounce (gõ xong đợi 500ms) hiện có MUST giữ nguyên không đổi, hoạt
+  động song song với nút Search mới — nút Search chỉ bổ sung một cách áp dụng "ngay lập tức", không
+  thay thế hành vi tự động hiện có.
+- Q: Nút Search mới có cần đồng bộ điều kiện tìm kiếm lên URL (query params, để khôi phục khi Back)
+  như `005-eutr-sales-orders` đã làm ở Update 24 không? → A: **Không** — màn hình Overview của
+  `012-eutr-purchase-orders` hiện chưa có cơ chế khôi phục từ khóa/trang qua URL nào (không giống
+  `005-eutr-sales-orders`), yêu cầu gốc chỉ đề cập thêm nút bấm; xây thêm hạ tầng URL sync nằm ngoài
+  phạm vi yêu cầu này.
+
+### Session 2026-09-24 (Update 9) — Thêm nút Download riêng cho từng dòng AVAILABLE FILES; tải file với tên = Step Name
+
+- Input: "thêm nút download kế nút edit ở màn hình available file. Khi downfile về hiện tại có chỉnh
+  tên file = step name + prefix, đổi lại chỉ cần đổi tên file thành step name là dc". Yêu cầu này áp
+  dụng chung cho cả `005-eutr-sales-orders` (Map File Step 2) lẫn `012-eutr-purchase-orders`
+  (`PurchId/View`) — `PurchaseOrderViewPage.jsx` là bản clone cùng cấu trúc AVAILABLE FILES với
+  `MapFilePage.jsx` (`005-eutr-sales-orders`), nhưng là code riêng của đặc tả này (không gọi qua
+  component dùng chung) nên cần khai báo FR/task riêng ở đây, không chỉ ghi chú kế thừa.
+- Change: Áp dụng nguyên vẹn quyết định đã chốt ở `005-eutr-sales-orders` Update 33 (xem FR-194 đến
+  FR-197 và research Quyết định 82/83 của đặc tả đó để biết đầy đủ rationale) vào `PurchId/View`: thêm
+  nút Download sau nút Edit trên mỗi dòng AVAILABLE FILES; tên file tải về (cả nút Download mới lẫn nút
+  Download có sẵn trong popup View, dùng chung component `EutrFileViewerDialog`) tính lại = Step Name
+  (Step đầu tiên nếu khớp nhiều Step), không đọc thẳng `eutr_documents.Name` đã lưu — áp dụng cho mọi
+  document kể cả document cũ tạo trước `004-eutr-documents` Update 26.
+- Change: Không ghi đè/backfill `eutr_documents.Name` trong DB, không ảnh hưởng cột File name hiển thị
+  trên AVAILABLE FILES hay bất kỳ màn hình nào khác — giống hệt phạm vi đã xác định ở
+  `005-eutr-sales-orders` Update 33.
+
+### Session 2026-09-24 (Update 8) — Kế thừa: Tăng giới hạn kích thước file lên 20MB khi Upload (004-eutr-documents Update 28)
+
+- Input: "mở giới hạn file upload lên 20MB" được gửi cho `004-eutr-documents`, áp dụng chung cho
+  `005-eutr-sales-orders`/`012-eutr-purchase-orders` qua popup Add/Edit dùng chung.
+- Change: Popup Add/Edit ở `PurchId/View` (FR-021/FR-022) tiếp tục dùng chung với `004-eutr-documents`
+  — không có validate kích thước riêng ở đặc tả này — nên tự động kế thừa giới hạn kích thước mới
+  (20MB, `004-eutr-documents` Update 28, FR-073) mà không cần thay đổi gì thêm.
+- Change: Không có thay đổi nào cần thực hiện riêng ở `012-eutr-purchase-orders`.
+
+### Session 2026-09-24 (Update 7) — Kế thừa: Mở rộng whitelist định dạng file (.xml/.json/.geojson) khi Upload (004-eutr-documents Update 27)
+
+- Input: yêu cầu cho phép 1 Step chứa nhiều file khác đuôi (ví dụ `.pdf` và `.xml`) nếu cùng Prefix,
+  hiển thị rõ trên view, được gửi cho `004-eutr-documents`, kèm chỉ định "cập nhật 004-eutr-documents,
+  005-eutr-sales-orders, 012-eutr-purchase-orders". Rà soát mã nguồn xác nhận: cây Step ở `PurchId/View`
+  (clone cùng logic `TreeNode` với Map File Step 2 của `005-eutr-sales-orders`) **đã hiển thị sẵn**
+  nhiều file/1 node Step qua badge "(+N)" và tooltip liệt kê đủ tên mọi file khớp step đó — không phải
+  UI mới; gap thực sự duy nhất (whitelist định dạng chặn `.xml`) thuộc phạm vi `004-eutr-documents`
+  (Update 27, FR-018/FR-071).
+- Change: Popup Add/Edit ở `PurchId/View` (FR-021/FR-022) tiếp tục dùng chung với `004-eutr-documents`
+  — không có whitelist định dạng riêng ở đặc tả này — nên tự động kế thừa việc mở rộng định dạng được
+  phép upload (`.xml`/`.json`/`.geojson`, `004-eutr-documents` Update 27, FR-071) mà không cần thay đổi
+  gì thêm.
+- Change: Không có thay đổi nào cần thực hiện riêng ở `012-eutr-purchase-orders` cho việc "nhiều file
+  khác đuôi cùng 1 Step" — cơ chế hiển thị badge "(+N)"/tooltip trên cây Step (`TreeNode`, kế thừa từ
+  Map File Step 2) đã hoạt động đúng với bất kỳ số lượng file nào khớp 1 Step từ trước; việc mở rộng
+  định dạng ở `004-eutr-documents` chỉ khiến kịch bản `.pdf` + `.xml` (trước đây bị chặn ở bước validate
+  định dạng) nay có thể chạm tới được logic hiển thị đã có sẵn này.
+- Q: Việc Upload ở `PurchId/View` tự điền sẵn Type = "PO" (Update 1) có ảnh hưởng gì tới việc nhiều file
+  khác đuôi cùng khớp 1 Prefix/Step không? → A: **Không** — mỗi file trong 1 lượt Upload (hoặc các lượt
+  khác nhau) độc lập khớp Prefix/Step riêng của nó qua `GetMatchingPrefixesAsync`, không có giới hạn nào
+  về số file/StepId; hành vi này áp dụng đồng nhất bất kể Type = "PO" tự điền sẵn hay được đổi thủ công.
+
+### Session 2026-09-24 (Update 6) — Kế thừa: Bỏ Prefix khỏi File name tự động khi Upload (004-eutr-documents Update 26)
+
+- Input: yêu cầu bỏ Prefix khỏi công thức đổi tên file khi Upload được gửi cho `004-eutr-documents`,
+  kèm chỉ định "cập nhật 004-eutr-documents, 005-eutr-sales-orders, 012-eutr-purchase-orders".
+- Change: Nút **Upload** và **Edit** ở màn hình `PurchId/View` (FR-021/FR-022) tiếp tục mở đúng popup
+  Add/Edit dùng chung với `004-eutr-documents` và gọi đúng luồng Upload chung — không có logic đặt tên
+  file riêng ở đặc tả này — do đó **tự động kế thừa nguyên vẹn** việc bỏ Prefix khỏi công thức đổi tên
+  đã đặc tả ở `004-eutr-documents` Update 26 (FR-068 đến FR-070 của đặc tả đó, sửa lại FR-062/FR-063
+  của Update 25 mà `012-eutr-purchase-orders` Update 3 đã kế thừa): File name của mỗi document tạo qua
+  Upload ở đây nay chỉ gồm Step Name đã làm sạch + đuôi file gốc (Step đã chọn tường minh, hoặc — khi
+  Type vẫn là "PO" tự điền sẵn theo Update 1 — Step ứng với Prefix khớp dài nhất, Prefix nay chỉ dùng để
+  chọn Step, không còn ghép vào tên) — KHÔNG còn ghép thêm Prefix của `eutr_master_documents` như trước.
+- Change: Không có thay đổi nào cần thực hiện riêng ở `012-eutr-purchase-orders` (không có FR/Key
+  Entity nào của đặc tả này cần cập nhật) — khu vực AVAILABLE FILES ở `PurchId/View` tiếp tục hiển thị
+  đúng giá trị `eutr_documents.Name` hiện có trong DB tại thời điểm đọc, tự động phản ánh công thức tên
+  mới. Document tạo trước Update này giữ nguyên File name cũ (có thể vẫn còn Prefix) — không migration/
+  backfill nào chạm dữ liệu cũ (kế thừa từ `004-eutr-documents` Update 26).
+- Q: Việc Upload ở `PurchId/View` tự điền sẵn Type = "PO" (Update 1), khiến hầu hết lượt Upload rơi vào
+  nhánh Type = "PO" (Step suy ra từ khớp Prefix), có ảnh hưởng gì tới đặc tả này khi Prefix không còn
+  được ghép vào tên không? → A: **Không** — nhánh Type = "PO" vẫn dùng Prefix để chọn Step thắng cuộc
+  (tie-break không đổi từ `004-eutr-documents` Update 25/FR-063), chỉ không còn đọc giá trị `Prefix` khi
+  ghép chuỗi tên; hành vi này áp dụng đồng nhất cho mọi Type, không cần quy tắc riêng ở đặc tả này.
+
 ### Session 2026-09-23 (Update 5) — Ẩn nút Upload/Edit theo permissionList của menu eutr-documents (sửa lại cả cơ chế Upload của Update 4)
 
 - Input: Cập nhật 005-eutr-sales-orders, 012-eutr-purchase-orders màn hình view, map file: nếu không
@@ -293,6 +388,9 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
    khóa đó.
 3. **Given** từ khóa tìm kiếm không khớp Purchase Order nào, **When** kết quả trả về rỗng, **Then**
    hệ thống hiển thị trạng thái trống ("No data"), không phải lỗi.
+4. **(Update 10, FR-039)** **Given** đã nhập một từ khóa vào ô tìm kiếm, **When** nhấn nút **Search**
+   ngay (không đợi 500ms debounce), **Then** danh sách được lọc lại ngay lập tức theo đúng từ khóa
+   đang nhập, về lại trang đầu — không cần chờ.
 
 ### Edge Cases
 
@@ -302,6 +400,12 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
 - Khi một Purchase Order có Template nhưng mã Template đó không khớp với template nào đang cấu hình
   trong hệ thống, Purchase Order đó được xử lý như trường hợp chưa có Template hợp lệ (Progress hiển
   thị trạng thái chưa có Template, không tính toán step).
+- (Update 10) Người dùng gõ từ khóa mới rồi nhấn Search ngay trước khi debounce 500ms của lần gõ
+  trước kịp kích hoạt: nút Search gọi API ngay với từ khóa hiện tại; lượt debounce đang chờ (nếu có)
+  vẫn có thể kích hoạt thêm sau đó — cùng một hành vi đã có ở `005-eutr-sales-orders` (nút Search không
+  hủy lượt debounce đang chờ). Vì cả hai lượt đều dùng cùng giá trị ô tìm kiếm tại thời điểm đó, kết
+  quả hiển thị không bị sai lệch — chỉ là có thể có 1 lượt gọi API dư (không gây lỗi/nhấp nháy dữ liệu
+  sai).
 - Khi việc tải danh sách step của Template hoặc tài liệu của Purchase Order (để tính Progress) bị lỗi
   cho một dòng cụ thể, dòng đó hiển thị trạng thái lỗi riêng cho cột Progress, không chặn các dòng
   khác trong bảng hiển thị bình thường.
@@ -431,6 +535,22 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
 - **FR-036** (Update 5): Khi nút Edit hiển thị theo FR-033 (người dùng có quyền), toàn bộ hành vi đã
   đặc tả cho nút Edit ở các Update trước đó MUST giữ nguyên không đổi — Update này chỉ thêm điều kiện
   hiển thị, không đổi luồng nghiệp vụ khi nút đã hiển thị.
+- **FR-037 (Update 9)**: Mỗi dòng tài liệu ở AVAILABLE FILES MUST hiển thị thêm nút **Download**, đặt
+  ngay sau nút Edit — hiển thị cho mọi document có `FileId` (cùng điều kiện với nút View hiện có,
+  không phụ thuộc quyền Edit ở FR-033). Nhấn nút MUST tải trực tiếp nội dung file thật qua `FileId`
+  (dùng chung endpoint `get-file-by-idref` đã có), KHÔNG mở popup View.
+- **FR-038 (Update 9)**: Tên file khi tải về (cả nút Download mới ở FR-037 lẫn nút Download có sẵn
+  trong popup View) MUST được tính lại tại thời điểm tải = `Name` của Step (Step đầu tiên nếu 1 file
+  khớp nhiều Step) + đuôi file gốc — không đọc thẳng `eutr_documents.Name` đã lưu, áp dụng cho mọi
+  document kể cả document tạo trước `004-eutr-documents` Update 26. Việc này CHỈ ảnh hưởng tên file lưu
+  về máy — KHÔNG ghi đè `eutr_documents.Name`, KHÔNG ảnh hưởng File name hiển thị ở màn hình này hay
+  bất kỳ màn hình nào khác. Chi tiết đầy đủ (bao gồm fallback khi không có Step nào khớp) xem
+  `005-eutr-sales-orders` FR-194 đến FR-197, áp dụng nguyên vẹn cho `PurchId/View`.
+- **FR-039 (Update 10)**: Màn hình danh sách Purchase Orders MUST hiển thị thêm nút **Search** ngay
+  bên phải ô tìm kiếm hiện có (FR-009) — nhấn nút MUST áp dụng ngay từ khóa đang nhập vào danh sách
+  (về lại trang đầu), không cần đợi cơ chế tự động lọc sau debounce (500ms kể từ lần gõ cuối, hành vi
+  hiện có ở FR-009) kích hoạt. Cơ chế tự động lọc sau debounce MUST tiếp tục hoạt động song song,
+  không bị thay thế bởi nút Search mới.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -467,6 +587,13 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
 - **SC-007** (Update 5): 100% người dùng không có quyền `EutrDocuments.Update` không nhìn thấy nút
   Edit trên bất kỳ dòng AVAILABLE FILES nào của màn hình chi tiết Purchase Order — trong khi người
   dùng có đủ quyền tiếp tục thấy và dùng được nút này đúng như hành vi trước Update 5.
+- **SC-008 (Update 9)**: 100% lượt nhấn nút Download mới ở AVAILABLE FILES (hoặc nút Download có sẵn
+  trong popup View) tải về đúng nội dung file thật, với tên file lưu về máy = đúng `Name` của Step
+  (Step đầu tiên nếu khớp nhiều Step) + đuôi file gốc — kể cả với document tạo trước
+  `004-eutr-documents` Update 26 (còn giữ tên cũ dạng Prefix + Step Name trong `eutr_documents.Name`).
+- **SC-009 (Update 10)**: 100% lượt nhấn nút Search mới áp dụng ngay từ khóa đang nhập vào danh sách
+  (không cần đợi 500ms debounce) — người dùng có cách chủ động "tìm ngay" bên cạnh cơ chế tự động lọc
+  hiện có.
 
 ## Assumptions
 

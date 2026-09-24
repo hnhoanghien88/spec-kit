@@ -1473,3 +1473,43 @@ memory — see `research.md` Decision 81 for the full before/after.
   of menu `eutr-sales-orders` (independent menu code, independent of this update).
 - No change to the View button (read-only preview) or Step 1 (PO selection/Save PO Mapping) — both
   remain unconditional.
+
+## Update 33 (2026-09-24): New per-row Download button on AVAILABLE FILES + download-time file-name recompute (frontend-only, no entity/DTO/API change)
+
+### No new entity, field, or endpoint
+
+Reuses the existing `GET /eutr-documents/get-file-by-idref?idRef=...` endpoint (already used by the
+View popup) verbatim — same request shape, same response shape (`{ content, contentType, fileName }`).
+No new backend file, entity, DTO, migration, or route.
+
+### Client-side "download file name" computation (not a DB field)
+
+The downloaded file's local name is now computed at download time, not read from any stored field:
+
+```
+downloadFileName = sanitizeFolderName(stepNames[0]) + extensionOf(storedName)   // stepNames non-empty
+downloadFileName = storedName                                                   // stepNames empty (fallback)
+```
+
+- `stepNames` — the same per-document array already returned by `list-po-references`
+  (`doc.stepNames`), already used to render the Step chips on each AVAILABLE FILES row. No new API
+  field.
+- `extensionOf(storedName)` — parsed client-side from whatever is already in `eutr_documents.Name`
+  (via `get-file-by-idref`'s `fileName` field) — the extension itself is unaffected by this update
+  (unchanged since `004-eutr-documents` Update 25/26, which already preserve the original extension).
+- `sanitizeFolderName` — reused from `@utils/helpers` (already used elsewhere in this codebase for
+  folder-name sanitization), not a new utility.
+
+This computed name is used ONLY for the browser download link's `download` attribute — `eutr_documents.Name`
+in the DB is never read for comparison/written to, and no other UI (File name column, tooltips, etc.)
+changes.
+
+### Non-goals confirmed (Update 33)
+
+- No new backend endpoint, controller, entity, table, migration, DTO, or authorization policy.
+- No change to `eutr_documents.Name`/`eutr_references` — this update is purely about what file name the
+  browser saves the downloaded file as, computed fresh on each download.
+- No change to Upload/Edit/View button gating (Update 29/30) — the new Download button is ungated,
+  matching the existing View button's visibility rule.
+- Applies identically to `012-eutr-purchase-orders` (`PurchaseOrderViewPage.jsx`), tracked in that
+  feature's own data-model.md/plan.md since it owns a separate copy of this row wiring.

@@ -508,23 +508,25 @@ Mở SPA, đăng nhập, vào menu **EUTR documents** (đường dẫn `/eutr/do
     Type = "Invoice" đã có `Invoice` (kịch bản 22/22c), xác nhận cột hiển thị đúng giá trị dạng văn
     bản đơn thuần (không phải chip). Với document Type khác "Invoice" (`Invoice = null`), xác nhận cột
     này hiển thị trống — không lỗi, không ảnh hưởng các cột khác.
-24. **Add — File name tự động đổi theo Step + Prefix của master (Update 25, FR-062/FR-064)**: Ở màn
-    Assign Steps (`006-eutr-reference-types`) hoặc `002-eutr-masters`, chuẩn bị 1 Step (ví dụ
-    "Invoice") có 1 bản ghi `eutr_master_documents` với `Prefix = "INV"`. Mở popup Add → chọn Type
-    khác "PO" (ví dụ "Invoice") → chọn Step đó → nhập 1 chip Value → Upload 1 file bất kỳ (ví dụ
-    `scan001.pdf`). Sau khi Upload xong, quay lại danh sách chính → xác nhận cột **File name** của
-    document mới = `"INVInvoice.pdf"` (Prefix + Step Name + đuôi file gốc) — **không phải**
-    `scan001.pdf`.
+24. **Add — File name tự động đổi theo Step (Update 25/26, FR-062/FR-064/FR-068)**: Ở màn Assign Steps
+    (`006-eutr-reference-types`) hoặc `002-eutr-masters`, chuẩn bị 1 Step (ví dụ "Invoice") có 1 bản
+    ghi `eutr_master_documents` với `Prefix = "INV"`. Mở popup Add → chọn Type khác "PO" (ví dụ
+    "Invoice") → chọn Step đó → nhập 1 chip Value → Upload 1 file bất kỳ (ví dụ `scan001.pdf`). Sau khi
+    Upload xong, quay lại danh sách chính → xác nhận cột **File name** của document mới =
+    `"Invoice.pdf"` (chỉ Step Name + đuôi file gốc, kể từ Update 26) — **không phải** `scan001.pdf` và
+    **không phải** `"INVInvoice.pdf"` (công thức có Prefix của Update 25 đã bị Update 26 thay thế).
 24a. **Step KHÔNG có cấu hình trong master (Update 25, FR-062)**: Lặp lại kịch bản 24 nhưng chọn 1
     Step KHÔNG có bản ghi nào trong `eutr_master_documents` (ví dụ "Delivery") → xác nhận File name =
-    đúng `Name` của Step đó + đuôi file gốc (ví dụ `"Delivery.docx"`) — không có Prefix ở đầu.
-24b. **Type = "PO" — Prefix dài nhất khi khớp nhiều Step (Update 25, FR-063)**: Chuẩn bị 2 bản ghi
-    `eutr_master_documents`: `Prefix = "INV"` (Step A) và `Prefix = "INV2026"` (Step B, cùng là tiền
-    tố của cùng 1 tên file). Ở popup Add, chọn Type = "PO", nhập 1 chip PO hợp lệ, Upload 1 file có
-    tên bắt đầu bằng `"INV2026"` (ví dụ `INV2026_PO000123.pdf`) → xác nhận: (a) kiểm tra DB —
-    `eutr_references` có đủ 2 dòng (`StepId` của Step A và Step B, cùng `RefValue` = mã PO); (b) trên
-    danh sách chính, File name của document đó = Prefix "INV2026" (dài hơn) + Step Name của Step B +
-    đuôi file gốc — không dùng Step A.
+    đúng `Name` của Step đó + đuôi file gốc (ví dụ `"Delivery.docx"`) — không có Prefix ở đầu (không
+    đổi so với Update 25 — Step này chưa từng có Prefix).
+24b. **Type = "PO" — Prefix dài nhất chỉ dùng để chọn Step, không ghép vào tên (Update 25/26, FR-063/
+    FR-068/FR-069)**: Chuẩn bị 2 bản ghi `eutr_master_documents`: `Prefix = "INV"` (Step A) và
+    `Prefix = "INV2026"` (Step B, cùng là tiền tố của cùng 1 tên file). Ở popup Add, chọn Type = "PO",
+    nhập 1 chip PO hợp lệ, Upload 1 file có tên bắt đầu bằng `"INV2026"` (ví dụ
+    `INV2026_PO000123.pdf`) → xác nhận: (a) kiểm tra DB — `eutr_references` có đủ 2 dòng (`StepId` của
+    Step A và Step B, cùng `RefValue` = mã PO); (b) trên danh sách chính, File name của document đó =
+    đúng `Name` của Step B (Prefix "INV2026" dài hơn thắng tie-break để **chọn Step B**, nhưng KHÔNG
+    còn xuất hiện trong File name kể từ Update 26) + đuôi file gốc — không dùng Step A.
 24c. **Sanitize ký tự đặc biệt (Update 25, FR-064)**: Ở `001-eutr-steps`, tạo tạm 1 Step có `Name`
     chứa ký tự đặc biệt (ví dụ `"A\B"`), không cấu hình Prefix nào cho Step đó. Mở popup Add, chọn
     Type khác "PO", chọn Step vừa tạo, Upload 1 file bất kỳ → xác nhận File name của document mới =
@@ -536,16 +538,47 @@ Mở SPA, đăng nhập, vào menu **EUTR documents** (đường dẫn `/eutr/do
 24e. **Edit không tính lại File name (Update 25, FR-066)**: Mở popup Edit của 1 document vừa tạo ở
     kịch bản 24, đổi Step sang giá trị khác, Save → xác nhận File name trên danh sách chính **không
     đổi** (vẫn giữ tên đã tính lúc Upload) dù Step hiển thị đã đổi.
+24f. **Document tạo trước Update 26 giữ nguyên tên cũ (Update 26)**: Với 1 document đã tạo qua kịch
+    bản 24 TRƯỚC khi áp dụng Update 26 (File name còn dạng `"INVInvoice.pdf"`, có Prefix) → sau khi
+    triển khai Update 26, xác nhận File name của document đó trên danh sách chính **không đổi** (không
+    có migration/backfill nào chạy) — chỉ document Upload MỚI sau Update 26 mới theo công thức chỉ-
+    Step-Name.
+25. **Nhiều file khác đuôi cùng 1 Step — cây Step hiển thị đủ (Update 27, FR-018/FR-071/FR-072)**:
+    Chuẩn bị 1 bản ghi `eutr_master_documents` (`Prefix = "INV"`, gán cho Step "Invoice") dùng cho Type
+    = "PO". Ở popup Add trên `005-eutr-sales-orders` (Map File Step 2) hoặc `012-eutr-purchase-orders`
+    (`PurchId/View`): upload file `INV_scan.pdf` ở một lượt → xác nhận thành công. Upload tiếp file
+    `INV_scan.xml` (cùng khớp Prefix "INV") ở một lượt khác → xác nhận **không** bị từ chối "Invalid
+    file type" (trước Update 27 sẽ bị từ chối vì `.xml` chưa được phép). Quay lại cây Step → xác nhận
+    node Step "Invoice" hiển thị badge **"+1"** và tooltip liệt kê đủ tên cả 2 file (`.pdf` và `.xml`).
+25a. **Upload `.json`/`.geojson` được chấp nhận (Update 27, FR-071)**: Ở popup Add (Type khác "PO"),
+    chọn 1 Step bất kỳ, upload 1 file `.json` hợp lệ (≤10MB) → xác nhận Upload thành công, document mới
+    xuất hiện trên danh sách chính. Lặp lại với 1 file `.geojson` → xác nhận tương tự.
+26. **Giới hạn kích thước 20MB (Update 28, FR-018/FR-073)**: Ở popup Add, chuẩn bị 1 file hợp lệ ~15MB
+    (định dạng bất kỳ được phép) → upload → xác nhận Upload thành công (trước Update 28, giới hạn còn
+    10MB nên file này sẽ bị từ chối). Chuẩn bị tiếp 1 file > 20MB → upload → xác nhận bị loại kèm thông
+    báo lỗi rõ ràng, không ảnh hưởng các file hợp lệ khác trong cùng lượt.
 
 ## Tiêu chí đạt
 
-- Tất cả 24 kịch bản trên (cùng các kịch bản phụ 9a-9s, 10a, 11a-11b, 15a-15e, 16a-16b, 17a, 18a-18i,
-  19a-19b, 20a-20b, 21a-21d, 22a-22d, 24a-24e, 1a, 5a-5c, 6a) hoạt động đúng.
-- **(Update 25)** File name (`eutr_documents.Name`) của mọi document tạo mới qua Upload không còn là
-  tên file gốc — tính theo Prefix (nếu Step có cấu hình trong `eutr_master_documents`) + Step Name, đã
-  loại bỏ ký tự đặc biệt (`\`, chuỗi `..`), giữ đuôi file gốc — xem SC-016/FR-062 đến FR-067. Type =
-  "PO" giữ nguyên toàn bộ logic khớp Prefix/ghi `eutr_references` hiện có (FR-020/FR-023), chỉ thêm
-  bước chọn bản ghi Prefix dài nhất để đặt tên. Edit không tính lại File name của document hiện có.
+- Tất cả 26 kịch bản trên (cùng các kịch bản phụ 9a-9s, 10a, 11a-11b, 15a-15e, 16a-16b, 17a, 18a-18i,
+  19a-19b, 20a-20b, 21a-21d, 22a-22d, 24a-24f, 25a, 1a, 5a-5c, 6a) hoạt động đúng.
+- **(Update 28)** Giới hạn kích thước file (FR-018/FR-073) tăng từ 10MB lên **20MB mỗi file** — xem
+  SC-019. Áp dụng đồng nhất cho mọi định dạng được phép (PDF/DOC/DOCX/XLS/XLSX/JPG/PNG/XML/JSON/
+  GeoJSON). Không có thay đổi hạ tầng nào khác (Kestrel `MaxRequestBodySize` đã là 200MB, đủ dùng).
+- **(Update 27)** Danh sách định dạng file được phép upload (FR-018/FR-071) gồm thêm `.xml`/`.json`/
+  `.geojson` bên cạnh PDF/DOC/DOCX/XLS/XLSX/JPG/PNG hiện có — xem SC-018. Nhiều file khác đuôi cùng khớp
+  1 Prefix/Step (FR-072) tạo nhiều `eutr_documents`/`eutr_references` độc lập như bình thường (không
+  ràng buộc unique theo `StepId`, hành vi có sẵn từ trước) và hiển thị đủ trên cây Step ở
+  `005-eutr-sales-orders`/`012-eutr-purchase-orders` qua badge "+N"/tooltip đã có sẵn (không phải UI
+  mới).
+- **(Update 26, sửa Update 25)** File name (`eutr_documents.Name`) của mọi document tạo mới qua Upload
+  sau Update 26 không còn là tên file gốc — tính CHỈ theo Step Name (đã làm sạch ký tự đặc biệt `\`,
+  chuỗi `..`), giữ đuôi file gốc, KHÔNG còn ghép Prefix của `eutr_master_documents` vào đầu tên — xem
+  SC-017/FR-062/FR-063/FR-068. Type = "PO" giữ nguyên toàn bộ logic khớp Prefix/ghi `eutr_references`
+  hiện có (FR-020/FR-023) cũng như bước chọn bản ghi Prefix dài nhất (FR-069) — nhưng bước đó nay chỉ
+  dùng để chọn Step thắng cuộc, không dùng để ghép tên. Edit không tính lại File name của document
+  hiện có. Document tạo trước Update 26 giữ nguyên File name cũ (có thể vẫn còn Prefix) — không
+  migration/backfill dữ liệu cũ.
 - **(Update 24)** Bảng danh sách chính hiển thị cột **Invoice** ngay sau cột Step name, đọc trực tiếp
   `eutr_documents.Invoice` (không JOIN `eutr_references`) — xem SC-015/FR-061; document `Invoice =
   null` hiển thị cột này ở trạng thái trống.

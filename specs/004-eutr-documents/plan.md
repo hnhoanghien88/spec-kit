@@ -567,6 +567,39 @@ Frontend: **0 file sửa** — `005-eutr-sales-orders`/`012-eutr-purchase-orders
 trên qua cùng use case/repository dùng chung với `004-eutr-documents`, tự động kế thừa hành vi đổi
 tên mà không cần thay đổi gì ở tầng feature của chúng (đã xác nhận trong spec Update 25 của cả hai).
 
+**Cập nhật (spec Session Update 26 — bỏ Prefix khỏi công thức File name, FR-068 đến FR-070)**: Sửa
+tiếp trên hạ tầng Update 25 ở trên, vẫn **backend-only**, **0 thay đổi frontend**. `BuildRenamedFileName`
+bỏ tham số `prefix`, chỉ còn `(stepName, stepId, originalFileName)` — `basePart =
+SanitizeNamePart(stepName)`, fallback `Step{StepId}` không đổi. Nhánh Type khác "PO"
+(`UploadMultipleForReferenceTypeAsync`) bỏ hẳn lời gọi `GetPrefixByStepIdAsync`; method này (và khai
+báo trên `IEutrMastersRepository`/`EutrMastersRepository`) bị **xóa hoàn toàn** khỏi codebase (research
+Quyết định 75) — không còn nơi nào gọi tới. Nhánh Type = "PO"
+(`UploadMultipleToSharePointAndSaveDataAsync`) giữ nguyên bước chọn `winningMaster` bằng
+`matchedMasters.FirstOrDefault(m => m.StepId.HasValue)` (việc thu hẹp về đúng bản ghi Prefix dài nhất
+khi khớp nhiều bản ghi đã thực hiện sẵn bên trong `GetMatchingPrefixesAsync`, không đổi) — chỉ đổi bước
+sau đó: không còn đọc `winningMaster.Prefix` để truyền vào `BuildRenamedFileName`, chỉ lấy
+`winningMaster.StepId` để tra `Name` của Step thắng cuộc.
+**Không migration DB mới, không entity/DTO/endpoint/route mới, 0 file frontend** —
+`005-eutr-sales-orders`/`012-eutr-purchase-orders` tự động kế thừa (đã xác nhận trong spec Update 26
+của cả hai).
+
+**Cập nhật (spec Session Update 27 — mở rộng whitelist định dạng file, FR-071/FR-072)**: Chỉ đổi 2
+hằng số whitelist — `AllowedExtensions` (`EutrUploadService.cs`, backend) và
+`ALLOWED_EUTR_UPLOAD_EXTENSIONS` (`EutrDocumentsFormDialog.jsx`, frontend — **1 file frontend duy nhất
+cần sửa**, khác mọi Update trước từ Update 25). Thêm `.xml`/`.json`/`.geojson` vào cả 2. Không sửa
+logic khớp Prefix/Step, ghi `eutr_references`, đổi tên file, hay bất kỳ endpoint/route/DTO/entity nào —
+đã xác nhận qua rà soát mã nguồn (research Quyết định 76) rằng nhiều file khác đuôi cùng 1 Step đã hoạt
+động đúng từ trước (không ràng buộc unique theo `StepId`) và cây Step ở `005-eutr-sales-orders`/
+`012-eutr-purchase-orders` (`MapFilePage.jsx`/`PurchaseOrderViewPage.jsx`) đã hiển thị sẵn nhiều file/1
+Step qua badge "(+N)"/tooltip — gap thực sự duy nhất là whitelist định dạng chặn `.xml` từ trước.
+
+**Cập nhật (spec Session Update 28 — tăng giới hạn kích thước file lên 20MB, FR-073)**: Chỉ đổi 2
+hằng số giới hạn kích thước — `MaxFileSizeBytes` (`EutrUploadService.cs`, backend) và
+`MAX_EUTR_UPLOAD_SIZE_BYTES` (`EutrDocumentsFormDialog.jsx`, frontend), từ 10MB lên 20MB. Đã kiểm tra
+Kestrel `MaxRequestBodySize` (`Program.cs`, 200MB, cấu hình chung toàn API) — không cần sửa (research
+Quyết định 77). Không sửa logic khớp Prefix/Step, ghi `eutr_references`, đổi tên file, whitelist định
+dạng (Update 27), hay bất kỳ endpoint/route/DTO/entity nào.
+
 ## Technical Context
 
 **Language/Version**: .NET 8 (backend); JavaScript (ES modules), React 18 + Vite (frontend)
@@ -1206,6 +1239,25 @@ mới — cả 2 endpoint Upload dùng chung policy hiện có của `SharePoint
 tiếng Việt/Anh nào phát sinh vì thay đổi hoàn toàn ở backend (Nguyên tắc IV/V không đổi, không áp
 dụng vì 0 thay đổi frontend/route).
 
+**Re-check sau Update 26** (bỏ Prefix khỏi công thức File name): vẫn PASS cả 5 nguyên tắc — thay đổi
+CHỈ thu hẹp/xóa code hiện có trong đúng 3 file đã xác định ở Update 25
+(`EutrUploadService.cs`/`IEutrMastersRepository.cs`/`EutrMastersRepository.cs`), không thêm entity/
+controller/route/endpoint/dependency mới nào (Nguyên tắc II/III); việc xóa hẳn
+`GetPrefixByStepIdAsync` (thay vì giữ lại không dùng) giữ codebase không có code chết, nhất quán với
+cách Update 25 tránh over-engineering (research Quyết định 71/75); không route/policy/menu/UI label
+nào phát sinh (Nguyên tắc IV/V không áp dụng, 0 thay đổi frontend).
+
+**Re-check sau Update 27** (mở rộng whitelist định dạng file): vẫn PASS cả 5 nguyên tắc — thay đổi chỉ
+là giá trị của 2 hằng số whitelist đã tồn tại (`AllowedExtensions`/`ALLOWED_EUTR_UPLOAD_EXTENSIONS`),
+không thêm entity/controller/route/endpoint/dependency/UI mới nào; quyết định KHÔNG xây thêm cơ chế
+gom nhóm/hiển thị "nhiều file/1 Step" mới (đã có sẵn qua `fileMappings`/`TreeNode`) là ví dụ trực tiếp
+của việc tránh over-engineering theo Nguyên tắc II/III (research Quyết định 76).
+
+**Re-check sau Update 28** (tăng giới hạn kích thước file lên 20MB): vẫn PASS cả 5 nguyên tắc — thay
+đổi chỉ là giá trị của 2 hằng số giới hạn đã tồn tại (`MaxFileSizeBytes`/`MAX_EUTR_UPLOAD_SIZE_BYTES`),
+không thêm entity/controller/route/endpoint/dependency/cấu hình server mới nào (đã xác nhận Kestrel
+200MB đã đủ, research Quyết định 77).
+
 ## Project Structure
 
 ### Documentation (this feature)
@@ -1798,6 +1850,45 @@ compliance-sys-api/src/
 > `SharePointController.cs` (không route/action mới, cùng 2 endpoint hiện có gọi thẳng 2 method đã
 > mở rộng). **Không có file frontend nào cần sửa** — cả `compliance-client` lẫn 2 đặc tả kế thừa
 > (`005-eutr-sales-orders`, `012-eutr-purchase-orders`) không cần thay đổi gì (xem Summary).
+
+Backend — **Update 26** (bỏ Prefix khỏi công thức File name — sửa tiếp đúng 3 file trên, **XÓA**
+`GetPrefixByStepIdAsync`, KHÔNG migration/entity/DTO/endpoint/route mới):
+
+```text
+compliance-sys-api/src/
+├── ComplianceSys.Application/Interfaces/Repositories/
+│   └── IEutrMastersRepository.cs   # (SỬA) - xóa khai báo Task<string?> GetPrefixByStepIdAsync(...)
+├── ComplianceSys.Infrastructure/Repositories/
+│   └── EutrMastersRepository.cs    # (SỬA) - xóa implementation GetPrefixByStepIdAsync
+└── ComplianceSys.Application/Services/
+    └── EutrUploadService.cs        # (SỬA) BuildRenamedFileName bỏ tham số prefix (chỉ con stepName/stepId/originalFileName); UploadMultipleForReferenceTypeAsync bỏ lời goi GetPrefixByStepIdAsync; UploadMultipleToSharePointAndSaveDataAsync giu nguyen OrderByDescending(Prefix.Length) de chon winningMaster nhung khong con doc winningMaster.Prefix khi goi BuildRenamedFileName
+```
+
+Backend — **Update 27** (mở rộng whitelist định dạng — sửa đúng 1 dòng, KHÔNG migration/entity/DTO/endpoint/route mới):
+
+```text
+compliance-sys-api/src/
+└── ComplianceSys.Application/Services/
+    └── EutrUploadService.cs        # (SỬA) AllowedExtensions HashSet: them ".xml", ".json", ".geojson"
+```
+
+Frontend — **Update 27** (1 file duy nhất, khác moi Update tu Update 25):
+
+```text
+compliance-client/src/
+└── presentation/pages/eutr-documents/components/
+    └── EutrDocumentsFormDialog.jsx # (SỬA) ALLOWED_EUTR_UPLOAD_EXTENSIONS: them '.xml', '.json', '.geojson' (dung 51-60)
+```
+
+Backend + Frontend — **Update 28** (tăng giới hạn kích thước — đúng 2 dòng, KHÔNG migration/entity/DTO/endpoint/route/cấu hình server mới):
+
+```text
+compliance-sys-api/src/ComplianceSys.Application/Services/
+└── EutrUploadService.cs        # (SỬA) MaxFileSizeBytes: 10 * 1024 * 1024 -> 20 * 1024 * 1024
+
+compliance-client/src/presentation/pages/eutr-documents/components/
+└── EutrDocumentsFormDialog.jsx # (SỬA) MAX_EUTR_UPLOAD_SIZE_BYTES: 10 * 1024 * 1024 -> 20 * 1024 * 1024
+```
 
 Frontend — **CÁC FILE MỚI** (clone `eutr-masters` cho list/Edit-popup; clone routing `eutr-templates` cho Add):
 

@@ -10,6 +10,97 @@
 
 ## Clarifications
 
+### Session 2026-09-24 (Update 33) — Thêm nút Download riêng cho từng dòng AVAILABLE FILES; tải file với tên = Step Name
+
+- Input: "thêm nút download kế nút edit ở màn hình available file. Khi downfile về hiện tại có chỉnh
+  tên file = step name + prefix, đổi lại chỉ cần đổi tên file thành step name là dc" (kèm ảnh chụp màn
+  hình AVAILABLE FILES với 1 document cũ có File name `"sinvSawmill Invoice.pdf"` — Prefix "sinv" +
+  Step Name "Sawmill Invoice", định dạng đặt tên từ trước khi `004-eutr-documents` Update 26 bỏ Prefix
+  khỏi công thức đổi tên khi Upload; document này được tạo trước Update 26 nên KHÔNG được backfill,
+  vẫn còn giữ tên cũ trong `eutr_documents.Name`).
+- Bối cảnh: Rà soát mã nguồn xác nhận AVAILABLE FILES (Map File Step 2) hiện chỉ có 2 nút hành động
+  trên mỗi dòng — View (xem trước qua popup, `EutrFileViewerDialog`) và Edit (khi có quyền) — chưa có
+  nút Download riêng nào ở dòng. Nút Download **đã có sẵn bên trong popup View** (`EutrFileViewerDialog`,
+  từ `004-eutr-documents` Update 10) nhưng dùng thẳng tên đã lưu (`eutr_documents.Name`/tên trả về từ
+  `get-file-by-idref`) — với document cũ (như trong ảnh) vẫn cho ra tên có Prefix.
+- Decision: Xác nhận qua `AskUserQuestion` — tên file khi tải về (cả nút Download mới ở dòng lẫn nút
+  Download có sẵn trong popup View) MUST **tính lại** = Step Name (không đọc thẳng tên đã lưu), áp
+  dụng cho MỌI document kể cả document cũ tạo trước Update 26 (không phụ thuộc giá trị
+  `eutr_documents.Name` hiện có trong DB) — khác với cách tiếp cận ở `004-eutr-documents` Update 26
+  (chỉ áp dụng công thức mới cho document tạo MỚI, không backfill/tính lại tên hiển thị của document
+  cũ). Ở đây, việc "tính lại tên" chỉ ảnh hưởng **tên file được lưu khi tải về máy người dùng**
+  (thuộc tính `download` của link tải) — KHÔNG ghi đè/backfill cột `eutr_documents.Name` trong DB, và
+  KHÔNG ảnh hưởng cột **File name** hiển thị trên chính AVAILABLE FILES/màn hình khác (vẫn hiển thị
+  đúng giá trị `eutr_documents.Name` như trước).
+- Change: Thêm nút **Download** mới trên mỗi dòng AVAILABLE FILES, đặt ngay sau nút Edit (thứ tự: View,
+  Edit, Download) — tải trực tiếp nội dung file thật qua `FileId` (cùng endpoint `get-file-by-idref` đã
+  dùng cho View/Download trong popup), KHÔNG mở popup View trước. Nút này hiển thị cho mọi document có
+  `FileId` (không gate theo quyền Edit — cùng điều kiện hiển thị với nút View hiện có, luôn hiển thị).
+- Q: Nếu 1 file khớp nhiều hơn 1 Step (nhiều chip Step name trên cùng 1 dòng — trường hợp Type = "PO"
+  khớp nhiều `eutr_master_documents.Prefix`), dùng Step nào để đặt tên khi tải về? → A: Dùng **Step
+  đầu tiên** trong danh sách Step đã khớp (thứ tự trả về từ `stepNames`/`stepIds` của document đó) —
+  đơn giản, nhất quán; không có "Step đúng duy nhất" khi 1 file thuộc nhiều Step nên không cần thêm
+  logic tie-break phức tạp (khác tie-break "Prefix dài nhất" dùng khi Upload — Prefix không còn liên
+  quan tới việc đặt tên nữa từ `004-eutr-documents` Update 26).
+- Q: Đuôi file gốc có giữ nguyên khi tải về không? → A: **Có** — chỉ đổi phần tên, giữ nguyên đuôi file
+  gốc (lấy từ tên file trả về bởi `get-file-by-idref`, không đổi).
+
+### Session 2026-09-24 (Update 32) — Kế thừa: Tăng giới hạn kích thước file lên 20MB khi Upload (004-eutr-documents Update 28)
+
+- Input: "mở giới hạn file upload lên 20MB" được gửi cho `004-eutr-documents`, áp dụng chung cho
+  `005-eutr-sales-orders`/`012-eutr-purchase-orders` qua popup Add/Edit dùng chung.
+- Change: Popup Add/Edit ở Step 2 (AVAILABLE FILES) tiếp tục dùng chung với `004-eutr-documents` —
+  không có validate kích thước riêng ở đặc tả này — nên tự động kế thừa giới hạn kích thước mới (20MB,
+  `004-eutr-documents` Update 28, FR-073) mà không cần thay đổi gì thêm.
+- Change: Không có thay đổi nào cần thực hiện riêng ở `005-eutr-sales-orders`.
+
+### Session 2026-09-24 (Update 31) — Kế thừa: Mở rộng whitelist định dạng file (.xml/.json/.geojson) khi Upload (004-eutr-documents Update 27)
+
+- Input: yêu cầu cho phép 1 Step chứa nhiều file khác đuôi (ví dụ `.pdf` và `.xml`) nếu cùng Prefix,
+  hiển thị rõ trên view, được gửi cho `004-eutr-documents`, kèm chỉ định "cập nhật 004-eutr-documents,
+  005-eutr-sales-orders, 012-eutr-purchase-orders". Rà soát mã nguồn xác nhận: cây Step ở màn hình Map
+  File (Step 2, `TreeNode` trong `MapFilePage.jsx`) **đã hiển thị sẵn** nhiều file/1 node Step qua badge
+  "(+N)" và tooltip liệt kê đủ tên mọi file khớp step đó — không phải UI mới; gap thực sự duy nhất
+  (whitelist định dạng chặn `.xml`) thuộc phạm vi `004-eutr-documents` (Update 27, FR-018/FR-071).
+- Change: Popup Add/Edit ở Step 2 (AVAILABLE FILES) tiếp tục dùng chung với `004-eutr-documents` —
+  không có whitelist định dạng riêng ở đặc tả này — nên tự động kế thừa việc mở rộng định dạng được
+  phép upload (`.xml`/`.json`/`.geojson`, `004-eutr-documents` Update 27, FR-071) mà không cần thay đổi
+  gì thêm.
+- Change: Không có thay đổi nào cần thực hiện riêng ở `005-eutr-sales-orders` cho việc "nhiều file khác
+  đuôi cùng 1 Step" — cơ chế hiển thị badge "(+N)"/tooltip trên cây Step (`TreeNode`, hành vi hiện có
+  trong code, chưa từng được đặc tả riêng ở bất kỳ Session nào trước đây của đặc tả này) đã hoạt động
+  đúng với bất kỳ số lượng file nào khớp 1 Step từ trước; việc mở rộng định dạng ở `004-eutr-documents`
+  chỉ khiến kịch bản `.pdf` + `.xml` (trước đây bị chặn ở bước validate định dạng) nay có thể chạm tới
+  được logic hiển thị đã có sẵn này.
+- Q: Cơ chế `fileMappings`/badge "(+N)" trên cây Step có giới hạn số lượng file/1 Step không (ví dụ chỉ
+  hiển thị tối đa N file rồi ẩn phần còn lại)? → A: **Không** — `mappedFiles` là danh sách đầy đủ mọi
+  file khớp `StepId` đó (không `.slice`/giới hạn số lượng), badge chỉ hiển thị số lượng **thêm** ngoài
+  file đầu tiên (`mappedFiles.length - 1`) và tooltip liệt kê **đủ** tên mọi file trong danh sách, không
+  cắt bớt.
+
+### Session 2026-09-24 (Update 30) — Kế thừa: Bỏ Prefix khỏi File name tự động khi Upload (004-eutr-documents Update 26)
+
+- Input: yêu cầu bỏ Prefix khỏi công thức đổi tên file khi Upload được gửi cho `004-eutr-documents`,
+  kèm chỉ định "cập nhật 004-eutr-documents, 005-eutr-sales-orders, 012-eutr-purchase-orders".
+- Change: Nút **Upload** và **Edit** ở Step 2 (AVAILABLE FILES) tiếp tục mở đúng popup Add/Edit dùng
+  chung với `004-eutr-documents` và gọi đúng luồng Upload chung (không có logic đặt tên file riêng ở
+  đặc tả này) — do đó **tự động kế thừa nguyên vẹn** việc bỏ Prefix khỏi công thức đổi tên đã đặc tả ở
+  `004-eutr-documents` Update 26 (FR-068 đến FR-070 của đặc tả đó, sửa lại FR-062/FR-063 của Update 25
+  mà `005-eutr-sales-orders` Update 23 đã kế thừa): File name của mỗi document tạo qua Upload ở đây nay
+  chỉ gồm Step Name đã làm sạch + đuôi file gốc — KHÔNG còn ghép thêm Prefix của `eutr_master_documents`
+  như trước.
+- Change: Không có thay đổi nào cần thực hiện riêng ở `005-eutr-sales-orders` (không có FR/Key Entity
+  nào của đặc tả này cần cập nhật) — mọi màn hình hiển thị File name (AVAILABLE FILES ở Map File/View,
+  cây step, Download zip theo tên file) tiếp tục hiển thị đúng giá trị `eutr_documents.Name` hiện có
+  trong DB tại thời điểm đọc, tự động phản ánh công thức tên mới mà không cần logic hiển thị riêng.
+  Document tạo trước Update này giữ nguyên File name cũ (có thể vẫn còn Prefix) — không migration/
+  backfill nào chạm dữ liệu cũ (kế thừa từ `004-eutr-documents` Update 26).
+- Q: Việc bỏ Prefix có ảnh hưởng gì tới cách Map File/View so khớp file với Template/Step (dựa trên
+  `eutr_references.StepId`, không phải theo File name) không? → A: **Không** — mọi logic map/mapped
+  status trong đặc tả này đều dựa trên `eutr_references.StepId`/`RefType` (xem Update 7/17/19), không
+  bao giờ so khớp theo `eutr_documents.Name`; đổi công thức tên file chỉ ảnh hưởng cột hiển thị, không
+  ảnh hưởng logic nghiệp vụ nào ở đây.
+
 ### Session 2026-09-23 (Update 29) — Màn hình Map File (Step 2): ẩn nút Upload/Edit tài liệu theo permissionList của menu eutr-documents
 
 - Input: Cập nhật 005-eutr-sales-orders (và 012-eutr-purchase-orders) màn hình view, map file: nếu
@@ -1483,6 +1574,18 @@ màn hình EUTR Sales Orders.
     **When** mở Step 2 của Map File, **Then** cả nút Upload lẫn nút Edit trên mọi dòng đều hiển thị
     đúng như hành vi đã có trước Update 29 (Update 1 đến Update 8) — không có thay đổi hành vi nào
     khác ngoài việc thêm điều kiện hiển thị.
+32. **(Update 33, FR-194/FR-195)** **Given** một dòng AVAILABLE FILES có `FileId` (document cũ, tạo
+    trước `004-eutr-documents` Update 26, `eutr_documents.Name` đang lưu dạng "Prefix + Step Name" ví
+    dụ `"sinvSawmill Invoice.pdf"`), **When** nhấn nút Download mới trên dòng đó, **Then** file được
+    tải về máy với tên = đúng `Name` của Step (ví dụ `"Sawmill Invoice.pdf"`) — KHÔNG phải tên đã lưu
+    `"sinvSawmill Invoice.pdf"`; không mở popup View.
+33. **(Update 33, FR-196)** **Given** một dòng AVAILABLE FILES hiển thị nhiều hơn 1 chip Step name
+    (file khớp nhiều Step), **When** nhấn nút Download, **Then** tên file tải về = `Name` của Step
+    **đầu tiên** trong danh sách Step đã khớp của document đó.
+34. **(Update 33, FR-195)** **Given** popup View đang mở cho 1 document (bất kỳ nút Download nào —
+    dòng AVAILABLE FILES hoặc bên trong popup View), **When** nhấn nút Download có sẵn trong popup,
+    **Then** tên file tải về cũng áp dụng đúng công thức = Step Name + đuôi file gốc như FR-194/FR-195
+    (không còn dùng tên đã lưu như hành vi trước Update 33).
 
 ---
 
@@ -2067,6 +2170,15 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
   lớp quyền (menu `eutr-sales-orders` và menu `eutr-documents`) không phụ thuộc lẫn nhau, mỗi lớp kiểm
   soát đúng phạm vi của nó (Update 28 kiểm soát việc vào được màn hình Map File; Update 29 kiểm soát
   riêng nút Upload/Edit bên trong màn hình đó khi đã vào được).
+- (Update 33) Document không có Step nào khớp (`stepNames` rỗng — dữ liệu bất thường/hiếm gặp): tên
+  file tải về (nút Download mới hoặc nút Download trong popup View) fallback về tên đã lưu
+  (`eutr_documents.Name`), không tạo tên rỗng (FR-197).
+- (Update 33) Nút Download mới hoạt động độc lập với nút View — nhấn Download KHÔNG mở popup View,
+  không tải nội dung 2 lần nếu người dùng cũng đã mở View trước đó cho cùng file (2 lượt gọi
+  `get-file-by-idref` độc lập, không cache dùng chung giữa nút Download rời và popup View).
+  `FileId = null` (dữ liệu cũ trước khi có SharePoint): nút Download mới không kiểm tra riêng, gọi API
+  như bình thường và nhận lỗi từ backend giống hệt hành vi hiện có của nút View khi thiếu `FileId`
+  (không có xử lý đặc biệt mới nào cho trường hợp này).
 
 ## Requirements *(mandatory)*
 
@@ -2942,6 +3054,25 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
   bộ hành vi đã đặc tả cho hai nút này ở các Update trước đó (Update 1 đến Update 8, ví dụ hành vi
   popup Add/Edit, refresh AVAILABLE FILES sau khi lưu) MUST giữ nguyên không đổi — Update này chỉ
   thêm điều kiện hiển thị, không đổi luồng nghiệp vụ khi nút đã hiển thị.
+- **FR-194 (Update 33)**: Mỗi dòng tài liệu ở AVAILABLE FILES MUST hiển thị thêm nút **Download**,
+  đặt ngay sau nút Edit (thứ tự: View, Edit, Download) — hiển thị cho mọi document có `FileId` (cùng
+  điều kiện với nút View hiện có, không phụ thuộc `permissionList`/quyền Edit ở FR-190).
+  Nhấn nút MUST tải trực tiếp nội dung file thật qua `FileId` (dùng chung endpoint
+  `get-file-by-idref` đã có, không cần endpoint mới) và lưu về máy người dùng — KHÔNG mở popup View.
+- **FR-195 (Update 33)**: Tên file khi tải về (cả nút Download mới ở FR-194 lẫn nút Download có sẵn
+  trong popup View, FR-097) MUST được **tính lại** tại thời điểm tải = `Name` của Step (không đọc
+  thẳng giá trị đã lưu ở `eutr_documents.Name`/tên trả về từ `get-file-by-idref`) + đuôi file gốc
+  (giữ nguyên, không đổi) — áp dụng cho MỌI document, kể cả document tạo trước
+  `004-eutr-documents` Update 26 (còn giữ tên cũ dạng Prefix + Step Name trong `eutr_documents.Name`).
+  Việc tính lại tên này CHỈ ảnh hưởng thuộc tính `download` của link tải (tên file lưu về máy) — KHÔNG
+  ghi đè `eutr_documents.Name` trong DB, KHÔNG ảnh hưởng cột File name hiển thị ở AVAILABLE FILES hay
+  bất kỳ màn hình nào khác.
+- **FR-196 (Update 33)**: Khi 1 document khớp nhiều hơn 1 Step (nhiều chip Step name trên cùng dòng),
+  tên file khi tải về (FR-195) MUST dùng Step **đầu tiên** trong danh sách Step đã khớp của document đó
+  — không cần tie-break theo Prefix hay logic phức tạp khác.
+- **FR-197 (Update 33)**: Với document KHÔNG có Step nào khớp (danh sách Step rỗng — trường hợp hiếm/
+  dữ liệu bất thường), tên file khi tải về MUST fallback về tên gốc đã lưu (`eutr_documents.Name`),
+  giữ nguyên đuôi file gốc — không tạo tên rỗng.
 
 ## Success Criteria *(mandatory)*
 
@@ -3206,6 +3337,11 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
   Step 2, và 100% user không có quyền `EutrDocuments.Update` không nhìn thấy nút Edit trên bất kỳ dòng
   AVAILABLE FILES nào — trong khi user có đủ quyền tương ứng tiếp tục thấy và dùng được các nút này
   đúng như hành vi trước Update 29.
+- **SC-096 (Update 33)**: 100% lượt nhấn nút Download mới ở AVAILABLE FILES tải về đúng nội dung file
+  thật, với tên file lưu về máy = đúng `Name` của Step (Step đầu tiên nếu khớp nhiều Step) + đuôi file
+  gốc — kể cả với document tạo trước `004-eutr-documents` Update 26 (còn giữ tên cũ dạng Prefix + Step
+  Name trong `eutr_documents.Name`, ví dụ document trong ảnh chụp màn hình gốc của yêu cầu này). 100%
+  lượt tải cũng áp dụng đúng công thức này khi dùng nút Download có sẵn trong popup View.
 
 ## Assumptions
 

@@ -1533,3 +1533,46 @@ FILES (so the Edit button has something to gate).
 - FR-191 (independent conditions) → frontend steps 2-3 (each toggled alone).
 - FR-192 (View/Step 1/template tree unaffected) → frontend steps 1, 4.
 - FR-193 (no behavior change to Upload/Edit once shown) → frontend step 5.
+
+## Update 33 (2026-09-24) — New per-row Download button on AVAILABLE FILES; download file name = Step Name
+
+100% frontend, zero backend change — reuses the existing `get-file-by-idref` endpoint. Edits confined
+to `MapFilePage.jsx`, `EutrFileViewerDialog.jsx` (shared with `004-eutr-documents`/`012`), and a new
+shared util `buildStepOnlyFileName.js`.
+
+### Fixture setup
+
+At least one Sales Order with AVAILABLE FILES containing: (a) a document created AFTER
+`004-eutr-documents` Update 26 (File name already Step-Name-only), and (b) ideally a pre-Update-26
+legacy document whose `eutr_documents.Name` still has the old `Prefix + Step Name` shape (like the
+`"sinvSawmill Invoice.pdf"` example from the originating request) — to verify the download name is
+recomputed rather than read from storage.
+
+### Frontend verification (manual)
+
+1. Open Map File Step 2 for the fixture Sales Order. **Expected**: each AVAILABLE FILES row now shows
+   3 action buttons — View, Edit (if permitted), **Download** (new, always visible) — in that order.
+2. Click Download on the legacy document (fixture b). **Expected**: file downloads immediately (no
+   popup opens); the saved file name is the Step's `Name` only (e.g. `"Sawmill Invoice.pdf"`) — NOT
+   the stored `"sinvSawmill Invoice.pdf"`; the File name column on the row itself is unchanged.
+3. Click Download on a document created after Update 26 (fixture a). **Expected**: downloaded file
+   name matches the Step Name (already true, confirms consistency with the row's displayed File name
+   for new documents).
+4. Open View (eye icon) for the legacy document (fixture b), then click Download inside the popup.
+   **Expected**: same corrected Step-Name-only file name as step 2 — the popup's own Download button
+   is also fixed, not just the new row-level one.
+5. Find (or set up) a document whose row shows more than one Step chip. Click Download. **Expected**:
+   downloaded file name uses the **first** Step chip's name.
+6. Repeat steps 1-5 on `012-eutr-purchase-orders`'s `PurchId/View` screen — same behavior (separate
+   code, same wiring).
+
+### Success criteria mapping (Update 33)
+
+- SC-096 (Download produces correct content with Step-Name file name, including legacy documents, via
+  both entry points) → frontend steps 2-4.
+- FR-194 (new Download button, positioned after Edit, visible whenever `FileId` exists) → frontend
+  step 1.
+- FR-195 (name recomputed at download time, not read from storage; applies to both Download entry
+  points) → frontend steps 2, 4.
+- FR-196 (multi-Step file uses first Step name) → frontend step 5.
+- FR-197 (no-Step fallback to stored name) → not directly exercised above (rare/abnormal data case).

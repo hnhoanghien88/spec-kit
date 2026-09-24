@@ -5799,3 +5799,27 @@ prior update's behavior, and zero dead code remains from the superseded probe-ba
 2. Complete T413 — delete the now-dead backend/frontend probe code.
 3. Complete Phase 83 (polish/validation) — full `quickstart.md` "Update 29"/"Update 5" pass across all 4
    `'Create'`/`'Update'` `permissionList` combinations on both screens.
+
+---
+
+## Phase 84: New per-row Download button on AVAILABLE FILES; download file name = Step Name (Update 33)
+
+**Goal**: Add a Download `IconButton` after Edit on each AVAILABLE FILES row (FR-194); make both this
+new button and `EutrFileViewerDialog`'s existing Download button recompute the saved file name as the
+document's Step Name — not the stored `eutr_documents.Name` — so legacy pre-Update-26 documents also
+download with a correct name (FR-195/FR-196/FR-197). Zero backend change — reuses `get-file-by-idref`.
+
+**Independent Test**: [quickstart.md](./quickstart.md) "Update 33" section, frontend steps 1-5.
+
+### Frontend (`compliance-client` — shared `eutr-documents/` files + `MapFilePage.jsx`)
+
+- [X] T416 [P] Create `compliance-client/src/presentation/pages/eutr-documents/utils/buildStepOnlyFileName.js`: exports `buildStepOnlyFileName(originalFileName, stepNames)` — extension from `originalFileName`, base = `sanitizeFolderName(stepNames[0])` (from `@utils/helpers`) when `stepNames` is non-empty, else falls back to `originalFileName` minus its extension (FR-197).
+- [X] T417 [P] Sửa `compliance-client/src/presentation/pages/eutr-documents/components/EutrFileViewerDialog.jsx`: add `stepNames` prop; `handleDownload` now sets `link.download = buildStepOnlyFileName(loadedFile.fileName || fileName, stepNames)` instead of the raw stored name (sau T416; FR-195).
+- [X] T418 [US-MapFile] Sửa `compliance-client/src/presentation/pages/eutr-sales-orders/MapFilePage.jsx`: import `DownloadIcon`/`GetEutrDocumentsFileByIdRefUseCase`/`buildStepOnlyFileName`; module-level `getEutrDocumentsFileByIdRefUseCase` instance; new `handleDownloadFile(file)` callback (fetch by `file.fileId`, build `Blob`, `link.download = buildStepOnlyFileName(...)`, error → `setSnackbar`); new Download `IconButton` after Edit on each AVAILABLE FILES row (FR-194); add `stepNames` to `viewerFile` state, `setViewerFile(...)` call, and `<EutrFileViewerDialog stepNames={...}>` prop (sau T416/T417).
+- [X] T419 Build verify: `npx eslint` trên `MapFilePage.jsx`/`EutrFileViewerDialog.jsx`/`buildStepOnlyFileName.js` (sau T416-T418) — 0 lỗi mới (5 lỗi `no-unused-vars` pre-existing trong `MapFilePage.jsx`, không liên quan tới thay đổi này, xác nhận qua `git stash` so sánh trước/sau).
+- [ ] T420 [US-MapFile] Kiểm thử thủ công theo [quickstart.md](./quickstart.md) "Update 33" section, bước 1-5, trên `/eutr/sales-orders/:salesId/map-file` Step 2 — **MỘT PHẦN**: người dùng đã thử bước 2/3 (nhấn Download), phát hiện lỗi runtime `Cannot read properties of undefined (reading 'replace')` (`loadedFile.content` là `undefined` vì response chưa unwrap envelope `ApiResponse<T>` — xem research.md "Bug fix" sau Quyết định 83) — đã sửa trong `handleDownloadFile`. Chưa có xác nhận lại đầy đủ bước 1-6 sau khi sửa.
+
+**Checkpoint**: Mỗi dòng AVAILABLE FILES có 3 nút hành động (View, Edit, Download); nhấn Download (từ
+dòng hoặc từ trong popup View) tải đúng nội dung file với tên = Step Name, kể cả với document tạo
+trước `004-eutr-documents` Update 26. `PurchaseOrderViewPage.jsx` (`012-eutr-purchase-orders`) nhận
+cùng thay đổi này, tracked ở tasks.md của chính đặc tả đó (T416/T417 dùng chung, không lặp lại).

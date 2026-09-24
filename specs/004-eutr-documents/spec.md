@@ -265,6 +265,90 @@ VARCHAR(255) — vẫn còn hiệu lực và được kế thừa nguyên vẹn 
   (`\ / : * ? " < > |`) để phòng lỗi tương tự với các ký tự khác cùng nhóm, không chỉ giới hạn đúng 2 ký
   tự nêu trong yêu cầu gốc.
 
+### Session 2026-09-24 (Update 26) — Bỏ Prefix khỏi công thức File name tự động khi Upload (chỉ giữ Step Name)
+
+- Input: "cập nhật 004-eutr-documents, 005-eutr-sales-orders, 012-eutr-purchase-orders khi upload
+  file, file sẽ đổi tên theo tên step đã tìm được, hoặc đã chọn". Xác nhận với người yêu cầu: logic
+  đổi tên theo Step đã có sẵn từ Update 25 (công thức Prefix + Step Name); yêu cầu thực tế của bản cập
+  nhật này là **bỏ phần Prefix**, chỉ đổi tên file theo đúng Step Name (đã tìm được qua khớp Prefix ở
+  Type = "PO", hoặc đã chọn tường minh ở Type khác "PO") — nếu công thức hiện có gắn Prefix vào thì bỏ
+  đi.
+- Change: Công thức tính File name mới ở Update 25 (FR-062/FR-063) MUST bỏ phần nối Prefix ở đầu — File
+  name mới cho **cả hai nhánh** (Type khác "PO" và Type = "PO") nay CHỈ gồm: `Name` của Step (đã chọn,
+  hoặc Step của bản ghi `eutr_master_documents` thắng cuộc theo tie-break Prefix dài nhất ở Type = "PO")
+  đã qua bước làm sạch (FR-064, không đổi), giữ nguyên đuôi file gốc — KHÔNG còn nối thêm Prefix vào
+  trước Step Name.
+- Change: Toàn bộ phần còn lại của Update 25 tiếp tục giữ nguyên không đổi: (a) logic xác định `StepId`
+  khớp Prefix ở Type = "PO" (FR-020, không đổi) và việc ghi bản ghi `eutr_references` tương ứng (không
+  đổi bởi Update này — giữ nguyên logic hiện có, không thuộc phạm vi thay đổi của Update 26); (b) bước
+  chọn bản ghi `eutr_master_documents` có Prefix dài nhất trong số các bản ghi khớp, dùng
+  để xác định **Step thắng cuộc** — nay CHỈ dùng Prefix để tie-break chọn Step khi khớp nhiều Step, KHÔNG
+  còn dùng giá trị Prefix để ghép vào tên file; (c) bước làm sạch ký tự đặc biệt và tên dự phòng
+  `Step{StepId}` khi rỗng (FR-064, không đổi, nay áp dụng cho riêng Step Name); (d) cơ chế hậu tố ngẫu
+  nhiên chống trùng tên vật lý SharePoint (FR-065, không đổi); (e) đổi tên chỉ áp dụng tại thời điểm
+  Upload, Edit không tính lại (FR-066, không đổi); (f) cho phép nhiều document có File name trùng nhau
+  (FR-067, không đổi — nay càng dễ trùng hơn vì không còn Prefix phân biệt).
+- Change: Kế thừa sang `005-eutr-sales-orders` và `012-eutr-purchase-orders` (đã kế thừa Update 25 ở
+  Update 23/Update 3 của hai đặc tả đó) tiếp tục nguyên vẹn — cả hai gọi đúng popup Add/Edit và luồng
+  Upload dùng chung với `004-eutr-documents`, không có logic đặt tên riêng, nên tự động kế thừa việc bỏ
+  Prefix này mà không cần thay đổi gì thêm ở hai đặc tả đó (xem mục kế thừa tương ứng trong spec của
+  từng đặc tả).
+- Q: Có cần xóa method `GetPrefixByStepIdAsync` (thêm ở Update 25, chỉ dùng để lấy Prefix cho nhánh Type
+  khác "PO") vì nay không còn dùng Prefix để đặt tên ở nhánh này? → A: **Có** — method này (và lời gọi
+  nó trong `UploadMultipleForReferenceTypeAsync`) chỉ được thêm riêng cho mục đích lấy Prefix để ghép
+  tên ở Update 25; nay không còn công dụng nào khác trong toàn bộ codebase nên MUST được xóa cùng bản
+  cập nhật này, tránh code chết. Nhánh Type = "PO" (`UploadMultipleToSharePointAndSaveDataAsync`) tiếp
+  tục dùng `Prefix` của bản ghi thắng cuộc — nhưng CHỈ để tie-break chọn Step, không lấy giá trị `Prefix`
+  đưa vào chuỗi tên nữa.
+- Q: Việc bỏ Prefix có ảnh hưởng gì tới các document ĐÃ được tạo trước bản cập nhật này (File name đã
+  lưu theo công thức Prefix + Step Name của Update 25) không? → A: **Không** — bản cập nhật này KHÔNG
+  migration/backfill dữ liệu cũ; document tạo trước Update 26 giữ nguyên File name đã lưu (có thể vẫn
+  còn Prefix ở đầu); chỉ document tạo MỚI qua Upload sau bản cập nhật này mới áp dụng công thức chỉ-Step-
+  Name.
+
+### Session 2026-09-24 (Update 27) — Mở rộng định dạng file được phép upload: thêm .xml/.json/.geojson (cho phép nhiều file khác đuôi cùng chung 1 Step)
+
+- Input: "cập nhật 004-eutr-documents, 005-eutr-sales-orders, 012-eutr-purchase-orders. hiện tại 1 file
+  ứng với 1 step. giờ cho phép 1 step có thể chứa nhiều file nếu khác đuôi ví dụ đuôi pdf và xml có thể
+  chung step, nếu prefix giống nhau. khi hiển thị ở view cũng hiển thị rõ 2 file thuộc step đó". Rà soát
+  mã nguồn thực tế trước khi soạn thảo cho thấy: (a) backend KHÔNG có ràng buộc unique/dedupe nào chặn
+  nhiều `eutr_documents`/`eutr_references` cùng trỏ về 1 `StepId` — nhiều file khớp cùng Prefix/Step đã
+  luôn tạo được nhiều bản ghi độc lập từ trước; (b) giao diện cây Step (Map File Step 2 của
+  `005-eutr-sales-orders`, và `PurchId/View` của `012-eutr-purchase-orders` — clone cùng logic) đã hiển
+  thị sẵn nhiều file/1 node Step dạng tên file đầu tiên + badge "(+N)" + tooltip liệt kê đủ tên mọi file
+  khớp step đó khi có nhiều hơn 1 file. Gap thực sự duy nhất: danh sách định dạng file được phép upload
+  (`FR-018`) hiện KHÔNG có `.xml` — nên kịch bản "1 file .pdf + 1 file .xml cùng Prefix/Step" bị chặn
+  ngay từ bước validate định dạng, chưa từng tới được logic khớp Step/hiển thị nói trên. Đã xác nhận
+  phạm vi thực tế với người yêu cầu qua `AskUserQuestion`: chỉ cần bổ sung định dạng được phép (`.xml`,
+  `.json`, `.geojson`) — không cần thay đổi gì thêm ở logic khớp Step, ghi `eutr_references`, hay hiển
+  thị cây Step (đã hoạt động đúng từ trước).
+- Change: `FR-018` (danh sách định dạng file được phép) MUST mở rộng thêm 3 định dạng mới: XML
+  (`.xml`), JSON (`.json`), GeoJSON (`.geojson`) — bên cạnh PDF/DOC/DOCX/XLS/XLSX/JPG/PNG hiện có. Giới
+  hạn kích thước 10MB/file và toàn bộ hành vi loại file không hợp lệ (liệt kê tên file + lý do, không
+  chặn các file hợp lệ khác trong cùng lượt) giữ nguyên không đổi.
+- Change: Không có thay đổi nào ở logic khớp Prefix/Step (FR-020, FR-032), ghi `eutr_references`, đổi
+  tên file (FR-062 đến FR-070), hay hiển thị cây Step ở `005-eutr-sales-orders`/`012-eutr-purchase-orders`
+  — toàn bộ cơ chế "nhiều file khác đuôi cùng 1 Step nếu cùng khớp Prefix" đã hoạt động đúng từ trước
+  Update này; việc mở rộng định dạng chỉ gỡ bỏ rào cản duy nhất (validate định dạng) khiến kịch bản đó
+  chưa từng kiểm thử được với file `.xml`/`.json`/`.geojson`.
+- Q: `.xml`/`.json`/`.geojson` có cần xử lý xem trước (preview qua icon View) khác với các định dạng
+  hiện có không? → A: **Không** — phạm vi yêu cầu chỉ là cho phép upload; xem trước file thật (icon
+  View, đọc nội dung base64 từ SharePoint) áp dụng đồng nhất cho mọi định dạng đã upload thành công,
+  không có xử lý riêng theo từng loại định dạng trong feature này (nằm ngoài phạm vi yêu cầu, không
+  thay đổi).
+
+### Session 2026-09-24 (Update 28) — Mở giới hạn kích thước file upload lên 20MB
+
+- Input: "mở giới hạn file upload lên 20MB".
+- Change: `FR-018` (giới hạn kích thước file) MUST tăng từ 10MB lên **20MB** mỗi file. Toàn bộ hành vi
+  còn lại (loại file vượt quá kèm thông báo lỗi liệt kê tên file + lý do, không chặn các file hợp lệ
+  khác trong cùng lượt; danh sách định dạng được phép ở FR-018/FR-071) giữ nguyên không đổi.
+- Change: Giới hạn kích thước file MUST áp dụng đồng nhất cho mọi định dạng được phép (PDF, DOC/DOCX,
+  XLS/XLSX, JPG/PNG, XML, JSON, GeoJSON) — không có giới hạn riêng theo từng định dạng.
+- Q: Giới hạn 20MB có áp dụng cho `005-eutr-sales-orders`/`012-eutr-purchase-orders` không? → A: **Có,
+  tự động** — cả hai gọi chung popup Add/Edit và 2 endpoint Upload dùng chung với `004-eutr-documents`,
+  không có validate kích thước riêng ở tầng feature của chúng.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Xem danh sách EUTR documents (Priority: P1)
@@ -357,18 +441,19 @@ nhập liệu **Invoice number** (ô nhập tự do, kiểu chuỗi, bắt buộ
 hiển thị trường này. Nút Upload MUST vô hiệu hóa thêm cho tới khi trường này có giá trị.
 
 Nút Upload chỉ khả dụng khi đã chọn Type, có ít nhất 1 chip, và — với Type khác "PO" — đã chọn Step.
-Nhấn Upload mở hộp thoại chọn nhiều file; mỗi file hợp lệ (PDF/DOC/DOCX/XLS/XLSX/JPG/PNG, tối đa
-10MB) được tải lên thư mục SharePoint xác định theo Type (PO/Vendor → thư mục theo chip đã chọn;
+Nhấn Upload mở hộp thoại chọn nhiều file; mỗi file hợp lệ (PDF/DOC/DOCX/XLS/XLSX/JPG/PNG/XML/JSON/
+GeoJSON — Update 27, tối đa **20MB** — Update 28, sửa 10MB cũ) được tải lên thư mục SharePoint xác
+định theo Type (PO/Vendor → thư mục theo chip đã chọn;
 Invoice/Delivery note/General agreement → thư mục cố định theo tên Type; Type khác → thư mục cố
 định theo `Name` của Type). Khi Type = "PO", tên file MUST khớp một `Prefix` trong
 `eutr_master_documents` — file không khớp bị loại kèm cảnh báo.
 
-Với mỗi file upload thành công, hệ thống tạo một document mới trong `eutr_documents` — **(Update 25)**
-File name **KHÔNG còn là tên file gốc** mà được hệ thống tự động tính lại theo Step: (Prefix từ
-`eutr_master_documents`, nếu Step đó — với Type khác "PO" là Step đã chọn; với Type = "PO" là Step
-ứng với Prefix khớp dài nhất — có cấu hình trong master) + Name của Step đó, đã làm sạch ký tự đặc
-biệt (loại bỏ `\ / : * ? " < > |` và mọi chuỗi `..`), giữ nguyên đuôi file gốc (xem Update 25 ở mục
-Clarifications để biết đầy đủ công thức và các trường hợp biên) — cùng Valid from = giá trị đang hiển
+Với mỗi file upload thành công, hệ thống tạo một document mới trong `eutr_documents` — **(Update 26,
+sửa Update 25)** File name **KHÔNG còn là tên file gốc** mà được hệ thống tự động tính lại theo Step:
+`Name` của Step đó (với Type khác "PO" là Step đã chọn; với Type = "PO" là Step ứng với Prefix khớp dài
+nhất, Prefix chỉ dùng để chọn Step, không còn ghép vào tên), đã làm sạch ký tự đặc biệt (loại bỏ
+`\ / : * ? " < > |` và mọi chuỗi `..`), giữ nguyên đuôi file gốc (xem Update 26 ở mục Clarifications để
+biết đầy đủ công thức và các trường hợp biên) — cùng Valid from = giá trị đang hiển
 thị ở popup, Valid to = giá trị đang hiển thị ở popup, FileId = id từ SharePoint. Với Type khác "PO",
 hệ thống ghi một bản ghi `eutr_references` cho mỗi
 chip (DocumentId, StepId đã chọn, RefType = `Id` của Type đã chọn, RefValue = giá trị chip). Với
@@ -388,13 +473,14 @@ hiển thị; gõ/chọn một PO hợp lệ, xác nhận chip xuất hiện, ô
 to sang giá trị khác; nhấn Upload, chọn file có tên khớp prefix hợp lệ; xác nhận document mới xuất
 hiện trên danh sách với đúng Valid from/Valid to đã chỉnh sửa (không phải mặc định) và đúng
 `eutr_references` (StepId khớp prefix, RefValue = mã PO); riêng biệt xác nhận không sửa Valid
-from/Valid to thì document tạo ra có Valid from = hôm nay, Valid to = ngày tối đa. **(Update 25)**
-Riêng biệt: chọn Type khác "PO" (ví dụ "Invoice") có Step "A" (không có cấu hình trong
+from/Valid to thì document tạo ra có Valid from = hôm nay, Valid to = ngày tối đa. **(Update 26, sửa
+Update 25)** Riêng biệt: chọn Type khác "PO" (ví dụ "Invoice") có Step "A" (không có cấu hình trong
 `eutr_master_documents`) và Step "B" (có cấu hình Prefix = "INV"); upload một file bất kỳ (ví dụ
 `baocao.pdf`) với Step "A" đã chọn, xác nhận File name trên danh sách = "A.pdf" (không phải
-`baocao.pdf`); lặp lại với Step "B", xác nhận File name = "INVB.pdf"; upload thêm một file khác cũng
-với Step "B", xác nhận document mới cũng có File name = "INVB.pdf" (trùng với document trước, được hệ
-thống chấp nhận bình thường).
+`baocao.pdf`); lặp lại với Step "B", xác nhận File name = "B.pdf" (KHÔNG phải "INVB.pdf" — Prefix "INV"
+của Step "B" KHÔNG còn được ghép vào tên kể từ Update 26); upload thêm một file khác cũng với Step "B",
+xác nhận document mới cũng có File name = "B.pdf" (trùng với document trước, được hệ thống chấp nhận
+bình thường).
 
 **Acceptance Scenarios**:
 
@@ -430,9 +516,9 @@ thống chấp nhận bình thường).
     ghi một bản ghi `eutr_references` cho mỗi chip đang có (RefType = `Id` của Type đã chọn).
 13. **Given** một file upload thành công, **Then** document mới tạo ra có Valid from/Valid to đúng
     bằng giá trị đang hiển thị ở popup tại thời điểm nhấn Upload (mặc định hoặc đã chỉnh sửa).
-14. **Given** một hoặc nhiều file trong lượt chọn sai định dạng hoặc vượt quá 10MB, **Then** hệ
-    thống loại các file đó kèm thông báo lỗi rõ ràng, vẫn upload và tạo document cho các file hợp lệ
-    còn lại trong cùng lượt.
+14. **(Update 28, sửa giới hạn 10MB cũ)** **Given** một hoặc nhiều file trong lượt chọn sai định dạng
+    hoặc vượt quá **20MB**, **Then** hệ thống loại các file đó kèm thông báo lỗi rõ ràng, vẫn upload
+    và tạo document cho các file hợp lệ còn lại trong cùng lượt.
 15. **Given** một lượt Upload vừa hoàn tất (toàn bộ hoặc một phần thành công), **Then** popup MUST
     tự đóng lại ngay lập tức.
 16. **Given** một document vừa tạo qua popup Add, **When** quay lại danh sách EUTR documents, **Then**
@@ -459,23 +545,25 @@ thống chấp nhận bình thường).
     thành công, **Then** bản ghi `eutr_documents` tạo ra cho file đó có cột `Invoice` = giá trị đang
     hiển thị ở popup tại thời điểm Upload; các bản ghi `eutr_references` tạo cùng lượt Upload đó KHÔNG
     có cột/giá trị Invoice nào (dữ liệu chỉ nằm trên `eutr_documents`).
-24. **(Update 25)** **Given** Type đã chọn khác "PO" với Step "Invoice" (Step này có bản ghi
-    `eutr_master_documents` với `Prefix = "INV"`), **When** upload thành công một file tên bất kỳ (ví
-    dụ `scan001.pdf`), **Then** `eutr_documents.Name` của document tạo ra = "INVInvoice.pdf" (Prefix +
-    Step Name + đuôi file gốc) — không phải `scan001.pdf`.
+24. **(Update 26, sửa Update 25)** **Given** Type đã chọn khác "PO" với Step "Invoice" (Step này có bản
+    ghi `eutr_master_documents` với `Prefix = "INV"`), **When** upload thành công một file tên bất kỳ
+    (ví dụ `scan001.pdf`), **Then** `eutr_documents.Name` của document tạo ra = "Invoice.pdf" (chỉ Step
+    Name + đuôi file gốc — KHÔNG còn Prefix "INV" ở đầu) — không phải `scan001.pdf` và không phải
+    "INVInvoice.pdf".
 25. **(Update 25)** **Given** Type đã chọn khác "PO" với một Step KHÔNG có bản ghi nào trong
     `eutr_master_documents`, **When** upload thành công, **Then** `eutr_documents.Name` = đúng `Name`
     của Step đó (đã làm sạch) + đuôi file gốc — không có Prefix ở đầu.
-26. **(Update 25)** **Given** Type = "PO", tên file gốc khớp Prefix của hai bản ghi
+26. **(Update 26, sửa Update 25)** **Given** Type = "PO", tên file gốc khớp Prefix của hai bản ghi
     `eutr_master_documents` khác nhau (ví dụ `Prefix = "INV"` ứng Step A và `Prefix = "INV2026"` ứng
-    Step B), **When** upload thành công, **Then** hệ thống vẫn ghi đủ 2 bản ghi `eutr_references`
-    (một cho Step A, một cho Step B, theo FR-023 không đổi), nhưng `eutr_documents.Name` được tính theo
-    bản ghi có Prefix dài hơn ("INV2026" — khớp Step B), không phải Step A.
-27. **(Update 25)** **Given** Step Name (hoặc Prefix) đang cấu hình chứa ký tự `\` hoặc chuỗi `..`
-    (dữ liệu do người dùng nhập tự do ở `001-eutr-steps`/`002-eutr-masters`), **When** upload thành
-    công dùng Step/Prefix đó, **Then** `eutr_documents.Name` của document tạo ra KHÔNG chứa ký tự `\`
-    hoặc chuỗi `..` nào — các ký tự/chuỗi đó bị loại bỏ khỏi tên trước khi lưu, không gây lỗi khi tải
-    file lên SharePoint.
+    Step B), **When** upload thành công, **Then** việc ghi `eutr_references` tiếp tục theo đúng logic
+    hiện có (không đổi bởi Update 26); Prefix dài hơn ("INV2026") vẫn dùng để **chọn Step B** làm Step
+    thắng cuộc (tie-break không đổi), nhưng `eutr_documents.Name` = đúng `Name` của Step B (đã làm
+    sạch) + đuôi file gốc — KHÔNG còn ghép Prefix "INV2026" vào tên.
+27. **(Update 26, sửa Update 25)** **Given** Step Name đang cấu hình chứa ký tự `\` hoặc chuỗi `..`
+    (dữ liệu do người dùng nhập tự do ở `001-eutr-steps`), **When** upload thành công dùng Step đó,
+    **Then** `eutr_documents.Name` của document tạo ra KHÔNG chứa ký tự `\` hoặc chuỗi `..` nào — các
+    ký tự/chuỗi đó bị loại bỏ khỏi tên trước khi lưu, không gây lỗi khi tải file lên SharePoint (kể từ
+    Update 26, bước làm sạch chỉ áp dụng cho Step Name vì Prefix không còn là một phần của tên).
 28. **(Update 25)** **Given** hai file khác nhau (tên gốc khác nhau) được upload trong cùng một lượt
     Upload với cùng Type/Step (hoặc, với Type = "PO", cùng bản ghi master thắng cuộc), **Then** cả hai
     document tạo ra đều có `eutr_documents.Name` **giống hệt nhau** — hệ thống lưu bình thường, không
@@ -483,6 +571,20 @@ thống chấp nhận bình thường).
 29. **(Update 25)** **Given** một file trong lượt Upload bị loại vì sai định dạng/kích thước hoặc (Type
     = "PO") không khớp Prefix nào, **Then** thông báo lỗi liệt kê đúng **tên file gốc** của file đó
     (không phải tên đã đổi, vì file này không tạo được document nên không có tên mới).
+30. **(Update 27)** **Given** Type = "PO" với 1 bản ghi `eutr_master_documents` (`Prefix = "INV"`,
+    `StepId` của Step "Invoice"), **When** upload file `INV_scan.pdf` ở một lượt, rồi upload tiếp file
+    `INV_scan.xml` (cùng khớp Prefix "INV") ở một lượt khác, **Then** cả 2 file đều được chấp nhận
+    (không bị loại vì định dạng), mỗi file tạo một `eutr_documents`/`eutr_references` độc lập cùng
+    `StepId` của Step "Invoice"; trên cây Step ở `005-eutr-sales-orders`/`012-eutr-purchase-orders`,
+    node Step "Invoice" hiển thị badge "+1" và tooltip liệt kê đủ tên cả 2 file.
+31. **(Update 27)** **Given** popup Add, **When** chọn upload 1 file `.json` hoặc `.geojson` hợp lệ
+    (≤10MB), **Then** file được chấp nhận và tạo document thành công — không còn bị từ chối với lý do
+    "Invalid file type" như trước Update 27.
+32. **(Update 28, FR-018/FR-073)** **Given** popup Add, **When** chọn upload 1 file hợp lệ có kích
+    thước trong khoảng **10MB–20MB** (ví dụ 15MB, định dạng bất kỳ được phép), **Then** file được chấp
+    nhận và tạo document thành công — không bị từ chối như trước Update 28 (khi giới hạn còn 10MB).
+    Upload tiếp 1 file **> 20MB** → xác nhận vẫn bị loại kèm thông báo lỗi rõ ràng, các file hợp lệ
+    khác trong cùng lượt không bị ảnh hưởng.
 
 ---
 
@@ -817,14 +919,14 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
 - **(Update 24)** Khi giá trị `eutr_documents.Invoice` dài, cột Invoice trên bảng danh sách chính tuân
   theo cùng cơ chế hiển thị/cắt ngắn văn bản (nếu có) như các cột văn bản đơn khác của bảng (ví dụ File
   name) — không có yêu cầu riêng biệt nào về giới hạn độ dài hiển thị cho cột này.
-- **(Update 25)** Khi Step Name (và/hoặc Prefix của master đang dùng) sau khi làm sạch ký tự đặc biệt
-  trở thành chuỗi rỗng (ví dụ Step Name chỉ toàn ký tự bị loại bỏ, hoặc để trống trong `eutr_steps`),
-  hệ thống MUST dùng tên dự phòng `Step{StepId}` làm phần tên trước khi thêm đuôi file, đảm bảo không
-  bao giờ tạo ra `eutr_documents.Name` rỗng.
-- **(Update 25)** Khi một Step (chọn ở Add với Type khác "PO", hoặc là Step "thắng cuộc" theo Prefix
-  dài nhất khớp với Type = "PO") có nhiều hơn một bản ghi `eutr_master_documents` cùng `StepId`, hệ
-  thống MUST dùng `Prefix` của bản ghi có `Id` nhỏ nhất trong số đó để đổi tên — không gộp/nối nhiều
-  Prefix lại với nhau.
+- **(Update 26, sửa Update 25)** Khi Step Name sau khi làm sạch ký tự đặc biệt trở thành chuỗi rỗng (ví
+  dụ Step Name chỉ toàn ký tự bị loại bỏ, hoặc để trống trong `eutr_steps`), hệ thống MUST dùng tên dự
+  phòng `Step{StepId}` làm phần tên trước khi thêm đuôi file, đảm bảo không bao giờ tạo ra
+  `eutr_documents.Name` rỗng.
+- **(Update 26, thay thế Update 25)** Trường hợp một Step có nhiều hơn một bản ghi `eutr_master_documents`
+  cùng `StepId` (nhiều Prefix khác nhau trỏ về cùng một Step) không còn ảnh hưởng tới việc đổi tên —
+  từ Update 26, tên file chỉ dùng `Name` của Step, không dùng `Prefix` của bất kỳ bản ghi nào, nên số
+  lượng bản ghi `eutr_master_documents` trùng `StepId` không còn tác động tới File name.
 - **(Update 25)** File bị loại khỏi lượt upload (sai định dạng/kích thước, hoặc — Type = "PO" — không
   khớp Prefix nào) KHÔNG tạo document nên không có tên mới; thông báo lỗi tương ứng MUST tiếp tục nêu
   đúng **tên file gốc** người dùng đã chọn, không phải tên đã đổi theo Step.
@@ -837,6 +939,10 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   lỗi hệ thống — kế thừa nguyên tắc File name không có ràng buộc duy nhất đã nêu ở trên; người dùng
   phân biệt các document trùng tên qua Valid from/Valid to/Created date/icon View (xem nội dung file
   thật) khi cần.
+- **(Update 27)** Nhiều file khác đuôi (ví dụ `.pdf` và `.xml`) cùng khớp 1 Prefix/Step KHÔNG bị chặn
+  hay gộp lại thành 1 document — mỗi file hợp lệ vẫn tạo `eutr_documents`/`eutr_references` riêng của
+  nó (không có ràng buộc unique theo `StepId`, hành vi đã có từ trước Update 27); trên cây Step, các
+  file này xuất hiện dưới cùng 1 node Step qua badge "+N"/tooltip đã có sẵn (không phải logic mới).
 
 ## Requirements *(mandatory)*
 
@@ -895,9 +1001,10 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   "PO" — đã chọn Type, đã chọn Step, và vùng chọn có ít nhất 1 chip; với Type = "PO" — đã chọn Type
   và vùng chọn có ít nhất 1 chip (không cần Step). Khi khả dụng và được nhấn, MUST mở hộp thoại chọn
   file của hệ điều hành cho phép chọn nhiều file cùng lúc.
-- **FR-018**: Hệ thống MUST chỉ chấp nhận file có định dạng PDF, DOC/DOCX, XLS/XLSX, JPG/PNG với
-  kích thước tối đa 10MB mỗi file. File không thỏa điều kiện MUST bị loại khỏi lượt upload kèm thông
-  báo lỗi liệt kê tên file và lý do; các file hợp lệ còn lại trong cùng lượt MUST vẫn được upload.
+- **FR-018 (mở rộng ở Update 27/28, xem FR-071/FR-073)**: Hệ thống MUST chỉ chấp nhận file có định
+  dạng PDF, DOC/DOCX, XLS/XLSX, JPG/PNG với kích thước tối đa **20MB** mỗi file. File không thỏa điều
+  kiện MUST bị loại khỏi lượt upload kèm thông báo lỗi liệt kê tên file và lý do; các file hợp lệ còn
+  lại trong cùng lượt MUST vẫn được upload.
 - **FR-019**: Với mỗi file hợp lệ, hệ thống MUST xác định thư mục SharePoint đích theo `Name` của
   Type đã chọn: "PO"/"Vendor" → thư mục đặt tên theo chip đã chọn (tìm thư mục cũ hoặc tạo mới dưới
   `SharePointEutrPath`); "Invoice" → `{SharePointEutrPath}/Invoice`; "Delivery note" →
@@ -908,8 +1015,9 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   không khớp bất kỳ Prefix nào MUST bị loại khỏi lượt upload kèm cảnh báo rõ ràng, không chặn các
   file hợp lệ khác trong cùng lượt.
 - **FR-021**: Với mỗi file upload thành công lên SharePoint, hệ thống MUST tạo một bản ghi mới trong
-  `eutr_documents`: File name = **(Update 25)** tên file hệ thống tự tính theo Step/Prefix của master
-  (KHÔNG còn là tên file gốc — xem FR-062/FR-063/FR-064), Valid from = giá trị đang hiển thị ở trường
+  `eutr_documents`: File name = **(Update 26, sửa Update 25)** tên file hệ thống tự tính theo Step
+  (KHÔNG còn là tên file gốc, KHÔNG còn gồm Prefix của master — xem FR-062/FR-063/FR-064/FR-068), Valid
+  from = giá trị đang hiển thị ở trường
   Valid from của popup tại thời điểm Upload, Valid to = giá trị đang hiển thị ở trường Valid to,
   FileId = id trả về từ SharePoint; ghi nhận người tạo/ngày tạo tự động.
 - **FR-022**: Với Type khác "PO", với mỗi file upload thành công, hệ thống MUST ghi thêm một bản ghi
@@ -1071,6 +1179,33 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   khi Step bị đổi ở Edit (không ảnh hưởng FR-029/FR-033 hiện có).
 - **FR-067 (Update 25)**: Hệ thống MUST cho phép nhiều document có File name trùng nhau sau khi áp
   dụng FR-062/FR-063 (không báo lỗi), kế thừa nguyên tắc File name không có ràng buộc duy nhất đã có.
+- **FR-068 (Update 26)**: File name mới tính ở FR-062 (Type khác "PO") và FR-063 (Type = "PO") MUST
+  KHÔNG còn nối Prefix vào trước Step Name — công thức thu gọn thành: `Name` của Step (đã chọn ở
+  FR-062, hoặc Step ứng với bản ghi `eutr_master_documents` thắng cuộc theo tie-break Prefix dài nhất ở
+  FR-063) đã làm sạch theo FR-064, giữ nguyên đuôi file gốc. Phần còn lại của FR-062/FR-063 (cách xác
+  định Step đã chọn/Step thắng cuộc) MUST giữ nguyên không đổi.
+- **FR-069 (Update 26)**: Ở nhánh Type = "PO" (FR-063), giá trị `Prefix` của bản ghi
+  `eutr_master_documents` thắng cuộc tiếp tục MUST được dùng để xác định bản ghi đó (tie-break "Prefix
+  dài nhất" không đổi) — nhưng CHỈ nhằm chọn ra Step thắng cuộc, KHÔNG được đưa vào chuỗi File name
+  (xem FR-068).
+- **FR-070 (Update 26)**: Hệ thống MUST xóa method `GetPrefixByStepIdAsync` trên
+  `IEutrMastersRepository`/`EutrMastersRepository` và lời gọi tương ứng trong `EutrUploadService` (thêm
+  riêng ở Update 25 cho nhánh Type khác "PO" để lấy Prefix ghép tên) — không còn công dụng nào khác sau
+  khi FR-068 có hiệu lực.
+- **FR-071 (Update 27)**: Danh sách định dạng file được phép ở FR-018 MUST mở rộng thêm XML (`.xml`),
+  JSON (`.json`), GeoJSON (`.geojson`) — validate định dạng/kích thước (10MB/file) và hành vi loại file
+  không hợp lệ (thông báo lỗi kèm tên file + lý do, không chặn các file hợp lệ khác trong cùng lượt)
+  MUST áp dụng đồng nhất cho 3 định dạng mới này như mọi định dạng hiện có.
+- **FR-072 (Update 27)**: Hệ thống MUST tiếp tục cho phép nhiều file (khác đuôi hoặc cùng đuôi) cùng
+  khớp một `eutr_master_documents.Prefix`/Step — mỗi file hợp lệ upload thành công MUST tạo một bản ghi
+  `eutr_documents`/`eutr_references` độc lập của riêng nó (không có ràng buộc unique/dedupe nào theo
+  `StepId`), để 1 Step có thể chứa nhiều file (ví dụ 1 file `.pdf` và 1 file `.xml` cùng Prefix) — hành
+  vi này không mới ở Update 27, chỉ được xác nhận rõ ràng thành yêu cầu vì trước đây không thể kiểm thử
+  được với định dạng `.xml`/`.json`/`.geojson` (bị chặn ở FR-018 cũ).
+- **FR-073 (Update 28)**: Giới hạn kích thước file ở FR-018 MUST tăng từ 10MB lên **20MB mỗi file**,
+  áp dụng đồng nhất cho mọi định dạng được phép (PDF, DOC/DOCX, XLS/XLSX, JPG/PNG, XML, JSON, GeoJSON).
+  Hành vi loại file vượt quá (thông báo lỗi kèm tên file + lý do, không chặn các file hợp lệ khác trong
+  cùng lượt) giữ nguyên không đổi.
 
 ## Key Entities *(include if feature involves data)*
 
@@ -1086,9 +1221,12 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   nhật trực tiếp `ValidFrom`/`ValidTo`/`Invoice` của document mà không tạo bản ghi mới. **(Update 24)**
   `Invoice` MUST hiển thị trên bảng danh sách chính (cột riêng, ngay sau Step name) — xem FR-061.
   **(Update 25)** File name KHÔNG còn là tên file gốc người dùng chọn — MUST là giá trị hệ thống tự
-  tính từ Step (+ Prefix của `eutr_master_documents`, nếu Step đó có cấu hình) tại thời điểm Upload,
-  xem FR-062/FR-063/FR-064; không duy nhất giữa các document vẫn đúng như trước, nay càng rõ hơn vì
-  nhiều file khác nhau upload cùng Type/Step MUST tạo File name giống hệt nhau (xem FR-067).
+  tính từ Step tại thời điểm Upload; không duy nhất giữa các document vẫn đúng như trước, nay càng rõ
+  hơn vì nhiều file khác nhau upload cùng Type/Step MUST tạo File name giống hệt nhau (xem FR-067).
+  **(Update 26)** Công thức tính File name KHÔNG còn cộng thêm Prefix của `eutr_master_documents` —
+  MUST chỉ gồm `Name` của Step đã làm sạch + đuôi file gốc, xem FR-062/FR-063/FR-064/FR-068. Document
+  tạo trước Update 26 giữ nguyên File name cũ (có thể vẫn còn Prefix) — không có migration/backfill nào
+  chạm dữ liệu cũ.
 - **EUTR Reference (liên kết Document ↔ Step/Type/Value)**: Bảng `eutr_references` (Id, RefId,
   DocumentId, StepId, RefType, RefValue). Mỗi file upload thành công qua popup Add tạo một hoặc nhiều
   bản ghi: với Type khác "PO", một bản ghi cho mỗi chip Value đã chọn (`RefValue` = giá trị chip); với
@@ -1118,10 +1256,11 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   Bảng `eutr_master_documents` (Id, StepId, Prefix), quản lý bởi feature `002-eutr-masters`. Feature
   này đọc (read-only) bảng này để: (a) validate tên file khi Type = "PO" — `Prefix` chỉ duy nhất theo
   cặp (`StepId`, `Prefix`), một chuỗi Prefix có thể khớp nhiều `StepId`, khi đó mỗi `StepId` khớp tạo
-  một bản ghi `eutr_references` riêng; (b) **(Update 25)** đặt tên file mới khi Upload — với Type khác
-  "PO", tra theo `StepId` đã chọn để lấy Prefix (nếu có); với Type = "PO", trong số các bản ghi đã khớp
-  ở (a), chọn bản ghi có `Prefix` dài nhất để lấy Prefix/Step dùng đặt tên (xem FR-062/FR-063). Một
-  `StepId` có thể không có bản ghi nào (không "cấu hình trong master" — bỏ qua Prefix khi đặt tên).
+  một bản ghi `eutr_references` riêng; (b) **(Update 26, sửa Update 25)** chọn Step dùng để đặt tên file
+  khi Upload — với Type khác "PO", Step đã chọn tường minh dùng trực tiếp; với Type = "PO", trong số các
+  bản ghi đã khớp ở (a), chọn bản ghi có `Prefix` **dài nhất** để xác định Step thắng cuộc (tie-break
+  không đổi từ Update 25) — nhưng kể từ Update 26, giá trị `Prefix` CHỈ dùng để tie-break, KHÔNG còn được
+  đọc/ghép vào File name (xem FR-062/FR-063/FR-068).
 - **D365 RSVNEutrPurchOrders / RSVNEutrSalesOrderPurchases / VendorsV3 (external, read-only)**: Dữ
   liệu tham chiếu D365 lấy qua `POST /api/dynamics/reference` với `refType = 15`/`16`/`14` tương
   ứng — không có bảng lưu trữ cục bộ.
@@ -1179,10 +1318,20 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
 - **SC-015 (Update 24)**: 100% document có `eutr_documents.Invoice` khác `null` hiển thị đúng giá trị
   đó ở cột Invoice (ngay sau cột Step name) trên bảng danh sách chính; 100% document `Invoice = null`
   hiển thị cột này ở trạng thái trống.
-- **SC-016 (Update 25)**: 100% lượt Upload thành công (Type khác "PO" và Type = "PO") tạo
-  `eutr_documents.Name` đúng theo công thức Prefix (nếu Step có cấu hình trong `eutr_master_documents`)
-  + Step Name + đuôi file gốc, không chứa ký tự `\` hay chuỗi `..`; 0% document tạo mới sau Update này
-  còn giữ nguyên tên file gốc làm File name.
+- **SC-016 (Update 25, công thức đã sửa ở SC-017/Update 26)**: 100% lượt Upload thành công (Type khác
+  "PO" và Type = "PO") tạo `eutr_documents.Name` không chứa ký tự `\` hay chuỗi `..`; 0% document tạo
+  mới sau Update này còn giữ nguyên tên file gốc làm File name.
+- **SC-017 (Update 26)**: 100% lượt Upload thành công (Type khác "PO" và Type = "PO") sau Update 26 tạo
+  `eutr_documents.Name` đúng theo công thức Step Name (đã làm sạch) + đuôi file gốc — KHÔNG chứa Prefix
+  của `eutr_master_documents` ở đầu tên, dù Step đó có cấu hình Prefix hay không.
+- **SC-018 (Update 27)**: 100% lượt Upload file `.xml`/`.json`/`.geojson` hợp lệ (≤10MB) được chấp
+  nhận (không còn bị loại vì "Invalid file type"); 100% trường hợp 2 file khác đuôi (ví dụ `.pdf` và
+  `.xml`) cùng khớp Prefix/Step trong cùng lượt hoặc các lượt Upload khác nhau đều xuất hiện đầy đủ
+  trên cây Step ở `005-eutr-sales-orders`/`012-eutr-purchase-orders` (badge "+N" và tooltip liệt kê đủ
+  tên cả 2 file).
+- **SC-019 (Update 28)**: 100% lượt Upload file hợp lệ có kích thước trong khoảng 10MB–20MB được chấp
+  nhận (không còn bị loại vì kích thước, khác với trước Update 28); 100% file > 20MB tiếp tục bị loại
+  kèm thông báo lỗi rõ ràng.
 
 ## Assumptions
 
@@ -1245,9 +1394,21 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   nhiều dòng/1 document, ví dụ nhiều `StepId` khớp Prefix) loại bỏ hoàn toàn nhu cầu đồng bộ/hòa giải
   giá trị Invoice number giữa nhiều bản ghi — không cần migration nào trên `eutr_references` cho tính
   năng này (chỉ `eutr_documents` cần cột mới).
-- **(Update 25)** Prefix và Step Name được nối trực tiếp, không có ký tự phân cách (ví dụ Prefix
-  `"INV"` + Step Name `"Invoice"` → `"INVInvoice"`) — đúng theo cách yêu cầu gốc mô tả ("lấy prefix gắn
-  vào phía trước"), không có yêu cầu nào về dấu phân cách (`_`, `-`, khoảng trắng...) giữa hai phần.
+- **(Update 26, thay thế Update 25)** Prefix KHÔNG còn được nối vào File name — công thức Update 25
+  ("Prefix + Step Name, nối trực tiếp không có ký tự phân cách") bị thay thế hoàn toàn; File name kể từ
+  Update 26 chỉ gồm Step Name đã làm sạch + đuôi file gốc (xem FR-068, SC-017).
+- **(Update 26)** Document tạo trước Update 26 (File name có thể vẫn còn Prefix ở đầu, theo công thức
+  Update 25) KHÔNG được migration/backfill lại theo công thức mới — chỉ document tạo mới qua Upload sau
+  Update 26 áp dụng công thức chỉ-Step-Name.
+- **(Update 27)** SharePoint (`ISharepointService.UploadFile`) chấp nhận lưu trữ file `.xml`/`.json`/
+  `.geojson` không khác gì các định dạng hiện có — không có xử lý/ánh xạ Content-Type đặc thù nào theo
+  từng định dạng trong phạm vi feature này; icon View xem trước file thật dùng chung 1 cơ chế đọc
+  base64 từ SharePoint cho mọi định dạng, không có trình xem/preview chuyên biệt cho XML/JSON/GeoJSON.
+- **(Update 28)** Giới hạn 20MB/file là giới hạn duy nhất, áp dụng đồng nhất cho mọi định dạng — không
+  có giới hạn tổng dung lượng cho cả lượt Upload nhiều file, không có giới hạn riêng biệt theo Type
+  (PO/Vendor/Invoice/...). SharePoint/`ISharepointService.UploadFile` và cấu hình server (kích thước
+  request tối đa của API) được giả định đã hỗ trợ file tới 20MB — không có thay đổi hạ tầng nào khác
+  trong phạm vi feature này ngoài hằng số giới hạn ở tầng validate.
 - **(Update 25)** Đuôi file gốc (phần mở rộng) được giữ nguyên y hệt (kể cả hoa/thường) khi ghép vào tên
   mới — không thuộc phạm vi làm sạch/đổi tên, vì đuôi file đã được validate thuộc danh sách định dạng
   cho phép ở FR-018 trước khi tới bước đổi tên.

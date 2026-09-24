@@ -116,3 +116,20 @@ Purchase Order (refType=15)  --EutrTemplate  -->  Compliance Template (003, by C
 Compliance Template          --StepId (1..*)  -->  Step (001-eutr-steps)
 Recorded Document (004)      --poCode + StepId-->  (Purchase Order, Step) — used to derive Progress
 ```
+
+## Update 9 (2026-09-24) — New Download button + download-time file-name recompute (FR-037/FR-038, no entity/DTO/API change)
+
+No new entity, field, or endpoint — reuses `GET /eutr-documents/get-file-by-idref` verbatim (already
+used by the View popup). The downloaded file's local name is computed client-side at download time
+from `doc.stepNames` (same array already used to render the Step chips on each AVAILABLE FILES row) +
+the extension of the stored file name — never read from or written back to `eutr_documents.Name`. Full
+formula, fallback rule, and multi-Step tie-break: see `005-eutr-sales-orders` data-model.md "Update 33"
+— applied identically here, `PurchaseOrderViewPage.jsx` reuses the same shared
+`buildStepOnlyFileName.js` helper.
+
+## Update 10 (2026-09-24) — Explicit Search button (FR-039, no entity/DTO/API change)
+
+No new entity, field, endpoint, or filter logic — the new Search button calls the exact same
+`fetchPurchaseOrders(0, pageSize, search)` (→ `GetReferenceDataUseCase.execute(...)` →
+`buildSearchFilters`, unchanged) that the existing debounced `onChange` handler already calls. Purely
+a second, immediate trigger for an already-existing query.

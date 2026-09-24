@@ -2120,3 +2120,68 @@ Phase 0 — chốt các quyết định kỹ thuật. Các điểm nghiệp vụ
   khả năng đối chiếu nêu trên, đồng thời không có yêu cầu nào trong spec đòi hỏi response phải phản
   ánh tên mới (tên mới chỉ cần đúng trong `eutr_documents.Name`, đọc lại được qua danh sách chính ngay
   sau đó).
+
+## Quyết định 75 — Bỏ Prefix khỏi công thức File name; xóa `GetPrefixByStepIdAsync` thay vì giữ lại không dùng (spec Update 26, FR-068 đến FR-070)
+
+- **Decision**: `BuildRenamedFileName` đổi chữ ký từ `(string? prefix, string? stepName, long stepId,
+  string originalFileName)` sang `(string? stepName, long stepId, string originalFileName)` — bỏ tham
+  số `prefix`, kết quả = `SanitizeNamePart(stepName)` (fallback `Step{stepId}` nếu rỗng) + đuôi file gốc.
+  Nhánh Type khác "PO" (`UploadMultipleForReferenceTypeAsync`) bỏ hẳn lời gọi
+  `_eutrMastersRepository.GetPrefixByStepIdAsync(...)` cùng method đó trên
+  `IEutrMastersRepository`/`EutrMastersRepository` (xóa hoàn toàn, không giữ lại dạng không dùng tới).
+  Nhánh Type = "PO" (`UploadMultipleToSharePointAndSaveDataAsync`) giữ nguyên
+  `matchedMasters.FirstOrDefault(m => m.StepId.HasValue)` (việc thu hẹp về đúng 1 bản ghi Prefix dài
+  nhất đã thực hiện sẵn bên trong `GetMatchingPrefixesAsync`, không đổi) để chọn `winningMaster`, nhưng
+  chỉ lấy `winningMaster.StepId` để tra `Name` của Step thắng cuộc — không còn đọc
+  `winningMaster.Prefix` để truyền vào `BuildRenamedFileName`.
+- **Rationale**: Người yêu cầu xác nhận trực tiếp — công thức đặt tên chỉ cần Step Name, phần Prefix
+  gắn thêm ở Update 25 cần bỏ đi. `GetPrefixByStepIdAsync` được thêm riêng ở Update 25 chỉ để phục vụ
+  việc ghép Prefix vào tên cho nhánh Type khác "PO" — sau khi bỏ Prefix khỏi công thức, method này không
+  còn nơi nào gọi tới trong toàn bộ codebase; xóa hẳn (thay vì giữ lại không dùng) để tránh code chết,
+  nhất quán với nguyên tắc không để lại implementation dở dang.
+- **Alternatives considered**: Giữ nguyên tham số `prefix`/method `GetPrefixByStepIdAsync` nhưng ngừng
+  sử dụng giá trị trả về — bị loại vì để lại code chết không có mục đích, gây khó hiểu cho người đọc sau
+  này (tưởng nhầm vẫn còn được dùng ở đâu đó).
+
+## Quyết định 76 — Chỉ mở rộng whitelist định dạng file (backend + frontend); KHÔNG đụng logic khớp Step/ghi eutr_references/hiển thị cây Step (spec Update 27, FR-071/FR-072)
+
+- **Decision**: Thêm đúng `".xml"`, `".json"`, `".geojson"` vào `AllowedExtensions` (HashSet, backend
+  `EutrUploadService.cs:20-23`) và `ALLOWED_EUTR_UPLOAD_EXTENSIONS` (mảng, frontend
+  `EutrDocumentsFormDialog.jsx:51-60`) — 2 nơi duy nhất trong toàn bộ codebase định nghĩa whitelist định
+  dạng cho popup Upload dùng chung. Không sửa bất kỳ logic nào khác (khớp Prefix, ghi
+  `eutr_documents`/`eutr_references`, đổi tên file, hiển thị cây Step ở `005-eutr-sales-orders`/
+  `012-eutr-purchase-orders`).
+- **Rationale**: Trước khi soạn thảo, đã rà soát mã nguồn thực tế để xác nhận: (1) backend không có
+  ràng buộc unique/dedupe nào theo `StepId` trên `eutr_documents`/`eutr_references` — nhiều file khớp
+  cùng Prefix/Step đã luôn tạo được nhiều bản ghi độc lập, không cần sửa gì; (2) `MapFilePage.jsx`
+  (`005-eutr-sales-orders`, Step 2 — cây Step) đã model `fileMappings[node.id]` dạng mảng và
+  `TreeNode` đã hiển thị tên file đầu tiên + badge "(+N)" + tooltip liệt kê đủ tên mọi file khi
+  `mappedFiles.length > 1`; `PurchaseOrderViewPage.jsx` (`012-eutr-purchase-orders`) là bản clone cùng
+  logic cây Step nên kế thừa nguyên vẹn. Gap thực sự duy nhất là whitelist định dạng chặn `.xml` (và
+  chưa từng có `.json`/`.geojson`) — khiến kịch bản "pdf + xml cùng Prefix/Step" trong yêu cầu gốc chưa
+  từng chạm tới được logic khớp Step/hiển thị đã có sẵn đó. Xác nhận phạm vi hẹp này trực tiếp với
+  người yêu cầu qua `AskUserQuestion` trước khi soạn thảo, để tránh triển khai lại tính năng đã tồn
+  tại.
+- **Alternatives considered**: Thêm một cơ chế gom nhóm/hiển thị "nhiều file/1 Step" mới ở tầng
+  service/API riêng cho use case này — bị loại vì trùng lặp hoàn toàn với cơ chế `fileMappings`/
+  `TreeNode` badge/tooltip đã có sẵn và đang hoạt động đúng; làm vậy sẽ là over-engineering ngoài phạm
+  vi yêu cầu thực tế (chỉ là mở rộng whitelist định dạng).
+
+## Quyết định 77 — Tăng giới hạn kích thước file lên 20MB; không cần sửa Kestrel/hạ tầng (spec Update 28, FR-073)
+
+- **Decision**: Đổi `MaxFileSizeBytes` (`EutrUploadService.cs:26`, backend) từ `10 * 1024 * 1024` sang
+  `20 * 1024 * 1024`, và `MAX_EUTR_UPLOAD_SIZE_BYTES` (`EutrDocumentsFormDialog.jsx:64`, frontend) từ
+  `10 * 1024 * 1024` sang `20 * 1024 * 1024`. Không sửa cấu hình Kestrel/server nào khác. Phát hiện
+  thêm khi soạn thảo: 2 chuỗi thông báo lỗi hardcode giá trị "10MB" theo văn bản thuần (không tham
+  chiếu hằng số) — `"File exceeds 10MB limit"` trong `ValidateFile` (backend) và
+  `` `${file.name} (exceeds 10MB limit)` `` trong `handleFilesSelected` (frontend) — cả 2 MUST sửa
+  thành "20MB" cùng lúc, nếu không thông báo lỗi sẽ hiển thị sai giới hạn thật dù logic validate đã
+  đúng.
+- **Rationale**: Đã kiểm tra `Program.cs:98` — `options.Limits.MaxRequestBodySize = 200 * 1024 * 1024`
+  (200MB, cấu hình chung toàn API, không riêng cho EUTR) — cao hơn nhiều 20MB nên không phải sửa; không
+  có `[RequestSizeLimit]` nào override thấp hơn trên `SharePointController`. 20MB/file vẫn nằm sâu
+  trong giới hạn request tổng 200MB kể cả khi Upload nhiều file cùng lượt (popup cho phép chọn nhiều
+  file — `multiple` trên `<input type="file">`), nên không cần tính toán/giới hạn thêm nào ở tầng
+  request.
+- **Alternatives considered**: Không có — thay đổi đơn giản, chỉ 2 hằng số, không có phương án khác cần
+  cân nhắc.

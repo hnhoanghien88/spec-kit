@@ -1547,3 +1547,117 @@ var entity = new EutrDocuments { Name = renamedFileName, /* ... */ };
   không ràng buộc duy nhất trên File name (kế thừa quy tắc đã có, FR-007b).
 - `EutrUploadFileResultDto.FileName` trên response (dùng cho thông báo thành công/lỗi) tiếp tục là
   tên file **gốc**, không đổi sang tên mới (research Quyết định 74).
+
+## Update 26 — Bỏ Prefix khỏi công thức File name (chỉ giữ Step Name) (FR-068 đến FR-070)
+
+Hoàn toàn **backend-only**, sửa tiếp trên hạ tầng Update 25 — vẫn **0 file frontend**, **0
+migration/entity/DTO/endpoint/route mới**. Thay đổi: bỏ tham số `prefix` khỏi `BuildRenamedFileName`
+và xóa hẳn `GetPrefixByStepIdAsync` (research Quyết định 75).
+
+### `EutrUploadService.cs` — `BuildRenamedFileName` bỏ tham số `prefix`
+
+```csharp
+private static string BuildRenamedFileName(string? stepName, long stepId, string originalFileName)
+{
+    var extension = Path.GetExtension(originalFileName);
+    var basePart = SanitizeNamePart(stepName ?? string.Empty);
+    if (string.IsNullOrWhiteSpace(basePart)) basePart = $"Step{stepId}";
+    return basePart + extension;
+}
+```
+
+### Nhánh Type khác "PO" — `UploadMultipleForReferenceTypeAsync` — bỏ lời gọi `GetPrefixByStepIdAsync`
+
+```csharp
+// Truoc vong lap file - 1 lan duy nhat (KHONG con goi GetPrefixByStepIdAsync):
+var step = await _stepsRepository.GetByIdAsync(request.StepId, ct);
+
+// Trong vong lap, moi file:
+var renamedFileName = BuildRenamedFileName(step?.Name, request.StepId, file.FileName);
+```
+
+### Nhánh Type = "PO" — `UploadMultipleToSharePointAndSaveDataAsync` — vẫn chọn `winningMaster` để lấy `StepId`, không còn đọc `Prefix`
+
+```csharp
+// GetMatchingPrefixesAsync da thu hep san ve toi da 1 ban ghi Prefix dai nhat khi co nhieu khop
+// (khong doi) - service chi can FirstOrDefault de lay ban ghi con lai (neu co).
+var winningMaster = matchedMasters.FirstOrDefault(m => m.StepId.HasValue);
+// ... (giu nguyen kiem tra winningMaster == null -> loai file, khong doi)
+var winningStep = await _stepsRepository.GetByIdAsync(winningMaster.StepId!.Value, ct);
+var renamedFileName = BuildRenamedFileName(winningStep?.Name, winningMaster.StepId!.Value, file.FileName);
+// winningMaster.Prefix KHONG con duoc truyen vao BuildRenamedFileName
+```
+
+### `IEutrMastersRepository`/`EutrMastersRepository` — xóa `GetPrefixByStepIdAsync`
+
+Method thêm ở Update 25 (data-model.md mục "Update 25" ở trên) bị **xóa hoàn toàn** — không còn nơi
+nào trong codebase gọi tới sau khi nhánh Type khác "PO" ở trên bỏ lời gọi này.
+
+### Ví dụ cụ thể (thay thế ví dụ ở mục Update 25)
+
+- Type khác "PO", Step "Invoice" (`Id=7`, có bản ghi `eutr_master_documents` `Prefix="INV"`), file gốc
+  bất kỳ tên `scan001.pdf` → `eutr_documents.Name = "Invoice.pdf"` (KHÔNG còn `"INVInvoice.pdf"`).
+- Type khác "PO", Step "Delivery" (`Id=9`, KHÔNG có bản ghi nào trong `eutr_master_documents`), file
+  gốc `abc.docx` → `eutr_documents.Name = "Delivery.docx"` (không đổi so với Update 25 — Step này chưa
+  từng có Prefix).
+- Type = "PO", file gốc `INV2026_PO000123.pdf` khớp Prefix của nhiều bản ghi cùng lúc (ví dụ
+  `Prefix="INV"` và `Prefix="INV2026"`) → `GetMatchingPrefixesAsync` (không đổi bởi Update này) thu hẹp
+  về đúng bản ghi Prefix dài nhất (`Prefix="INV2026"`, `StepId=7`); việc ghi `eutr_references` (số dòng,
+  `StepId` nào được ghi) tiếp tục theo đúng logic hiện có, không đổi bởi Update 26; điểm thay đổi duy
+  nhất là `eutr_documents.Name` = đúng `Name` của Step 7 (không còn ghép `"INV2026"` vào đầu).
+
+### Quy tắc nghiệp vụ bổ sung (Update 26)
+
+- Mọi quy tắc nghiệp vụ khác ở mục "Update 25" (tách biệt việc chọn Prefix khỏi ghi `eutr_references`;
+  đổi tên chỉ chạy tại Upload; nhiều document trùng `Name`; `EutrUploadFileResultDto.FileName` giữ tên
+  gốc) tiếp tục không đổi.
+- Document tạo trước Update 26 giữ nguyên `Name` đã lưu theo công thức Update 25 (có thể còn Prefix) —
+  không migration/backfill dữ liệu cũ.
+
+## Update 27 — Mở rộng whitelist định dạng file (FR-071/FR-072)
+
+Chỉ đổi **giá trị hằng số whitelist** — không entity/DTO/endpoint/migration mới, không đổi schema
+`eutr_documents`/`eutr_references`/`eutr_master_documents`.
+
+```csharp
+// EutrUploadService.cs - AllowedExtensions (backend, dong 20-23)
+private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
+{
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".jpg", ".jpeg", ".png",
+    ".xml", ".json", ".geojson"   // MOI - Update 27
+};
+```
+
+```js
+// EutrDocumentsFormDialog.jsx - ALLOWED_EUTR_UPLOAD_EXTENSIONS (frontend, dong 51-60)
+const ALLOWED_EUTR_UPLOAD_EXTENSIONS = [
+  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png',
+  '.xml', '.json', '.geojson', // MOI - Update 27
+];
+```
+
+Không có bản ghi `eutr_master_documents`/`eutr_documents`/`eutr_references` nào cần backfill — 1
+`Prefix` (khớp theo `StartsWith` trên tên file gốc, không phân biệt đuôi) tự nhiên đã khớp mọi đuôi
+file kể từ trước Update này; việc nhiều file khác đuôi cùng khớp 1 `StepId` tạo nhiều bản ghi độc lập
+là hành vi sẵn có (không có ràng buộc unique nào trên `StepId`), không phải năng lực mới của Update 27.
+
+## Update 28 — Tăng giới hạn kích thước file lên 20MB (FR-073)
+
+Chỉ đổi **giá trị hằng số giới hạn kích thước** — không entity/DTO/endpoint/migration/cấu hình server
+nào khác (Kestrel `MaxRequestBodySize` đã là 200MB, xem research Quyết định 77).
+
+```csharp
+// EutrUploadService.cs - MaxFileSizeBytes (backend, dong 26)
+private const long MaxFileSizeBytes = 20 * 1024 * 1024; // 20MB - Update 28 (truoc: 10MB)
+
+// ValidateFile - chuoi thong bao loi cung phai doi (khong tham chieu hang so, hardcode rieng)
+return "File exceeds 20MB limit"; // truoc: "File exceeds 10MB limit"
+```
+
+```js
+// EutrDocumentsFormDialog.jsx - MAX_EUTR_UPLOAD_SIZE_BYTES (frontend, dong 64)
+const MAX_EUTR_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024; // 20MB - Update 28 (truoc: 10MB)
+
+// handleFilesSelected - chuoi thong bao loi cung phai doi (khong tham chieu hang so, hardcode rieng)
+rejectedFiles.push(`${file.name} (exceeds 20MB limit)`); // truoc: "exceeds 10MB limit"
+```

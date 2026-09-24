@@ -499,3 +499,37 @@ can be toggled — same constraint as T024/T026/Update 4's checkpoint.
 per role via the same menu-admin mechanism already used for menu `eutr-sales-orders`. No new DB seeding
 is required; only confirm the roles that should/shouldn't see Upload/Edit already have the expected
 `permissionList` entries for menu `eutr-documents`.
+
+---
+
+## Phase 11: Spec Update 9 — New per-row Download button on AVAILABLE FILES; download file name = Step Name (FR-037/FR-038)
+
+**Goal**: Same feature as `005-eutr-sales-orders` Update 33 (Phase 84 of that spec's tasks.md), applied
+to `PurchId/View`'s own copy of the AVAILABLE FILES UI. Zero backend change.
+
+**Independent Test**: [quickstart.md](./quickstart.md) "Update 9" section, frontend steps 1-4.
+
+- [X] T052 [US2] Sửa `compliance-client/src/presentation/pages/eutr-purchase-orders/PurchaseOrderViewPage.jsx`: import `DownloadIcon`/`GetEutrDocumentsFileByIdRefUseCase`/`buildStepOnlyFileName` (helper shared với `005-eutr-sales-orders`, tạo ở tasks T416 của đặc tả đó); module-level `getEutrDocumentsFileByIdRefUseCase` instance; new `handleDownloadFile(file)` callback (cùng logic với `MapFilePage.jsx`'s T418); new Download `IconButton` sau nút Edit trên mỗi dòng AVAILABLE FILES; thêm `stepNames` vào `viewerFile` state, `setViewerFile(...)`, và `<EutrFileViewerDialog stepNames={...}>` (phụ thuộc `EutrFileViewerDialog.jsx`/`buildStepOnlyFileName.js` đã sửa ở T417/T416 của `005-eutr-sales-orders`, dùng chung không sửa lại).
+- [X] T053 [P] Build verify: `npx eslint` trên `PurchaseOrderViewPage.jsx` (sau T052) — 0 lỗi mới.
+- [ ] T054 [US2] Kiểm thử thủ công theo [quickstart.md](./quickstart.md) "Update 9" section, bước 1-4, trên `PurchId/View` — **CHƯA chạy** (cần môi trường DB/SharePoint thật + trình duyệt, ngoài phạm vi phiên làm việc này). Lưu ý: cùng lỗi runtime đã phát hiện và sửa ở `005-eutr-sales-orders` T420 (`handleDownloadFile` chưa unwrap envelope `ApiResponse<T>`, xem `005-eutr-sales-orders` research.md "Bug fix" sau Quyết định 83) cũng đã được sửa ở `PurchaseOrderViewPage.jsx` (T052) — chưa có xác nhận trực tiếp trên màn hình này.
+
+**Checkpoint**: Mỗi dòng AVAILABLE FILES ở `PurchId/View` có 3 nút hành động (View, Edit, Download);
+nhấn Download (từ dòng hoặc từ trong popup View) tải đúng nội dung file với tên = Step Name, kể cả với
+document tạo trước `004-eutr-documents` Update 26. Không có backend/entity/DTO/endpoint/route mới.
+
+---
+
+## Phase 12: Spec Update 10 — Explicit Search button next to the search box on the Purchase Orders list (FR-039)
+
+**Goal**: Add a `Search` button next to the existing search `TextField` on the Overview list, so the
+user can apply the current search value immediately instead of waiting for the 500ms debounce. Zero
+backend change.
+
+**Independent Test**: [quickstart.md](./quickstart.md) "Update 10" section, frontend steps 1-4.
+
+- [X] T055 [US3] Sửa `compliance-client/src/presentation/pages/eutr-purchase-orders/PurchaseOrderOverviewPage.jsx`: import `Stack`/`Button`; bọc `TextField` tìm kiếm hiện có trong 1 `Stack` (row); thêm `handleSearchClick` (reset `page` về 0, gọi thẳng `fetchPurchaseOrders(0, pageSize, search)` — không qua debounce); thêm `<Button variant="contained">Search</Button>` cạnh ô tìm kiếm.
+- [X] T056 [P] Build verify: `npx eslint` trên `PurchaseOrderOverviewPage.jsx` (sau T055) — 0 lỗi.
+- [ ] T057 [US3] Kiểm thử thủ công theo [quickstart.md](./quickstart.md) "Update 10" section, bước 1-4, trên danh sách Purchase Orders — **CHƯA chạy** (cần môi trường DB/ERP thật + trình duyệt, ngoài phạm vi phiên làm việc này).
+
+**Checkpoint**: Nút Search hiển thị cạnh ô tìm kiếm; nhấn nút áp dụng ngay từ khóa đang nhập, về lại
+trang đầu, không cần đợi debounce; cơ chế tự động lọc hiện có (gõ xong đợi 500ms) không đổi.

@@ -123,3 +123,48 @@ feature's own quickstart.md "Update 29" section.
 - Compare the Progress figure on the Overview row (step 3 above) against the completed/missing step
   count visible on that same Purchase Order's detail screen (step 4 above) — they must match exactly
   at the same point in time (spec SC-002).
+
+## Update 9 (2026-09-24) — New per-row Download button on AVAILABLE FILES; download file name = Step Name
+
+100% frontend, zero backend change — reuses the existing `get-file-by-idref` endpoint. Same behavior
+as `005-eutr-sales-orders` Update 33 (see that feature's quickstart.md for the full fixture/steps),
+applied to `PurchId/View`'s own copy of the AVAILABLE FILES UI.
+
+### Frontend verification (manual)
+
+1. Open `PurchId/View` for a Purchase Order whose AVAILABLE FILES includes a document created BEFORE
+   `004-eutr-documents` Update 26 (legacy `Prefix + Step Name` file name still in `eutr_documents.Name`).
+   **Expected**: each row now shows 3 action buttons — View, Edit (if permitted), **Download** (new).
+2. Click Download on that legacy document. **Expected**: file downloads immediately (no popup); saved
+   file name = the Step's `Name` only — NOT the legacy stored name; the row's File name column is
+   unchanged.
+3. Open View for the same document, click Download inside the popup. **Expected**: same corrected
+   Step-Name-only file name — the popup's own Download button is fixed too, not just the new row-level
+   one.
+4. Find a row with more than one Step chip (if available) and click Download. **Expected**: downloaded
+   file name uses the first Step chip's name.
+
+### Success criteria mapping (Update 9)
+
+- SC-008 (Download produces correct content with Step-Name file name, including legacy documents, via
+  both entry points) → frontend steps 2-3.
+- FR-037 (new Download button, positioned after Edit, visible whenever `FileId` exists) → frontend
+  step 1.
+- FR-038 (name recomputed at download time; multi-Step uses first Step name) → frontend steps 2-4.
+
+## Update 10 (2026-09-24) — Explicit Search button next to the search box on the Purchase Orders list
+
+### Frontend verification (manual)
+
+1. Open the Purchase Orders Overview list. Type a known Vendor code (e.g. `"CC01226"`) into the search
+   box. **Expected**: a `Search` button now appears immediately to the right of the search field.
+2. Before the 500ms auto-filter kicks in, click **Search**. **Expected**: the list filters immediately
+   to matching rows (same result the debounce would have produced), page resets to 1.
+3. Clear the search box, type a keyword that matches nothing, click **Search**. **Expected**: "No
+   data" state, not an error.
+4. Confirm the existing auto-filter-after-typing behavior (no click needed) still works unchanged.
+
+### Success criteria mapping (Update 10)
+
+- SC-009 (Search button applies immediately) → frontend steps 1-2.
+- FR-039 (button present, immediate apply, auto-filter still works) → frontend steps 1, 2, 4.

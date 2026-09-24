@@ -3018,3 +3018,65 @@ no-dead-code convention.
   of Map File — only Upload's and each row's Edit's visibility condition changes.
 - No change to Upload/Edit's own behavior once shown (popup contents, save flow, AVAILABLE FILES
   refresh) — purely a visibility gate.
+
+## Decision 82 — Row-level Download button fetches directly (no dialog), reuses `get-file-by-idref`; download name recomputed client-side, never written to DB (spec Update 33, FR-194 to FR-197)
+
+- **Decision**: New Download `IconButton` on each AVAILABLE FILES row calls
+  `getEutrDocumentsFileByIdRefUseCase.execute(file.fileId)` directly (same use case/endpoint already
+  used by `EutrFileViewerDialog`) and builds the `Blob`/`<a download>` inline in `MapFilePage.jsx` —
+  it does NOT open `EutrFileViewerDialog` first. `EutrFileViewerDialog`'s own existing Download button
+  (inside the View popup) is also updated to use the same new `buildStepOnlyFileName(originalFileName,
+  stepNames)` helper (new file, `eutr-documents/utils/buildStepOnlyFileName.js`) instead of the raw
+  stored file name, for consistency between the two download entry points.
+- **Rationale**: The user's screenshot showed a document created before `004-eutr-documents` Update 26
+  (Prefix removed from the naming formula at Upload time going forward, no backfill) still downloading
+  with its old Prefix+StepName name via the existing popup Download button — confirmed via
+  `AskUserQuestion` that the fix should be a **fresh computation on every download**, not a read of
+  whatever `eutr_documents.Name` happens to hold, so it also fixes legacy documents without any
+  DB migration/backfill. Building the row-level button as a direct fetch (skip the dialog) keeps the
+  new interaction minimal — one click, one download — matching how "Download" buttons behave elsewhere
+  in this codebase (e.g. `EutrFileViewerDialog`'s own button), rather than requiring the user to open a
+  preview first just to get a file they may not want to view.
+- **Alternatives considered**: (1) Backfill `eutr_documents.Name` for legacy documents to strip the
+  Prefix — rejected because `004-eutr-documents` Update 26 explicitly decided against backfill (File
+  name shown elsewhere, e.g. the main list/tooltips, is out of scope for that decision and this one);
+  recomputing only at download time achieves the user's actual goal (correct file name when downloading)
+  without touching stored data or any other UI. (2) Route the new row-level button through
+  `EutrFileViewerDialog` (open it, then trigger its Download) — rejected as an unnecessary UX detour
+  (extra click, extra network round-trip for content already fetchable directly) when the same use
+  case/endpoint is trivially callable standalone.
+
+## Decision 83 — Multi-Step file uses the first `stepNames` entry for the download name; no Prefix-based tie-break (spec Update 33, FR-196)
+
+- **Decision**: `buildStepOnlyFileName` always uses `stepNames?.[0]` when the array is non-empty,
+  regardless of how many Step chips a row shows.
+- **Rationale**: A file can legitimately match more than one Step (Type = "PO" matching multiple
+  `eutr_master_documents.Prefix` rows) — there is no single "correct" Step name in that case, only the
+  one that historically won the Prefix-length tie-break used to compute `eutr_documents.Name` at Upload
+  time (`004-eutr-documents` Update 25/26). Reconstructing that exact historical tie-break at download
+  time would require re-fetching the original file name and re-running the same prefix-matching query
+  against `eutr_master_documents` — real backend work for an edge case the user's request never
+  mentioned. The first array entry is simple, deterministic, and correct for the overwhelming common
+  case (exactly one Step per file, as in the screenshot).
+- **Alternatives considered**: Re-run the Prefix tie-break server-side for multi-Step files — rejected
+  as over-engineering relative to the actual request ("đổi tên file thành step name"), which did not
+  ask for byte-for-byte parity with the Upload-time naming algorithm for this rare edge case.
+
+## Bug fix (2026-09-24, same Update 33) — `handleDownloadFile` must unwrap the `ApiResponse<T>` envelope itself
+
+- **Symptom**: Clicking the new row-level Download button threw `Cannot read properties of undefined
+  (reading 'replace')` — `loadedFile.content.replace(...)` failed because `loadedFile.content` was
+  `undefined`.
+- **Root cause**: `GET /eutr-documents/get-file-by-idref` (`EutrDocumentsController.cs:174`) returns
+  `ApiResponse<SharepointFileContent>.Ok(files, ...)`, i.e. the JSON body is
+  `{ success, message, data: { content, contentType, fileName } }` — `RestEutrDocumentsRepository.
+  getFileByIdRef` (`RestEutrDocumentsRepository.js:31-34`) passes this through unwrapped
+  (`return res.data`, the raw axios body, envelope and all). `EutrFileViewerDialog`'s existing Download
+  button never hit this bug because its `loadedFile` state comes from `FilePreviewer.jsx`'s `onLoaded`
+  callback, which already destructures `response.data` (`FilePreviewer.jsx:75-81`) before calling
+  `onLoaded`. `handleDownloadFile` (`MapFilePage.jsx`/`PurchaseOrderViewPage.jsx`) calls the use case
+  directly — bypassing `FilePreviewer` entirely, by design (FR-194: no popup) — so it received the
+  still-wrapped envelope and read `.content` directly off it.
+- **Fix**: `handleDownloadFile` now checks `response.success`/`response.data` and reads
+  `response.data` as `loadedFile`, mirroring `FilePreviewer.jsx`'s own unwrapping exactly, before doing
+  anything else with it.

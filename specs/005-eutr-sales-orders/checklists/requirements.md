@@ -484,3 +484,41 @@
   coupled conditions — are resolved as explicit Edge Cases/FR-186 (fail-closed default, matching every
   other EUTR screen's existing behavior when `permissionList` is missing; each icon depends only on its
   own permission, not the other) rather than left open.
+- **2026-09-24 (Update 30)**: Documented that the Upload/Edit buttons at Step 2 (AVAILABLE FILES)
+  inherit `004-eutr-documents` Update 26 (FR-068–FR-070 there), which drops the Prefix component from
+  the automatic File-name-by-Step behavior added at Update 25/inherited here at Update 23 — File name
+  is now Step Name only, at no cost to this spec since Upload/Edit still call the exact same shared
+  popup/flow with no naming logic of their own. No FR/Key Entity/Success Criteria changes needed here;
+  only a cross-reference Clarifications entry was added. No [NEEDS CLARIFICATION] markers — the one
+  question worth confirming (whether the naming-formula change affects Map File/View's file-to-step
+  matching) was resolved as an informed default, same as Update 23: matching is based on
+  `eutr_references.StepId`, never on `eutr_documents.Name`, so it is unaffected.
+- **2026-09-24 (Update 31)**: Documented that Step 2's Upload/Edit popup inherits `004-eutr-documents`
+  Update 27's expanded upload-format whitelist (`.xml`/`.json`/`.geojson`), and confirmed (via codebase
+  research before drafting, plus an `AskUserQuestion` to the user narrowing scope) that the "multiple
+  files per Step, clearly shown" half of the original request needs no change here — `MapFilePage.jsx`'s
+  `TreeNode` already renders a "(+N)" badge and a full-name tooltip whenever more than one file maps to
+  a Step, with no cap on the list length. No FR/Key Entity/Success Criteria changes needed; only a
+  cross-reference Clarifications entry was added. No [NEEDS CLARIFICATION] markers — the real fork (add
+  a new grouping mechanism vs. confirm the existing one already covers it) was resolved via that
+  `AskUserQuestion`, not left open.
+- **2026-09-24 (Update 32)**: Documented that Step 2's Upload/Edit popup inherits `004-eutr-documents`
+  Update 28's raised per-file size limit (10MB → 20MB, FR-073) at no cost to this spec since Upload/Edit
+  still call the exact same shared popup/flow with no size validation of their own. No FR/Key
+  Entity/Success Criteria changes needed; only a cross-reference Clarifications entry was added. No
+  [NEEDS CLARIFICATION] markers — trivial inheritance, no ambiguity.
+- **2026-09-24 (Update 33)**: Added a new per-row Download button on AVAILABLE FILES (FR-194) and
+  changed both it and the existing popup-View Download button to recompute the saved file's local name
+  as the document's Step Name (FR-195/FR-196/FR-197), rather than reading `eutr_documents.Name` — this
+  also fixes documents created before `004-eutr-documents` Update 26 that still carry the old
+  Prefix+StepName name in the DB (no backfill was ever run for those), confirmed as the intended scope
+  via `AskUserQuestion` before implementing (a real fork with no safe default: read the stored name
+  as-is vs. recompute fresh on every download). Added FR-194 through FR-197, SC-096, 3 new acceptance
+  scenarios under User Story 4, 2 new Edge Cases, no new Key Entity (client-side computation only, no
+  new persisted field). No [NEEDS CLARIFICATION] markers — the one real fork was resolved via the
+  `AskUserQuestion` above rather than left open. All checklist items pass after this update — no
+  regressions; downstream artifacts were updated to match (`plan.md`, `data-model.md`, `research.md`,
+  `tasks.md` Phase 84, `quickstart.md`), and the new shared
+  `eutr-documents/utils/buildStepOnlyFileName.js` helper plus the `EutrFileViewerDialog.jsx`/
+  `MapFilePage.jsx` code changes described here should be applied to match (also applied to
+  `012-eutr-purchase-orders`'s own `PurchaseOrderViewPage.jsx`, tracked in that feature's own spec).

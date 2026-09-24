@@ -172,3 +172,60 @@
   quickstart.md, research.md) still reflect the pre-Update-25 design (including the sanitize/rename
   logic itself, which has no existing implementation to reuse per research) and should be regenerated
   via `/speckit-plan` and `/speckit-tasks`.
+- 2026-09-24 `/speckit-specify` update 26: per direct user request (after confirming scope via
+  `AskUserQuestion` — the Update 25 rename-on-upload behavior already existed, so the ask was to verify
+  what specifically should change), the computed File name formula drops the **Prefix** component
+  entirely — it is now just the Step's sanitized `Name` + original extension, for both the Type = "PO"
+  and Type-other-than-"PO" branches. The Prefix-based tie-break used to pick a winning
+  `eutr_master_documents` row when Type = "PO" matches multiple Steps is unchanged (still needed to pick
+  which Step's name to use) — only the act of concatenating that row's `Prefix` text into the file name
+  is removed. Added FR-068 through FR-070 (superseding the naming half of FR-062/FR-063, which are kept
+  as historical record per this repo's convention rather than rewritten in place), SC-017 (SC-016
+  annotated as superseded), one new Edge Case replacing an obsolete one, two new Assumptions replacing
+  obsolete ones, and corrected the specific acceptance-scenario/quickstart example values that stated
+  concrete Prefix-inclusive file names (since those are testable pass/fail criteria, not just narrative
+  history). Documented that `005-eutr-sales-orders`/`012-eutr-purchase-orders` inherit this change
+  automatically (no code of their own) via a one-line cross-reference note in each spec's own
+  Clarifications section. One clarifying question was asked before drafting (the request as literally
+  stated already matched existing FR-062/FR-063 — real scope ambiguity with no safe default): what,
+  concretely, should differ from the already-implemented Update 25 behavior — resolved to "drop the
+  Prefix, keep only the Step Name." All checklist items pass after this update — no regressions;
+  `plan.md`/`data-model.md`/`research.md`/`tasks.md`/`contracts/eutr-documents-api.md` were updated in
+  place (not regenerated) to match this repo's established per-update-append convention, and the
+  `EutrUploadService.cs`/`IEutrMastersRepository.cs`/`EutrMastersRepository.cs` code changes described
+  here should be applied to match.
+- 2026-09-24 `/speckit-specify` update 27: per direct user request to allow one Step to hold multiple
+  files of different extensions (e.g. `.pdf` and `.xml`) sharing the same Prefix, with the matching
+  files clearly shown together in the view — codebase research (before drafting) found this almost
+  entirely already works: no unique/dedupe constraint exists anywhere blocking multiple
+  `eutr_documents`/`eutr_references` rows from sharing one `StepId`, and the Step-tree UI in
+  `005-eutr-sales-orders` (`MapFilePage.jsx`) and `012-eutr-purchase-orders`
+  (`PurchaseOrderViewPage.jsx`, a clone of the same tree) already renders a "(+N)" badge and a tooltip
+  listing every matching file's name whenever more than one file maps to a Step node. The one real gap:
+  `.xml` was not in the upload's allowed-extension whitelist (and `.json`/`.geojson` never were), so the
+  `.pdf` + `.xml` scenario in the request was blocked at format validation before ever reaching the
+  already-working matching/display logic. Confirmed this narrowed scope directly with the user via
+  `AskUserQuestion` before drafting (a real, high-impact fork — building a second file-grouping
+  mechanism versus just widening the whitelist — with no safe default) — user confirmed: just add
+  `.xml`, `.json`, `.geojson`. Added FR-071/FR-072 (extending FR-018's format list; documenting the
+  already-existing multi-file-per-Step behavior as an explicit requirement, since it had never actually
+  been exercised with `.xml`), SC-018, two new acceptance scenarios, one new Edge Case, one new
+  Assumption. No [NEEDS CLARIFICATION] markers — the single real fork was resolved via the
+  `AskUserQuestion` above rather than left open. All checklist items pass after this update — no
+  regressions; downstream artifacts were updated to match (`plan.md`, `data-model.md`, `research.md`,
+  `tasks.md` Phase 32, `contracts/eutr-documents-api.md`), and the `EutrUploadService.cs`
+  (`AllowedExtensions`) plus `EutrDocumentsFormDialog.jsx` (`ALLOWED_EUTR_UPLOAD_EXTENSIONS`, the one
+  frontend file this update touches) code changes described here should be applied to match.
+- 2026-09-24 `/speckit-specify` update 28: per direct user request ("mở giới hạn file upload lên
+  20MB"), the per-file size limit rises from 10MB to 20MB — checked Kestrel's `MaxRequestBodySize`
+  (`Program.cs`, already 200MB API-wide) before drafting to confirm no server-level infrastructure
+  change was needed. Updated FR-018 in place (small numeric change, unlike the format-list expansion at
+  Update 27 which was superseded via a new FR) and added FR-073 documenting the change explicitly,
+  SC-019, corrected the one existing acceptance scenario that stated the old "vượt quá 10MB" threshold
+  (a testable pass/fail criterion, not just narrative history) plus the primary-flow narrative text, and
+  added one new acceptance scenario for the 10MB–20MB range. No [NEEDS CLARIFICATION] markers — trivial,
+  unambiguous numeric change with no reasonable alternative reading. All checklist items pass after this
+  update — no regressions; downstream artifacts were updated to match (`plan.md`, `data-model.md`,
+  `research.md`, `tasks.md` Phase 33, `contracts/eutr-documents-api.md`), and the
+  `EutrUploadService.cs`/`EutrDocumentsFormDialog.jsx` size-limit constant changes described here should
+  be applied to match.

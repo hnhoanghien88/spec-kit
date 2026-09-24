@@ -284,3 +284,19 @@ reasoning as before (reuse the real capability, don't invent a parallel one).
 confirmation)* — rejected: redundant network round trip for no additional correctness once
 `permissionList` is confirmed to reflect the same underlying data; the requester explicitly asked to
 remove the now-unused probe code.
+
+## Update 10 — Explicit Search button reuses the `005-eutr-sales-orders` pattern verbatim; no URL sync, no debounce cancellation
+
+- **Decision**: Copy `SalesOrderOverviewPage.jsx`'s `handleSearchClick` shape (reset page to 0, call
+  the existing fetch function directly with the current `search` value) but WITHOUT the URL
+  `searchParams` sync that version also does, and WITHOUT cancelling the pending debounced call.
+- **Rationale**: URL sync exists on the Sales Orders screen to support a Back-button restore feature
+  (spec Update 14 there) that `012-eutr-purchase-orders`'s Overview never had — building that
+  infrastructure here would be new scope the request never asked for. Not cancelling the debounce
+  matches the Sales Orders screen's own accepted behavior (its `handleSearchClick` doesn't call
+  `debouncedFetch.cancel()` either) — a harmless possible duplicate fetch (same search value either
+  way), not a new inconsistency introduced by this change.
+- **Alternatives considered**: Add `debouncedFetch.cancel()` to `handleSearchClick` to avoid the
+  possible duplicate call — considered but not applied, since it would make this screen's behavior
+  diverge from the established `005-eutr-sales-orders` reference pattern for a cosmetic-only benefit
+  (no incorrect data results either way).

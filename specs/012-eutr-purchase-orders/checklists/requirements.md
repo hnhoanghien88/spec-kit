@@ -90,3 +90,61 @@
   quyền theo menu) — việc bổ sung cơ chế này để phục vụ FR-030 nằm trong phạm vi cập nhật này.
 - Re-validated toàn bộ checklist: tất cả mục vẫn PASS sau khi giải quyết clarification, không phát
   sinh chi tiết triển khai hay yêu cầu không kiểm chứng được.
+
+### Update 6 (2026-09-24) — Kế thừa bỏ Prefix khỏi File name tự động từ 004-eutr-documents Update 26
+
+- Ghi lại (chỉ 1 Clarifications entry, không cần FR/Key Entity/Success Criteria mới) rằng nút
+  Upload/Edit ở `PurchId/View` dùng chung đúng popup Add/Edit và luồng Upload với `004-eutr-documents`
+  nên tự động kế thừa việc bỏ Prefix khỏi công thức đổi tên file (Update 26, FR-068–FR-070 của đặc tả
+  đó, sửa lại công thức Update 25 mà đặc tả này đã kế thừa ở Update 3) mà không cần thay đổi gì ở đặc
+  tả này.
+- Không cần [NEEDS CLARIFICATION] — câu hỏi duy nhất đáng cân nhắc (Type tự điền sẵn = "PO" theo
+  Update 1 có làm thay đổi cách áp dụng việc bỏ Prefix không) được trả lời trực tiếp trong Clarifications
+  entry: nhánh Type = "PO" vẫn dùng Prefix để chọn Step thắng cuộc, chỉ không còn ghép Prefix vào tên —
+  áp dụng đồng nhất, không cần quy tắc riêng.
+- Re-validated toàn bộ checklist: tất cả mục vẫn PASS, không phát sinh chi tiết triển khai hay yêu cầu
+  không kiểm chứng được.
+
+### Update 7 (2026-09-24) — Kế thừa mở rộng whitelist định dạng file từ 004-eutr-documents Update 27
+
+- Ghi lại (chỉ 1 Clarifications entry, không cần FR/Key Entity/Success Criteria mới) rằng nút
+  Upload/Edit ở `PurchId/View` dùng chung đúng popup Add/Edit và luồng Upload với `004-eutr-documents`
+  nên tự động kế thừa việc mở rộng whitelist định dạng (Update 27, FR-071 của đặc tả đó) mà không cần
+  thay đổi gì ở đặc tả này. Rà soát mã nguồn trước khi soạn thảo xác nhận thêm: cây Step ở `PurchId/View`
+  (clone `TreeNode` từ Map File Step 2) đã hiển thị sẵn badge "(+N)"/tooltip cho nhiều file/1 Step, nên
+  phần "hiển thị rõ" trong yêu cầu gốc cũng không cần thay đổi gì ở đặc tả này.
+- Không cần [NEEDS CLARIFICATION] — câu hỏi duy nhất đáng cân nhắc (Type tự điền sẵn = "PO" có ảnh
+  hưởng gì tới việc nhiều file cùng khớp 1 Prefix/Step không) được trả lời trực tiếp trong Clarifications
+  entry: mỗi file độc lập khớp Prefix/Step riêng, không giới hạn số file/StepId, áp dụng đồng nhất.
+- Re-validated toàn bộ checklist: tất cả mục vẫn PASS, không phát sinh chi tiết triển khai hay yêu cầu
+  không kiểm chứng được.
+
+### Update 8 (2026-09-24) — Kế thừa tăng giới hạn kích thước file lên 20MB từ 004-eutr-documents Update 28
+
+- Ghi lại (chỉ 1 Clarifications entry, không cần FR/Key Entity/Success Criteria mới) rằng nút
+  Upload/Edit ở `PurchId/View` dùng chung đúng popup Add/Edit và luồng Upload với `004-eutr-documents`
+  nên tự động kế thừa giới hạn kích thước mới (20MB, Update 28, FR-073 của đặc tả đó) mà không cần thay
+  đổi gì ở đặc tả này.
+- Không cần [NEEDS CLARIFICATION] — thay đổi kế thừa đơn giản, không có gì mơ hồ.
+- Re-validated toàn bộ checklist: tất cả mục vẫn PASS, không phát sinh chi tiết triển khai hay yêu cầu
+  không kiểm chứng được.
+
+### Update 9 (2026-09-24) — Thêm nút Download riêng AVAILABLE FILES; tải file với tên = Step Name
+
+- Bổ sung FR-037/FR-038 và SC-008 — khác các Update kế thừa trước đó (Update 3/6/7/8), Update này có
+  code THẬT của riêng đặc tả này (`PurchaseOrderViewPage.jsx` là bản sao riêng của UI AVAILABLE FILES,
+  không gọi qua component dùng chung), nên khai báo FR/task đầy đủ thay vì chỉ 1 ghi chú kế thừa; chi
+  tiết rationale đầy đủ tham chiếu `005-eutr-sales-orders` Update 33 (research Quyết định 82/83).
+- Không cần [NEEDS CLARIFICATION] — phạm vi đã được xác nhận qua `AskUserQuestion` ở phiên soạn thảo
+  `005-eutr-sales-orders` Update 33 (áp dụng chung cho cả hai đặc tả, cùng 1 câu hỏi/1 câu trả lời).
+- Re-validated toàn bộ checklist: tất cả mục vẫn PASS, không phát sinh chi tiết triển khai hay yêu cầu
+  không kiểm chứng được.
+
+### Update 10 (2026-09-24) — Thêm nút Search rõ ràng kế bên ô tìm kiếm
+
+- Bổ sung FR-039, SC-009, 1 acceptance scenario (User Story 3, #4), 1 Edge Case — tái sử dụng đúng mẫu
+  nút Search đã có ở `005-eutr-sales-orders` Overview (Update 24), không thêm URL query-param sync
+  (màn hình này chưa có hạ tầng đó, ngoài phạm vi yêu cầu).
+- Không cần [NEEDS CLARIFICATION] — yêu cầu rõ ràng, không có cách hiểu khác.
+- Re-validated toàn bộ checklist: tất cả mục vẫn PASS, không phát sinh chi tiết triển khai hay yêu cầu
+  không kiểm chứng được.
