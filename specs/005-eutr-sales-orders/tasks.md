@@ -5823,3 +5823,334 @@ download with a correct name (FR-195/FR-196/FR-197). Zero backend change — reu
 dòng hoặc từ trong popup View) tải đúng nội dung file với tên = Step Name, kể cả với document tạo
 trước `004-eutr-documents` Update 26. `PurchaseOrderViewPage.jsx` (`012-eutr-purchase-orders`) nhận
 cùng thay đổi này, tracked ở tasks.md của chính đặc tả đó (T416/T417 dùng chung, không lặp lại).
+
+## Phase 85: Step 1 (Map File) & Selected Purchase Orders (View) đọc trực tiếp từ `RSVNEutrSalesOrderPurchLines`; bổ sung Qty/Unit/Percentage used (Update 34/35)
+
+**Goal**: Bảng PO Step 1 (Map File) và bảng Selected Purchase Orders (View) MUST lấy toàn bộ dữ liệu
+hiển thị (PO/Template/Order account/Vendor name/Variant/Material/Qty/Unit/Percentage used) trực tiếp
+từ reference type = 20 (`RSVNEutrSalesOrderPurchLines`) — 1 bản ghi API = 1 dòng bảng, không còn kết
+hợp reference type = 16 hay gộp/nối chuỗi Variants/Materials theo PO (FR-198..FR-210). Bổ sung 2 trường
+mới `QtyPercent` (Update 34)/`Unit` (Update 35) xuyên suốt model D365 → DTO dùng chung → `case 20:`.
+Additive backend change (không endpoint/entity/migration mới); frontend giới hạn trong 2 file đã có.
+
+**Independent Test**: [quickstart.md](./quickstart.md) "Update 34/35" section.
+
+### Backend (`compliance-sys-api`)
+
+- [X] T421 [P] Sửa `compliance-sys-api/src/ComplianceSys.Domain/Dynamics/RSVNEutrSalesOrderPurchLines.cs`: thêm `public string QtyPercent { get; set; }` và `public string Unit { get; set; }` (FR-202/FR-208); `FilterableFields` giữ nguyên (không liên quan tới response shape).
+- [X] T422 [P] Sửa `compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/ComplDynReferenceResponseDto.cs`: thêm `public string QtyPercent { get; set; }` và `public string Unit { get; set; }`.
+- [X] T423 Sửa `compliance-sys-api/src/ComplianceSys.Application/Services/ComplDynamicsService.cs`, `MapDynamicsResponse`'s `case 20:`: thêm `QtyPercent = x.QtyPercent`, `Unit = x.Unit` — không đổi bất kỳ dòng gán nào khác trong `case` này (kể cả `CustAccount = x.OrderAccount` đã có từ trước — research.md Quyết định 87) (sau T421/T422).
+- [X] T424 Build verify: `dotnet build src/ComplianceSys.Application/ComplianceSys.Application.csproj` (sau T421-T423) — build thành công, 0 lỗi (chỉ 2 warning `NU1903` pre-existing không liên quan).
+
+### Frontend (`compliance-client`) — `MapFilePage.jsx`
+
+- [X] T425 [US-MapFile] Sửa `compliance-client/src/presentation/pages/eutr-sales-orders/MapFilePage.jsx`: xóa hằng số `EUTR_SALES_ORDER_PURCHASE_REF_TYPE = 16` và effect fetch refType=16 của nó; gộp effect refType=20 (trước đây chỉ gom Variants/Materials) thành 1 state `poLines` duy nhất chứa đủ field (`purchId/name/orderAccount/eutrTemplate/variant/material/qty/unit/qtyPercent`, `orderAccount` đọc từ `item.custAccount` — research.md Quyết định 87); xóa state `poLinesByPurchId`; thêm `poList` `useMemo` (dedupe `poLines` theo `purchId`) để `handleSavePOMapping`/`buildReferenceCodes`/`buildPurchIdToTemplateCodeMap` dùng nguyên vẹn.
+- [X] T426 [US-MapFile] Sửa `MapFilePage.jsx`: viết lại phần thân bảng Step 1 — đổi tiêu đề cột **Variants**/**Materials** thành **Variant**/**Material**, thêm 2 cột mới **Qty**/**Unit** (trước **Percentage used**); `TableBody` map trực tiếp `poLines` (1 dòng/1 bản ghi, không còn gộp chuỗi); `colSpan` của dòng "No POs" sửa `5` → `10` (đã lệch từ trước Update 34, tiện sửa luôn); loading/error (`poLinesLoading`/`poLinesError`) nay che toàn bộ bảng thay vì chỉ 2 ô (FR-205) (sau T425).
+
+### Frontend (`compliance-client`) — `ViewSalesOrderPage.jsx`
+
+- [X] T427 [US-View] Sửa `compliance-client/src/presentation/pages/eutr-sales-orders/ViewSalesOrderPage.jsx`: xóa hằng số `EUTR_SALES_ORDER_PURCHASE_REF_TYPE = 16`, state `allPos`/`poListLoading` và effect fetch refType=16 của nó; gộp effect refType=20 thành 1 state `poLines` (cùng shape T425); xóa state `poLinesByPurchId`; thêm `poInfoByPurchId` `useMemo` (dedupe `poLines` theo `purchId`) thay thế vai trò tra cứu của `allPos` cho `poList`/`buildReferenceCodes`/`purchIdToTemplateCode`.
+- [X] T428 [US-View] Sửa `ViewSalesOrderPage.jsx`: thêm `poRows` `useMemo` (1 dòng/1 bản ghi `poLines` khớp mỗi PO đã lưu trong `purchaseAttachments`; PO đã lưu nhưng không còn bản ghi type=20 nào khớp vẫn tạo đúng 1 dòng trống — giữ nguyên edge case Update 4); viết lại phần thân bảng Selected Purchase Orders dùng `poRows` thay vì `poList`; đổi tiêu đề cột Variants/Materials → Variant/Material, thêm cột Qty/Unit; loading/error nay che toàn bộ bảng (thêm nhánh `poLinesError`); `poList`/số đếm "Selected Purchase Orders (N)"/chip PO ở header giữ nguyên hành vi cũ (đếm theo PO duy nhất, không theo số dòng) (sau T427).
+- [X] T429 Build verify: `npx vite build --mode development` (sau T425-T428) — build thành công 0 lỗi; `npx eslint` trên `MapFilePage.jsx`/`ViewSalesOrderPage.jsx` — 0 lỗi mới (7 lỗi `no-unused-vars` pre-existing không liên quan tới thay đổi này, xác nhận qua `git stash` so sánh trước/sau).
+- [ ] T430 [US-MapFile] [US-View] Kiểm thử thủ công theo [quickstart.md](./quickstart.md) "Update 34/35" section — **CHƯA THỰC HIỆN**: môi trường phiên làm việc này không có công cụ điều khiển trình duyệt (không có Playwright/chromium-cli sẵn có; cài đặt qua npm bị chặn bởi lỗi xác thực chứng chỉ khi gọi registry) và ứng dụng yêu cầu đăng nhập Azure AD thật (MSAL, `VITE_TENANT_ID`/`VITE_CLIENT_ID`) không có sẵn trong phiên này — cần người yêu cầu tính năng tự xác nhận trực tiếp trên trình duyệt với dữ liệu D365 thật (đặc biệt bước 2/3/6 của quickstart, vốn cần fixture PO có ≥ 2 dòng hàng).
+
+**Checkpoint**: Bảng PO Step 1 (Map File) và bảng Selected Purchase Orders (View) hiển thị đúng 10/9
+cột tương ứng, mỗi dòng ứng với đúng 1 bản ghi `RSVNEutrSalesOrderPurchLines` (không còn chuỗi gộp);
+Select/Save PO Mapping vẫn hoạt động đúng ở cấp PO khi 1 PO chiếm nhiều dòng; cột Qty/Unit/Percentage
+used hiển thị dữ liệu thật một khi backend trả về `qty`/`unit`/`qtyPercent`. Backend/frontend đều build
+sạch; xác nhận trực quan trên trình duyệt với dữ liệu D365 thật do người yêu cầu tính năng thực hiện
+(T430).
+
+## Phase 86: Select/Save PO Mapping ở Step 1 khóa theo (PO, Variant, ItemId); `eutr_purchase_attachments` bổ sung `ProductVariant`/`ItemId` (Update 36)
+
+**Goal**: Select checkbox và Save PO Mapping ở Step 1 (Map File) MUST khóa theo bộ ba
+(`RSVNRefPurchId`, `ProductVariant`, `ItemId`) của đúng dòng hàng, không còn chỉ theo PO — 1 PO có
+nhiều dòng hàng cho phép tick độc lập từng dòng (FR-212). Bảng `eutr_purchase_attachments` bổ sung 2
+cột `ProductVariant`/`ItemId` (`varchar(50)`, nullable) để lưu đúng dòng hàng đã chọn (FR-211/FR-213).
+Bảng Selected Purchase Orders ở View hiển thị đúng các dòng đã lưu, không còn toàn bộ dòng hàng của PO
+đó (FR-215).
+
+**Independent Test**: mở Step 1 cho 1 Sales Order có PO với ≥ 2 dòng hàng (Variant/Material khác
+nhau); tick 1 dòng, xác nhận dòng còn lại của cùng PO KHÔNG bị tick theo; Save PO Mapping, tải lại
+trang, xác nhận đúng dòng đã tick (không thừa/thiếu) hiển thị tick sẵn; mở View, xác nhận bảng chỉ
+hiển thị đúng (các) dòng đã chọn.
+
+### Backend (`compliance-sys-api`)
+
+- [X] T431 Tạo migration mới `compliance-sys-api/src/ComplianceSys.Infrastructure/Sqls/Migration/32_add_productvariant_itemid_to_eutr_purchase_attachments.sql`: `ALTER TABLE eutr_purchase_attachments ADD COLUMN ProductVariant VARCHAR(50) NULL, ADD COLUMN ItemId VARCHAR(50) NULL` (FR-211) — theo đúng quy ước migration đánh số của repo (Sqls/Migration/), không NOT NULL (khác TemplateCode).
+- [X] T432 [P] Sửa `compliance-sys-api/src/ComplianceSys.Domain/Entities/EutrPurchaseAttachments.cs`: thêm `public string? ProductVariant { get; set; }`, `public string? ItemId { get; set; }` (sau T431).
+- [X] T433 [P] Sửa `compliance-sys-api/src/ComplianceSys.Application/Dtos/Request/PurchaseAttachmentItemDto.cs` và `.../Dtos/Response/PurchaseAttachmentDto.cs`: mỗi file thêm `ProductVariant`/`ItemId` (string?).
+- [X] T434 Sửa `compliance-sys-api/src/ComplianceSys.Infrastructure/Repositories/EutrPurchaseAttachmentsRepository.cs`: `SELECT` list của `GetBySalesIdAsync`/`GetBySalesIdsAsync` thêm `ProductVariant, ItemId` (sau T431/T433).
+- [X] T435 Sửa `compliance-sys-api/src/ComplianceSys.Application/Services/EutrPurchaseAttachmentsService.cs`: `SavePoMappingAsync`'s insert (`new EutrPurchaseAttachments {...}`) thêm `ProductVariant = item.ProductVariant`, `ItemId = item.ItemId` — không thêm validation bắt buộc (khác `TemplateCode`) (sau T432/T433).
+- [X] T436 Build verify: `dotnet build src/ComplianceSys.Application/ComplianceSys.Application.csproj` và `src/ComplianceSys.Infrastructure/ComplianceSys.Infrastructure.csproj` (sau T431-T435) — cả 2 build thành công, 0 lỗi (chỉ warning pre-existing không liên quan).
+
+### Frontend (`compliance-client`) — helper dùng chung
+
+- [X] T437 [P] Sửa `compliance-client/src/presentation/pages/eutr-sales-orders/utils/progressUtils.js`: thêm `makePoLineKey(purchId, productVariant, itemId)` (khóa chuỗi ghép PO+Variant+ItemId) và `purchIdsFromPoLineKeys(keys)` (suy ra danh sách PurchId duy nhất từ 1 Set khóa) — dùng chung cho cả 2 trang bên dưới.
+
+### Frontend (`compliance-client`) — `MapFilePage.jsx`
+
+- [X] T438 [US-MapFile] Sửa `MapFilePage.jsx`: `loadPurchaseAttachments` seed `selectedPOs` bằng `makePoLineKey(purchId, productVariant, itemId)` thay vì chỉ `purchId`; đổi `handleTogglePO(purchId)` thành `handleToggleLine(line)` dùng khóa ghép; Checkbox/TableRow `selected`/`checked` trong bảng Step 1 đổi sang `selectedPOs.has(makePoLineKey(line.purchId, line.variant, line.material))` (sau T437).
+- [X] T439 [US-MapFile] Sửa `MapFilePage.jsx`: `handleSavePOMapping` đổi nguồn từ `poList` (dedupe theo PO) sang `poLines` (thô), lọc theo `selectedPOs.has(makePoLineKey(...))`, payload mỗi item thêm `productVariant`/`itemId`; mọi chỗ cần danh sách PurchId thuần (AVAILABLE FILES `loadAvailableFiles`, chip PO ở header ×2) đổi sang `purchIdsFromPoLineKeys(selectedPOs)` (sau T437/T438).
+
+### Frontend (`compliance-client`) — `ViewSalesOrderPage.jsx`
+
+- [X] T440 [US-View] Sửa `ViewSalesOrderPage.jsx`: `poList` (memo cho chip PO header + số đếm "Selected Purchase Orders (N)") đổi sang dedupe tường minh theo `purchId` (trước đây map 1:1, nay `purchaseAttachments` có thể nhiều dòng/PO); `poRows` (thân bảng) đổi từ "explode toàn bộ poLines khớp purchId" sang khớp CHÍNH XÁC bộ ba `(purchId, productVariant, itemId)` với `poLines` bằng `makePoLineKey` (sau T437).
+- [X] T441 [US-View] Sửa `ViewSalesOrderPage.jsx`: dòng "N PO selected" ở Validation Summary đổi từ `purchaseAttachments.length` sang `poList.length` (đếm theo PO duy nhất, không theo số dòng đã lưu) (sau T440).
+- [X] T442 Build verify: `npx vite build --mode development` (sau T437-T441) — build thành công 0 lỗi; `npx eslint` trên `MapFilePage.jsx`/`ViewSalesOrderPage.jsx`/`progressUtils.js` — 0 lỗi mới (7 lỗi pre-existing không liên quan, xác nhận qua so sánh trước/sau).
+- [ ] T443 [US-MapFile] [US-View] Kiểm thử thủ công theo Independent Test ở trên — **CHƯA THỰC HIỆN**: cùng lý do đã ghi ở T430 (không có công cụ điều khiển trình duyệt, ứng dụng yêu cầu đăng nhập Azure AD thật) — cần người yêu cầu tính năng tự xác nhận trên trình duyệt với 1 PO có ≥ 2 dòng hàng thật.
+
+**Checkpoint**: Tick/bỏ tick 1 dòng hàng của 1 PO có nhiều dòng không còn ảnh hưởng các dòng khác cùng
+PO; Save PO Mapping lưu đúng 1 bản ghi/dòng đã tick kèm ProductVariant/ItemId; tải lại trang tick sẵn
+đúng dòng đã lưu; View hiển thị đúng (các) dòng đã chọn, số đếm/chip PO ở header vẫn đúng theo PO duy
+nhất. Backend/frontend đều build sạch; xác nhận trực quan trên trình duyệt với dữ liệu D365 thật do
+người yêu cầu tính năng thực hiện (T443).
+
+---
+
+## Phase 87: Cây Template hiển thị tên file thay tên Step khi đã upload; bỏ đổi tên file khi Download cho document Type = "PO" (Update 37)
+
+**Goal**: Kế thừa `004-eutr-documents` Update 29 (matching/bỏ đổi tên khi Upload cho Type = "PO", không
+cần sửa gì ở đây — Upload/Edit dùng chung popup). Node Step trong cây template có ≥ 1 tài liệu khớp MUST
+hiển thị nhãn = tên file (bỏ đuôi) của tài liệu khớp đầu tiên, thay `Name` của Step (FR-216); node chưa
+khớp tiếp tục hiển thị tên Step. Download (dòng AVAILABLE FILES hoặc popup View) trên document Type =
+"PO" MUST dùng đúng `eutr_documents.Name` đã lưu, không còn tính lại thành Step Name (FR-217); Type khác
+"PO" không đổi. KHÔNG migration DB mới, KHÔNG entity/DTO/endpoint/route mới.
+
+**Independent Test**: Xem [quickstart.md](./quickstart.md) "Update 37".
+
+### Frontend — helper dùng chung
+
+- [X] T444 [P] Sửa `compliance-client/src/presentation/pages/eutr-sales-orders/utils/progressUtils.js`: thêm hàm export `stripFileExtension(name)` = `(name || '').replace(/\.[^/.]+$/, '')`.
+
+### Frontend — `MapFilePage.jsx`
+
+- [X] T445 [US4] Sửa `MapFilePage.jsx`: import `stripFileExtension` từ `./utils/progressUtils`; trong `TreeNode`, đổi `{node.stepName}` (nhãn chính) thành `{mappedFiles.length > 0 ? stripFileExtension(mappedFiles[0].name) : node.stepName}` (FR-216) — không đổi caption phụ/badge "+N"/tooltip đã có.
+- [X] T446 [US4] Sửa `handleDownloadFile(file)` trong `MapFilePage.jsx`: nếu `(file.typeName || '').trim().toLowerCase() === 'po'`, dùng thẳng `loadedFile.fileName || file.name` làm `link.download` (không gọi `buildStepOnlyFileName`); ngược lại giữ nguyên hành vi hiện có (FR-217, sau T445 không phụ thuộc nhưng cùng khu vực sửa).
+- [X] T447 [US4] Sửa lời gọi `<EutrFileViewerDialog>` trong `MapFilePage.jsx`: thêm prop `typeName={viewerFile.typeName}`; thêm `typeName` vào state `viewerFile`/`setViewerFile(...)` call tương ứng (sau T446).
+
+### Frontend — `EutrFileViewerDialog.jsx` (dùng chung 004/005/012)
+
+- [X] T448 [US4] Sửa `compliance-client/src/presentation/pages/eutr-documents/components/EutrFileViewerDialog.jsx`: thêm prop tùy chọn `typeName`; trong `handleDownload`, nếu `(typeName || '').trim().toLowerCase() === 'po'`, dùng thẳng `loadedFile.fileName || fileName` làm `link.download` (không gọi `buildStepOnlyFileName`); ngược lại giữ nguyên (FR-217).
+- [X] T449 Build verify: `npx eslint` trên `MapFilePage.jsx`/`EutrFileViewerDialog.jsx`/`progressUtils.js` (sau T444-T448) — 0 lỗi mới (5 lỗi pre-existing không liên quan, xác nhận qua so sánh trước/sau bằng `git stash`); `npx vite build` — thành công (chỉ warning chunk-size có sẵn, không liên quan).
+- [ ] T450 [US4] Kiểm thử thủ công theo [quickstart.md](./quickstart.md) "Update 37" trên Map File (`005-eutr-sales-orders`) — **CHƯA chạy** (cần môi trường DB/SharePoint thật + trình duyệt, ngoài phạm vi phiên làm việc này).
+
+**Checkpoint**: Node Step có tài liệu khớp hiển thị nhãn = tên file (bỏ đuôi) của tài liệu đầu tiên; node
+chưa khớp hiển thị tên Step; Download trên document Type = "PO" giữ nguyên tên đã lưu (tên file gốc từ
+`004-eutr-documents` Update 29); Type khác "PO" không đổi.
+
+---
+
+## Phase 88: Bug fix — cột Qty hiển thị "—" cho mọi dòng vì `long.TryParse` fail trên giá trị thập phân từ D365 (Update 38)
+
+**Goal**: Cột Qty (Step 1/Selected Purchase Orders, FR-200) hiện dùng `long.TryParse` để parse chuỗi
+Qty thô từ D365 — fail trên mọi giá trị có phần thập phân (rơi về 0, frontend hiển thị "—"). Sửa sang
+`decimal.TryParse`, luôn trả về trị tuyệt đối, làm tròn 4 chữ số thập phân (`AwayFromZero`) — spec
+FR-218. Backend-only, dùng chung cho cả 2 bảng. KHÔNG migration DB/entity/endpoint/route mới.
+
+**Independent Test**: Mở Step 1 (Map File) cho 1 Sales Order có dòng type = 20 với `Qty` âm có phần
+thập phân (ví dụ `"-49.154850"`) — xác nhận cột Qty hiển thị `49.1549` thay vì "—".
+
+- [X] T362 [P] Sửa `compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/ComplDynReferenceResponseDto.cs`: đổi kiểu `Qty` từ `long` sang `decimal`.
+- [X] T363 [US4] Sửa `compliance-sys-api/src/ComplianceSys.Application/Services/ComplDynamicsService.cs`: thêm `using System.Globalization;`; đổi `case 20:` mapping từ `Qty = long.TryParse(x.Qty, out var qty) ? qty : 0` thành `Qty = decimal.TryParse(x.Qty, NumberStyles.Any, CultureInfo.InvariantCulture, out var qty) ? Math.Round(Math.Abs(qty), 4, MidpointRounding.AwayFromZero) : 0` (sau T362).
+- [X] T364 [P] Xác nhận `case 16:`'s `Qty = x.Qty` (domain model `RSVNEutrSalesOrderPurchases.Qty` đã là `long`) vẫn compile đúng sau khi đổi kiểu DTO (implicit `long` → `decimal`, không cần sửa gì).
+- [X] T365 Build verify: `dotnet build compliance-sys-api/src/ComplianceSys.Application/ComplianceSys.Application.csproj` (sau T362-T364) — 0 lỗi biên dịch (chỉ warning có sẵn từ trước, không liên quan).
+- [ ] T366 [US4] Kiểm thử thủ công trên Map File Step 1 và View's Selected Purchase Orders với dữ liệu D365 thật có `Qty` âm/thập phân — **CHƯA chạy** (cần môi trường D365 thật + trình duyệt, ngoài phạm vi phiên làm việc này).
+
+**Checkpoint**: Cột Qty hiển thị đúng giá trị tuyệt đối, làm tròn 4 chữ số thập phân cho mọi dòng (kể
+cả giá trị âm/thập phân từ D365); giá trị dương giữ nguyên, chỉ làm tròn; dòng có `Qty` rỗng/không
+parse được tiếp tục hiển thị "—" (FR-204 không đổi).
+
+---
+
+## Phase 89: Sắp xếp lại thứ tự cột bảng PO ở Step 1 (Map File) và Selected Purchase Orders (View) (Update 39)
+
+**Goal**: Đổi thứ tự cột (header + cell dữ liệu) trên cả 2 bảng thành: (Select) → Template → Variant →
+Material → Qty → Percentage used → Unit → PO → Order account → Vendor name (spec FR-219). Thuần
+frontend, chỉ đổi thứ tự JSX — không đổi tên cột/công thức/logic nào khác.
+
+**Independent Test**: Mở Step 1 (Map File), xác nhận thứ tự cột đúng như trên; mở View, xác nhận bảng
+Selected Purchase Orders cũng theo đúng thứ tự đó (trừ không có cột Select).
+
+- [X] T367 [US4] Sửa `compliance-client/src/presentation/pages/eutr-sales-orders/MapFilePage.jsx`: đổi thứ tự `TableCell` header (giữ Select đầu tiên) và `TableCell` dữ liệu tương ứng của mỗi dòng `poLines.map(...)` sang thứ tự Template/Variant/Material/Qty/Percentage used/Unit/PO/Order account/Vendor name.
+- [X] T368 [P] Sửa `compliance-client/src/presentation/pages/eutr-sales-orders/ViewSalesOrderPage.jsx`: đổi thứ tự tương tự cho bảng Selected Purchase Orders (`data-marker="selected-po-table"`, không có cột Select) — độc lập với T367 (file khác nhau).
+- [X] T369 Build verify: `npx eslint` trên `MapFilePage.jsx`/`ViewSalesOrderPage.jsx` (sau T367-T368) — 0 lỗi mới (7 lỗi pre-existing không liên quan, xác nhận qua `git stash`); `npx vite build` — thành công.
+- [ ] T370 [US4] Kiểm thử thủ công trên trình duyệt (Step 1 và View) — **CHƯA chạy** (ngoài phạm vi phiên làm việc này).
+
+**Checkpoint**: Cả 2 bảng hiển thị đúng thứ tự cột mới; không có cột nào bị mất/đổi tên/đổi công thức
+tính giá trị.
+
+---
+
+## Phase 90: Toolbar cây Template (Step 2 Map File + Template Checklist View) nhóm theo PurchId thay vì TemplateCode (Update 40)
+
+**Goal**: Mỗi PO đã lưu có 1 tab riêng trên toolbar (2 dòng: PurchId, tên Template) — không còn gộp
+theo TemplateCode (2 PO dùng chung template → 2 tab riêng, không còn 1 tab gộp). Mapped/Missing tính
+riêng cho từng PO. View bỏ tab "Template"/All duy nhất (Update 26), thay bằng N tab theo N PO. Zip
+Download "By Template" tạo 1 thư mục/1 PO thay vì 1 thư mục/1 TemplateCode. Thuần frontend — KHÔNG
+migration DB/entity/DTO/endpoint/route mới; `buildTemplateComputations`/`buildPurchIdToTemplateCodeMap`
+KHÔNG đổi (vẫn dùng ở 3 nơi khác, xem research Quyết định 90).
+
+**Independent Test**: Xem [quickstart.md](./quickstart.md) "Update 40" bước 1-7.
+
+### Frontend — helper dùng chung
+
+- [X] T371 [P] Sửa `compliance-client/src/presentation/pages/eutr-sales-orders/utils/progressUtils.js`: thêm hàm export `buildPoTemplateComputations(poTemplates, files)` — sibling của `buildTemplateComputations` (không đổi), lọc `filesForTemplate` theo `f.poCode === t.purchId || (t.orderAccount && f.poCode === t.orderAccount)`.
+
+### Frontend — `MapFilePage.jsx`
+
+- [X] T372 [US4] Sửa `MapFilePage.jsx`: import `buildPoTemplateComputations` thay `buildTemplateComputations`/`buildPurchIdToTemplateCodeMap`; thêm memo `poTemplates` (1 phần tử/1 PurchId từ `purchaseAttachments`, tra `templateName`/`flatDetails`/`tree` từ `templatesData` đã tải theo `templateCode`, `orderAccount` từ `poList`).
+- [X] T373 [US4] Sửa tiếp: đổi state `selectedTemplateCode`/`setSelectedTemplateCode` thành `selectedPurchId`/`setSelectedPurchId`; effect mặc định chọn PO đầu tiên (thay vì template đầu tiên) dựa trên `poTemplates` (sau T372).
+- [X] T374 [US4] Sửa tiếp: `templateComputations` gọi `buildPoTemplateComputations(poTemplates, realAvailableFiles)` thay `buildTemplateComputations(templatesData, ..., purchIdToTemplateCode)`; xóa memo `purchIdToTemplateCode` (không còn dùng); `selectedTemplateComputation` tra theo `c.purchId === selectedPurchId`; `allTrees`/`allDetails` đổi nguồn từ `templatesData` sang `poTemplates` (sau T373).
+- [X] T375 [US4] Sửa toolbar tab: đổi `templatesData.map(...)` thành `poTemplates.map(...)`, `key`/`active`/`onClick` theo `t.purchId`/`selectedPurchId`; nội dung nút đổi từ 1 dòng (`t.templateCode`) thành 2 dòng (`t.purchId` in đậm, `t.templateName` bên dưới) (sau T374).
+- [X] T376 [US4] Sửa khối hiển thị cây: đổi lookup `templatesData.find(item => item.templateCode === selectedTemplateCode)` thành `poTemplates.find(item => item.purchId === selectedPurchId)`; header phía trên cây thêm dòng PurchId (bên trên dòng `templateName (templateCode)` hiện có) (sau T375).
+
+### Frontend — `ViewSalesOrderPage.jsx`
+
+- [X] T377 [US5] Sửa `ViewSalesOrderPage.jsx`: cùng các thay đổi T372-T374 (import, `poTemplates`, `selectedPurchId`, `templateComputations`/`selectedTemplateComputation`, `allTrees`).
+- [X] T378 [US5] Sửa toolbar: bỏ mảng hardcode `[{templateCode: null, templateName: 'Template'}]` (Update 26), thay bằng `poTemplates.map(...)` — cùng định dạng nút 2 dòng như T375; bỏ nhánh `isAll`/gọi `loadDefaultTemplate()` trong `onClick` (không còn tab All để click) (sau T377).
+- [X] T379 [US5] Sửa `availableFilesForPanel`: đổi `isAllActive = selectedTemplateCode === null` thành `selectedPurchId === null` (giữ làm fallback an toàn, không xóa — vẫn dùng `allChipFiles`/`allChipTree`/`allChipDerivedFileMappings` cho Download "Combined All"); nhánh cây riêng lẻ đổi `templatesData.find(...templateCode...)` thành `poTemplates.find(...purchId...)` (sau T378).
+- [X] T380 [US5] Sửa khối render cây: nhánh `selectedTemplateCode === null` đổi thành `selectedPurchId === null` (giữ nguyên nhánh All bên trong, không xóa — xem research Quyết định 92); nhánh còn lại đổi lookup sang `poTemplates`/`selectedPurchId`, thêm dòng PurchId phía trên `templateName (templateCode)` (sau T379).
+- [X] T381 [US5] Sửa `buildDownloadFolders`: đổi `templateFolders` từ `templatesData.map(t => { const tc = templateComputations.find(c => c.templateCode === t.templateCode); ... })` thành `templateComputations.map(t => ...)` trực tiếp (1 phần tử/1 PO sau T377); `folderPath` đổi thành `[`${t.purchId} - ${t.templateName}`]` (tránh mất dữ liệu khi 2 PO dùng chung template — xem research Quyết định 93) (sau T380).
+- [X] T382 Build verify: `npx eslint` trên `MapFilePage.jsx`/`ViewSalesOrderPage.jsx`/`progressUtils.js` (sau T371-T381) — 0 lỗi mới (7 lỗi pre-existing không liên quan, xác nhận qua so sánh trước/sau); `npx vite build` — thành công.
+- [ ] T383 [US4] [US5] Kiểm thử thủ công theo [quickstart.md](./quickstart.md) "Update 40" bước 1-7 trên Map File và View — **CHƯA chạy** (cần môi trường D365 thật với 2 PO cùng dùng 1 TemplateCode + trình duyệt, ngoài phạm vi phiên làm việc này).
+
+**Checkpoint**: 2 PO dùng chung 1 template hiển thị đúng 2 tab riêng (2 dòng PurchId/tên Template);
+tài liệu của PO này không còn làm step của PO khác hiển thị "Mapped" sai; header "Mapped: X/Y" cộng
+dồn đúng theo từng PO; View không còn tab "Template"/All gộp chung; Download "By Template" tạo đúng
+N thư mục theo N PO; Download "Combined All" không đổi.
+
+## Phase 91: Bỏ popup chọn định dạng tải; Download luôn tách theo từng PO, mỗi folder chứa toàn bộ file (Update 41)
+
+**Goal**: Nút Download (Overview per-row, View toolbar) tải zip ngay lập tức, không còn popup "Choose
+download format" (Combined All / By Template). Format duy nhất còn lại là per-PO: N thư mục theo N PO
+đã lưu, mỗi thư mục chứa toàn bộ file đã map của PO đó (không tổ chức theo Step con bên trong). Xóa
+hẳn `DownloadFormatDialog.jsx` và toàn bộ "All mode" computation stack còn sót lại từ Update 40 (xem
+research Quyết định 94). Thuần frontend — KHÔNG migration DB/entity/DTO/endpoint/route mới.
+
+**Independent Test**: Bấm Download ở Overview (từng dòng) và ở View (toolbar) — zip tải ngay, không
+hiện popup; giải nén ra đúng N thư mục theo N PO, mỗi thư mục chứa toàn bộ file đã map phẳng (không có
+thư mục con theo Step).
+
+### Frontend — xóa dialog và điểm gọi
+
+- [X] T384 [US4] [US5] Xóa file `compliance-client/src/presentation/pages/eutr-sales-orders/components/DownloadFormatDialog.jsx` (xác nhận không còn nơi nào import qua grep trước khi xóa).
+
+### Frontend — `ViewSalesOrderPage.jsx`
+
+- [X] T385 [US5] Sửa `ViewSalesOrderPage.jsx`: xóa `import DownloadFormatDialog`, state `downloadDialogOpen`, khối JSX `<DownloadFormatDialog>`; nút Download đổi `onClick` sang gọi thẳng `handleDownload` (không còn mở dialog).
+- [X] T386 [US5] Sửa `buildDownloadFolders`/`handleDownload`: bỏ tham số `format`; luôn build `templateFolders` từ `templateComputations` (per-PO, có sẵn từ Update 40/T381) — không còn nhánh rẽ theo `format === 'all'`.
+- [X] T387 [US5] Xóa toàn bộ "All mode" computation stack còn sót lại từ Update 40 (Quyết định 92, nay đảo ngược ở Quyết định 94): state `defaultTemplate*`, hàm `loadDefaultTemplate` + effect gọi nó, `soStepIds`, `allChipFlatDetails`, `allChipTree`, `stepIdToFileIds`, `allChipDerivedFileMappings`, `allChipFiles` (sau T386).
+- [X] T388 [US5] Sửa `availableFilesForPanel`: xóa nhánh `isAllActive`/`selectedPurchId === null` (không còn cách nào kích hoạt được) (sau T387).
+- [X] T389 [US5] Sửa khối render cây: xóa nhánh `selectedPurchId === null` (nhánh All), chỉ còn nhánh per-PO; `allParentIds` không còn duyệt qua `allChipTree` (sau T388).
+- [X] T390 [US5] Dọn import: chỉ còn `import { flatToTree } from './utils/treeUtils'` (bỏ `filterFlatListByStepIds`/`flattenTreeToFolderEntries`, đã thành dead code) (sau T389).
+
+### Frontend — `SalesOrderOverviewPage.jsx`
+
+- [X] T391 [US4] Sửa `SalesOrderOverviewPage.jsx`: xóa `import DownloadFormatDialog`, state `downloadDialogRow`, khối JSX `<DownloadFormatDialog>`; nút Download (`IconButton`) đổi `onClick` sang gọi thẳng `handleDownload(row.code, row.custAccount, row.name)`.
+- [X] T392 [US4] Sửa `handleDownload`: bỏ tham số `format`; xóa hẳn `fetchDefaultTemplateForZip`; build `poTemplates` inline (cùng pattern T372); đổi từ `buildTemplateComputations` sang `buildPoTemplateComputations` (import thêm từ `progressUtils.js`, xem research Quyết định 95) khi build `templateFolders`; đặt tên thư mục `${t.purchId} - ${t.templateName}` (giống T381) (sau T391).
+- [X] T393 [US4] Dọn import: xóa `GetPagingEutrTemplatesUseCase`/`GetEutrTemplatesUseCase` (không còn dùng sau khi xóa `fetchDefaultTemplateForZip`); giữ nguyên `buildTemplateComputations`/`buildPurchIdToTemplateCodeMap` (vẫn dùng cho tính cột Progress riêng, `fetchProgressForRows` — xem research Quyết định 90) (sau T392).
+
+### Build verify
+
+- [X] T394 Build verify: `npx eslint` trên `ViewSalesOrderPage.jsx`/`SalesOrderOverviewPage.jsx` (sau T384-T393) — `SalesOrderOverviewPage.jsx` không lỗi; `ViewSalesOrderPage.jsx` chỉ còn 2 lỗi pre-existing không liên quan (`canSubmit`, `isMapped`, xác nhận qua so sánh trước/sau); `npx vite build` — thành công.
+- [ ] T395 [US4] [US5] Kiểm thử thủ công: bấm Download ở Overview và ở View trên môi trường thật có ít nhất 2 PO đã map file — **CHƯA chạy** (cần môi trường D365 thật + trình duyệt, ngoài phạm vi phiên làm việc này).
+
+**Checkpoint**: Bấm Download không còn hiện popup chọn định dạng ở cả 2 điểm gọi (Overview, View); zip
+tải về luôn có N thư mục theo N PO, mỗi thư mục chứa toàn bộ file đã map của PO đó, không có thư mục
+con theo Step; `DownloadFormatDialog.jsx` không còn tồn tại trong codebase.
+
+## Phase 92: Bảng `eutr_progression` (Total/Missing/Finished) lưu sẵn, thay tính động 4-API ở Overview; `test-so-template-sync` lưu thêm ProductVariant/ItemId (Update 42)
+
+**Goal**: Cột Progress ở Overview (`/eutr/sales-orders`) đọc thẳng bảng mới `eutr_progression`
+(`Id, SalesId, Total, Missing, Finished`) qua 1 lượt JOIN theo `SalesId`, thay cho 4 lượt gọi API +
+vòng lặp client-side hiện có (`fetchProgressForRows`). Bảng này được recompute (upsert) tại đúng 4 thời
+điểm: mở màn View, Save PO Mapping, Upload/Xóa tài liệu Step 2 Map File, và chạy job
+`test-so-template-sync` — job này đồng thời lưu thêm `ProductVariant`/`ItemId` khi thêm bản ghi mới vào
+`eutr_purchase_attachments`. View/Map File giữ nguyên cách tính Progress chi tiết theo step hiện có
+(FR-229) — không đọc từ `eutr_progression`.
+
+**Independent Test**: Save PO Mapping cho 1 Sales Order, xác nhận `eutr_progression` có bản ghi khớp số
+liệu Required/Missing/Finished đúng bằng số liệu View/Map File hiển thị; Overview hiển thị đúng số liệu
+đó không cần gọi lại `by-sales-ids-raw`/`by-codes`/`list-po-references`; Upload 1 tài liệu ở Step 2 rồi
+quay lại Overview thấy Progress cập nhật ngay không cần Save lại hay mở View.
+
+### Backend — bảng mới + entity + migration
+
+- [X] T451 Tạo migration `compliance-sys-api/src/ComplianceSys.Infrastructure/Sqls/Migration/33_create_eutr_progression.sql` + `Sqls/Tables/eutr_progression.sql` (đúng cặp file theo quy ước `DatabaseInitializer.InitTables()`): `CREATE TABLE eutr_progression (Id, SalesId, Total, Missing, Finished` + cột audit chuẩn `BaseEntity`, `UNIQUE INDEX` theo `SalesId`).
+- [X] T452 Tạo entity `ComplianceSys.Domain/Entities/EutrProgression.cs` (theo mẫu `EutrPurchaseAttachments.cs`) — `Id, SalesId, Total, Missing, Finished` (sau T451).
+
+### Backend — repository/service tính toán (RecomputeAsync)
+
+- [X] T453 Tạo `IEutrProgressionRepository`/`EutrProgressionRepository`: `GetBySalesIdsAsync(salesIds)` (đọc theo lô, dùng cho Overview), `UpsertAsync(salesId, total, missing, finished)` (INSERT ... ON DUPLICATE KEY UPDATE) (sau T452).
+- [X] T454 Tạo `IEutrProgressionService`/`EutrProgressionService.RecomputeAsync(salesId, ct)`: đọc `eutr_purchase_attachments` + tài liệu đã map cho đúng 1 `SalesId` (per-PO, dùng `IEutrTemplatesService.GetManyByCodesWithDetailsAsync` + D365 refType=16 cho Vendor code + `IEutrDocumentsService.GetPoReferencesAsync`, giống hệt công thức Map File/View), áp dụng RequirementType = Required (`AUTO_SOURCES` không port sang backend vì domain giá trị TakeFrom thật không bao giờ khớp — xem comment trong file), gọi `UpsertAsync` (sau T453).
+
+### Backend — gắn 4 điểm trigger
+
+- [X] T455 [US1] Sửa `EutrPurchaseAttachmentsController.GetBySalesId`/`EutrPurchaseAttachmentsService.GetBySalesIdAsync` (`by-sales-id/{salesId}`, dùng bởi màn View): gọi `RecomputeAsync(salesId)` trước khi trả kết quả (trigger 1 — mở màn View) (sau T454).
+- [X] T456 [US4] Sửa `EutrPurchaseAttachmentsService.SavePoMappingAsync`: gọi `RecomputeAsync(salesId)` ngay sau khi transaction delete-then-reinsert commit thành công, dùng đúng danh sách PO MỚI vừa lưu (trigger 2 — Save PO Mapping) (sau T454).
+- [X] T457 **[SỬA LẠI khi triển khai, xem research Quyết định 99]** Sửa `EutrSynchronizeDataService.SyncSalesOrderTemplatesAsync`: nhánh thêm bản ghi mới gán thêm `ProductVariant`/`ItemId` từ `item` (refType=19); sau vòng lặp add/skip, gọi `RecomputeAsync` CHỈ cho các `SalesId` MỚI THÊM trong lần chạy đó (`addedSalesIds`) — KHÔNG còn cho cả `SalesId` bị bỏ qua như task gốc mô tả (lý do hiệu năng: job này từng xử lý hàng nghìn PO/lần chạy trên dữ liệu thật; recompute mọi SalesId sẽ biến job thành điểm nghẽn mới) (trigger 3 — job đồng bộ) (sau T454).
+- [X] T458 Thêm field `ProductVariant`/`ItemId` vào `RSVNEutrSalesOrderTemplates.cs` (D365 domain model, refType=19) và `ItemId` vào `ComplDynReferenceResponseDto`, mapping tương ứng trong `ComplDynamicsService` case 19 (tên field D365 là suy đoán theo đúng quy ước đã xác nhận hoạt động ở entity anh em `RSVNEutrSalesOrderPurchLines` — **CẦN xác nhận lại với D365 thật khi có môi trường**, xem research Quyết định 100) (sau T457).
+- [X] T459 Phối hợp với `004-eutr-documents`: gọi `RecomputeForPurchIdAsync(purchId)` (tra `eutr_purchase_attachments` theo `PurchId` = RefValue của tài liệu) sau khi Upload (`EutrUploadService.UploadMultipleToSharePointAndSaveDataAsync`/`UploadMultipleForReferenceTypeAsync`) hoặc Xóa (`EutrDocumentsService.DeleteAsync`/`DeleteMultiAsync`, đọc RefValue TRƯỚC khi xóa `eutr_references`) tài liệu thành công (trigger 4 — cross-feature). **Giới hạn đã biết**: chỉ khớp tài liệu Type = "PO" (RefValue = PurchId); tài liệu Type = "Vendor" (RefValue = Order account) chưa trigger — cần thêm 1 lượt tra cứu D365 refType=16 theo Order account để suy ngược PurchId, chưa làm ở Update này (sau T454).
+
+### Backend — endpoint đọc theo lô cho Overview
+
+- [X] T460 [US1] Tạo `EutrProgressionController.cs`: `POST /api/eutr-progression/by-sales-ids` (theo đúng policy/shape pattern của `EutrPurchaseAttachmentsController.GetBySalesIdsRaw`) trả `ProgressionDto { SalesId, Total, Missing, Finished }[]` (sau T453).
+
+### Backend — backfill 1 lần khi triển khai (FR-230)
+
+- [X] T461 Thêm `GET /api/eutr-progression/backfill-all` (`EutrProgressionController.BackfillAll` → `EutrProgressionService.BackfillAllAsync`) gọi `RecomputeAsync` cho mọi `SalesId` đang có ≥1 bản ghi `eutr_purchase_attachments` (qua `GetSalesIdsWithTemplateAsync` đã có sẵn) (sau T454) — **endpoint vận hành gọi thủ công 1 lần sau khi deploy, không phải job chạy định kỳ**.
+
+### Frontend — `SalesOrderOverviewPage.jsx`
+
+- [X] T462 [US1] Tạo use case `GetProgressionBySalesIdsUseCase.js` + chain đầy đủ (`IEutrProgressionRepository`/`RestEutrProgressionRepository`/`eutrProgressionApi.js`, đăng ký ở `di/repositories.js`) gọi endpoint T460 (sau T460).
+- [X] T463 [US1] Sửa `fetchProgressForRows` trong `SalesOrderOverviewPage.jsx`: bỏ 4 lượt gọi cũ (`by-sales-ids-raw`/`by-codes`/`refType=16`/`list-po-references`) và vòng lặp `buildTemplateComputations`/`computeProgress`; thay bằng 1 lượt gọi `GetProgressionBySalesIdsUseCase`, map kết quả sang đúng shape `{ status: 'empty' | 'no-required' | 'ok', completed, total, pct }` hiện có (giữ nguyên 4 trạng thái hiển thị — FR-228) (sau T462).
+- [X] T464 [US1] Dọn import ở `SalesOrderOverviewPage.jsx`: xóa `GetPurchaseAttachmentsBySalesIdsRawUseCase` và `computeProgress`/`buildTemplateComputations`/`buildPurchIdToTemplateCodeMap` (chỉ dùng cho `fetchProgressForRows` cũ); xác nhận `buildPoTemplateComputations`/`buildReferenceCodes`/`normalizeTemplateDetail`/`getEutrTemplatesByCodesUseCase`/`getEutrDocumentsPoReferencesUseCase` vẫn giữ nguyên vì `handleDownload` vẫn dùng (sau T463).
+
+### Build verify
+
+- [X] T465 Build verify: backend `dotnet build` (Domain/Application/Infrastructure/Api/UnitTests đều build sạch, 0 Error — phải sửa thêm 2 file test cũ `EutrUploadServiceTests.cs`/`EutrSynchronizeDataServiceTests.cs` bị lệch chữ ký constructor từ TRƯỚC Update 42, không liên quan tới thay đổi lần này, để build pass); frontend `npx eslint` (0 lỗi) + `npx vite build` (thành công) trên toàn bộ file đã sửa (sau T451-T464).
+- [ ] T466 [US1] Kiểm thử thủ công theo `quickstart.md` (Update 42 section) trên môi trường thật — **CHƯA chạy** (cần môi trường D365 + MySQL thật, ngoài phạm vi phiên làm việc này).
+
+**Checkpoint**: `eutr_progression` tồn tại và được recompute đúng tại 4 thời điểm (View/Save PO Mapping/
+Upload-Xóa tài liệu/job đồng bộ); Overview đọc Progress qua đúng 1 lượt JOIN theo `SalesId`, không còn
+gọi 4 API động cũ; bản ghi mới do job `test-so-template-sync` thêm vào `eutr_purchase_attachments` có
+`ProductVariant`/`ItemId`; View/Map File không đổi cách tính Progress chi tiết theo step.
+
+## Phase 93: Thêm 2 ô tìm ItemId/ConfigId ở Overview, lọc qua danh sách SalesId tra từ `RSVNSalesLineOpenInvoiceCogs` (Update 43)
+
+**Goal**: Overview (`/eutr/sales-orders`) có thêm 2 ô nhập **ItemId**/**ConfigId** trên thanh công cụ
+tìm kiếm. Khi nhấn Search với 1 trong 2 (hoặc cả hai) có giá trị: tra `refType=21`
+(`RSVNSalesLineOpenInvoiceCogs`, đăng ký mới) để lấy danh sách `SalesId` khớp, rồi dùng danh sách đó
+thu hẹp (AND) kết quả `refType=11` qua bucket `BuildFilterString` mới (`"salesidin"`) — KHÔNG gộp vào
+cụm OR-search hiện có của ô tìm kiếm chính/CustAccount (Update 27).
+
+**Independent Test**: Nhập đúng 1 ItemId thật vào ô ItemId, nhấn Search — bảng chỉ còn (các) Sales
+Order có dòng hàng khớp ItemId đó; nhập thêm từ khóa Sales ID không khớp bất kỳ dòng nào trong tập đó —
+bảng hiển thị "No data" (xác nhận AND, không phải OR).
+
+### Backend — đăng ký refType=21
+
+- [ ] T467 Sửa `ComplianceSys.Domain/Dynamics/RSVNSalesLineOpenInvoiceCogs.cs`: kế thừa `RSVNModelBase`, thêm `ModelType => 21`, `EntityName => "RSVNSalesLineOpenInvoiceCogs"`, `FilterableFields = {ItemId, ConfigId, SalesId}` — giữ nguyên moi property hien co (khong doi 2 noi goi truc tiep hien co).
+- [ ] T468 Sửa `ComplDynReferenceResponseDto.cs`: thêm field `ConfigId` (giống `ItemId` đã thêm ở Update 42) (sau T467).
+- [ ] T469 Sửa `ComplDynamicsService.cs`: thêm entry `EntityMappings[21] = ("RSVNSalesLineOpenInvoiceCogs", "SalesId", "ItemId")`; thêm `case 21` trong `MapDynamicsResponse` (Id/Code = SalesId, ItemId passthrough) (sau T467, T468).
+
+### Backend — bucket AND-search mới cho refType=11
+
+- [ ] T470 Sửa `BuildFilterString` (`ComplDynamicsService.cs`): thêm nhánh `"salesidin" when mapping.Entity == "RSVNSalesOrderOpenInvoiceCogs" => "salesidin"` vào switch phân loại; thêm list `salesIdInFilters` riêng (KHÔNG dùng chung `searchFilters`); sau vòng lặp, nếu có giá trị thì `filterParts.Add($"({string.Join(" or ", salesIdInFilters)})")` (AND với phần còn lại) (sau T469 — độc lập T467/T468 nhưng cùng file, làm tuần tự để tránh conflict).
+
+### Frontend — `SalesOrderOverviewPage.jsx`
+
+- [ ] T471 [US2] Thêm state `itemId`/`configId` + 2 `TextField` mới vào search `Stack` (sau ô tìm kiếm chính, trước nút Search) (sau T470).
+- [ ] T472 [US2] Sửa `handleSearchClick`/`fetchSalesOrders`: khi `itemId`/`configId` có giá trị, gọi `getReferenceDataUseCase.execute(1, 500, 'Code', 'asc', 21, [...])` trước; danh sách rỗng → hiển thị thẳng trạng thái trống, KHÔNG gọi refType=11; danh sách có SalesId → map thành `{column:'SalesIdIn', operator:'eq', value:salesId}` (1/SalesId), gộp vào mảng filter hiện có (`buildSearchFilters()` + `etdFiltersRef.current`) trước khi gọi refType=11 (sau T471).
+- [ ] T473 [US2] Sửa nút Clear: reset thêm `itemId`/`configId` về rỗng cùng các điều kiện khác đã reset (sau T472).
+- [ ] T474 [US2] Mở rộng cơ chế khôi phục tìm kiếm khi Back (Update 14): `itemId`/`configId` cũng được lưu/khôi phục cùng cơ chế hiện có của từ khóa chính (sau T472).
+
+### Build verify
+
+- [ ] T475 Build verify: backend `dotnet build` (Domain/Application/Api); frontend `npx eslint` + `npx vite build` trên `SalesOrderOverviewPage.jsx` (sau T467-T474).
+- [ ] T476 [US2] Kiểm thử thủ công theo `quickstart.md` (Update 43 section) trên môi trường thật — **CHƯA chạy** (cần môi trường D365 thật + trình duyệt, ngoài phạm vi phiên đặc tả này).
+
+**Checkpoint**: `refType=21` hoạt động qua `POST /api/dynamics/reference`; Overview lọc đúng theo
+ItemId/ConfigId (AND khi cả hai có giá trị, AND với mọi filter khác đang áp dụng); không khớp hiển thị
+"No data"; Clear/Back-restore hoạt động nhất quán với các điều kiện tìm kiếm khác đã có.

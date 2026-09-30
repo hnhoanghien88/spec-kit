@@ -128,6 +128,36 @@ Kiểm thử:
 
 ---
 
+## Phase 9: Bug fix — xóa Step đang được Template tham chiếu báo lỗi SQL thô (FR-012) — bổ sung 2026-09-30
+
+**Mục tiêu**: Xóa (đơn/nhiều) một Step đang được `eutr_template_details.StepId` tham chiếu hiện báo
+nguyên văn `MySqlException`/lỗi 1451 ra tận frontend. Bắt riêng lỗi 1451, dịch thành thông báo tiếng
+Anh rõ ràng (clone đúng mẫu `EutrReferenceTypesService.DeleteAsync`/`DeleteMultiAsync`, feature
+`006-eutr-reference-types`, đã có sẵn cho ràng buộc khóa ngoại tương tự). Xóa nhiều rollback toàn bộ
+nếu có ≥ 1 Step bị chặn (không xóa một phần).
+**Independent test**: Xóa 1 Step đang được 1 Template dùng → bị chặn, thông báo lỗi tiếng Anh rõ ràng
+(không phải text SQL thô), Step vẫn còn trong bảng. Chọn nhiều Step (có ít nhất 1 Step đang dùng bởi
+Template, còn lại chưa dùng) → xóa nhiều → TOÀN BỘ bị chặn, không Step nào biến mất khỏi bảng.
+
+Backend — clone khuôn mẫu `EutrReferenceTypesService` (đã có sẵn cho ràng buộc khóa ngoại tương tự):
+
+- [X] T031 [P] Sửa `compliance-sys-api/src/ComplianceSys.Application/Services/EutrStepService.cs`: thêm `using MySql.Data.MySqlClient;`, `using Serilog;`, `using System.Data;`; thêm field `IUnitOfWork _unitOfWork` (gán trong constructor, đã có `unitOfWork` tham số sẵn).
+- [X] T032 Sửa tiếp: override `DeleteAsync(long id, string userEmail, CancellationToken ct)` — mở transaction, gọi `_repository.DeleteAsync(id, ct)`, `catch (MySqlException ex) when (ex.Number == 1451)` → rollback, `throw new InvalidOperationException("This step is currently used by one or more templates and cannot be deleted.")` (clone `EutrReferenceTypesService.DeleteAsync`) (phụ thuộc T031).
+- [X] T033 Sửa tiếp: override `DeleteMultiAsync(IEnumerable<long> ids, CancellationToken ct)` — 1 transaction chung cho cả lượt, loop `_repository.DeleteAsync(id, ct)` từng id, `catch (MySqlException ex) when (ex.Number == 1451)` → rollback toàn bộ, `throw new InvalidOperationException("One or more selected steps are currently used by a template and cannot be deleted.")` (clone `EutrReferenceTypesService.DeleteMultiAsync`) (phụ thuộc T032).
+- [X] T034 Build verify: `dotnet build compliance-sys-api/src/ComplianceSys.Application/ComplianceSys.Application.csproj` (sau T031-T033) — 0 lỗi biên dịch (chỉ warning có sẵn từ trước).
+
+Frontend — SỬA cách trích thông báo lỗi khi xóa (file đã tồn tại, không thêm field mới):
+
+- [X] T035 [US4] Sửa catch block của thao tác Delete (đơn) trong `compliance-client/src/presentation/pages/eutr-steps/index.jsx`: đổi `message: e?.message || "Failed to delete"` thành `message: e?.response?.data?.message || e?.message || "Failed to delete"` (khớp đúng cách catch block Create/Update trong CÙNG file đã làm ở T028, phát hiện thiếu sót khi rà soát trước khi sửa).
+- [X] T036 [US4] Sửa catch block của thao tác Delete nhiều trong cùng file `index.jsx` theo đúng cách T035 (phụ thuộc T035, cùng file nên chạy tuần tự).
+- [X] T037 Build verify: `npx eslint` trên `eutr-steps/index.jsx` (sau T035-T036) — 0 lỗi; `npx vite build` — thành công.
+- [ ] T038 Kiểm thử thủ công kịch bản 4 & 5 (User Story 4) trong spec.md: xóa 1 Step đang dùng bởi Template bị chặn kèm thông báo rõ ràng; xóa nhiều với ≥ 1 Step đang dùng bị chặn toàn bộ — **CHƯA CHẠY** (cần backend chạy + dữ liệu Template thật đang tham chiếu Step + đăng nhập user có quyền `EutrSteps.Delete`, thực hiện thủ công trên trình duyệt).
+
+**Checkpoint**: FR-012 hoạt động end-to-end — không còn lộ lỗi SQL thô; xóa nhiều rollback đúng toàn
+bộ khi có Step bị chặn; không phá vỡ US1–US4 hay Phase 8 (FR-005a) đã có.
+
+---
+
 ## Dependencies & thứ tự
 
 - **Phase 1** (Setup) → **Phase 2** (Foundational) là điều kiện tiên quyết của mọi user story.

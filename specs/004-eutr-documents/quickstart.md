@@ -557,11 +557,40 @@ Mở SPA, đăng nhập, vào menu **EUTR documents** (đường dẫn `/eutr/do
     (định dạng bất kỳ được phép) → upload → xác nhận Upload thành công (trước Update 28, giới hạn còn
     10MB nên file này sẽ bị từ chối). Chuẩn bị tiếp 1 file > 20MB → upload → xác nhận bị loại kèm thông
     báo lỗi rõ ràng, không ảnh hưởng các file hợp lệ khác trong cùng lượt.
+27. **Type = "PO" khớp theo tên Step trong toàn bộ `eutr_steps`, không đổi tên file (Update 29,
+    FR-020/FR-074/FR-075/FR-077, sửa lại sau kiểm thử thật)**: Đảm bảo có Step "1.Invoice" và Step
+    "2.Packing list" tồn tại trong hệ thống (`001-eutr-steps`) — **không cần** gán qua Assign Steps
+    (`006-eutr-reference-types`), quyết định ban đầu dùng Assign Steps đã bị loại bỏ vì bảng đó không
+    liên quan tới cây Step của Template. Ở popup Add (Type = "PO", 1 chip mã PO), upload file tên
+    `1.Invoice AP-PD.pdf` → xác nhận Upload thành công, document mới trên danh sách chính có File name
+    **đúng bằng** `1.Invoice AP-PD.pdf` (không đổi thành `1.Invoice.pdf`), và ghi đúng 1 bản ghi
+    `eutr_references` với `StepId` của Step "1.Invoice".
+27a. **File không khớp Step nào — báo lỗi (Update 29, FR-076)**: Tiếp kịch bản 27, upload file tên
+    `baocao.pdf` (không chứa tên "1.Invoice" hay "2.Packing list") → xác nhận file bị loại khỏi lượt
+    upload kèm thông báo lỗi rõ ràng ("No matching step found for this file name"), không tạo document
+    nào cho file này.
+27b. **Khớp nhiều Step cùng lúc (Update 29, FR-075)**: Đảm bảo có thêm Step "Invoice" (tên là chuỗi con
+    của "1.Invoice") tồn tại trong hệ thống. Upload lại file `1.Invoice AP-PD.pdf` → xác nhận hệ thống
+    ghi **2** bản ghi `eutr_references` (1 cho Step "1.Invoice", 1 cho Step "Invoice") cho cùng 1
+    document.
+27c. **`eutr_steps` rỗng (Update 29, FR-074, sửa lại sau kiểm thử thật)**: Trên một môi trường/tenant
+    chưa tạo Step nào — ở popup Add, upload bất kỳ file nào với Type = "PO" → xác nhận mọi file trong
+    lượt đó đều bị loại kèm lỗi "không tìm được step tương ứng".
+27d. **Edit-popup Step combobox cho document Type = "PO" (Update 29, FR-079)**: Mở Edit cho document
+    tạo ở kịch bản 27 → xác nhận combobox Step hiển thị đúng "1.Invoice" (và "Invoice" nếu đã tạo ở
+    27b) — không còn gọi `GET /api/eutr-masters/steps`.
 
 ## Tiêu chí đạt
 
-- Tất cả 26 kịch bản trên (cùng các kịch bản phụ 9a-9s, 10a, 11a-11b, 15a-15e, 16a-16b, 17a, 18a-18i,
-  19a-19b, 20a-20b, 21a-21d, 22a-22d, 24a-24f, 25a, 1a, 5a-5c, 6a) hoạt động đúng.
+- Tất cả 27 kịch bản trên (cùng các kịch bản phụ 9a-9s, 10a, 11a-11b, 15a-15e, 16a-16b, 17a, 18a-18i,
+  19a-19b, 20a-20b, 21a-21d, 22a-22d, 24a-24f, 25a, 27a-27d, 1a, 5a-5c, 6a) hoạt động đúng.
+- **(Update 29, sửa lại sau kiểm thử thật)** Type = "PO" so khớp tên file bằng cách CHỨA tên Step
+  trong **toàn bộ `eutr_steps`** (quyết định ban đầu dùng "Step đã gán cho Type PO qua Assign Steps" đã
+  bị loại bỏ — bảng `eutr_reference_type_details` không liên quan tới cây Step của Template, luôn rỗng
+  trong thực tế) — không còn tra `eutr_master_documents`/`Prefix` — xem
+  SC-020/FR-020/FR-074/FR-075. Không khớp Step nào → loại file kèm lỗi rõ ràng (SC-021/FR-076). File
+  name (`eutr_documents.Name`) của document Type = "PO" tạo mới sau Update 29 giữ nguyên tên file gốc,
+  KHÔNG còn đổi tên theo Step (FR-077) — khác nhánh Type khác "PO" (không đổi, tiếp tục theo Update 26).
 - **(Update 28)** Giới hạn kích thước file (FR-018/FR-073) tăng từ 10MB lên **20MB mỗi file** — xem
   SC-019. Áp dụng đồng nhất cho mọi định dạng được phép (PDF/DOC/DOCX/XLS/XLSX/JPG/PNG/XML/JSON/
   GeoJSON). Không có thay đổi hạ tầng nào khác (Kestrel `MaxRequestBodySize` đã là 200MB, đủ dùng).

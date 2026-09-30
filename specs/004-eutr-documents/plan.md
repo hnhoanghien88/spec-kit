@@ -600,6 +600,100 @@ Kestrel `MaxRequestBodySize` (`Program.cs`, 200MB, cấu hình chung toàn API) 
 Quyết định 77). Không sửa logic khớp Prefix/Step, ghi `eutr_references`, đổi tên file, whitelist định
 dạng (Update 27), hay bất kỳ endpoint/route/DTO/entity nào.
 
+**Cập nhật (spec Session Update 29 — Type = "PO": bỏ khớp Prefix qua `eutr_master_documents`, thay
+bằng so khớp tên Step đã gán cho Type "PO" với tên file; bỏ đổi tên file khi Upload, FR-020/FR-074
+đến FR-079)**: Thay đổi **chỉ nhánh Type = "PO"** của `EutrUploadService.
+UploadMultipleToSharePointAndSaveDataAsync` (`ComplianceSys.Application/Services/EutrUploadService.cs`,
+dòng 66-201 hiện tại). Rà soát mã nguồn khi lập kế hoạch phát hiện: implementation THẬT SỰ hiện tại đã
+âm thầm lệch khỏi văn bản spec FR-023/FR-063 cũ — `EutrMastersRepository.GetMatchingPrefixesAsync` (đã
+tự thu hẹp về **đúng 1** bản ghi thắng cuộc — Prefix dài nhất, tie-break Id nhỏ nhất — ngay bên trong
+repository, dòng 162-176) khiến `UploadMultipleToSharePointAndSaveDataAsync` chỉ từng ghi **đúng 1**
+dòng `eutr_references`/file, không phải N dòng cho N StepId khớp như FR-023 mô tả; đây là drift đã có
+từ trước, ngoài phạm vi Update 29, chỉ ghi nhận lại ở đây (research Quyết định mới) vì Update 29 khôi
+phục đúng hành vi multi-match theo văn bản spec hiện hành (FR-023/FR-075/FR-076) làm baseline mới.
+- **Dependency mới**: Inject thêm `IEutrReferenceTypeDetailsRepository` (đã tồn tại sẵn, feature
+  `006-eutr-reference-types`, KHÔNG entity/repository mới) vào `EutrUploadService` qua constructor —
+  dùng lại nguyên vẹn `GetByTypeIdAsync(long typeId, ct)` (JOIN `eutr_reference_type_details`+
+  `eutr_steps`, trả `{StepId, StepName}`) đã có sẵn cho tính năng Assign Steps (Update 20 của chính
+  spec này), KHÔNG viết SQL mới.
+- **Bỏ dependency `IEutrMastersRepository` khỏi nhánh PO**: Trong
+  `UploadMultipleToSharePointAndSaveDataAsync`, xóa lời gọi `_eutrMastersRepository.
+  GetMatchingPrefixesAsync(file.FileName, ct)` (dòng 100) — `IEutrMastersRepository` vẫn còn được
+  inject (dùng bởi CRUD `eutr-masters` khác, không xóa khỏi constructor nếu còn dùng nơi khác trong
+  service; xác nhận lại lúc code — nếu không còn dùng ở method nào khác thì xóa luôn field/constructor
+  param để tránh dependency chết).
+- **Logic khớp mới**: Trước vòng lặp file (1 lần/batch, không phải 1 lần/file — vì danh sách Step gán
+  cho Type "PO" không đổi theo file), gọi `var poTypeId = request.TypeId ?? PoRefType;` (tái dùng đúng
+  pattern `resolvedRefType` đã có ở dòng 154) rồi `var assignedSteps = await
+  _referenceTypeDetailsRepository.GetByTypeIdAsync(poTypeId, ct);`. Với mỗi file, thay
+  `GetMatchingPrefixesAsync` bằng so khớp C# thuần: `var matchedSteps = assignedSteps.Where(s =>
+  !string.IsNullOrEmpty(s.StepName) && file.FileName.Contains(s.StepName,
+  StringComparison.OrdinalIgnoreCase)).ToList();` — không khớp Prefix nữa, khớp CHỨA (không phải bắt
+  đầu bằng) tên Step.
+- **Không khớp Step nào**: `matchedSteps.Count == 0` → loại file kèm `ErrorMessage = "No matching step
+  found for this file name"` (thay thông báo cũ "No matching prefix found in EUTR masters" — text tiếng
+  Anh theo FR-038 hiện có).
+- **Ghi `eutr_references` cho MỌI Step khớp** (khôi phục đúng FR-023/FR-075, không còn giới hạn 1 bản
+  ghi thắng cuộc): trong transaction hiện có (dòng 145-169), thay đoạn tạo 1 `EutrReferences` bằng
+  vòng lặp `foreach (var matchedStep in matchedSteps)` — ghi 1 dòng/`matchedStep.StepId`, cùng
+  `DocumentId`/`RefType`/`RefValue` (clone đúng pattern vòng lặp `foreach (var refValue in
+  request.RefValues)` đã có sẵn ở `UploadMultipleForReferenceTypeAsync`, dòng 282-296, chỉ đổi biến
+  lặp).
+- **Bỏ đổi tên file (FR-077)**: Xóa lời gọi `BuildRenamedFileName(winningStep?.Name, ...)` và biến
+  `winningStep`/`winningMaster` — `entity.Name = file.FileName` (tên file gốc, không qua
+  `SanitizeNamePart`/`BuildRenamedFileName`). `GetUniqueFileName` (chống trùng tên vật lý SharePoint,
+  FR-078) tiếp tục được gọi nhưng nay nhận thẳng `file.FileName` làm đầu vào thay vì
+  `renamedFileName`.
+- **Không đổi nhánh `UploadMultipleForReferenceTypeAsync`** (Type khác "PO", dòng 206-330) — tiếp tục
+  dùng `BuildRenamedFileName`/Step đã chọn tường minh, không liên quan Update 29.
+- **Frontend — Edit-popup Step combobox cho document Type = "PO" (FR-079)**: `EutrDocumentsFormDialog.
+  jsx` hiện gọi `loadDistinctMasterSteps(stepsList, initialData.name)` (dòng 134-145, qua
+  `GetEutrMastersStepsUseCase` → `GET /api/eutr-masters/steps?fileName=...`, dựa trên
+  `GetMatchingPrefixesAsync`) khi `isPoTypeName(matchedType)` — **đổi sang** dùng lại đúng
+  `loadFilteredSteps(typeId, fullSteps)` đã có sẵn (dòng 109-126, gọi
+  `getByTypeIdEutrReferenceTypeDetailsUseCase.execute(typeId)`, cùng cơ chế Assign Steps đã dùng cho
+  Type khác) rồi lọc thêm theo tên chứa trong `initialData.name` — thêm 1 hàm nhỏ **mới**
+  `loadMatchingStepsForPoByName(typeId, fullSteps, fileName)` = `loadFilteredSteps(...)` rồi
+  `.filter(s => fileName?.toLowerCase().includes((s.name || '').toLowerCase()))`. **0 backend mới cho
+  phần này** — endpoint `GET /api/eutr-reference-type-details/by-type/{typeId}` đã tồn tại sẵn, dùng
+  lại nguyên vẹn. Hàm `loadDistinctMasterSteps`/import `GetEutrMastersStepsUseCase` không còn được gọi
+  ở đây nữa nhưng KHÔNG xóa file `GetEutrMastersStepsUseCase.js`/endpoint `GET /api/eutr-masters/steps`
+  (vẫn dùng bởi `TemplateBuilderPage.jsx`/`AssignStepsPage.jsx`, ngoài phạm vi feature này).
+- **Không migration DB mới** — không entity/cột mới; `eutr_reference_type_details` đã tồn tại sẵn từ
+  Update 20. Bảng `eutr_master_documents`/entity `EutrMastersDocument`/repository
+  `EutrMastersRepository`/`GetMatchingPrefixesAsync`/`GetDistinctStepsAsync`/`GetMatchingStepsAsync`/
+  endpoint `GET /api/eutr-masters/steps` **không bị xóa** (vẫn dùng bởi `002-eutr-masters` CRUD và 2
+  màn hình khác nêu trên) — chỉ không còn được `EutrUploadService` tham chiếu.
+
+**Sửa lại Update 29 ngay sau kiểm thử thật** (xem research Quyết định 81 cho phân tích đầy đủ): Toàn bộ
+đoạn trên mô tả **bản nháp đầu tiên** của Update 29, dùng `IEutrReferenceTypeDetailsRepository`/Assign
+Steps làm nguồn Step. Ngay sau khi triển khai, người yêu cầu tính năng báo lỗi: upload file
+`1.Invoice AP-PD.pdf` vào một template đang hiển thị rõ Step "1.Invoice" vẫn bị từ chối "No matching
+step found for this file name". Nguyên nhân: `eutr_reference_type_details` (Assign Steps) không liên
+quan gì tới cây Step của Template (nguồn hiển thị thật là `eutr_template_details`), nên luôn RỖNG cho
+Type "PO" trong thực tế — `assignedSteps` rỗng khiến MỌI file bị từ chối. **Đã sửa lại**: bỏ hẳn
+`IEutrReferenceTypeDetailsRepository` khỏi `EutrUploadService` (xóa field/tham số constructor); thay
+`assignedSteps` bằng `var allSteps = (await _stepsRepository.GetAllAsync(ct)).ToList();` (dùng lại
+`IRepository<EutrStep, long>` đã inject sẵn từ trước, method `GetAllAsync` có sẵn trên interface
+generic — không cần SQL/repository mới); matching đổi từ `s.StepName`/`s.StepId` (DTO Assign Steps)
+sang `s.Name`/`s.Id` (entity `EutrStep` thật). Frontend tương ứng: `loadMatchingStepsForPoByName` trong
+`EutrDocumentsFormDialog.jsx` đổi từ gọi `loadFilteredSteps(typeId, fullSteps)` (Assign Steps) sang lọc
+thẳng trên `fullSteps` (toàn bộ `eutr_steps` đã tải sẵn ở component, tham số `typeId` bị bỏ) — trở
+thành hàm đồng bộ (không còn `await`/gọi API). Mọi mô tả "Step đã gán cho Type PO qua Assign Steps"
+trong đoạn Update 29 phía trên nay chỉ còn giá trị lịch sử (bản nháp đầu tiên), không phải hành vi
+cuối cùng.
+
+**Cập nhật (spec Session Update 30 — popup Add ẩn Valid from/Valid to trừ khi Type = "Vendor",
+FR-080)**: Thuần frontend, **0 backend/entity/DTO/endpoint/route mới**. Chỉ sửa
+`EutrDocumentsFormDialog.jsx`: thêm helper `isVendorTypeName(refType)` (cùng mẫu
+`isPoTypeName`/`isInvoiceTypeName` đã có) và biến `showValidDates = isEdit || isVendorTypeName(type)` —
+mode `edit` luôn `true` (không đổi hành vi Edit, FR-030), mode `add` chỉ `true` khi Type = "Vendor". Bọc
+2 `TextField` Valid from/Valid to (và dòng lỗi `dateValid`) trong `{showValidDates && (...)}`. Reset về
+mặc định khi đổi Type ra khỏi "Vendor" (FR-080): thêm vào `handleTypeChange` (đã có sẵn, xử lý reset
+chip/Step/Invoice khi đổi Type) 2 dòng `if (!isVendorTypeName(newType)) { setValidFrom(todayInputValue());
+setValidTo(MAX_VALID_TO); }` — dùng lại đúng 2 hằng số/hàm mặc định đã có từ Update 19
+(`todayInputValue()`/`MAX_VALID_TO`), không cần logic mới.
+
 ## Technical Context
 
 **Language/Version**: .NET 8 (backend); JavaScript (ES modules), React 18 + Vite (frontend)
@@ -1258,6 +1352,16 @@ của việc tránh over-engineering theo Nguyên tắc II/III (research Quyết
 không thêm entity/controller/route/endpoint/dependency/cấu hình server mới nào (đã xác nhận Kestrel
 200MB đã đủ, research Quyết định 77).
 
+**Re-check sau Update 29** (bỏ khớp Prefix qua `eutr_master_documents`, thay bằng so khớp tên Step đã
+gán cho Type "PO"; bỏ đổi tên file khi Upload cho nhánh PO): vẫn PASS cả 5 nguyên tắc — không thêm
+entity/controller/route/endpoint mới nào (dùng lại nguyên vẹn `IEutrReferenceTypeDetailsRepository.
+GetByTypeIdAsync` và endpoint `GET /api/eutr-reference-type-details/by-type/{typeId}` đã tồn tại từ
+Update 20); dependency mới duy nhất (`IEutrReferenceTypeDetailsRepository` vào `EutrUploadService`) là
+tái sử dụng interface có sẵn, không tạo abstraction mới (Nguyên tắc II/III); việc bỏ hẳn logic đổi tên
+cho nhánh PO (không giữ lại code chết `winningMaster`/`BuildRenamedFileName` cho nhánh này) nhất quán
+với cách Update 26/29 tránh over-engineering; không route/policy/menu/UI label mới nào phát sinh
+(Nguyên tắc IV/V) ngoài 1 dòng text lỗi đổi nội dung (English, theo FR-038 hiện có).
+
 ## Project Structure
 
 ### Documentation (this feature)
@@ -1888,6 +1992,36 @@ compliance-sys-api/src/ComplianceSys.Application/Services/
 
 compliance-client/src/presentation/pages/eutr-documents/components/
 └── EutrDocumentsFormDialog.jsx # (SỬA) MAX_EUTR_UPLOAD_SIZE_BYTES: 10 * 1024 * 1024 -> 20 * 1024 * 1024
+```
+
+Backend + Frontend — **Update 29** (Type = "PO": so khớp tên Step đã gán cho Type "PO" thay Prefix; bỏ đổi tên file khi Upload cho nhánh PO; KHÔNG migration/entity/DTO/endpoint/route mới):
+
+```text
+compliance-sys-api/src/ComplianceSys.Application/Services/
+└── EutrUploadService.cs
+    # (SỬA) constructor: + IEutrReferenceTypeDetailsRepository (xóa IEutrMastersRepository field
+    #        neu khong con noi nao khac trong file dung)
+    # (SỬA) UploadMultipleToSharePointAndSaveDataAsync (dong 66-201):
+    #        - bo GetMatchingPrefixesAsync(file.FileName, ct); nap 1 lan/batch danh sach Step gan
+    #          Type "PO" qua _referenceTypeDetailsRepository.GetByTypeIdAsync(poTypeId, ct)
+    #        - so khop file.FileName.Contains(step.StepName, OrdinalIgnoreCase) cho tung Step
+    #        - khong khop Step nao -> ErrorMessage = "No matching step found for this file name"
+    #        - vong lap ghi 1 dong eutr_references / Step khop (khoi phuc FR-023, khong con gioi
+    #          han 1 ban ghi thang cuoc)
+    #        - bo BuildRenamedFileName cho nhanh nay; entity.Name = file.FileName (ten file goc);
+    #          GetUniqueFileName nhan thang file.FileName
+
+compliance-client/src/presentation/pages/eutr-documents/components/
+└── EutrDocumentsFormDialog.jsx
+    # (SỬA) them ham loadMatchingStepsForPoByName(typeId, fullSteps, fileName) = goi lai
+    #        loadFilteredSteps(typeId, fullSteps) (da co, dung eutr_reference_type_details) roi loc
+    #        .filter(s => fileName?.toLowerCase().includes((s.name||'').toLowerCase()))
+    # (SỬA) nhanh isPoTypeName(matchedType) trong useEffect nap Edit: doi
+    #        loadDistinctMasterSteps(stepsList, initialData.name) -> loadMatchingStepsForPoByName(
+    #        initialData.refType, stepsList, initialData.name)
+    # (KHONG XOA) loadDistinctMasterSteps/import GetEutrMastersStepsUseCase van con dung o noi khac
+    #        trong file? xac nhan luc code - neu khong con cho goi nao khac thi xoa ham + import,
+    #        KHONG xoa GetEutrMastersStepsUseCase.js (dung boi TemplateBuilderPage.jsx/AssignStepsPage.jsx)
 ```
 
 Frontend — **CÁC FILE MỚI** (clone `eutr-masters` cho list/Edit-popup; clone routing `eutr-templates` cho Add):

@@ -1661,3 +1661,54 @@ const MAX_EUTR_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024; // 20MB - Update 28 (truoc:
 // handleFilesSelected - chuoi thong bao loi cung phai doi (khong tham chieu hang so, hardcode rieng)
 rejectedFiles.push(`${file.name} (exceeds 20MB limit)`); // truoc: "exceeds 10MB limit"
 ```
+
+## Update 29 — Type = "PO": bỏ khớp Prefix (`eutr_master_documents`), thay bằng so khớp tên Step đã gán cho Type "PO" (`eutr_reference_type_details`); bỏ đổi tên file khi Upload cho nhánh PO (FR-020/FR-074 đến FR-079)
+
+Không entity/cột/migration mới. `eutr_master_documents`/`EutrMastersDocument` KHÔNG bị xóa (vẫn CRUD
+bởi `002-eutr-masters`, vẫn dùng bởi `TemplateBuilderPage.jsx`/`AssignStepsPage.jsx` qua
+`GET /api/eutr-masters/steps`) — chỉ không còn được `EutrUploadService` tham chiếu khi Upload/Edit Type
+= "PO".
+
+```csharp
+// EutrUploadService.cs - UploadMultipleToSharePointAndSaveDataAsync, nhanh Type = "PO"
+// TRUOC (Update 25/26, da lech spec tu truoc - xem research Quyet dinh 79):
+var matchedMasters = await _eutrMastersRepository.GetMatchingPrefixesAsync(file.FileName, ct);
+var winningMaster = matchedMasters.FirstOrDefault(m => m.StepId.HasValue);
+// ... entity.Name = BuildRenamedFileName(winningStep?.Name, winningMaster.StepId.Value, file.FileName);
+// ... ghi 1 dong eutr_references cho winningMaster.StepId
+
+// SAU (Update 29, sua lai ngay sau kiem thu that - xem research Quyet dinh 81; ban dau dung
+// IEutrReferenceTypeDetailsRepository/Assign Steps nhung bang do luon RONG cho Type "PO" trong thuc
+// te, khong lien quan gi cay Step cua Template, nen MOI file deu bi bao loi sai):
+var allSteps = (await _stepsRepository.GetAllAsync(ct)).ToList(); // 1 lan/batch, toan bo eutr_steps
+// ... trong vong lap file:
+var matchedSteps = allSteps
+    .Where(s => !string.IsNullOrEmpty(s.Name)
+        && file.FileName.Contains(s.Name, StringComparison.OrdinalIgnoreCase))
+    .ToList();
+if (matchedSteps.Count == 0)
+{
+    // ErrorMessage = "No matching step found for this file name"
+    continue;
+}
+// entity.Name = file.FileName;  // KHONG doi ten nua
+// GetUniqueFileName(file.FileName) thay vi GetUniqueFileName(renamedFileName)
+// ghi 1 dong eutr_references / matchedStep.Id trong matchedSteps (khoi phuc multi-match, FR-023/FR-075)
+```
+
+`_stepsRepository` (`IRepository<EutrStep, long>`) đã được inject sẵn từ trước Update 29 (dùng ở nhánh
+`UploadMultipleForReferenceTypeAsync`) — `GetAllAsync(ct)` là method generic có sẵn trên interface,
+không cần SQL/repository mới. `IEutrReferenceTypeDetailsRepository` (thêm tạm ở bản nháp đầu của Update
+29) đã bị gỡ khỏi constructor sau khi sửa lại.
+
+```js
+// EutrDocumentsFormDialog.jsx - Edit-popup Step combobox cho document Type = "PO"
+// TRUOC: loadDistinctMasterSteps(stepsList, initialData.name)  // GET /api/eutr-masters/steps?fileName=...
+// SAU (sua lai ngay sau kiem thu that): loadMatchingStepsForPoByName(stepsList, initialData.name)
+// - dong bo (khong con await/goi API) vi chi loc tren fullSteps (toan bo eutr_steps) da tai san,
+//   khong con qua loadFilteredSteps (Assign Steps) nua.
+function loadMatchingStepsForPoByName(fullSteps, fileName) {
+  const normalizedFileName = (fileName || '').toLowerCase();
+  return (fullSteps || []).filter(s => normalizedFileName.includes((s.name || '').toLowerCase()));
+}
+```

@@ -10,6 +10,34 @@
 
 ## Clarifications
 
+### Session 2026-09-30 (Update 11) — Kế thừa `004-eutr-documents` Update 29 (matching Type = "PO" theo tên Step, bỏ đổi tên khi Upload); cây Template hiển thị tên file thay tên Step khi đã upload; bỏ đổi tên file khi Download cho document Type = "PO"
+
+- Input: "cập nhật 004-eutr-documents, 005-eutr-sales-orders, 012-eutr-purchase-orders khi upload
+  file với type = PO, bỏ logic kiểm tra với eutr_master_documents. thay đổi thành so sánh tên step
+  với tên file... Màn hình hiển thị template, khi file đã upload, phần tên step sẽ lấy tên file gắn
+  vào để hiện thị (...) file chưa upload thì hiển thị tên step bình thường, bỏ logic đổi tên file
+  theo tên step, tên file ntn giữ nguyên khi up và khi tải".
+- Kế thừa (không cần thay đổi riêng): Nút **Upload**/**Edit** ở `PurchId/View` (FR-021/FR-022) tiếp
+  tục gọi đúng popup Add/Edit dùng chung với `004-eutr-documents` — nên tự động kế thừa nguyên vẹn
+  thay đổi matching/bỏ đổi tên khi Upload cho Type = "PO" đã đặc tả ở `004-eutr-documents` Update 29
+  (FR-020, FR-074 đến FR-079); riêng ở màn hình này, popup Upload còn tự điền sẵn Type = "PO" (Update
+  1, FR-024) — nếu người dùng giữ nguyên Type đó, vẫn áp dụng đúng nhánh Type = "PO" mới.
+- Bối cảnh (rà soát mã nguồn): Cây Step ở `PurchId/View` (clone cùng cấu trúc `TreeNode` với Map File
+  Step 2 của `005-eutr-sales-orders`) hiện LUÔN hiển thị `node.stepName` làm nhãn — chưa có logic thay
+  nhãn theo tên file đã upload. Nút Download ở AVAILABLE FILES (Update 9, FR-037/FR-038) hiện luôn
+  tính lại tên file khi tải về = `Name` của Step cho **mọi** document, bất kể Type.
+- Change (MỚI — cây Template): Áp dụng nguyên vẹn quyết định đã chốt ở `005-eutr-sales-orders` Update
+  37 (xem FR-216 và Clarifications Update 37 của đặc tả đó để biết đầy đủ rationale) vào `PurchId/View`:
+  mỗi node Step trong cây đang có ít nhất một tài liệu khớp (missing = false) MUST hiển thị nhãn = tên
+  file (bỏ đuôi) của tài liệu khớp **đầu tiên**, thay cho `Name` của Step; node CHƯA có tài liệu nào
+  khớp (còn "missing") MUST tiếp tục hiển thị `Name` của Step. Áp dụng cho mọi Type tài liệu.
+- Change (Download, Type = "PO"): Áp dụng nguyên vẹn quyết định đã chốt ở `005-eutr-sales-orders`
+  FR-217 vào `PurchId/View`: với document Type = "PO", tên file khi tải về (nút Download ở dòng
+  AVAILABLE FILES lẫn nút Download trong popup View, FR-037/FR-038) KHÔNG còn tính lại = Step Name —
+  MUST dùng đúng `eutr_documents.Name` đã lưu (từ `004-eutr-documents` Update 29 trở đi là tên file
+  gốc) + đuôi file gốc. Document Type khác "PO" (nếu có, qua việc người dùng tự đổi Type ở popup Add)
+  tiếp tục tính lại tên = Step Name (FR-038) như hiện có.
+
 ### Session 2026-09-24 (Update 10) — Thêm nút Search rõ ràng kế bên ô tìm kiếm ở danh sách Purchase Orders
 
 - Input: "Thêm nút search kế bên text search để user có thể click rồi danh sách hiển thị theo điều
@@ -289,7 +317,12 @@ File** của 005-eutr-sales-orders (`eutr/sales-orders/{SalesId}/map-file`), nh�
   **AVAILABLE FILES** liệt kê tài liệu thật đã ghi nhận cho Purchase Order này (kèm trạng thái đã có
   tài liệu/còn thiếu cho từng step), và các thao tác **Upload** (thêm tài liệu mới) và **Edit** (sửa
   tài liệu đã có) — giữ nguyên hành vi như Step 2 của màn hình Map File, tái sử dụng đúng các popup
-  Add/Edit tài liệu đã có ở 004-eutr-documents.
+  Add/Edit tài liệu đã có ở 004-eutr-documents. **(Update 11)** Node Step trong cây đã có ít nhất một
+  tài liệu khớp MUST hiển thị nhãn = tên file (bỏ đuôi) của tài liệu khớp đầu tiên, thay cho tên Step;
+  node còn "missing" tiếp tục hiển thị đúng tên Step. Với Type = "PO" (tự điền sẵn, xem Update 1), tên
+  file MUST được xác định bằng cách so khớp tên file với tên (các) Step đã gán cho Type "PO" (không
+  còn qua `eutr_master_documents`) và MUST giữ nguyên tên file gốc, không đổi tên (kế thừa
+  `004-eutr-documents` Update 29).
 
 **Why this priority**: Đây là hành động chính người dùng thực hiện sau khi phát hiện một Purchase
 Order còn thiếu tài liệu ở danh sách — không có giá trị nào nếu người dùng không thể mở và bổ sung
@@ -363,6 +396,16 @@ trạng thái của step đó trong cây được cập nhật ngay mà không c
     `EutrDocuments.Create` (hoặc ngược lại), **When** mở màn hình chi tiết, **Then** đúng một trong hai
     nút Upload/Edit hiển thị theo đúng quyền tương ứng của nó, nút còn lại bị ẩn — không có trường hợp
     ẩn cả hai chỉ vì thiếu một quyền.
+20. **(Update 11, FR-040)** **Given** Step "1.Invoice" trong cây template của Purchase Order đang có 1
+    tài liệu khớp với `eutr_documents.Name` = `"1.Invoice AP-PD.pdf"`, **When** xem cây thư mục,
+    **Then** node của Step đó hiển thị nhãn = `"1.Invoice AP-PD"` (bỏ đuôi `.pdf`) thay cho
+    `"1.Invoice"`; upload file tên `baocao.pdf` (không chứa tên Step nào đã gán cho Type "PO") với
+    Type = "PO" MUST bị loại kèm lỗi "không tìm được step tương ứng" (kế thừa
+    `004-eutr-documents` FR-076).
+21. **(Update 11, FR-041)** **Given** một document Type = "PO" đã ghi nhận cho Purchase Order này, tạo
+    MỚI sau `004-eutr-documents` Update 29 (File name = tên file gốc, không bị đổi tên), **When** nhấn
+    nút Download (dòng AVAILABLE FILES hoặc trong popup View), **Then** tên file tải về **đúng bằng**
+    `eutr_documents.Name` đã lưu — KHÔNG còn tính lại thành Step Name.
 
 ---
 
@@ -539,10 +582,12 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
   ngay sau nút Edit — hiển thị cho mọi document có `FileId` (cùng điều kiện với nút View hiện có,
   không phụ thuộc quyền Edit ở FR-033). Nhấn nút MUST tải trực tiếp nội dung file thật qua `FileId`
   (dùng chung endpoint `get-file-by-idref` đã có), KHÔNG mở popup View.
-- **FR-038 (Update 9)**: Tên file khi tải về (cả nút Download mới ở FR-037 lẫn nút Download có sẵn
+- **FR-038 (Update 9; Type = "PO" sửa đổi ở Update 11, xem FR-041)**: Tên file khi tải về (cả nút
+  Download mới ở FR-037 lẫn nút Download có sẵn
   trong popup View) MUST được tính lại tại thời điểm tải = `Name` của Step (Step đầu tiên nếu 1 file
-  khớp nhiều Step) + đuôi file gốc — không đọc thẳng `eutr_documents.Name` đã lưu, áp dụng cho mọi
-  document kể cả document tạo trước `004-eutr-documents` Update 26. Việc này CHỈ ảnh hưởng tên file lưu
+  khớp nhiều Step) + đuôi file gốc — không đọc thẳng `eutr_documents.Name` đã lưu, áp dụng cho document
+  Type khác "PO" (mọi document, kể cả document tạo trước `004-eutr-documents` Update 26); với Type =
+  "PO", xem FR-041 (Update 11) — không còn tính lại. Việc này CHỈ ảnh hưởng tên file lưu
   về máy — KHÔNG ghi đè `eutr_documents.Name`, KHÔNG ảnh hưởng File name hiển thị ở màn hình này hay
   bất kỳ màn hình nào khác. Chi tiết đầy đủ (bao gồm fallback khi không có Step nào khớp) xem
   `005-eutr-sales-orders` FR-194 đến FR-197, áp dụng nguyên vẹn cho `PurchId/View`.
@@ -551,6 +596,16 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
   (về lại trang đầu), không cần đợi cơ chế tự động lọc sau debounce (500ms kể từ lần gõ cuối, hành vi
   hiện có ở FR-009) kích hoạt. Cơ chế tự động lọc sau debounce MUST tiếp tục hoạt động song song,
   không bị thay thế bởi nút Search mới.
+- **FR-040 (Update 11)**: Trên cây thư mục ở `PurchId/View` (cùng cấu trúc `TreeNode` với Map File
+  Step 2 của `005-eutr-sales-orders`), mỗi node Step đang có ít nhất một tài liệu khớp (không còn
+  "missing") MUST hiển thị nhãn = tên file (bỏ phần mở rộng) của tài liệu khớp **đầu tiên**, thay cho
+  `Name` của Step. Node Step còn "missing" MUST tiếp tục hiển thị `Name` của Step. Áp dụng nguyên vẹn
+  quyết định đã chốt ở `005-eutr-sales-orders` FR-216 vào màn hình này.
+- **FR-041 (Update 11)**: Với document có Type = "PO", tên file khi tải về (cả nút Download mới ở
+  FR-037 lẫn nút Download có sẵn trong popup View) KHÔNG còn được tính lại theo FR-038 — MUST dùng
+  đúng `eutr_documents.Name` đã lưu (từ `004-eutr-documents` Update 29 trở đi là tên file gốc đã
+  upload) + đuôi file gốc, không đổi. Áp dụng nguyên vẹn quyết định đã chốt ở `005-eutr-sales-orders`
+  FR-217 vào màn hình này.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -587,13 +642,20 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
 - **SC-007** (Update 5): 100% người dùng không có quyền `EutrDocuments.Update` không nhìn thấy nút
   Edit trên bất kỳ dòng AVAILABLE FILES nào của màn hình chi tiết Purchase Order — trong khi người
   dùng có đủ quyền tiếp tục thấy và dùng được nút này đúng như hành vi trước Update 5.
-- **SC-008 (Update 9)**: 100% lượt nhấn nút Download mới ở AVAILABLE FILES (hoặc nút Download có sẵn
-  trong popup View) tải về đúng nội dung file thật, với tên file lưu về máy = đúng `Name` của Step
+- **SC-008 (Update 9; Type = "PO" sửa đổi ở Update 11, xem SC-011)**: 100% lượt nhấn nút Download mới
+  ở AVAILABLE FILES (hoặc nút Download có sẵn
+  trong popup View) trên document Type khác "PO" tải về đúng nội dung file thật, với tên file lưu về máy = đúng `Name` của Step
   (Step đầu tiên nếu khớp nhiều Step) + đuôi file gốc — kể cả với document tạo trước
   `004-eutr-documents` Update 26 (còn giữ tên cũ dạng Prefix + Step Name trong `eutr_documents.Name`).
 - **SC-009 (Update 10)**: 100% lượt nhấn nút Search mới áp dụng ngay từ khóa đang nhập vào danh sách
   (không cần đợi 500ms debounce) — người dùng có cách chủ động "tìm ngay" bên cạnh cơ chế tự động lọc
   hiện có.
+- **SC-010 (Update 11)**: 100% node Step trong cây thư mục có ít nhất một tài liệu khớp hiển thị nhãn =
+  tên file (bỏ đuôi) của tài liệu khớp đầu tiên thay cho tên Step; 100% node Step còn "missing" tiếp
+  tục hiển thị đúng tên Step.
+- **SC-011 (Update 11)**: 100% lượt Download trên document Type = "PO" tải về file với tên đúng bằng
+  `eutr_documents.Name` đã lưu (không còn tính lại thành Step Name); document Type khác "PO" tiếp tục
+  theo SC-008 như hiện có.
 
 ## Assumptions
 
@@ -645,3 +707,10 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
   liệu dùng chung với 004-eutr-documents) — không phải quyền mới. Giao diện xác định quyền này qua
   `permissionList` của menu `eutr-documents` (cùng cơ chế FR-033/Update 28) — không qua endpoint dò
   quyền nào; endpoint `can-update` từng được thêm trong bản đầu của Update này đã bị xoá.
+- (Update 11) Việc kế thừa matching/bỏ đổi tên khi Upload cho Type = "PO" (`004-eutr-documents` Update
+  29) không cần thay đổi backend riêng ở màn hình này — Upload/Edit ở `PurchId/View` gọi đúng
+  popup/luồng dùng chung, không có logic đặt tên/matching độc lập.
+- (Update 11) Nhãn cây theo tên file (FR-040) và bỏ đổi tên khi Download cho Type = "PO" (FR-041) áp
+  dụng NGUYÊN VẸN quyết định đã chốt ở `005-eutr-sales-orders` Update 37 (FR-216/FR-217) — không phát
+  sinh quyết định thiết kế riêng nào khác cho `012-eutr-purchase-orders`, vì cả hai màn hình dùng chung
+  cấu trúc `TreeNode`/luồng Download.

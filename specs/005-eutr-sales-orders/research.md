@@ -3080,3 +3080,557 @@ no-dead-code convention.
 - **Fix**: `handleDownloadFile` now checks `response.success`/`response.data` and reads
   `response.data` as `loadedFile`, mirroring `FilePreviewer.jsx`'s own unwrapping exactly, before doing
   anything else with it.
+
+## Update 34/35 (2026-09-29/30): Step 1 (Map File) & Selected Purchase Orders (View) read every column directly from `RSVNEutrSalesOrderPurchLines` (refType=20); `QtyPercent`/`Unit` added end-to-end
+
+### Decision 84 — Make refType=20 the sole row source for both tables; drop refType=16 and the Update 17/18 group-by-PO string join entirely (spec FR-198/FR-199)
+
+- **Decision**: `MapFilePage.jsx` Step 1 and `ViewSalesOrderPage.jsx`'s Selected Purchase Orders table
+  both stop calling reference type = 16 (`RSVNEutrSalesOrderPurchases`) for PO/Template/Order account/
+  Vendor name. Instead, a single refType=20 (`RSVNEutrSalesOrderPurchLines`) call — already fetched by
+  both screens since Update 17/18 — supplies every column: `RSVNRefPurchId`→PO, `RSVNEutrTemplate`→
+  Template, `OrderAccount`→Order account, `Name`→Vendor name, `ProductVariant`→Variant, `ItemId`→
+  Material, `Qty`→Qty. The table row grain changes from "1 row per PO" to "1 row per refType=20 record"
+  — a PO with N line records now renders N rows, each with that record's own Variant/Material/Qty
+  values, rather than 1 row with all N records' Variant/Material values joined into one comma-separated
+  cell.
+- **Rationale**: The request was explicit and literal — "chỉ lấy dữ liệu từ api
+  `RSVNEutrSalesOrderPurchLines` để hiển thị, bỏ logic hiển thị chuỗi nối" (only take data from this one
+  API to display, remove the string-join display logic). `RSVNEutrSalesOrderPurchLines` already carries
+  every field the table needs (confirmed by reading the domain model) — there is no missing column that
+  would force keeping refType=16 for anything in this table. Dropping the join also fixes a latent
+  correctness gap the join mechanism had: a PO with multiple lines showed the *same* joined
+  Variants/Materials string on every duplicate PO row the underlying refType=16 source could already
+  produce (see Decision 85), so no individual row's Variant/Material was actually traceable to its own
+  Qty — reading directly off each refType=20 record removes that mismatch entirely.
+- **Alternatives considered**: (1) Keep refType=16 for PO/Template/Order account/Vendor name and only
+  swap the Variant/Material *values* to per-record instead of joined-string, dropping the join but
+  keeping 1-row-per-PO by showing only the first matching line's Variant/Material — rejected: this
+  either silently drops data for multi-line POs (which line "wins"?) or reintroduces some other
+  aggregation the request explicitly asked to remove; it also ignores the literal "chỉ lấy dữ liệu từ
+  api ... để hiển thị" instruction, which names one API as the *only* source, not "the only source for
+  2 of 8 columns." (2) Keep both refType=16 and refType=20 calls, with refType=20 now also supplying
+  Qty/Unit/Percentage-used per-row while refType=16 still backs Select/disable logic — rejected: this
+  doubles the network calls this table needs for no behavioral gain, since refType=20 already carries
+  `RSVNEutrTemplate` (usable for the disable condition, Decision 86) and the two API calls could disagree
+  on which POs exist for edge-case D365 data, which the single-source design avoids by construction.
+
+### Decision 85 — Select/disable/Save PO Mapping stay keyed by `purchId` (`Set`), unaffected by the new multi-row-per-PO grain (spec FR-203)
+
+- **Decision**: `handleTogglePO(purchId)` and the `selectedPOs` `Set<purchId>` in `MapFilePage.jsx` are
+  unchanged. Each table row's Checkbox reads `selectedPOs.has(line.purchId)` and the disable condition
+  reads `!line.eutrTemplate` off that same row's own record — both already correct for a PO spanning
+  multiple rows, since every row of the same PO carries the same `purchId` key (toggling one row updates
+  the shared `Set` entry, which every other row with that `purchId` also reads on next render) and the
+  same `RSVNEutrTemplate` value (a per-PO attribute in D365, replicated onto every one of that PO's line
+  records). `handleSavePOMapping` still derives its payload from `poList` (deduped by `purchId`), so
+  Save persists exactly 1 `{purchId, templateCode}` entry per unique PO regardless of how many table rows
+  that PO occupies.
+- **Rationale**: No code change was needed here because the pre-existing design already keyed selection
+  state by PO identity, not by row/array index — a fact confirmed by reading `MapFilePage.jsx` before
+  making any edit (Constitution Principle III: don't rebuild a mechanism that's already correct for the
+  new shape). This also explains a screenshot the requester attached alongside the original Update 34
+  ask, showing the same PO number appearing twice in the Step 1 table with identical Template/Order
+  account values: today's (pre-Update-34) refType=16 PO source can itself return more than one record
+  for the same `PurchId` (confirmed: `poList.map(po => ...)` has no client-side dedupe), so duplicate PO
+  rows already existed before this update — Update 34 does not introduce row duplication, it makes the
+  already-duplicated rows' Variant/Material/Qty values individually correct instead of each showing an
+  identical, PO-wide joined string.
+- **Alternatives considered**: Re-key selection state by a composite `purchId+lineIndex` to give each
+  displayed row its own independent checkbox — rejected: the spec (FR-203) explicitly requires selection
+  to keep operating at the PO level ("Select checkbox ... MUST tiếp tục hoạt động đúng ở cấp PO"), and a
+  per-line checkbox would let a user select only *some* lines of one PO, a state `eutr_purchase_
+  attachments` (`{SalesId, PurchId, TemplateCode}`, no line-level column) has no way to represent.
+
+### Decision 86 — `QtyPercent`/`Unit` added as new `string` properties, threaded through 3 files (domain model → shared DTO → `case 20:` mapping); `FilterableFields` and every other `case N:` left untouched (spec FR-202/FR-208)
+
+- **Decision**: `RSVNEutrSalesOrderPurchLines.cs` gains `public string QtyPercent { get; set; }` (Update
+  34) and `public string Unit { get; set; }` (Update 35), alongside the existing `string Qty` property.
+  `ComplDynReferenceResponseDto.cs` (the one flat DTO shared by every `refType`) gains matching
+  `QtyPercent`/`Unit` string properties. `ComplDynamicsService.MapDynamicsResponse`'s `case 20:` gains
+  `QtyPercent = x.QtyPercent` and `Unit = x.Unit` — every other assignment already in that `case` block
+  (`Code = x.ItemId`, `CustAccount = x.OrderAccount`, `Qty = long.TryParse(...)`, etc.) is unchanged.
+  Both new DTO fields serialize via the default `System.Text.Json` camelCase formatter (confirmed:
+  `Program.cs` registers no custom naming policy) as `qtyPercent`/`unit` — the frontend reads
+  `item.qtyPercent`/`item.unit`.
+- **Rationale**: Codebase research (confirmed before writing any code) established that
+  `ComplDynReferenceResponseDto` is a single, fixed, flat DTO reused across every `refType`'s hand-written
+  `case N:` mapping — there is no generic/reflection-based passthrough, so a new domain-model property is
+  **not** automatically visible in the API response; it must also be added to the shared DTO and to the
+  one `case` block that owns this `refType`. `string` (not a numeric type) was chosen for both new
+  properties to mirror the existing `Qty` *domain-model* property's own type (also `string` — the D365
+  entity's raw field type) and to avoid making an unverified assumption about `QtyPercent`'s numeric
+  format (e.g. whether D365 already includes a `%` suffix, decimal precision, etc.); the frontend appends
+  a literal `%` when rendering `qtyPercent` only if a value is present, matching the pre-Update-34
+  placeholder's own `{po.qty} %` display convention.
+- **Alternatives considered**: (1) Add `QtyPercent`/`Unit` to `FilterableFields` too — rejected: codebase
+  research confirmed this dictionary is consumed only by `ODataFilterBuilder`/`EtdWeekFilterBuilder` for
+  WHERE-clause/`$orderby` column validation on the `reference` endpoint's `filters`/`sortColumn`
+  parameters, never for controlling which fields serialize in the response; neither new field needs to be
+  filterable/sortable per the spec, so adding them would be unused surface area. (2) Parse `QtyPercent`
+  into a numeric DTO field (like `Qty`'s `long`) — rejected: `Qty`'s numeric parse exists because the
+  *display* need is a plain number; `Percentage used` had no such established numeric contract before
+  this update (its pre-existing placeholder just borrowed `Qty`'s already-parsed number), so introducing
+  a new numeric-parse assumption for a field with an unconfirmed raw D365 format carries needless risk of
+  a `TryParse` silently defaulting to `0` for values that don't fit whatever numeric shape was guessed.
+
+### Decision 87 — Frontend reads refType=20's Order account off `item.custAccount`, not `item.orderAccount`; the existing `case 20:` `OrderAccount`→`CustAccount` rename is left as-is
+
+- **Decision**: `case 20:`'s pre-existing `CustAccount = x.OrderAccount` line (present before Update 34)
+  is **not** changed to also/instead populate the DTO's own `OrderAccount` property. `MapFilePage.jsx`/
+  `ViewSalesOrderPage.jsx` read `item.custAccount` when building each `poLines`/`poRows` entry's
+  `orderAccount` field for refType=20 responses.
+- **Rationale**: Codebase research (a dedicated investigation before writing any code) found that
+  `case 20:`'s existing mapping already renames `OrderAccount`→`CustAccount` on the shared DTO — a
+  different choice than `case 16:`'s `OrderAccount = x.OrderAccount` (no rename) — and that nothing in
+  the frontend reads `item.custAccount` for refType=20 today (the whole field was unused pre-Update-34).
+  Two ways to reconcile this were available: change the backend mapping to also emit `OrderAccount =
+  x.OrderAccount` for refType=20 (making both refTypes consistent under the same DTO field name), or
+  leave the 4-year-old mapping alone and have the frontend read the field name refType=20 actually
+  returns. The second was chosen because it is the smaller, lower-risk diff (Constitution Principle
+  III/"smallest reasonable diff") — `case 20:`'s `CustAccount` assignment already compiles and already
+  works for whatever (if any) other caller of refType=20 exists outside this feature's own 2 files
+  (confirmed by a repo-wide grep: none do), so changing it carries a small but non-zero risk of an
+  unintended effect elsewhere for a purely cosmetic consistency gain. This decision does **not** change
+  any DTO field's meaning or add a new one — it only decides which of two already-shipped field names the
+  new frontend code should read.
+- **Alternatives considered**: Add `OrderAccount = x.OrderAccount` to `case 20:` alongside the existing
+  `CustAccount` line (both populated, frontend reads the more semantically-named `orderAccount`) —
+  seriously considered, ultimately deferred as unnecessary: it would touch a backend file not otherwise
+  broken, for a naming-clarity improvement the spec never asked for, when the minimal fix (read
+  `custAccount` in the 2 already-being-edited frontend files) fully satisfies FR-199 with a smaller diff.
+  If a future update needs refType=20's Order account under the `orderAccount` name for some third
+  consumer, this decision can be revisited then.
+
+### Updated non-goals (Update 34/35)
+
+- No change to `SalesOrderOverviewPage.jsx` or its own reference type = 16 usage (a different, unrelated
+  Order-account lookup for that screen's own Progress/Download batching) — scope is Map File Step 1 +
+  View's Selected Purchase Orders table only.
+- No change to Step 2 (template tree, AVAILABLE FILES, Upload/Edit/View/Download), Template Checklist,
+  Validation Summary, Back navigation, or any permission gating (Update 28/29) on either screen — this
+  update only changes the Step 1/Selected-Purchase-Orders table's data source and columns.
+- No database migration, no new endpoint, no new DTO class, no new frontend file — additive properties on
+  2 already-existing backend classes, 2 new assignment lines in an already-existing `case` block, and
+  edits confined to 2 already-existing frontend pages.
+- No change to the batch-loading mechanism (1 call per Sales ID, grouped/consumed client-side, no N+1)
+  already established by Update 17/125 — Update 34/35 reuses it unchanged, just consumes more fields per
+  record and no longer groups multiple records into one row.
+
+## Update 37 (2026-09-30): Template tree label shows the mapped file's name once uploaded; download for Type = "PO" documents no longer recomputes the file name as Step Name
+
+### Decision 88 — Swap the tree node's primary label to the first mapped file's name (extension stripped) instead of adding a second display mechanism (spec FR-216)
+
+- **Decision**: In `TreeNode` (`MapFilePage.jsx`), the `Typography` that renders `{node.stepName}`
+  (around line 245) becomes `{mappedFiles.length > 0 ? stripFileExtension(mappedFiles[0].name) :
+  node.stepName}`. `stripFileExtension` is a new small exported helper in `progressUtils.js` (same regex
+  `buildStepOnlyFileName.js` already uses to strip an extension), shared with `PurchaseOrderViewPage.jsx`
+  (`012-eutr-purchase-orders`) since both files import from this module already.
+- **Rationale**: Reading `TreeNode` before editing revealed it already renders a *second* line below the
+  step name — a caption showing `mappedFiles[0].name` (full name, with extension) plus a `(+N)` badge for
+  additional matches — added at some point after the "+N badge/tooltip" behavior Update 31 documented as
+  pre-existing. The request's example ("step là 1.Invoice, tên file đã upload là 1.Invoice AP-PD.pdf thì
+  hiển thị 1.Invoice AP-PD") describes the *primary*, bold label changing to the file name, not a second
+  line being added — that already exists. So this update only touches the primary `Typography`, leaving
+  the existing secondary caption, its `(+N)` badge, and the status-icon tooltip (`Đã map: fileA, fileB`,
+  listing every matched file's full name) untouched, per the spec's explicit "badge/tooltip unchanged"
+  clause. The result is intentionally a little redundant (primary label = file name minus extension,
+  caption directly below = the same file's full name) — removing the caption instead was considered and
+  rejected (see Alternatives) since the spec never asked for it to be removed.
+- **Alternatives considered**: (1) Replace the secondary caption instead of the primary label, leaving
+  `node.stepName` as the bold primary text always — rejected: this does not match the request's example,
+  where the *prominent* label (the one described as "phần tên step") is what changes. (2) Remove the
+  now-partially-redundant secondary caption line since the primary label already shows the (truncated)
+  file name — rejected as scope creep: the spec (`005-eutr-sales-orders` FR-216) explicitly says the
+  badge/tooltip mechanism "giữ nguyên không đổi," and collapsing the two into one display is a UI
+  redesign decision nobody asked for; if the duplication reads as visual noise once shipped, that is a
+  follow-up request, not an inference to make now.
+
+### Decision 89 — Skip the Step-Name download-name recompute for Type = "PO" documents specifically, gated on the already-present `typeName` field (spec FR-217)
+
+- **Decision**: `handleDownloadFile` (`MapFilePage.jsx`) and `EutrFileViewerDialog.handleDownload` both
+  gain a check: when the document's Type is "PO" (`file.typeName`/a new `typeName` prop, compared
+  case-insensitively), `link.download` is set directly from `loadedFile.fileName || file.name` (the
+  stored/returned name, which — since `004-eutr-documents` Update 29 — already equals the original
+  uploaded file name for new Type = "PO" documents) instead of calling `buildStepOnlyFileName(...)`. Every
+  other Type continues to call `buildStepOnlyFileName(...)` exactly as Update 33 left it.
+- **Rationale**: `realAvailableFiles` (`MapFilePage.jsx`) already carries a `typeName` field per document,
+  populated straight from the `list-po-references` response (added for Update 5's Map-status/File-type/
+  PO-value computation) — no new backend field, DTO change, or round-trip is needed to make this decision
+  Type-aware; the data was already there. Gating narrowly on Type = "PO" (rather than removing the
+  recompute for every Type) matches the amendment's own framing, which opens with "khi upload file với
+  type = PO" and only asks for original-file-name behavior in that context — Type ≠ "PO" documents keep
+  the Update 33 behavior verbatim (their `eutr_documents.Name` already equals the Step-Name formula from
+  `004-eutr-documents`'s own Upload-time rename, unaffected by Update 29, so recomputing it again at
+  download time remains a correct no-op for freshly-created documents and a deliberate normalization for
+  documents created before Update 26 still carrying a stale Prefix+StepName).
+- **Alternatives considered**: (1) Remove the recompute-to-Step-Name behavior entirely, for every Type —
+  rejected: the amendment is explicitly scoped to Type = "PO" ("khi upload file với type = PO... tên file
+  ntn giữ nguyên khi up và khi tải"); silently changing Type ≠ "PO" download behavior nobody asked to
+  change risks an unannounced regression for users relying on the current Step-Name download convention
+  for non-PO documents. (2) Thread a fresh `type`/`refType` lookup through a new prop instead of reusing
+  the already-present `typeName` field — rejected as needless extra plumbing once `typeName` was confirmed
+  already available on the exact object both call sites already receive.
+
+## Update 40 (2026-09-30): Template tree toolbar groups by PurchId instead of TemplateCode; View's single collapsed "Template" tab is replaced with per-PO tabs
+
+### Decision 90 — Introduce `buildPoTemplateComputations` as a sibling function, not a replacement of `buildTemplateComputations`
+
+- **Decision**: `progressUtils.js` gains a new exported `buildPoTemplateComputations(poTemplates,
+  files)`. The existing `buildTemplateComputations(templatesData, files, purchIdToTemplateCode)` is left
+  completely untouched. `MapFilePage.jsx`/`ViewSalesOrderPage.jsx` switch their own toolbar-tab
+  computation to the new function; `SalesOrderOverviewPage.jsx`, `PurchaseOrderOverviewPage.jsx`, and
+  `012-eutr-purchase-orders`'s `PurchaseOrderViewPage.jsx` keep calling the old one, unchanged.
+- **Rationale**: Grepping every caller of `buildTemplateComputations` before making any edit (Constitution
+  Principle III) found 6 call sites across 4 files. Only 2 of them (`MapFilePage.jsx`,
+  `ViewSalesOrderPage.jsx`) render a multi-item toolbar where 2+ POs sharing 1 TemplateCode could
+  plausibly appear side by side — the bug the requester is describing. The other 3 call sites
+  (`SalesOrderOverviewPage.jsx`/`PurchaseOrderOverviewPage.jsx`'s Progress column, `PurchaseOrderViewPage.jsx`'s
+  own single-PO page) each invoke the function once per row/page with a `templatesData` array already
+  scoped to exactly one PO's own template — they never had this bug, because they were never merging
+  multiple POs' files into one computation in the first place. Changing the shared function's signature
+  or behavior would have been unnecessary churn on 3 files that don't need it, and risks a regression on
+  the Overview Progress columns most other update sessions haven't touched.
+- **Alternatives considered**: Modify `buildTemplateComputations` in place to accept a `groupBy: 'template'
+  | 'po'` parameter, letting every caller opt in — rejected: none of the other 3 callers need the new
+  grouping, so a parameter only they never pass is pure complexity for no behavioral gain; a new,
+  separately-named function documents the actual distinction (group by Template vs. group by PO) more
+  clearly than a boolean/enum flag would.
+
+### Decision 91 — Per-PO file matching drops the "ambiguous vendor code" exclusion `buildPurchIdToTemplateCodeMap` used
+
+- **Decision**: `buildPoTemplateComputations` matches a file to a PO with `f.poCode === purchId ||
+  f.poCode === orderAccount` — the PO's *own* PurchId or the PO's *own* Order account (Vendor code), full
+  stop. No cross-PO ambiguity check is performed.
+- **Rationale**: The old `buildPurchIdToTemplateCodeMap` (used to build `purchIdToTemplateCode` for the
+  now-untouched `buildTemplateComputations`) had to solve a harder problem: given a Vendor code that might
+  belong to several POs on several *different* templates, which single template should a Vendor-level
+  document (Type = "Vendor", RefValue = that Vendor code) be merged into? It answered this by excluding
+  the Vendor code from the map entirely whenever it mapped to more than one distinct TemplateCode —
+  meaning, before Update 40, a Vendor-level document from a vendor supplying POs on 2+ different templates
+  never showed up on ANY template's tree at all. Once every computation is already scoped to exactly one
+  PO (Update 40's whole point), that ambiguity dissolves by construction: a file matches this PO's own
+  Order account or it doesn't — there is no "which of several templates does this belong to" question left
+  to answer, because we're never comparing across POs in the first place. This is strictly more correct
+  than the old behavior, not just simpler: a vendor-level document (e.g. "General agreement") now
+  correctly appears on every one of that vendor's PO tabs, instead of silently vanishing whenever that
+  vendor happened to supply POs on more than one template.
+- **Alternatives considered**: Keep calling `buildPurchIdToTemplateCodeMap` to precompute a
+  `purchIdToTemplateCode` map and pass it into the new per-PO function too, purely for consistency with the
+  old code path — rejected: the per-PO function doesn't need a PurchId→TemplateCode lookup at all (each
+  `poTemplates` entry already carries its own `templateCode` directly from `eutr_purchase_attachments`),
+  so calling the old map-builder here would be dead computation that also silently reintroduces the exact
+  ambiguity-exclusion this update makes obsolete.
+
+### Decision 92 — View's toolbar loses its "All" tab entirely; the underlying All-mode computations stay, because Download still needs them
+
+- **Decision**: The toolbar's hardcoded `[{templateCode: null, templateName: 'Template'}]` single-tab
+  array (Update 26) is replaced by `poTemplates.map(...)` — real per-PO tabs, no "All" tab anywhere in the
+  list. `selectedPurchId` can therefore no longer become `null` through any user click. However,
+  `defaultTemplate`, `loadDefaultTemplate`, `allChipTree`, `allChipDerivedFileMappings`, `allChipFiles`,
+  and `soStepIds` (the entire Update 19/20/21 "All" computation stack) are left completely in place, and
+  the `isAllActive`/`selectedPurchId === null` branches in `availableFilesForPanel` and the tree-display
+  ternary are also left in place (now practically unreachable, not deleted).
+- **Rationale**: Reading `buildDownloadFolders` before touching anything revealed the Download button's
+  "Combined All" zip format (Update 21/22, a real, separately-specced feature with its own FR range,
+  FR-142..FR-160) builds its zip payload directly from `allChipTree`/`allChipDerivedFileMappings`/
+  `allChipFiles` — computed independently of `selectedPurchId`/which toolbar tab happens to be active.
+  Deleting the "All" computation stack to fully clean up after removing the "All" tab would break a
+  working, independently-specced download feature the requester never asked to change (the request was
+  about the toolbar's tab *grouping*, not about the zip download's format options). Leaving the dead
+  toolbar-reachable branches in place (rather than deleting them) is a deliberate, minimal-diff choice:
+  removing them requires re-verifying every remaining reference to `defaultTemplate`/`allChip*` compiles
+  and behaves the same, for a code-cleanliness benefit with no user-visible effect, on a screen this
+  session cannot test end-to-end in a real browser.
+- **Alternatives considered**: (1) Fully delete the All-mode UI branches and hoist `allChipTree`/etc.'s
+  Download-only usage directly into `buildDownloadFolders`/`handleDownload` — a genuine simplification,
+  but a strictly larger, riskier diff for a request that only asked to change what the toolbar *shows*,
+  not to refactor the Download feature's internals; deferred as a follow-up if ever requested explicitly.
+  (2) Keep one "All" tab alongside the new per-PO tabs, so users can still reach the merged view visually
+  — rejected: the request explicitly says "không nhóm theo template nữa" (no longer grouped by template)
+  and asks for the section to show PO-by-PO "rõ ràng" (clearly) — reintroducing a merged/grouped tab
+  option directly contradicts that ask, even if it's additive rather than a replacement.
+
+### Decision 93 — Fix `buildDownloadFolders`'s "By Template" zip folders to iterate `templateComputations` directly, not `templatesData.map(...).find(...)`
+
+- **Decision**: `templateFolders` now maps over `templateComputations` (1 entry per PO after this
+  update) directly, building 1 zip folder per PO named `"{purchId} - {templateName}"`. The previous
+  `templatesData.map(t => { const tc = templateComputations.find(c => c.templateCode ===
+  t.templateCode); ... })` pattern is removed.
+- **Rationale**: This was not an optional cleanup — it was a correctness fix required by Decision 90/91.
+  Once `templateComputations` can hold 2+ entries sharing the same `templateCode` (one per PO), the old
+  `.find(c => c.templateCode === t.templateCode)` would silently return only the *first* matching entry,
+  meaning the "By Template" zip download would silently drop every file belonging to the second (and
+  any further) PO sharing that template — a data-loss regression that would have shipped invisibly
+  alongside the toolbar change if not caught while tracing every consumer of `templateComputations`
+  before editing (Constitution Principle III). Folder-naming by `"{purchId} - {templateName}"` (rather
+  than just `templateName`, which could now collide across 2 folders) keeps each PO's downloaded files
+  in their own clearly-labeled folder.
+- **Alternatives considered**: Keep grouping zip folders by `templateName` alone, merging 2 POs' mapped
+  files into 1 folder when they share a template — rejected: this reintroduces, at the zip-download
+  layer, the exact "which PO does this file really belong to" confusion Update 40 exists to eliminate
+  from the on-screen toolbar; a downloaded zip should be at least as unambiguous as the screen it was
+  downloaded from.
+
+## Update 41 — Bỏ popup chọn định dạng tải; Download luôn tách theo từng PO, mỗi folder chứa toàn bộ file
+
+### Decision 94 — Xóa hẳn toàn bộ "All mode" computation stack, thay vì tiếp tục giữ nhưng không dùng (đảo ngược Quyết định 92)
+
+- **Decision**: `DownloadFormatDialog.jsx` bị xóa khỏi codebase; trong `ViewSalesOrderPage.jsx`, toàn bộ
+  nhánh "All mode" mà Quyết định 92 quyết định giữ lại (khi đó chưa dùng tới nhưng chưa xóa) — `defaultTemplate`
+  state, `loadDefaultTemplate` + effect gọi nó, `soStepIds`, `allChipFlatDetails`, `allChipTree`,
+  `stepIdToFileIds`, `allChipDerivedFileMappings`, `allChipFiles` — nay bị xóa hoàn toàn, cùng với nhánh
+  `isAllActive`/`selectedPurchId === null` trong `availableFilesForPanel` và nhánh tương ứng trong khối
+  render cây. `buildDownloadFolders`/`handleDownload` bỏ tham số `format`, luôn build folder theo từng PO
+  (tái dùng trực tiếp `templateComputations` đã có sẵn từ Update 40, vốn đã là per-PO).
+- **Rationale**: Quyết định 92 cố tình giữ lại stack "All mode" vì khi đó Download vẫn còn cung cấp lựa
+  chọn "Combined (All)" qua `DownloadFormatDialog`, và đây là hàm tiêu thụ duy nhất còn lại của stack đó
+  (mọi tab "All" trên toolbar đã bị xóa từ Update 40). Yêu cầu lần này ("không cần hiển thị popup này nữa,
+  mặc định tách ra theo từng po") xóa bỏ chính điểm tiêu thụ cuối cùng đó — khi popup và lựa chọn "Combined
+  (All)" không còn tồn tại, `allChipTree`/`allChipDerivedFileMappings`/`allChipFiles`/`soStepIds`/
+  `defaultTemplate*` trở thành dead code thực sự (không chỉ "hiện chưa reachable qua UI" như trước), nên xóa
+  hẳn theo đúng quy ước "no dead code" đã áp dụng nhất quán trong toàn bộ phiên làm việc này (vd. xóa
+  `GetPrefixByStepIdAsync`, `IEutrMastersRepository`, `loadDistinctMasterSteps`). Giữ lại `flatToTree` (từ
+  `treeUtils.js`) vì cây per-PO (`poTemplates`/`templateComputations`) vẫn cần build từ danh sách phẳng.
+- **Alternatives considered**: Tiếp tục giữ nguyên stack "All mode" như Quyết định 92 (không xóa, chỉ bỏ
+  điểm gọi) — rejected: một khi không còn bất kỳ code path nào (UI hay Download) có thể kích hoạt
+  `selectedPurchId === null`, việc giữ lại ~7 state/computation không ai gọi tới chỉ tăng diện tích bảo trì
+  mà không phục vụ mục đích gì, đi ngược quy ước "no dead code" đã dùng xuyên suốt phiên này.
+
+### Decision 95 — `SalesOrderOverviewPage.jsx` cũng phải chuyển sang `buildPoTemplateComputations`, dù Update 40 không đụng tới file này
+
+- **Decision**: `handleDownload` trong `SalesOrderOverviewPage.jsx` (nút Download trên từng dòng ở màn
+  hình Overview) bỏ tham số `format`, xóa hẳn `fetchDefaultTemplateForZip`, build `poTemplates` inline
+  (theo đúng pattern Update 40 đã dùng ở 2 file kia), và đổi từ `buildTemplateComputations` (nhóm theo
+  TemplateCode) sang `buildPoTemplateComputations` (nhóm theo PurchId, thêm ở Update 40) khi build folder
+  zip.
+- **Rationale**: File này có logic build-folder-zip của riêng nó (độc lập với `MapFilePage.jsx`/
+  `ViewSalesOrderPage.jsx`), và trước Update 41 vẫn dùng `buildTemplateComputations`/nhóm theo
+  TemplateCode — nghĩa là mắc đúng lỗi mất dữ liệu mà Quyết định 93 đã sửa ở 2 file kia (2 PO dùng chung 1
+  template → `.find(c => c.templateCode === ...)` chỉ giữ 1 PO). Lỗi này nằm ngoài phạm vi Update 40 (khi
+  đó chỉ sửa toolbar tabs của Map File/View), nhưng vì Update 41 xóa hẳn popup chọn format — biến "By
+  Template" (tức per-PO) thành hành vi duy nhất, mặc định, không thể tắt — thì lỗi tiềm ẩn này ở Overview
+  page giờ chắc chắn sẽ bị người dùng gặp phải mỗi lần bấm Download, nên bắt buộc phải sửa cùng lúc thay vì
+  để lại như một bug riêng biệt.
+- **Alternatives considered**: Chỉ xóa popup ở Overview page, giữ nguyên `buildTemplateComputations` cho
+  tới khi có báo lỗi thực tế — rejected: lỗi đã được xác nhận tồn tại qua việc đọc code (không phải suy
+  đoán), và vì Update 41 khiến đường dẫn lỗi này trở thành mặc định/không thể né tránh, để lại một lỗi mất
+  dữ liệu đã biết trước trong lúc đang sửa chính đường dẫn đó là không phù hợp với quy ước của phiên làm
+  việc này (luôn dò hết các nơi gọi liên quan trước khi coi một thay đổi là hoàn tất — Constitution
+  Principle III).
+
+## Update 42 — Bảng `eutr_progression` lưu sẵn Total/Missing/Finished; Overview đọc qua JOIN; `test-so-template-sync` lưu thêm ProductVariant/ItemId
+
+### Decision 96 — Thêm bảng cache `eutr_progression` thay vì tối ưu 4 lượt gọi động hiện có
+
+- **Decision**: Thay vì tối ưu lại (giảm số lượt gọi, thêm index, v.v.) 4 lượt gọi API +
+  vòng lặp client-side hiện có của `fetchProgressForRows` (`SalesOrderOverviewPage.jsx:203-338`), thêm
+  hẳn 1 bảng mới `eutr_progression` (`Id, SalesId, Total, Missing, Finished`) lưu sẵn (cache) kết quả
+  tính theo đúng công thức hiện có, và đổi Overview sang đọc thẳng bảng này qua 1 câu JOIN duy nhất theo
+  `SalesId`.
+- **Rationale**: Yêu cầu gốc chỉ định rõ giải pháp ("tạo 1 bảng eutr_progression ... màn hình
+  eutr/sales-orders chỉ cần dựa vào SalesId, join với bảng eutr_progression") — không phải một yêu cầu
+  mở ("làm cho nhanh hơn") để tự chọn giải pháp. Cách này cũng triệt để hơn tối ưu lượt gọi: dù giảm
+  xuống còn 1-2 lượt gọi, Overview vẫn phải lặp qua từng Sales ID × PO × Template × Step ở client mỗi
+  lần hiển thị trang — chuyển hẳn phép tính đó sang thời điểm ghi dữ liệu (4 trigger cố định, xem Quyết
+  định 97) khiến thời điểm ĐỌC (Overview) chỉ còn là 1 SELECT đơn giản theo khóa `SalesId`, không phụ
+  thuộc số PO/Template/Step của Sales Order đó.
+- **Alternatives considered**: (a) Giữ tính động nhưng thêm cache tầng ứng dụng (in-memory/Redis, TTL
+  ngắn) — rejected, không khớp yêu cầu gốc (không phải bảng DB), và cache tầng ứng dụng không tự làm
+  mới đúng lúc dữ liệu đổi (Save PO Mapping/Upload tài liệu) như 1 bảng được recompute tường minh tại
+  đúng các thời điểm đó. (b) Vẫn tính động ở Overview nhưng chuyển toàn bộ phép tính (JOIN/GROUP BY
+  ngay trong SQL, không lặp ở client) — rejected, vẫn phải tính lại mỗi lần hiển thị trang thay vì chỉ 1
+  lần tại 4 thời điểm dữ liệu thực sự đổi; không khớp yêu cầu gốc.
+
+### Decision 97 — Recompute đúng 1 `SalesId` tại mỗi trigger, không recompute toàn bảng
+
+- **Decision**: Cả 4 trigger (View, Save PO Mapping, Upload/Xóa tài liệu, `test-so-template-sync`) chỉ
+  recompute `eutr_progression` cho đúng (các) `SalesId` liên quan trực tiếp tới hành động đó — 3 trigger
+  đầu luôn đúng 1 `SalesId`; trigger job đồng bộ recompute cho mọi `SalesId` job đó có xử lý trong lần
+  chạy (thêm mới hoặc bỏ qua vì đã tồn tại, xem Quyết định 99), không phải TOÀN BỘ `SalesId` đang có
+  trong `eutr_purchase_attachments`.
+- **Rationale**: Recompute toàn bảng ở mỗi trigger (đặc biệt View/Save PO Mapping — xảy ra thường xuyên,
+  mỗi lần 1 user mở 1 Sales Order) sẽ tạo lại đúng vấn đề hiệu năng ban đầu (chỉ chuyển từ "tính động lúc
+  đọc" sang "tính động lúc ghi", không giảm khối lượng tính toán) — đi ngược mục tiêu chính của Update
+  này. Vì `Total`/`Missing`/`Finished` chỉ phụ thuộc vào dữ liệu của đúng 1 `SalesId` (không có phép
+  tính liên Sales Order nào), recompute phạm vi hẹp là đủ và đúng.
+- **Alternatives considered**: Recompute toàn bảng theo lịch (job riêng chạy định kỳ, độc lập với 4
+  trigger) — rejected, không thuộc yêu cầu gốc (chỉ định rõ 3 [nay 4] thời điểm cụ thể, không phải theo
+  lịch) và làm tăng độ trễ giữa lúc dữ liệu đổi và lúc Overview phản ánh đúng.
+
+### Decision 98 — Thêm Upload/Xóa tài liệu (Step 2 Map File) làm trigger thứ 4 (xác nhận qua AskUserQuestion)
+
+- **Decision**: Ngoài 3 trigger nêu trong yêu cầu gốc (mở View, Save PO Mapping, chạy job
+  `test-so-template-sync`), thêm Upload/Xóa tài liệu thành công ở Step 2 Map File (feature
+  `004-eutr-documents`) làm trigger thứ 4 — recompute đúng `SalesId` sở hữu PO/step vừa Upload/Xóa.
+- **Rationale**: Rà soát mã nguồn xác nhận Upload/Xóa tài liệu (popup "Add tài liệu thật",
+  `MapFilePage.jsx`) là một hành động RIÊNG, độc lập với nút Save PO Mapping (chỉ ghi lại lựa chọn PO ở
+  `eutr_purchase_attachments`, không liên quan tài liệu) — và chính hành động Upload/Xóa mới là thứ làm
+  thay đổi `Finished`/`Missing` (số step "đã đủ hồ sơ"), trong khi `Total` chỉ phụ thuộc PO/Template đã
+  lưu. Nếu không có trigger thứ 4 này, `eutr_progression` sẽ hiển thị sai (cũ) ngay sau khi user upload
+  tài liệu, cho tới khi họ tình cờ quay lại màn View hoặc bấm lại Save PO Mapping — một hồi quy rõ ràng
+  so với hành vi tính động hiện tại (luôn đúng ngay lập tức). Người yêu cầu tính năng xác nhận bổ sung
+  trigger này khi được hỏi trực tiếp (xem Clarifications, Update 42).
+- **Alternatives considered**: Giữ đúng 3 trigger như yêu cầu gốc liệt kê — rejected bởi người yêu cầu
+  tính năng (lựa chọn "Có, thêm làm trigger thứ 4") đúng vì độ trễ hiển thị sai ngay sau thao tác chính
+  (upload chứng từ) là rủi ro trải nghiệm cao hơn chi phí thêm 1 điểm gọi recompute.
+
+### Decision 99 — Job `test-so-template-sync` recompute — SỬA LẠI khi triển khai: chỉ `SalesId` MỚI THÊM, không phải cả `SalesId` bị bỏ qua
+
+- **Decision (bản gốc, viết trước khi triển khai)**: Sau khi vòng lặp thêm/bỏ qua bản ghi D365
+  refType=19 hoàn tất, job recompute `eutr_progression` cho MỌI `SalesId` mà lần chạy đó có xử lý — kể
+  cả `SalesId` bị bỏ qua vì đã tồn tại sẵn trong `eutr_purchase_attachments`.
+- **Decision (SỬA LẠI khi triển khai — đây là hành vi thực tế đã code)**: Job chỉ recompute
+  `eutr_progression` cho các `SalesId` MỚI THÊM vào `eutr_purchase_attachments` trong lần chạy đó
+  (`summary.Added`) — KHÔNG recompute cho `SalesId` bị bỏ qua vì đã tồn tại sẵn (dedupe hiện có,
+  `existingSalesIds.Add(salesId)` trả `false`).
+- **Rationale (lý do sửa lại)**: Rà soát mã nguồn khi triển khai cho thấy job này, trên dữ liệu thật, đã
+  từng xử lý hàng nghìn PO/SalesId trong 1 lần chạy (xem log lỗi thực tế trong
+  `compliance-sys-api/src/ComplianceSys.Api/logs/error/`). `RecomputeAsync` cho 1 `SalesId` tự nó không
+  rẻ — gọi `IEutrTemplatesService.GetManyByCodesWithDetailsAsync` + 1 lượt D365 refType=16 (OR-join theo
+  PurchId) + `IEutrDocumentsService.GetPoReferencesAsync`. Nếu recompute cho MỌI `SalesId` job đọc qua
+  (không chỉ SalesId mới), mỗi lần job chạy sẽ nhân số lượt gọi phụ trợ này lên hàng nghìn lần — biến
+  chính job "đồng bộ" (vốn đã ghi nhận log lỗi hiệu năng/timeout trong quá khứ) thành điểm nghẽn hiệu
+  năng mới, đi ngược đúng mục tiêu chính của Update 42 (giảm tải tính toán). Phần "SalesId bị bỏ qua có
+  thể có tài liệu mới từ Upload/Xóa" (rationale gốc) đã được phủ bởi trigger 4 (Quyết định 98) — Upload/
+  Xóa tài liệu tự nó đã trigger `RecomputeForPurchIdAsync` ngay tại thời điểm xảy ra, không cần đợi job
+  chạy lại mới cập nhật.
+- **Alternatives considered**: Giữ nguyên quyết định gốc (recompute cả SalesId bị bỏ qua) — rejected khi
+  triển khai vì lý do hiệu năng nêu trên; SalesId đã tồn tại từ trước, chưa từng qua 1 trong 4 trigger
+  sau khi Update 42 triển khai, được phủ bởi backfill 1 lần (FR-230,
+  `EutrProgressionController.BackfillAll`, `GET /api/eutr-progression/backfill-all`) thay vì job định kỳ.
+- **Theo dõi sau triển khai**: Nếu thực tế cho thấy nhiều SalesId vẫn có `eutr_progression` lệch dữ liệu
+  dài ngày dù đã có backfill + trigger 4 (ví dụ do Upload tài liệu qua 1 đường khác không đi qua
+  `EutrUploadService`), cân nhắc mở rộng lại phạm vi recompute của job hoặc thêm 1 job quét định kỳ
+  riêng — chưa cần thiết ở Update 42 này.
+
+### Decision 100 — `ItemId` cần thêm field mới trên `ComplDynReferenceResponseDto`/mapping refType=19; `ProductVariant` tái dùng field đã có
+
+- **Decision**: `ProductVariant` khi ghi vào `eutr_purchase_attachments` từ `SyncSalesOrderTemplatesAsync`
+  dùng lại field `ComplDynReferenceResponseDto.ProductVariant` đã có sẵn (hiện chỉ gán cho refType=15);
+  `ItemId` cần thêm 1 field mới trên DTO này (và mapping tương ứng cho refType=19 trong
+  `ComplDynamicsService`) vì hiện chưa tồn tại field nào tương đương.
+- **Rationale**: Rà soát `ComplDynReferenceResponseDto.cs` xác nhận `ProductVariant` đã tồn tại (dùng
+  cho refType=15/RSVNEutrPurchOrders) nhưng chưa từng được gán khi map dữ liệu refType=19
+  (RSVNEutrSalesOrderPurchases — nguồn của `SyncSalesOrderTemplatesAsync`); và không có field `ItemId`
+  nào trên DTO này ở bất kỳ refType nào. Việc thêm field/mapping cụ thể (tên trường D365 tương ứng) là
+  chi tiết triển khai ở giai đoạn plan, cần xác nhận với nguồn D365 refType=19 xem có trả về giá trị
+  Item tương ứng hay không.
+- **Alternatives considered**: Suy ra `ItemId` từ `PurchId` qua một lượt tra cứu riêng (ví dụ query lại
+  refType=20 theo PurchId) — rejected, không cần thiết nếu D365 refType=19 đã trả sẵn trường tương ứng
+  trong cùng lượt đọc hiện có (research cần xác nhận ở giai đoạn plan/implement); tránh phát sinh thêm 1
+  lượt gọi D365 cho mỗi trang dữ liệu chỉ để lấy 1 trường.
+
+### Decision 101 — Backfill 1 lần khi triển khai, không phải trigger tự động lặp lại
+
+- **Decision**: Một lượt backfill chạy 1 lần khi triển khai Update 42 (tính `eutr_progression` cho mọi
+  `SalesId` đang có ≥1 bản ghi `eutr_purchase_attachments` từ trước) — không phải một trigger thứ 5 tự
+  động chạy lại định kỳ.
+- **Rationale**: Không có yêu cầu backfill định kỳ trong mô tả gốc; nếu không backfill 1 lần, Overview
+  sẽ hiển thị trạng thái trống cho MỌI Sales Order đã có Template/tài liệu từ trước Update 42 cho tới khi
+  user tình cờ mở View/Save PO Mapping/Upload tài liệu cho từng Sales Order đó — một hồi quy hiển thị rõ
+  ràng ngay sau khi triển khai. Cơ chế cụ thể (script một lần, hay gọi lặp qua endpoint recompute có sẵn
+  cho từng `SalesId`) là quyết định kỹ thuật ở giai đoạn plan.
+- **Triển khai thực tế**: `GET /api/eutr-progression/backfill-all` (policy `EutrProgression.Update`,
+  `EutrProgressionController.BackfillAll` → `EutrProgressionService.BackfillAllAsync`) — đọc toàn bộ
+  `SalesId` qua `GetSalesIdsWithTemplateAsync` (hàm đã có sẵn từ Update 16) rồi gọi `RecomputeAsync` tuần
+  tự cho từng SalesId, trả về số lượng đã backfill. Đây là 1 endpoint vận hành gọi thủ công 1 lần sau
+  khi deploy (giống tinh thần `test-so-template-sync`/`test-purchase-missing` — các "test-" endpoint
+  khác của `011-eutr-synchronize-data` cũng được gọi thủ công, không chạy tự động theo lịch), KHÔNG phải
+  1 job chạy định kỳ — có thể mất nhiều thời gian trên dữ liệu thật lớn (mỗi SalesId là 1 lượt
+  `RecomputeAsync` đầy đủ, xem chi phí đã nêu ở Quyết định 99).
+- **Alternatives considered**: Không backfill, chấp nhận Overview "trống dần lấp đầy" qua 4 trigger tự
+  nhiên — rejected, gây hồi quy hiển thị ngay sau khi deploy cho toàn bộ dữ liệu lịch sử, không chấp
+  nhận được cho một tính năng đang ở production.
+
+## Update 43 — Thêm 2 ô tìm ItemId/ConfigId ở Overview, lọc qua danh sách SalesId tra từ `RSVNSalesLineOpenInvoiceCogs`
+
+### Decision 102 — Đăng ký `refType = 21` cho `RSVNSalesLineOpenInvoiceCogs` thay vì tạo endpoint riêng
+
+- **Decision**: `RSVNSalesLineOpenInvoiceCogs.cs` (đã tồn tại sẵn, dùng trực tiếp bởi
+  `ComplSynchronizeDataService`/`DynamicsDataService` cho mục đích khác) được bổ sung kế thừa
+  `RSVNModelBase` (`ModelType = 21`, `EntityName`, `FilterableFields = {ItemId, ConfigId, SalesId}`),
+  thêm entry mới vào `EntityMappings` và 1 case mới trong `MapDynamicsResponse` — dùng qua đúng cơ chế
+  `POST /api/dynamics/reference` dùng chung mà mọi refType khác (bao gồm refType=11 của chính Overview)
+  đang dùng, KHÔNG tạo controller/action riêng cho tra cứu ItemId/ConfigId.
+- **Rationale**: Đây là cách nhất quán với TOÀN BỘ lịch sử cập nhật của tính năng này — mọi nguồn dữ
+  liệu D365 mới (refType=16 ở Update 1, refType=20 ở Update 17, v.v.) đều đăng ký qua đúng cơ chế
+  `EntityMappings`/`MapDynamicsResponse` này thay vì viết controller riêng, giữ đúng 1 con đường duy
+  nhất cho mọi truy vấn D365 tham chiếu (Constitution Principle III — tái dùng backend hiện có). Việc
+  `RSVNSalesLineOpenInvoiceCogs` đã tồn tại (dùng cho tính năng khác) chỉ thiếu phần kế thừa
+  `RSVNModelBase` — bổ sung phần đó không ảnh hưởng 2 nơi đang dùng trực tiếp class này
+  (`FetchAllSalesLinesAsync`/`GetSalesLineOpenInvoiceCogsFromDynamics`, cả hai đọc D365 thẳng qua
+  `_paramManager`/`_dynamicService`, không đi qua `GetDynRefePagedAsync`/`EntityMappings`).
+- **Alternatives considered**: Viết 1 action riêng (ví dụ trong `EutrSynchronizeDataController` hoặc
+  1 controller mới) gọi thẳng `RSVNSalesLineOpenInvoiceCogs` giống `DynamicsDataService` đang làm —
+  rejected, sẽ tạo 1 con đường D365 thứ hai riêng cho đúng 1 tính năng tìm kiếm, đi ngược nguyên tắc
+  dùng chung `POST /api/dynamics/reference` đã áp dụng xuyên suốt tính năng này từ Update 1.
+
+### Decision 103 — Bucket AND-search mới (`"salesidin"`), KHÔNG gộp vào cụm OR-search hiện có của `"custaccount"`/`"vendorcode"`
+
+- **Decision**: `BuildFilterString` (`ComplDynamicsService.cs:177-267`) được thêm 1 bucket mới, ví dụ
+  `"salesidin"`, chỉ áp dụng khi `mapping.Entity == "RSVNSalesOrderOpenInvoiceCogs"` — nhận nhiều
+  `FilterRequest` cùng tên cột (1 `FilterRequest{Column:"SalesIdIn", Operator:"eq", Value:salesId}`/1
+  SalesId), OR các giá trị đó lại thành 1 cụm `(SalesId eq 'A' or SalesId eq 'B' or ...)` **riêng biệt**,
+  rồi đưa cụm đó vào `filterParts` (AND với phần còn lại) — KHÔNG dùng chung biến `searchFilters` mà
+  `"code"`/`"name"`/`"custaccount"`/`"vendorcode"` đang OR chung với nhau.
+- **Rationale**: `"custaccount"` (Update 27) cố tình OR-search cùng cụm với `"code"`/`"name"` vì cả 3
+  cùng trả lời 1 câu hỏi "ô tìm kiếm này khớp Sales Order nào" (mở rộng phạm vi khớp). Yêu cầu lần này
+  ngược lại về ngữ nghĩa: danh sách SalesId tra được từ ItemId/ConfigId phải THU HẸP kết quả (chỉ những
+  Sales Order nào vừa khớp từ khóa/Year/Week VỪA có SalesId trong danh sách đó) — nếu tái dùng
+  `searchFilters` chung, 2 nhóm điều kiện có ngữ nghĩa đối lập (mở rộng vs thu hẹp) sẽ bị gộp sai thành
+  1 cụm OR, phá vỡ đúng cả 2 mục đích cùng lúc.
+- **Alternatives considered**: Gộp thẳng vào `searchFilters` như `"custaccount"` — rejected vì lý do
+  ngữ nghĩa trên (đã xác nhận qua đọc kỹ `BuildFilterString`, không phải suy đoán). Dùng toán tử `"in"`
+  có sẵn trên `FilterRequest` — rejected, xác nhận `ODataOperatorConverter.ToODataOperator`
+  (`Application/Utils/ODataOperatorConverter.cs:20-37`) chỉ hỗ trợ `eq/ne/gt/ge/lt/le` và ném
+  `ArgumentException` cho `"in"`; toán tử đó chỉ hoạt động ở các nơi filter local qua Dapper (khác hẳn
+  đường D365/OData của tính năng này) — OR-chain nhiều `eq` (đã dùng ở Quyết định 42's
+  `GetOrderAccountsByPurchIdsAsync`) là cách duy nhất khả thi cho D365 OData.
+
+### Decision 104 — Quy trình 2 bước chạy ở frontend, không thêm endpoint tổng hợp phía backend
+
+- **Decision**: `SalesOrderOverviewPage.jsx` tự gọi tuần tự/song song 2 lượt `POST /api/dynamics/reference`
+  khi Search: (1) `refType=21` lấy danh sách SalesId theo ItemId/ConfigId (nếu có giá trị); (2)
+  `refType=11` với danh sách đó đưa vào filter qua bucket `"salesidin"` mới, kết hợp cùng
+  `buildSearchFilters()`/`etdFiltersRef` hiện có. Không thêm endpoint backend mới nào gộp 2 bước này
+  làm 1.
+- **Rationale**: Đây là đúng mô hình hiện có của toàn bộ Overview — Update 24 (Year/ETD Week) và Update
+  27 (CustAccount) đều xây filter hoàn toàn ở frontend rồi gọi `POST /api/dynamics/reference` (dùng
+  chung), không có endpoint tổng hợp riêng cho tìm kiếm. Giữ nguyên mô hình này tránh phải thêm 1
+  controller/DTO mới chỉ để làm việc mà 2 lượt gọi tuần tự ở frontend đã làm được, và nhất quán với
+  cách `handleDownload`/`fetchProgressForRows` (trước Update 42) cũng từng gọi nhiều lượt API tuần tự từ
+  frontend.
+- **Alternatives considered**: Thêm 1 endpoint backend mới nhận `{itemId, configId, ...cácFilterKhac}`
+  rồi tự làm cả 2 bước — cân nhắc vì gọn hơn cho frontend, nhưng rejected để giữ nhất quán kiến trúc
+  hiện có của đúng màn hình này (mọi filter khác đều ở frontend) và tránh nhân đôi logic
+  `BuildFilterString` ở 1 nơi mới.
+
+## Update 42 — Bug fix (phát hiện sau khi triển khai): `RecomputeAsync` ghi `Total=0` cho SalesId KHÔNG có `eutr_purchase_attachments`, khiến Overview hiển thị sai "Không có step bắt buộc" thay vì trạng thái trống
+
+### Decision 105 — Xóa bản ghi `eutr_progression` thay vì ghi `0/0/0` khi SalesId không còn attachment
+
+- **Decision**: `EutrProgressionService.RecomputeAsync`, khi `SalesId` không có bản ghi
+  `eutr_purchase_attachments` nào, MUST gọi `IEutrProgressionRepository.DeleteAsync(salesId)` (xóa bản
+  ghi `eutr_progression` nếu có) thay vì `UpsertAsync(salesId, 0, 0, 0, ...)` như thiết kế gốc (Quyết
+  định ban đầu của Update 42, spec Edge Cases). "Không có bản ghi `eutr_progression`" trở thành điều
+  kiện DUY NHẤT cho trạng thái trống ở Overview (FR-228 sửa lại).
+- **Rationale**: Xác nhận lỗi thực tế bằng cách đọc trực tiếp dữ liệu production sau khi triển khai:
+  nhiều `SalesId` (`SO002778`, `SO001484`, `SO006671`) có bản ghi `eutr_progression` với `Total = 0`
+  nhưng **0 bản ghi** `eutr_purchase_attachments` — nghĩa là các Sales Order này CHƯA từng được Save PO
+  Mapping, chỉ từng bị mở màn View (trigger 1) một lần, khiến thiết kế gốc ghi nhầm `0/0/0` vào
+  `eutr_progression`. Overview sau đó không phân biệt được bản ghi này với 1 SalesId THẬT SỰ có Template
+  đã lưu nhưng 0 step bắt buộc (FR-084) — cả hai đều chỉ là `Total = 0` trong bảng, nên hiển thị nhầm
+  "Không có step bắt buộc" cho các Sales Order thực ra hoàn toàn chưa có Template nào, trong khi cột
+  Template của cùng dòng đó (đọc từ nguồn khác, không qua `eutr_progression`) vẫn hiển thị đúng trạng
+  thái trống — 2 cột mâu thuẫn nhau trên cùng 1 dòng, dấu hiệu rõ ràng của lỗi.
+  Thiết kế gốc dựa trên tiền đề "cần phân biệt 'chưa từng trigger' với 'đã trigger nhưng rỗng'" — tiền
+  đề này sai: cả hai trạng thái đều phải hiển thị GIỐNG HỆT nhau cho người dùng (trạng thái trống,
+  FR-083), nên việc phân biệt chúng trong dữ liệu lưu trữ là thừa và chính là nguồn gốc lỗi.
+- **Khắc phục dữ liệu đã có**: chạy 1 lần `DELETE FROM eutr_progression WHERE SalesId NOT IN (SELECT
+  DISTINCT SalesId FROM eutr_purchase_attachments)` để dọn các bản ghi "mồ côi" đã ghi sai trước khi có
+  bản sửa này (xác nhận đã chạy, xóa đúng 3 bản ghi nêu trên).
+- **Alternatives considered**: Thêm 1 cột/cờ riêng trên `eutr_progression` để đánh dấu "đã từng
+  trigger" tách biệt với `Total` — rejected, thêm phức tạp không cần thiết khi giải pháp đơn giản hơn
+  (xóa bản ghi) đã giải quyết đúng vấn đề và khớp lại đúng ngữ nghĩa gốc của FR-083 (không có bản ghi
+  `eutr_purchase_attachments` = trạng thái trống) mà không cần khái niệm mới nào.

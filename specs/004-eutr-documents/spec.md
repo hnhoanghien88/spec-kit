@@ -10,6 +10,106 @@
 
 ## Clarifications
 
+### Session 2026-09-30 (Update 30) — Popup Add: ẩn Valid from/Valid to trừ khi Type = "Vendor"
+
+- Input: "ẩn 2 thông tin valid from, to. mặc định là today > maxdate. Nếu type là vendor mới hiển thị"
+  (kèm ảnh chụp popup "Add EUTR documents" với Type = "PO" đang hiển thị 2 trường Valid from/Valid to).
+- Change: Ở popup Add (mode `add`), hai trường **Valid from** và **Valid to** MUST chỉ hiển thị khi
+  Type đã chọn có `Name` = "Vendor" (không phân biệt hoa/thường) — mọi Type khác (bao gồm "PO",
+  "Invoice", "Delivery note", "General agreement", và Type mới) MUST ẩn hoàn toàn 2 trường này.
+- Change: Khi 2 trường bị ẩn, hệ thống MUST tiếp tục dùng đúng giá trị mặc định hiện có khi Upload —
+  Valid from = ngày hiện tại tại thời điểm mở popup, Valid to = ngày tối đa `9999-12-31` — người dùng
+  không có cách nào chỉnh sửa 2 giá trị này khi Type khác "Vendor" (phải đổi sang Type "Vendor" để hiển
+  thị lại và sửa, hoặc dùng Edit sau khi document đã tạo — xem Q&A bên dưới).
+- Change: Đổi Type từ "Vendor" sang Type khác (khi 2 trường đang hiển thị, đã có thể đã sửa giá trị)
+  MUST reset lại Valid from/Valid to về đúng giá trị mặc định (ngày hiện tại/`9999-12-31`) trước khi ẩn
+  đi — tránh gửi lên giá trị người dùng đã lỡ sửa khi trường đó không còn hiển thị để xác nhận lại.
+- Q: Có ảnh hưởng gì tới popup Edit không? → A: **Không** — Edit (mode `edit`) tiếp tục hiển thị Valid
+  from/Valid to cho **mọi** Type như hiện có (FR-030 không đổi), vì document đã tạo có thể đang giữ giá
+  trị khác mặc định (do người dùng từng sửa khi Type là "Vendor", hoặc do Edit hiện tại vẫn cho sửa cả
+  2 trường bất kể Type) — ẩn ở Edit sẽ khiến người dùng mất khả năng xem/sửa giá trị thật đang lưu, yêu
+  cầu gốc cũng chỉ nêu ảnh chụp màn hình Add.
+- Q: Validate "Valid from ≤ Valid to" (FR-016) có còn cần khi 2 trường bị ẩn không? → A: Về logic vẫn
+  giữ nguyên nhưng luôn PASS khi ẩn — giá trị mặc định (hôm nay ≤ `9999-12-31`) luôn hợp lệ, không có
+  cách nào người dùng tạo ra giá trị không hợp lệ khi trường bị ẩn (không có ô nhập nào để sửa sai).
+
+### Session 2026-09-30 (Update 29) — Type = "PO": bỏ khớp Prefix qua `eutr_master_documents`, thay bằng so khớp tên Step (đã gán cho Type "PO") với tên file; bỏ đổi tên file khi Upload
+
+- Input: "cập nhật 004-eutr-documents, 005-eutr-sales-orders, 012-eutr-purchase-orders khi upload
+  file với type = PO, bỏ logic kiểm tra với eutr_master_documents. thay đổi thành so sánh tên step
+  với tên file, nếu tên file chứa tên step sẽ gán file vào step đó, file không chứa thì báo lỗi up
+  không thành công do tìm không được step tương ứng. Màn hình hiển thị template, khi file đã upload,
+  phần tên step sẽ lấy tên file gắn vào để hiện thị (...) file chưa upload thì hiển thị tên step bình
+  thường, bỏ logic đổi tên file theo tên step, tên file ntn giữ nguyên khi up và khi tải".
+- Bối cảnh: Rà soát mã nguồn xác nhận nhánh Type = "PO" (`EutrUploadService.UploadMultipleToSharePointAndSaveDataAsync`)
+  hiện gọi `EutrMastersRepository.GetMatchingPrefixesAsync` để so khớp tên file gốc với `Prefix` trong
+  `eutr_master_documents` (`fileName.StartsWith(Prefix)`, không phân biệt hoa/thường — FR-020), rồi
+  dùng bản ghi thắng cuộc (Prefix dài nhất, tie-break `Id` nhỏ nhất) để: (a) xác định (các) `StepId`
+  ghi vào `eutr_references` (FR-023), và (b) tính File name mới = Step Name đã làm sạch (FR-062 đến
+  FR-070, kể từ Update 26 không còn cộng Prefix). Cùng cơ chế `GetMatchingPrefixesAsync` cũng được
+  `GetDistinctStepsAsync`/`GetMatchingStepsAsync` (`EutrMastersController.GetSteps`) dùng để nạp danh
+  sách Step cho combobox Step khi Edit một document Type = "PO".
+- Decision (xác nhận qua `AskUserQuestion`, **sau đó sửa lại** — xem "Sửa lại sau kiểm thử thật" bên
+  dưới): Tập Step dùng để so khớp tên file khi Type = "PO" **ban đầu** chọn là các
+  Step **đã được gán cho Type "PO"** qua tính năng Assign Steps (`eutr_reference_type_details`,
+  `TypeId` = `Id` của Type "PO") — đúng cơ chế đã dùng cho mọi Type khác từ Update 20 (FR-020 cũ của
+  Update 20). Kiểm thử thật sau khi triển khai cho thấy quyết định này **sai** — `eutr_reference_type_details`
+  không hề liên quan tới cây Step hiển thị trên màn Map File/`PurchId/View` (nguồn hiển thị thật là
+  `eutr_template_details`, một bảng khác hoàn toàn) nên gần như luôn RỖNG cho Type "PO", khiến MỌI file
+  hợp lệ đều bị báo "không tìm được step tương ứng" dù Step đó rõ ràng hiển thị trên cây Template. Đã
+  sửa lại: dùng **toàn bộ `eutr_steps`** (danh sách phẳng, không lọc theo Type) — đúng tính chất "phẳng,
+  không giới hạn Type" mà `eutr_master_documents` vốn đã có trước đây (bảng đó cũng không có ràng buộc
+  Type nào).
+- Change: **Thay thế hoàn toàn** cơ chế xác định (các) `StepId` khớp khi Type = "PO" (thay FR-020):
+  hệ thống KHÔNG còn tra `eutr_master_documents`/`Prefix`. Với mỗi file trong lượt Upload, hệ thống
+  MUST so khớp tên
+  file gốc (không phân biệt hoa/thường) có **CHỨA** `Name` của Step nào trong **toàn bộ `eutr_steps`**
+  hay không (khác quy tắc cũ "bắt đầu bằng Prefix") — mọi Step có `Name` xuất hiện ở bất kỳ vị trí nào
+  trong tên file đều được coi là khớp; một file vẫn có thể khớp nhiều Step cùng lúc (không giới hạn số
+  lượng, kế thừa tinh thần khớp-nhiều-Prefix cũ).
+- Change: File **không chứa** tên của bất kỳ Step nào trong `eutr_steps` MUST
+  bị loại khỏi lượt upload kèm thông báo lỗi nêu rõ lý do "không tìm được step tương ứng" — không tạo
+  document/`eutr_references` cho file đó; các file hợp lệ khác trong cùng lượt KHÔNG bị ảnh hưởng
+  (giữ nguyên tinh thần FR-025).
+- Change: Với mỗi Step khớp, hệ thống tiếp tục ghi một bản ghi `eutr_references` (cơ chế FR-023
+  không đổi) — chỉ khác nguồn xác định "khớp" (tên Step thay vì Prefix).
+- Change: **Bỏ hẳn** việc đổi tên file khi Upload cho nhánh Type = "PO" (vô hiệu phần Type = "PO" của
+  FR-063/FR-068/FR-069 kể từ Update này) — sau khi xác định xong danh sách Step khớp, hệ thống KHÔNG
+  còn chọn "Step thắng cuộc" và KHÔNG còn tính File name mới nào cho nhánh này nữa.
+  `eutr_documents.Name` MUST lưu **đúng tên file gốc** người dùng đã chọn (giữ nguyên toàn bộ tên,
+  bao gồm phần mở rộng) — y hệt hành vi trước khi có logic đổi tên (trước Update 25). Nhánh Type khác
+  "PO" (FR-062/FR-064/FR-068, đổi tên = Step Name đã chọn) KHÔNG bị ảnh hưởng bởi Update này, giữ
+  nguyên không đổi.
+- Change: Cơ chế hậu tố ngẫu nhiên 6 ký tự chống trùng tên vật lý trên SharePoint (FR-065) tiếp tục áp
+  dụng cho nhánh Type = "PO", nhưng nay dựa trên **tên file gốc** (vì không còn tên đã đổi).
+- Change: Combobox Step ở popup Edit khi sửa document Type = "PO" (hiện nạp qua
+  `GetDistinctStepsAsync`/`GetMatchingStepsAsync`, dựa trên `GetMatchingPrefixesAsync`) MUST đổi nguồn
+  sang danh sách Step khớp theo tên trong **toàn bộ `eutr_steps`** (cùng quy tắc Change ở trên), tính
+  trên tên file đã lưu của document đang sửa (`eutr_documents.Name`, nay là tên file gốc) — để nhất
+  quán với logic Upload mới.
+- Change: Bảng `eutr_master_documents` và toàn bộ CRUD/Import/Export của nó (`EutrMastersController`,
+  thuộc feature `002-eutr-masters`) KHÔNG bị xóa hay thay đổi — chỉ không còn được luồng Upload/Edit
+  Type = "PO" của feature này tham chiếu nữa.
+- Q: So khớp tên file chứa tên Step có phân biệt hoa/thường không? → A: Không — kế thừa nguyên tắc so
+  khớp không phân biệt hoa/thường đã dùng cho Prefix ở FR-020 cũ.
+- Q: Nếu `eutr_steps` rỗng (chưa cấu hình Step nào trong toàn hệ thống)? → A: Mọi
+  file upload với Type = "PO" đều bị loại kèm lỗi "không tìm được step tương ứng" — tương tự trường
+  hợp `eutr_master_documents` rỗng trước đây; đây không phải lỗi hệ thống, cần tạo Step trước (màn
+  `001-eutr-steps`).
+- Q: **Sửa lại sau kiểm thử thật** — Vì sao quyết định ban đầu (Steps đã gán cho Type "PO" qua Assign
+  Steps) sai? → A: Rà soát lại xác nhận `eutr_reference_type_details` (Assign Steps) là một cơ chế
+  HOÀN TOÀN riêng biệt, không liên quan gì tới cây Step hiển thị trên màn Map File (`005-eutr-sales-orders`)/
+  `PurchId/View` (`012-eutr-purchase-orders`) — cây đó lấy Step từ `eutr_template_details` (gắn theo
+  Template, feature `003-eutr-templates`). Không có gì đảm bảo (và thực tế kiểm thử cho thấy không có)
+  Step nào từng được gán cho Type "PO" qua màn Assign Steps, nên `assignedSteps` luôn rỗng và MỌI file
+  hợp lệ đều bị báo lỗi sai — kể cả khi tên file chứa đúng tên một Step đang hiển thị rõ ràng trên cây
+  Template. Sửa lại dùng toàn bộ `eutr_steps` giải quyết đúng vấn đề này, đồng thời khớp lại đúng tính
+  chất "phẳng, không giới hạn theo Type" mà `eutr_master_documents` (cơ chế cũ) vốn đã có.
+- Q: Document Type = "PO" tạo TRƯỚC bản cập nhật này (File name hiện đang là Step Name do bị đổi tên
+  ở Update 25/26) có bị tính toán/hiển thị lại tên không? → A: Không — không migration/backfill dữ
+  liệu cũ; document cũ giữ nguyên File name đã lưu; chỉ document Upload MỚI sau bản cập nhật này mới
+  giữ tên file gốc.
+
 ### Sessions 2026-07-07 → 2026-07-23 (Updates 1-18) — tóm tắt lịch sử
 
 Feature này đã trải qua nhiều vòng cập nhật: từ một trang Add riêng (`eutr/documents/add`) với
@@ -429,7 +529,9 @@ control này ẩn hẳn; khi hiển thị, combobox này mặc định chọn s�
 lọc), ô **Value** (combobox
 vừa gõ tự do vừa hiển thị gợi ý tùy Type, hỗ trợ dán nhiều giá trị), vùng chip hiển thị các giá trị
 đã chọn, hai trường ngày mới **Valid from** (mặc định ngày hiện tại) và **Valid to** (mặc định ngày
-tối đa `9999-12-31`) — cả hai đều có thể chỉnh sửa trước khi Upload, và nút **Upload**.
+tối đa `9999-12-31`) — cả hai đều có thể chỉnh sửa trước khi Upload — **(Update 30)** CHỈ hiển thị khi
+Type đã chọn = "Vendor", Type khác ẩn hoàn toàn 2 trường này nhưng vẫn dùng đúng giá trị mặc định khi
+Upload — và nút **Upload**.
 
 Chọn Type = "PO", "Invoice", hoặc "Delivery note" hiển thị gợi ý PO (API `refType = 15`); chọn Type
 = "Vendor" hiển thị gợi ý Vendor (API `refType = 14`); Type khác không có gợi ý, ô Value là nhập tự
@@ -445,21 +547,25 @@ Nhấn Upload mở hộp thoại chọn nhiều file; mỗi file hợp lệ (PDF
 GeoJSON — Update 27, tối đa **20MB** — Update 28, sửa 10MB cũ) được tải lên thư mục SharePoint xác
 định theo Type (PO/Vendor → thư mục theo chip đã chọn;
 Invoice/Delivery note/General agreement → thư mục cố định theo tên Type; Type khác → thư mục cố
-định theo `Name` của Type). Khi Type = "PO", tên file MUST khớp một `Prefix` trong
-`eutr_master_documents` — file không khớp bị loại kèm cảnh báo.
+định theo `Name` của Type). **(Update 29, thay Update 19 gốc; sửa lại sau kiểm thử thật)** Khi Type =
+"PO", tên file MUST **chứa** `Name` của ít nhất một Step trong **toàn bộ `eutr_steps`** — KHÔNG còn
+khớp `Prefix` trong `eutr_master_documents` (quyết định ban đầu chỉ dùng Step đã gán cho Type "PO" qua
+Assign Steps đã bị loại bỏ, xem Update 29 ở mục Clarifications); file không chứa tên Step nào bị loại
+kèm cảnh báo "không tìm được step tương ứng".
 
-Với mỗi file upload thành công, hệ thống tạo một document mới trong `eutr_documents` — **(Update 26,
-sửa Update 25)** File name **KHÔNG còn là tên file gốc** mà được hệ thống tự động tính lại theo Step:
-`Name` của Step đó (với Type khác "PO" là Step đã chọn; với Type = "PO" là Step ứng với Prefix khớp dài
-nhất, Prefix chỉ dùng để chọn Step, không còn ghép vào tên), đã làm sạch ký tự đặc biệt (loại bỏ
-`\ / : * ? " < > |` và mọi chuỗi `..`), giữ nguyên đuôi file gốc (xem Update 26 ở mục Clarifications để
-biết đầy đủ công thức và các trường hợp biên) — cùng Valid from = giá trị đang hiển
+Với mỗi file upload thành công, hệ thống tạo một document mới trong `eutr_documents` — File name: với
+Type khác "PO", **(Update 26, sửa Update 25)** KHÔNG còn là tên file gốc mà được hệ thống tự động
+tính lại theo Step đã chọn: `Name` của Step đó, đã làm sạch ký tự đặc biệt (loại bỏ `\ / : * ? " < > |`
+và mọi chuỗi `..`), giữ nguyên đuôi file gốc; với Type = "PO", **(Update 29, thay Update 25/26)**
+**giữ nguyên tên file gốc** — hệ thống KHÔNG còn đổi tên file cho nhánh này nữa (xem Update 29 ở mục
+Clarifications để biết đầy đủ lý do và các trường hợp biên) — cùng Valid from = giá trị đang hiển
 thị ở popup, Valid to = giá trị đang hiển thị ở popup, FileId = id từ SharePoint. Với Type khác "PO",
 hệ thống ghi một bản ghi `eutr_references` cho mỗi
 chip (DocumentId, StepId đã chọn, RefType = `Id` của Type đã chọn, RefValue = giá trị chip). Với
-Type = "PO", hệ thống ghi một bản ghi `eutr_references` cho **mỗi** `StepId` khớp Prefix của file đó
+Type = "PO", hệ thống ghi một bản ghi `eutr_references` cho **mỗi** `StepId` khớp (Update 29: khớp theo
+tên Step chứa trong tên file, không còn khớp Prefix) của file đó
 (RefType = `Id` của Type "PO" đang chọn — gửi kèm dưới dạng `TypeId`, RefValue = giá trị chip PO đã
-chọn) — không phụ thuộc vào việc Step nào được chọn để đổi tên file ở trên. **(Update 23)** Với Type =
+chọn). **(Update 23)** Với Type =
 "Invoice", bản ghi `eutr_documents` vừa tạo cho file đó MUST được
 ghi thêm giá trị Invoice number đang hiển thị ở popup vào cột `Invoice` (không ghi vào
 `eutr_references`). Sau khi lượt Upload hoàn tất (toàn bộ hoặc một phần thành công), popup MUST tự
@@ -470,17 +576,23 @@ ghi thêm giá trị Invoice number đang hiển thị ở popup vào cột `Inv
 **Independent Test**: Nhấn Add, xác nhận popup "Add EUTR documents" mở ra với Valid from = hôm nay
 và Valid to = ngày tối đa hiển thị sẵn (có thể sửa); chọn Type = "PO", xác nhận combobox Step không
 hiển thị; gõ/chọn một PO hợp lệ, xác nhận chip xuất hiện, ô Value trở về trống; đổi Valid from/Valid
-to sang giá trị khác; nhấn Upload, chọn file có tên khớp prefix hợp lệ; xác nhận document mới xuất
-hiện trên danh sách với đúng Valid from/Valid to đã chỉnh sửa (không phải mặc định) và đúng
-`eutr_references` (StepId khớp prefix, RefValue = mã PO); riêng biệt xác nhận không sửa Valid
-from/Valid to thì document tạo ra có Valid from = hôm nay, Valid to = ngày tối đa. **(Update 26, sửa
-Update 25)** Riêng biệt: chọn Type khác "PO" (ví dụ "Invoice") có Step "A" (không có cấu hình trong
-`eutr_master_documents`) và Step "B" (có cấu hình Prefix = "INV"); upload một file bất kỳ (ví dụ
+to sang giá trị khác; nhấn Upload, chọn file có tên chứa tên một Step đã gán cho Type "PO" (Update
+29); xác nhận document mới xuất hiện trên danh sách với đúng Valid from/Valid to đã chỉnh sửa (không
+phải mặc định) và đúng `eutr_references` (StepId khớp theo tên, RefValue = mã PO); riêng biệt xác
+nhận không sửa Valid from/Valid to thì document tạo ra có Valid from = hôm nay, Valid to = ngày tối
+đa. **(Update 26, sửa Update 25)** Riêng biệt: chọn Type khác "PO" (ví dụ "Invoice") có Step "A" (không
+có cấu hình trong `eutr_master_documents`) và Step "B" (có cấu hình Prefix = "INV"); upload một file bất
+kỳ (ví dụ
 `baocao.pdf`) với Step "A" đã chọn, xác nhận File name trên danh sách = "A.pdf" (không phải
 `baocao.pdf`); lặp lại với Step "B", xác nhận File name = "B.pdf" (KHÔNG phải "INVB.pdf" — Prefix "INV"
 của Step "B" KHÔNG còn được ghép vào tên kể từ Update 26); upload thêm một file khác cũng với Step "B",
 xác nhận document mới cũng có File name = "B.pdf" (trùng với document trước, được hệ thống chấp nhận
-bình thường).
+bình thường). **(Update 29)** Riêng biệt cho Type = "PO": upload một file tên `1.Invoice AP-PD.pdf`
+khi có Step "1.Invoice" đã gán cho Type "PO", xác nhận: (a) document mới tạo ra có File name **đúng
+bằng** `1.Invoice AP-PD.pdf` (tên file gốc, không đổi thành "1.Invoice.pdf"); (b) `eutr_references`
+được ghi với `StepId` của Step "1.Invoice"; upload thêm một file tên `baocao.pdf` (không chứa tên Step
+nào đã gán cho Type "PO"), xác nhận file này bị loại khỏi lượt upload kèm lỗi "không tìm được step
+tương ứng", không tạo document nào cho file đó.
 
 **Acceptance Scenarios**:
 
@@ -585,6 +697,41 @@ bình thường).
     nhận và tạo document thành công — không bị từ chối như trước Update 28 (khi giới hạn còn 10MB).
     Upload tiếp 1 file **> 20MB** → xác nhận vẫn bị loại kèm thông báo lỗi rõ ràng, các file hợp lệ
     khác trong cùng lượt không bị ảnh hưởng.
+33. **(Update 29, FR-020/FR-074/FR-075, sửa lại sau kiểm thử thật)** **Given** đã chọn Type = "PO" với
+    1 chip mã PO, có Step "1.Invoice" và Step "2.Packing list" tồn tại trong `eutr_steps` (không cần
+    Assign Steps cho Type "PO"), **When** upload file tên
+    `1.Invoice AP-PD.pdf`, **Then** hệ thống tạo document mới với `eutr_documents.Name` =
+    `1.Invoice AP-PD.pdf` (giữ nguyên tên file gốc, KHÔNG đổi tên) và ghi một bản ghi
+    `eutr_references` với `StepId` của Step "1.Invoice" (RefValue = mã PO đã chọn) — KHÔNG tra
+    `eutr_master_documents`.
+34. **(Update 29, FR-076)** **Given** đã chọn Type = "PO", `eutr_steps` gồm
+    "1.Invoice" và "2.Packing list" (cùng các Step khác), **When** upload file tên `baocao.pdf` (không
+    chứa tên Step nào), **Then** file đó bị loại khỏi lượt upload kèm thông báo lỗi nêu rõ "không tìm
+    được step tương ứng" — không tạo document/`eutr_references` cho file này; các file khác trong cùng
+    lượt (nếu có, khớp Step hợp lệ) không bị ảnh hưởng.
+35. **(Update 29, FR-075)** **Given** đã chọn Type = "PO", tên file upload chứa tên của **cả hai** Step
+    "1.Invoice" và "Invoice" (ví dụ tên Step "Invoice" là một chuỗi con của "1.Invoice"), **When**
+    upload thành công, **Then** hệ thống ghi đủ hai bản ghi `eutr_references` — một cho mỗi `StepId`
+    khớp — không giới hạn chỉ chọn một Step "thắng cuộc" (khác cơ chế tie-break Prefix cũ, nay không
+    còn áp dụng vì không còn đổi tên file).
+36. **(Update 29, FR-074, sửa lại sau kiểm thử thật)** **Given** `eutr_steps` hiện KHÔNG có bản ghi nào
+    (toàn hệ thống chưa tạo Step nào), **When** upload bất kỳ file nào
+    với Type = "PO", **Then** mọi file trong lượt đó đều bị loại kèm lỗi "không tìm được step tương
+    ứng" — không phải lỗi hệ thống, cần tạo Step trước (màn `001-eutr-steps`).
+37. **(Update 30, FR-080)** **Given** popup Add đang mở, **When** chọn Type = "PO" (hoặc bất kỳ Type
+    nào khác "Vendor"), **Then** hai trường Valid from/Valid to KHÔNG hiển thị trên popup; upload file
+    hợp lệ thành công vẫn tạo document với Valid from = ngày hiện tại, Valid to = `9999-12-31` (giá trị
+    mặc định, không có ô nào để sửa).
+38. **(Update 30, FR-080)** **Given** popup Add đang mở, **When** chọn Type = "Vendor", **Then** hai
+    trường Valid from/Valid to hiển thị lại như trước Update 30, cho phép sửa trước khi Upload.
+39. **(Update 30, FR-080)** **Given** popup Add đang mở với Type = "Vendor" và người dùng đã sửa Valid
+    from/Valid to sang giá trị khác mặc định, **When** đổi Type sang "PO" (hoặc Type khác "Vendor"),
+    **Then** hai trường ẩn đi VÀ giá trị được reset lại về mặc định (ngày hiện tại/`9999-12-31`) — nếu
+    người dùng đổi lại Type = "Vendor" ngay sau đó, hai trường hiển thị lại với giá trị mặc định (không
+    còn giữ giá trị đã sửa trước đó).
+40. **(Update 30, FR-080)** **Given** popup Edit đang mở cho một document bất kỳ Type nào, **When** xem
+    popup, **Then** Valid from/Valid to tiếp tục hiển thị như hành vi hiện có (FR-030) — không bị ẩn dù
+    Type của document đó không phải "Vendor".
 
 ---
 
@@ -943,6 +1090,22 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   hay gộp lại thành 1 document — mỗi file hợp lệ vẫn tạo `eutr_documents`/`eutr_references` riêng của
   nó (không có ràng buộc unique theo `StepId`, hành vi đã có từ trước Update 27); trên cây Step, các
   file này xuất hiện dưới cùng 1 node Step qua badge "+N"/tooltip đã có sẵn (không phải logic mới).
+- **(Update 29)** Kể từ Update 29, việc `eutr_master_documents` hiện không có bản ghi nào (hoặc API
+  tra cứu Prefix thất bại) KHÔNG còn ảnh hưởng tới Type = "PO" — dòng edge case cũ ở trên ("Khi
+  `eutr_master_documents` hiện không có bản ghi nào...") chỉ còn đúng cho lịch sử trước Update 29;
+  edge case tương đương hiện tại là danh sách Step đã gán cho Type "PO" (`eutr_reference_type_details`)
+  rỗng (xem FR-074, FR-036 ở Acceptance Scenarios).
+- **(Update 29)** File bị loại khỏi lượt upload vì "không tìm được step tương ứng" (Type = "PO") KHÔNG
+  tạo document nên không ảnh hưởng tên hiển thị; thông báo lỗi tương ứng MUST nêu đúng tên file gốc
+  người dùng đã chọn (cùng nguyên tắc đã áp dụng cho file bị loại vì sai định dạng/kích thước).
+- **(Update 29)** Vì Type = "PO" không còn đổi tên file khi Upload, nhiều document Type = "PO" khác
+  nhau (tạo từ các file gốc khác nhau) sẽ hầu như luôn có `eutr_documents.Name` khác nhau (đúng bằng
+  tên file gốc tương ứng) — khác với trước Update 29, khi nhiều file khớp cùng Step/Prefix luôn tạo ra
+  File name trùng nhau; hệ thống vẫn tiếp tục KHÔNG có ràng buộc duy nhất nào trên File name (không
+  phải lỗi nếu trùng tên gốc do trùng tên file thật).
+- **(Update 29)** Document Type = "PO" tạo TRƯỚC Update 29 giữ nguyên File name cũ (tên đã đổi theo
+  Step ở Update 25/26) — không có migration/backfill nào chạm dữ liệu cũ; chỉ document Upload MỚI sau
+  Update 29 mới giữ tên file gốc.
 
 ## Requirements *(mandatory)*
 
@@ -992,9 +1155,12 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   chip — thêm chip mới khi đã có 1 chip MUST bị chặn kèm thông báo. Với Type khác, vùng chọn MUST
   cho phép nhiều chip. Đổi giá trị dropdown Type MUST xóa toàn bộ chip hiện có.
 - **FR-014**: Popup Add MUST có trường **Valid from** (ô chọn ngày), mặc định hiển thị giá trị = ngày
-  hiện tại tại thời điểm mở popup, cho phép người dùng sửa trước khi Upload.
+  hiện tại tại thời điểm mở popup, cho phép người dùng sửa trước khi Upload — **(Update 30)** CHỈ hiển
+  thị khi Type đã chọn = "Vendor" (xem FR-080); Type khác vẫn dùng giá trị mặc định này, chỉ không hiển
+  thị/không sửa được.
 - **FR-015**: Popup Add MUST có trường **Valid to** (ô chọn ngày), mặc định hiển thị giá trị = ngày
-  tối đa `9999-12-31`, cho phép người dùng sửa trước khi Upload.
+  tối đa `9999-12-31`, cho phép người dùng sửa trước khi Upload — **(Update 30)** CHỈ hiển thị khi Type
+  đã chọn = "Vendor" (xem FR-080), cùng quy tắc với FR-014.
 - **FR-016**: Popup Add MUST validate Valid from ≤ Valid to; nếu Valid from muộn hơn Valid to, hệ
   thống MUST báo lỗi và chặn Upload cho tới khi giá trị hợp lệ.
 - **FR-017**: Nút **Upload** trong popup Add MUST ở trạng thái vô hiệu hóa cho tới khi: với Type khác
@@ -1010,13 +1176,19 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   `SharePointEutrPath`); "Invoice" → `{SharePointEutrPath}/Invoice`; "Delivery note" →
   `{SharePointEutrPath}/DeliveryNote`; "General agreement" → `{SharePointEutrPath}/GeneralAgreement`;
   Type khác → thư mục cố định đặt tên theo `Name` của Type đó.
-- **FR-020**: Khi Type = "PO", trước khi upload lên SharePoint, hệ thống MUST validate tên file bắt
-  đầu bằng (không phân biệt hoa/thường) một `Prefix` đang tồn tại trong `eutr_master_documents`; file
-  không khớp bất kỳ Prefix nào MUST bị loại khỏi lượt upload kèm cảnh báo rõ ràng, không chặn các
-  file hợp lệ khác trong cùng lượt.
+- **FR-020**: **(Update 29, thay thế toàn bộ cơ chế trước đó)** Khi Type = "PO", trước khi upload lên
+  SharePoint, hệ thống MUST xác định (các) Step khớp bằng cách so khớp tên file gốc (không phân biệt
+  hoa/thường) có **chứa** `Name` của Step nào trong danh sách Step đã gán cho Type "PO"
+  (`eutr_reference_type_details`) hay không — KHÔNG còn tra `eutr_master_documents`/`Prefix`; file
+  không chứa tên của bất kỳ Step nào trong danh sách đó MUST bị loại khỏi lượt upload kèm thông báo
+  lỗi nêu rõ "không tìm được step tương ứng", không chặn các file hợp lệ khác trong cùng lượt. Xem
+  FR-074 đến FR-079 (Update 29) để biết đầy đủ công thức, edge case, và các thay đổi liên quan (bỏ
+  đổi tên file, nguồn dữ liệu combobox Step ở Edit).
 - **FR-021**: Với mỗi file upload thành công lên SharePoint, hệ thống MUST tạo một bản ghi mới trong
-  `eutr_documents`: File name = **(Update 26, sửa Update 25)** tên file hệ thống tự tính theo Step
-  (KHÔNG còn là tên file gốc, KHÔNG còn gồm Prefix của master — xem FR-062/FR-063/FR-064/FR-068), Valid
+  `eutr_documents`: File name = với Type khác "PO", **(Update 26, sửa Update 25)** tên file hệ thống
+  tự tính theo Step (KHÔNG còn là tên file gốc, KHÔNG còn gồm Prefix của master — xem
+  FR-062/FR-063/FR-064/FR-068); với Type = "PO", **(Update 29, thay Update 25/26)** tên file gốc
+  người dùng đã chọn, KHÔNG đổi tên (xem FR-077). Valid
   from = giá trị đang hiển thị ở trường
   Valid from của popup tại thời điểm Upload, Valid to = giá trị đang hiển thị ở trường Valid to,
   FileId = id trả về từ SharePoint; ghi nhận người tạo/ngày tạo tự động.
@@ -1025,7 +1197,8 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   document vừa tạo, `StepId` = Step đã chọn, `RefType` = `Id` của Type đã chọn, `RefValue` = giá trị
   chip đó.
 - **FR-023**: Với Type = "PO", với mỗi file upload thành công, hệ thống MUST ghi một bản ghi
-  `eutr_references` cho **mỗi** `StepId` khớp Prefix của file đó (FR-020): `DocumentId` = Id document
+  `eutr_references` cho **mỗi** `StepId` khớp của file đó (FR-020 — **Update 29**: khớp theo tên Step
+  chứa trong tên file, không còn khớp Prefix): `DocumentId` = Id document
   vừa tạo, `StepId` = từng `StepId` khớp, `RefType` = `Id` của Type "PO" đang chọn (gửi kèm dưới dạng
   `TypeId` từ frontend), `RefValue` = giá trị chip PO đã chọn.
 - **FR-024**: Popup Add MUST tự đóng lại ngay sau khi một lượt Upload hoàn tất (dù toàn bộ hay một
@@ -1206,6 +1379,39 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   áp dụng đồng nhất cho mọi định dạng được phép (PDF, DOC/DOCX, XLS/XLSX, JPG/PNG, XML, JSON, GeoJSON).
   Hành vi loại file vượt quá (thông báo lỗi kèm tên file + lý do, không chặn các file hợp lệ khác trong
   cùng lượt) giữ nguyên không đổi.
+- **FR-074 (Update 29, sửa lại sau kiểm thử thật)**: Khi Type = "PO", danh sách Step dùng để so khớp
+  tên file (FR-020) MUST là **toàn bộ `eutr_steps`** (danh sách phẳng, không lọc theo Type) — quyết
+  định ban đầu (chỉ dùng Step đã gán cho Type "PO" qua Assign Steps, `eutr_reference_type_details`) đã
+  bị loại bỏ vì bảng đó không liên quan tới cây Step của Template và luôn rỗng cho Type "PO" trong thực
+  tế, khiến mọi file bị báo lỗi sai (xem Q&A "Sửa lại sau kiểm thử thật" ở mục Clarifications).
+- **FR-075 (Update 29)**: Với mỗi file trong lượt Upload (Type = "PO"), hệ thống MUST so khớp tên file
+  gốc (không phân biệt hoa/thường) với `Name` của từng Step trong danh sách ở FR-074 bằng phép kiểm
+  tra "tên file **chứa** tên Step" (`fileName` chứa `step.Name`, không còn là "bắt đầu bằng Prefix") —
+  mọi Step thỏa điều kiện này đều được coi là khớp; một file có thể khớp 0, 1, hoặc nhiều Step.
+- **FR-076 (Update 29)**: File không khớp bất kỳ Step nào ở FR-075 MUST bị loại khỏi lượt upload kèm
+  thông báo lỗi nêu rõ lý do (không tìm được step tương ứng cho file đó); không tạo `eutr_documents`/
+  `eutr_references` nào cho file này; các file hợp lệ khác trong cùng lượt KHÔNG bị ảnh hưởng (cùng
+  tinh thần FR-025).
+- **FR-077 (Update 29, thay thế nhánh Type = "PO" của FR-063/FR-068/FR-069)**: Sau khi xác định xong
+  danh sách Step khớp ở FR-075, hệ thống KHÔNG còn đổi tên file cho nhánh Type = "PO" — không còn khái
+  niệm "Step thắng cuộc" để đặt tên. `eutr_documents.Name` MUST lưu đúng **tên file gốc** người dùng
+  đã chọn (giữ nguyên toàn bộ tên, kể cả phần mở rộng). Nhánh Type khác "PO" (FR-062/FR-064/FR-068)
+  KHÔNG bị ảnh hưởng, tiếp tục đổi tên theo Step Name như hiện có.
+- **FR-078 (Update 29)**: Cơ chế hậu tố ngẫu nhiên 6 ký tự chống trùng tên vật lý trên SharePoint
+  (FR-065) tiếp tục áp dụng cho nhánh Type = "PO", nhưng nay MUST dựa trên **tên file gốc** (thay vì
+  tên đã đổi, vì FR-077 đã bỏ việc đổi tên).
+- **FR-079 (Update 29, sửa lại sau kiểm thử thật)**: Combobox Step ở popup Edit khi sửa một document
+  có Type = "PO" (nguồn dữ liệu hiện dựa trên `GetDistinctStepsAsync`/`GetMatchingStepsAsync`, vốn dùng
+  chung cơ chế Prefix ở FR-020 cũ) MUST đổi nguồn sang danh sách Step khớp theo tên trong **toàn bộ
+  `eutr_steps`** (cùng quy tắc FR-074/FR-075), tính trên tên file đã lưu của document đang sửa
+  (`eutr_documents.Name`, từ Update 29 trở đi chính là tên file gốc) — để nhất quán với logic Upload
+  mới.
+- **FR-080 (Update 30)**: Ở popup Add (mode `add`), hai trường Valid from (FR-014)/Valid to (FR-015)
+  MUST chỉ hiển thị khi Type đã chọn có `Name` = "Vendor" (không phân biệt hoa/thường); mọi Type khác
+  MUST ẩn hoàn toàn 2 trường này. Khi ẩn, hệ thống vẫn MUST dùng đúng giá trị mặc định (ngày hiện tại/
+  `9999-12-31`) khi Upload, và MUST reset lại 2 giá trị này về mặc định ngay khi Type đổi từ "Vendor"
+  sang Type khác (trước khi ẩn). Popup Edit (mode `edit`) KHÔNG bị ảnh hưởng — tiếp tục hiển thị 2
+  trường này cho mọi Type như FR-030 hiện có.
 
 ## Key Entities *(include if feature involves data)*
 
@@ -1253,14 +1459,19 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   combobox Step của popup Add/Edit theo Type đang chọn (FR-043/FR-044/FR-045) — một Step chỉ xuất
   hiện trong combobox nếu có bản ghi `TypeId` khớp Type đó.
 - **EUTR Master Document (Prefix/Step) — nguồn tham chiếu, KHÔNG thuộc phạm vi CRUD feature này**:
-  Bảng `eutr_master_documents` (Id, StepId, Prefix), quản lý bởi feature `002-eutr-masters`. Feature
-  này đọc (read-only) bảng này để: (a) validate tên file khi Type = "PO" — `Prefix` chỉ duy nhất theo
-  cặp (`StepId`, `Prefix`), một chuỗi Prefix có thể khớp nhiều `StepId`, khi đó mỗi `StepId` khớp tạo
-  một bản ghi `eutr_references` riêng; (b) **(Update 26, sửa Update 25)** chọn Step dùng để đặt tên file
-  khi Upload — với Type khác "PO", Step đã chọn tường minh dùng trực tiếp; với Type = "PO", trong số các
-  bản ghi đã khớp ở (a), chọn bản ghi có `Prefix` **dài nhất** để xác định Step thắng cuộc (tie-break
-  không đổi từ Update 25) — nhưng kể từ Update 26, giá trị `Prefix` CHỈ dùng để tie-break, KHÔNG còn được
-  đọc/ghép vào File name (xem FR-062/FR-063/FR-068).
+  Bảng `eutr_master_documents` (Id, StepId, Prefix), quản lý bởi feature `002-eutr-masters`. **(Update
+  29)** Kể từ Update 29, feature này KHÔNG còn đọc bảng này ở bất kỳ luồng nào (Upload, Edit) — mô tả
+  (a)/(b) dưới đây chỉ còn đúng cho lịch sử TRƯỚC Update 29, giữ lại để tham chiếu: (a) validate tên
+  file khi Type = "PO" — `Prefix` chỉ duy nhất theo cặp (`StepId`, `Prefix`), một chuỗi Prefix có thể
+  khớp nhiều `StepId`, khi đó mỗi `StepId` khớp tạo một bản ghi `eutr_references` riêng; (b) (Update 26,
+  sửa Update 25) chọn Step dùng để đặt tên file khi Upload — với Type khác "PO", Step đã chọn tường
+  minh dùng trực tiếp; với Type = "PO", trong số các bản ghi đã khớp ở (a), chọn bản ghi có `Prefix`
+  **dài nhất** để xác định Step thắng cuộc (tie-break không đổi từ Update 25) — nhưng kể từ Update 26,
+  giá trị `Prefix` CHỈ dùng để tie-break, KHÔNG còn được đọc/ghép vào File name. Từ Update 29, Type =
+  "PO" xác định (các) Step khớp bằng cách so tên file với `Name` của các Step đã gán cho Type "PO" qua
+  `eutr_reference_type_details` (xem FR-074/FR-075), và KHÔNG còn đổi tên file (xem FR-077) — bảng
+  `eutr_master_documents` vẫn tồn tại, vẫn được CRUD bởi `002-eutr-masters`, chỉ không còn ai đọc nó từ
+  feature này.
 - **D365 RSVNEutrPurchOrders / RSVNEutrSalesOrderPurchases / VendorsV3 (external, read-only)**: Dữ
   liệu tham chiếu D365 lấy qua `POST /api/dynamics/reference` với `refType = 15`/`16`/`14` tương
   ứng — không có bảng lưu trữ cục bộ.
@@ -1332,6 +1543,17 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
 - **SC-019 (Update 28)**: 100% lượt Upload file hợp lệ có kích thước trong khoảng 10MB–20MB được chấp
   nhận (không còn bị loại vì kích thước, khác với trước Update 28); 100% file > 20MB tiếp tục bị loại
   kèm thông báo lỗi rõ ràng.
+- **SC-020 (Update 29)**: 100% lượt Upload thành công với Type = "PO" sau Update 29 tạo
+  `eutr_documents.Name` đúng bằng tên file gốc người dùng đã chọn (không đổi tên) và ghi đủ
+  `eutr_references` cho mọi Step (đã gán cho Type "PO") mà tên file gốc có chứa; 0% lượt Upload Type =
+  "PO" còn tra cứu `eutr_master_documents`/`Prefix`.
+- **SC-021 (Update 29, sửa lại sau kiểm thử thật)**: 100% file upload với Type = "PO" mà tên KHÔNG
+  chứa tên bất kỳ Step nào trong `eutr_steps` bị loại khỏi lượt upload kèm thông báo lỗi rõ ràng nêu lý
+  do "không tìm được step tương ứng"; 0% document/`eutr_references` được tạo cho các file này.
+- **SC-022 (Update 30)**: 100% lượt mở popup Add với Type khác "Vendor" (hoặc chưa chọn Type) không
+  hiển thị Valid from/Valid to; 100% document tạo qua các lượt đó có Valid from/Valid to đúng bằng giá
+  trị mặc định (ngày hiện tại/`9999-12-31`) dù người dùng không thấy/không sửa được 2 trường này. 100%
+  lượt chọn Type = "Vendor" hiển thị lại đúng 2 trường, cho phép sửa như trước Update 30.
 
 ## Assumptions
 
@@ -1423,3 +1645,33 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   không cần thay đổi backend/frontend riêng ở hai feature đó — cả hai đều gọi đúng cùng endpoint/luồng
   Upload dùng chung với `004-eutr-documents`, không có logic đặt tên file độc lập nào ở tầng feature của
   chúng; xem ghi chú kế thừa trong Update 25 ở mục Clarifications.
+- **(Update 29, sửa lại sau kiểm thử thật)** Tập Step dùng để so khớp tên file khi Type = "PO" **ban
+  đầu** chọn là Step đã được gán cho Type "PO" qua tính năng Assign Steps (`eutr_reference_type_details`,
+  cùng cơ chế Update 20 dùng cho mọi Type khác) — xác nhận qua `AskUserQuestion` khi viết bản cập nhật
+  này. Kiểm thử thật ngay sau khi triển khai cho thấy quyết định này sai: `eutr_reference_type_details`
+  không liên quan gì tới cây Step của Template (nguồn hiển thị thật là `eutr_template_details`), nên
+  hầu như luôn rỗng cho Type "PO" — mọi file hợp lệ đều bị báo lỗi sai dù tên file khớp rõ ràng một Step
+  đang hiển thị trên cây. Đã sửa lại: dùng **toàn bộ `eutr_steps`** (không lọc theo Type) — khớp đúng
+  tính chất "phẳng, không giới hạn Type" mà `eutr_master_documents` (cơ chế cũ) vốn đã có. Nếu về sau
+  phát sinh nhu cầu so khớp trên một tập Step hẹp hơn (ví dụ theo Template cụ thể của PO đang upload),
+  đó là một quyết định phạm vi mới, cần yêu cầu tường minh, không tự suy diễn từ Update này.
+- **(Update 29)** Việc bỏ đổi tên file cho Type = "PO" KHÔNG kèm migration/backfill nào cho document đã
+  tạo trước Update 29 — các document đó giữ nguyên File name cũ (đã đổi theo Step Name ở Update 25/26);
+  chỉ document Upload MỚI sau Update 29 mới có File name = tên file gốc.
+- **(Update 29)** Việc kế thừa các thay đổi ở Update này sang `005-eutr-sales-orders` và
+  `012-eutr-purchase-orders` (matching + bỏ đổi tên khi Upload) không cần thay đổi backend riêng ở hai
+  feature đó với vai trò popup Add/Edit dùng chung — nhưng RIÊNG phần hiển thị tên file trên cây
+  Template (Step 2 Map File / `PurchId/View`) và phần đổi tên file khi Download (đã có nhánh riêng ở
+  frontend hai feature đó) đòi hỏi thay đổi cụ thể riêng — xem Update tương ứng trong spec của
+  `005-eutr-sales-orders`/`012-eutr-purchase-orders`.
+- **(Update 30)** Phạm vi ẩn Valid from/Valid to CHỈ áp dụng cho popup Add (mode `add`) theo đúng ảnh
+  chụp màn hình kèm yêu cầu gốc — không tự suy rộng sang popup Edit (mode `edit`), vì Edit có thể đang
+  hiển thị giá trị THẬT khác mặc định của một document đã tồn tại (kể cả document Type khác "Vendor" đã
+  từng có Valid from/Valid to khác mặc định, do được tạo từ trước Update 30, hoặc do luồng khác ghi
+  đè) — ẩn ở Edit sẽ khiến người dùng mất khả năng xem/sửa giá trị thật đang lưu trên document đó. Nếu
+  về sau có yêu cầu tường minh mở rộng ẩn sang cả Edit, đó là quyết định phạm vi mới, không suy diễn từ
+  Update này.
+- **(Update 30)** Việc kế thừa sang `005-eutr-sales-orders`/`012-eutr-purchase-orders` không cần thay
+  đổi gì thêm — cả hai đều mở đúng popup Add/Edit dùng chung (`EutrDocumentsFormDialog.jsx`) qua nút
+  Upload ở Step 2 Map File/`PurchId/View`, không có logic hiển thị Valid from/Valid to riêng nào ở tầng
+  feature của chúng.

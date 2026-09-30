@@ -10,6 +10,31 @@
 
 ## Clarifications
 
+### Session 2026-09-30 — Bug fix: xóa (đơn/nhiều) một Step đang được Template tham chiếu báo lỗi SQL thô thay vì thông báo rõ ràng
+
+- Input: "delete nhiều dòng trong eutr/steps link https://localhost:7141/api/eutr-steps/delete-multi.
+  báo lỗi MySql.Data.MySqlClient.MySqlException (0x80004005): Cannot delete or update a parent row: a
+  foreign key constraint fails (`compliance_sys_db_eutr`.`eutr_template_details`, CONSTRAINT
+  `eutr_template_details_stepid_foreign` FOREIGN KEY (`StepId`) REFERENCES `eutr_steps` (`Id`))".
+- Bối cảnh (rà soát mã nguồn xác nhận nguyên nhân gốc): `EutrStepService` trước đây không override
+  `DeleteAsync`/`DeleteMultiAsync` — kế thừa nguyên bản từ `BaseService`, không có bước kiểm tra ràng
+  buộc khóa ngoại nào trước khi gọi DELETE. Khi một Step đang được ít nhất một Template tham chiếu
+  (`eutr_template_details.StepId`), MySQL từ chối lệnh DELETE bằng lỗi 1451 (constraint
+  `eutr_template_details_stepid_foreign`) — ngoại lệ `MySqlException` thô này không được bắt riêng nên
+  lộ nguyên văn ra tận response API/giao diện. Tính năng `006-eutr-reference-types` đã có sẵn đúng cơ
+  chế sửa lỗi này cho một ràng buộc khóa ngoại tương tự (`EutrReferenceTypesService`, bắt lỗi 1451 của
+  `eutr_references_reftype_foreign`) — dùng lại đúng mẫu đó cho Step.
+- Change: `DeleteAsync`/`DeleteMultiAsync` của Step MUST bắt riêng lỗi MySQL 1451 (vi phạm khóa ngoại)
+  phát sinh khi (một hoặc nhiều) Step đang bị Template tham chiếu, và dịch thành thông báo lỗi tiếng
+  Anh rõ ràng cho người dùng (theo FR-011, không phải văn bản lỗi SQL thô) — thay vì để ngoại lệ SQL
+  gốc lộ ra ngoài. Xóa nhiều (`DeleteMultiAsync`) MUST tiếp tục dùng chung 1 transaction cho cả lượt
+  xóa — nếu bất kỳ Step nào trong lượt bị chặn vì đang được tham chiếu, TOÀN BỘ lượt xóa đó rollback
+  (không xóa một phần), đúng theo cách `006-eutr-reference-types` đã làm cho tình huống tương tự.
+- Q: Vì sao không cho xóa một phần (bỏ qua Step đang bị tham chiếu, chỉ xóa các Step hợp lệ còn lại)?
+  → A: Giữ đúng hành vi rollback-toàn-bộ đã có sẵn ở `006-eutr-reference-types` cho ràng buộc khóa
+  ngoại tương tự — nhất quán giữa hai màn hình, và tránh để người dùng bối rối khi 1 lượt xóa nhiều chỉ
+  thành công một phần mà không có lựa chọn rõ ràng nào để biết trước Step nào sẽ bị chặn.
+
 ### Session 2026-07-01
 
 - Q: Phạm vi chuyển sang tiếng Anh — tài liệu spec, giao diện ứng dụng, hay cả hai? → A: Chỉ toàn bộ văn bản hiển thị cho người dùng trên front-end (nhãn cột, nút, breadcrumb, thông báo kiểm tra/lỗi/thành công, trạng thái rỗng, hộp thoại xác nhận) phải bằng tiếng Anh; tài liệu spec giữ nguyên.
@@ -91,7 +116,10 @@ phản ánh ngay trong bảng.
 ### User Story 4 - Xóa bước (Priority: P2)
 
 Người dùng nhấn **Delete** trên một dòng, xác nhận, và bước bị loại khỏi danh sách. Hệ thống
-cũng hỗ trợ xóa nhiều bước cùng lúc.
+cũng hỗ trợ xóa nhiều bước cùng lúc. **(Cập nhật 2026-09-30)** Nếu (một hoặc nhiều) bước đang được
+ít nhất một Template tham chiếu (`eutr_template_details`), hệ thống MUST chặn việc xóa và hiển thị
+thông báo lỗi rõ ràng — KHÔNG hiển thị văn bản lỗi SQL thô; xóa nhiều với ít nhất 1 bước bị chặn MUST
+rollback toàn bộ lượt xóa đó (không xóa một phần).
 
 **Why this priority**: Dọn dẹp các bước không còn dùng là cần thiết nhưng ít rủi ro nếu để sau.
 
@@ -104,6 +132,15 @@ cũng hỗ trợ xóa nhiều bước cùng lúc.
    khỏi bảng.
 3. **Given** hộp thoại xác nhận xóa hiện ra, **When** người dùng hủy, **Then** không có bước nào
    bị xóa.
+4. **(Cập nhật 2026-09-30)** **Given** một bước đang được ít nhất một Template tham chiếu
+   (`eutr_template_details`), **When** nhấn Delete trên dòng đó và xác nhận, **Then** hệ thống chặn
+   việc xóa, bước đó vẫn còn trong bảng, và hiển thị thông báo lỗi rõ ràng bằng tiếng Anh (ví dụ "This
+   step is currently used by one or more templates and cannot be deleted.") — KHÔNG hiển thị văn bản
+   lỗi SQL thô (`MySqlException`/tên bảng/constraint).
+5. **(Cập nhật 2026-09-30)** **Given** đã chọn nhiều bước để xóa, trong đó CÓ ÍT NHẤT 1 bước đang được
+   Template tham chiếu (các bước còn lại không bị tham chiếu), **When** thực hiện xóa nhiều, **Then**
+   TOÀN BỘ lượt xóa bị chặn — kể cả các bước không bị tham chiếu cũng KHÔNG bị xóa (rollback toàn bộ,
+   không xóa một phần) — kèm thông báo lỗi rõ ràng.
 
 ---
 
@@ -119,6 +156,11 @@ cũng hỗ trợ xóa nhiều bước cùng lúc.
   coi là trùng và chặn lưu.
 - Khi sửa một bước và giữ nguyên tên hiện tại của chính nó, hệ thống không báo trùng (không tự so
   khớp với bản ghi đang sửa).
+- **(Cập nhật 2026-09-30)** Khi xóa một bước đang được Template tham chiếu (`eutr_template_details`),
+  hệ thống chặn xóa kèm thông báo lỗi rõ ràng — không phải lỗi hệ thống, người dùng cần gỡ bước đó khỏi
+  mọi Template trước (màn `003-eutr-templates`) rồi mới xóa được.
+- **(Cập nhật 2026-09-30)** Khi xóa nhiều bước, TẤT CẢ bước trong lượt đều không bị Template nào tham
+  chiếu: xóa thành công bình thường như trước (không đổi).
 
 ## Requirements *(mandatory)*
 
@@ -146,6 +188,12 @@ cũng hỗ trợ xóa nhiều bước cùng lúc.
   gồm: nhãn cột (Step name, Created by, Created date, Action), nút (Add, Edit, Delete, Save,
   Cancel), breadcrumb (EUTR > Steps), ô tìm kiếm (Search), thông báo kiểm tra/lỗi (ví dụ tên
   bước để trống), thông báo thành công, trạng thái rỗng ("No data"), và hộp thoại xác nhận xóa.
+- **FR-012 (Cập nhật 2026-09-30, bug fix)**: Khi xóa (đơn hoặc nhiều) một bước đang được ít nhất một
+  Template tham chiếu (`eutr_template_details.StepId`), hệ thống MUST chặn việc xóa và hiển thị thông
+  báo lỗi rõ ràng bằng tiếng Anh (theo FR-011) — KHÔNG được để lộ văn bản lỗi SQL thô
+  (`MySqlException`/tên bảng/constraint) ra giao diện. Xóa nhiều với ít nhất 1 bước bị chặn MUST
+  rollback TOÀN BỘ lượt xóa đó trong cùng 1 transaction — không xóa một phần các bước còn lại không bị
+  tham chiếu.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -165,6 +213,10 @@ cũng hỗ trợ xóa nhiều bước cùng lúc.
 - **SC-004**: Người dùng lọc đến đúng bước cần tìm bằng từ khóa trong dưới 5 giây với danh sách
   tối thiểu 100 bản ghi.
 - **SC-005**: Mọi thao tác xóa đều yêu cầu xác nhận, không có trường hợp xóa nhầm do một cú nhấp.
+- **SC-006 (Cập nhật 2026-09-30, bug fix)**: 100% lượt xóa (đơn hoặc nhiều) một bước đang được Template
+  tham chiếu hiển thị đúng thông báo lỗi rõ ràng bằng tiếng Anh — 0% lượt xóa như vậy còn hiển thị văn
+  bản lỗi SQL thô ra giao diện. 100% lượt xóa nhiều có ít nhất 1 bước bị chặn không xóa bất kỳ bước nào
+  trong lượt đó (rollback toàn bộ).
 
 ## Assumptions
 

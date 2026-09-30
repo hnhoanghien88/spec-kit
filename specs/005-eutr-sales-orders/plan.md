@@ -537,7 +537,12 @@ end by the same external menu/auth service Update 28 already reads for menu `eut
 the same already-cached `localStorage['userMenu']`. An earlier draft of this update added one stateless
 authorization-probe backend action (`CanUpdate`, mirroring the pre-existing `CanCreate`); both were
 removed after confirming `permissionList` already carries the same `'Create'`/`'Update'` data (research.md
-Decision 81) — net zero backend surface change.
+Decision 81) — net zero backend surface change. **Update 42**: adds the first new local MySQL table since
+Update 1 — `eutr_progression` (`Id, SalesId, Total, Missing, Finished` + audit columns, 1 row per
+`SalesId`, migration `33_create_eutr_progression.sql`), read/written via the same Dapper (`IUnitOfWork`)
+access path every other `Eutr*Repository` in this codebase uses; no change to `eutr_purchase_attachments`'s
+schema (Update 36's `ProductVariant`/`ItemId` columns already exist), only to which write path
+(`test-so-template-sync`) populates those 2 columns.
 
 **Testing**: Existing backend unit test project `ComplianceSysApi.UnitTests` (add/extend a test for the new `EntityMappings[11]` + mapping case if a suitable existing test class covers `ComplDynamicsService`; **Update 1**: add a test class for `EutrPurchaseAttachmentsRepository`/`Service` if the project has an equivalent existing test for `EutrTemplatesRepository`/`Service` to model it on); frontend has no dedicated automated test harness for this page — verify manually per `quickstart.md`, consistent with how prior EUTR features in this repo were validated. **Update 2**: extend the same `EutrPurchaseAttachmentsRepository`/`Service` test class (if added) with cases for `GetBySalesIdAsync`/`SavePoMappingAsync`; `MapFilePage.jsx` remains manually verified per `quickstart.md` (no automated UI harness in this repo). **Update 4**: zero backend test impact (no backend change); `ViewSalesOrderPage.jsx` is manually verified per `quickstart.md`, same as `MapFilePage.jsx`. **Update 5**: if `004-eutr-documents` has an existing `EutrReferencesRepository`/`EutrDocumentsService.GetPoReferencesAsync` test class, extend it with a case asserting `stepIds`/`refType`/`typeName` are populated correctly for a multi-row document; `MapFilePage.jsx`'s toolbar-reload and dynamic badges are manually verified per `quickstart.md` (Update 5 section), same as every prior frontend-only update in this feature. **Update 6**: zero backend test impact (no backend change) — `MapFilePage.jsx`'s Upload/Edit wiring is manually verified per `quickstart.md` (Update 6 section); if `004-eutr-documents` already has a test class covering `EutrDocumentsService.GetPagedAsync`'s `Id`-filter path, no new test case is needed there either since this update is a new caller of an already-tested behavior, not a new behavior. **Update 7**: zero backend test impact (no backend change) — verified manually per `quickstart.md` (Update 7 section), specifically constructing a fixture with 2 templates sharing a `StepId`/step name to prove no cross-template contamination survives (no automated UI harness in this repo, consistent with every prior frontend-only update in this feature). **Update 8**: zero backend test impact (no backend change) — verified manually per `quickstart.md` (Update 8 section), reusing the same 2-templates-sharing-a-step-name fixture shape already used to verify Update 7, this time exercised against `ViewSalesOrderPage.jsx`'s toolbar/Template Checklist/Validation Summary instead of `MapFilePage.jsx`'s Step 2. **Update 9**: zero backend test impact (no backend change) — if `004-eutr-documents` has an existing test covering `EutrDocumentsService`'s file-content-by-id read path, no new backend test case is needed since this update is a new caller of an already-tested endpoint, not a new behavior; `MapFilePage.jsx`'s new View button is manually verified per `quickstart.md` (Update 9 section), same as every prior frontend-only update in this feature. **Update 10**: no existing test class covers `AllCompliancesController`/`ComplianceDownloadService` (the pattern this update clones) at the unit level in this repo today, so no analogous existing test class exists to extend for the new `EutrDocumentsController.DownloadZip` action either — verified manually per `quickstart.md` (Update 10 section), consistent with how every other backend addition in this feature without a pre-existing test class precedent has been handled; `ViewSalesOrderPage.jsx`'s Download button wiring is manually verified the same way. **Update 11**: zero backend test impact (no backend change) — verified manually per `quickstart.md` (Update 11 section), specifically constructing a fixture with a Required step whose `takeFrom` is one of `AUTO_SOURCES` and no mapped file, then confirming `progress.total - progress.completed` equals `missingRequired` on Map File and matches the equivalent Required/completed/missing numbers on View for the same Sales Order (no automated UI harness in this repo, consistent with every prior frontend-only update in this feature). **Update 12**: the two new batch endpoints (`by-sales-ids-raw`, `by-codes`) are new, small, additive actions with no existing test class precedent in this repo for their owning controllers' batch-shaped reads — if a suitable existing test class exists for `EutrPurchaseAttachmentsRepository`/`EutrTemplatesRepository`, extend it with one case each; otherwise verified manually per `quickstart.md` (Update 12 section), consistent with how every other backend addition without a pre-existing test precedent has been handled in this feature. The frontend batching/3-state Progress cell is manually verified per `quickstart.md`, specifically constructing the empty/no-required/error fixtures FR-083/FR-084/FR-085 call for (no automated UI harness in this repo). **Update 13**: zero backend test impact (no backend change) — `download-zip` is reused unchanged; `SalesOrderOverviewPage.jsx`'s new per-row on-demand Download wiring is manually verified per `quickstart.md` (Update 13 section), specifically confirming its zip output matches `ViewSalesOrderPage.jsx`'s own Download output for the same Sales Order (SC-040). **Update 14**: zero backend test impact (no backend change). Verified manually per `quickstart.md` (Update 14 section): search Overview for a known Sales ID, open Map File then View, click each screen's Back button, and confirm the search box/page/filtered rows are restored exactly; separately confirm the browser's own Back button produces the identical result, and that navigating to Overview via the nav menu/breadcrumb (not via Back) shows the default unfiltered list — no automated UI harness in this repo, consistent with every prior frontend-only update in this feature. **Update 15**: zero backend test impact (no backend change) — verified manually per `quickstart.md` (Update 15 section): open View for a Sales Order with 2+ templates where at least one step is Mapped and at least one is missing, confirm the new AVAILABLE FILES panel shows the full file set of the active template by default, confirm clicking a leaf step narrows it to that step's own Mapped file(s), confirm clicking a parent step narrows it to the union of its descendants' Mapped files, confirm clicking any template chip (including the currently-active one) clears the filter back to the full set, and confirm the View button opens the same read-only preview popup already shipped for Map File (Update 9) — no automated UI harness in this repo, consistent with every prior frontend-only update in this feature. **Update 16**: the one new backend read (`GET /api/eutr-purchase-attachments/sales-ids-with-template`) has no existing test class precedent for an unscoped "every distinct value" query on this repository — if a suitable existing test class exists for `EutrPurchaseAttachmentsRepository`, extend it with one case (empty table → `[]`; multiple Sales IDs, some sharing a `TemplateCode` → each Sales ID appears exactly once); otherwise verified manually per `quickstart.md` (Update 16 section), consistent with how every other backend addition without a pre-existing test precedent has been handled in this feature. `SalesOrderOverviewPage.jsx`'s default-view/search-toggle behavior is manually verified per `quickstart.md`, specifically confirming the empty-search list excludes a Sales ID with no saved Template, a non-empty search still finds it, and clearing search restores the filtered default (no automated UI harness in this repo). **Update 17**: the one backend change (adding `EntityMappings[20]`) has no existing test class precedent covering `ComplDynamicsService.GetDynRefePagedAsync` at the unit level in this repo today (same situation Update 1/12/16 already noted for their own backend additions) — verified manually per `quickstart.md` (Update 17 section): confirm `refType=20` returns `[]` before the fix and real rows after it, for a Sales Order with known purchase-line fixtures. `MapFilePage.jsx`'s new Variants/Materials columns are manually verified per `quickstart.md`, specifically the combine/dedupe behavior for a PO with 2+ lines and the empty-state for a PO with none (no automated UI harness in this repo, consistent with every prior frontend-only update in this feature). **Update 18**: the one backend change (Update 17's `EntityMappings[20]` entry) needs no further test impact - reused unchanged; `ViewSalesOrderPage.jsx`'s Selected Purchase Orders table is manually verified per `quickstart.md` (Update 18 section), specifically confirming its Variants/Materials cells match `MapFilePage.jsx`'s own cells for the same Sales Order/PO (no automated UI harness in this repo, consistent with every prior frontend-only update in this feature). **Update 19**: zero backend test impact (no backend change) — verified manually per `quickstart.md` (Update 19 section): construct a Sales Order with 2 saved templates that only partially overlap the current default template's steps (some default steps missing from both, some present in only one, one default parent step missing while a child of it is present in one saved template), click All, and confirm the resulting tree shows exactly the overlapping steps (no more, no less), confirms the orphaned-but-present child step is still visible, and confirms AVAILABLE FILES lists the union of both templates' Mapped documents; separately confirm the "no default template configured" and "no steps match" empty states each render distinctly, and that switching from All to a specific template chip and back clears/restores the AVAILABLE FILES step filter correctly (no automated UI harness in this repo, consistent with every prior frontend-only update in this feature). **Update 22**: zero backend test impact (no backend change) — verified manually per `quickstart.md` (Update 22 section): click Download on View and confirm the popup shows exactly 2 options with neither pre-selected and the confirm button disabled until one is chosen; pick **By Template** and confirm the downloaded zip contains only the per-template folders (no `All` folder); pick **Combined (All)** on a second attempt and confirm the zip contains only the `All` folder (no per-template folders); close the popup via Cancel/click-outside and confirm no network call fires and no file downloads; repeat all three checks on an Overview row, additionally confirming that picking **By Template** does not trigger the default-template network calls (verify via browser devtools network tab) while picking **Combined (All)** does — no automated UI harness in this repo, consistent with every prior frontend-only update in this feature. **Update 24**: the one backend change (the new `EtdWeekFilterBuilder`/`DynamicModelService` call site inside `ComplDynamicsService.GetDynRefePagedAsync`, plus the `RsVnETD` DTO/mapping addition) has no existing test class precedent covering `ComplDynamicsService` at the unit level in this repo (same situation Update 1/12/16/17 already noted for their own backend additions) — verified manually per `quickstart.md` (Update 24 section): confirm `refType=11` returns `rsVnETD` for known fixtures, confirm `inyear`/`inweeks` filters narrow results correctly and combine via AND with an existing search keyword, and confirm sorting by `DeliveryDate desc` works with no code change. `SalesOrderOverviewPage.jsx`'s new ETD column/Year-Week search block/brown buttons/default sort are manually verified per `quickstart.md`, specifically the empty-ETD placeholder state, the Clear button resetting all three filter inputs together, and the "No data" state for a Year/Week combination with no matches (no automated UI harness in this repo, consistent with every prior frontend-only update in this feature).
 **Update 25**: zero backend test impact (no backend change) — verified manually per `quickstart.md`
@@ -856,6 +861,16 @@ way in the same session, replacing its Update 4 `canUploadDocuments`-via-`can-cr
   (reading `permissionList` via the already-existing `getMenuDataFromStorage()` util, `@utils/helpers`
   — not a new layer, the same util every other EUTR screen's presentation layer already imports); no
   use case, repository, interface, or backend layer of any kind is added, changed, or bypassed.
+  **Update 42**: PASS. `eutr_progression` gets its own full stack on both sides, mirroring
+  `eutr_purchase_attachments`'s own Update-1 stack exactly: backend `Api → Application → Domain`/
+  `Infrastructure` (`EutrProgressionController` → `IEutrProgressionService`/`EutrProgressionService` →
+  `IEutrProgressionRepository`/`EutrProgressionRepository`); frontend `domain` (no new interface needed
+  — reuses the existing thin-repository pattern) → `infrastructure/api` → `application/usecases/
+  eutr-progression/GetProgressionBySalesIdsUseCase.js` → `presentation/pages/eutr-sales-orders/
+  SalesOrderOverviewPage.jsx`. The 4 recompute call sites (`EutrPurchaseAttachmentsController.GetBySalesId`,
+  `EutrPurchaseAttachmentsService.SavePoMappingAsync`, `EutrSynchronizeDataService.SyncSalesOrderTemplatesAsync`,
+  and `004-eutr-documents`'s upload/delete service) each call `IEutrProgressionService.RecomputeAsync`
+  through its own interface — not the repository directly — so no layer is bypassed at any trigger.
 - **II. Reference-Pattern Reuse** — PASS. The concrete reference for "register a new refType end to
   end" is how `EUTR_PURCH_ORDER` (`refType=15`) and `EUTR_SALES_ORDER_PURCHASE` (`refType=16`) were
   added for feature `004-eutr-documents` (see that spec's Update 4): an `EntityMappings` entry in
@@ -1031,6 +1046,21 @@ way in the same session, replacing its Update 4 `canUploadDocuments`-via-`can-cr
   => m.code === <menu code>)?.permissionList` and gating with `.includes('Update' | 'Download' | ...)`.
   This update clones that exact pattern for menu code `eutr-sales-orders` rather than inventing a new
   permission-checking mechanism or helper.
+  **Update 42**: PASS. `EutrProgressionController`/`EutrProgressionRepository` clone
+  `EutrPurchaseAttachmentsController.GetBySalesIdsRaw`/`EutrPurchaseAttachmentsRepository`'s own
+  batched-read-by-`SalesId`-list shape/policy pattern (Update 12) rather than inventing a new batch-read
+  convention; `EutrProgression.cs` clones `EutrPurchaseAttachments.cs`'s entity shape
+  (`Id` + `BaseEntity` audit columns). The recompute formula itself is a direct server-side port of the
+  already-specified `computeProgress()`/`buildTemplateComputations()` algorithm (`progressUtils.js`,
+  Update 11/12) — not a newly-invented calculation.
+  **Update 43**: PASS. Registering `refType=21` for `RSVNSalesLineOpenInvoiceCogs` clones the exact
+  `EntityMappings`/`MapDynamicsResponse` registration pattern every prior refType addition in this
+  feature already used (refType=16 Update 1, refType=20 Update 17) — same 3-step recipe (domain class
+  extends `RSVNModelBase`, `EntityMappings` entry, `MapDynamicsResponse` case), not a new mechanism. The
+  cross-entity "lookup A for keys, filter B by them" flow itself has no prior in-repo pattern to clone
+  (research.md Decision 103/104 confirm this directly) — it is new, but built entirely from existing,
+  already-reused primitives (`GetDynRefePagedAsync`, `BuildFilterString`'s existing bucket mechanism),
+  not a new query pipeline.
 - **III. Reuse Existing Backend** — PASS, with a verified, scoped gap. `POST /api/dynamics/reference`
   already exists and MUST be reused as-is (no new controller action). The only backend change for
   the 4 D365 columns is filling a verified gap: `refType=11` (`ObjectType.SALE_ORDER`, already
@@ -1192,6 +1222,14 @@ way in the same session, replacing its Update 4 `canUploadDocuments`-via-`can-cr
   Update 5/9/17/24/27's own scoped backend gaps). `permissionList` is already fully delivered by the
   existing external menu/auth service and already cached client-side; this update only starts reading
   an already-available, already-cached array that other EUTR screens already read the same way.
+  **Update 43**: PASS, with a verified, scoped gap of the same class as Update 5/9/17/24/27 —
+  `RSVNSalesLineOpenInvoiceCogs` already exists and is already queried against D365 successfully by two
+  other services (confirmed by reading `ComplSynchronizeDataService.FetchAllSalesLinesAsync`/
+  `DynamicsDataService.GetSalesLineOpenInvoiceCogsFromDynamics`); the only gap is that it was never
+  wired into the generic `EntityMappings`/`GetDynRefePagedAsync` path this Overview screen's every other
+  filter already uses. `POST /api/dynamics/reference` itself is reused as-is (no new controller action);
+  `BuildFilterString`'s existing group-then-join structure is extended with one new case, following the
+  same shape as `"vendorcode"`/`"custaccount"` (Update 27), not a new filter-combination mechanism.
 - **IV. Vietnamese Comments; Localizable UI Labels** — PASS. New/changed backend code comments are
   Vietnamese. The frontend page's existing column headers ("Sales ID", "Customer", "Customer Name",
   "Template", "Delivery Date", "Progress") were already shipped in English by a prior iteration of
@@ -1354,6 +1392,11 @@ way in the same session, replacing its Update 4 `canUploadDocuments`-via-`can-cr
   **Update 28**: no backend code changes (no comments needed there); no new user-facing label of any
   kind — this update only changes whether 2 already-existing, already-labeled icons/buttons (**Map
   File**/**Edit / Map File**, **Download**) render, never their text/tooltip/icon.
+  **Update 42**: PASS. New backend comments (`EutrProgression.cs`, `EutrProgressionService.cs`, the
+  edited insert branch of `EutrSynchronizeDataService.cs`) follow the same Vietnamese-comment convention
+  as every prior update in this feature. No new user-facing label of any kind — the Progress column's
+  display (`Finished/Total`, `pct`, and its empty/no-required/ok/error states) is unchanged; only the
+  data source behind it changes.
 - **V. Routing & Menu Registration** — PASS, already satisfied. Route (`/eutr/sales-orders` →
   `MainRoutes.jsx`'s implicit resolver path) and menu (`code: 'eutr-sales-orders'`, `url:
   '/eutr/sales-orders'`, title "Sales orders" in `ComplianceSystem.jsx`) and `RouteResolver.jsx`'s
@@ -1487,6 +1530,13 @@ way in the same session, replacing its Update 4 `canUploadDocuments`-via-`can-cr
   `eutr-templates`/`compliance-view-so`/`eutr-reference-types` already do. No ops-seeding step is needed:
   the `'Update'`/`'Download'` permission strings already exist and are already assignable per menu
   through the existing menu-admin mechanism; this update adds no new string, no new row, no new table.
+  **Update 42**: no new route or menu — the new `EutrProgressionController` action
+  (`POST /api/eutr-progression/by-sales-ids`) reuses the existing `EutrPurchaseAttachments.Read`-style
+  authorization policy pattern (a new, equivalently-scoped policy for this controller, following the
+  same per-controller policy convention every `Eutr*Controller` in this codebase already uses — no new
+  policy *mechanism*), and is called only from screens already reachable under the existing
+  `/eutr/sales-orders` route/menu registration (Overview). No new screen, route, or menu entry is
+  introduced by this update.
 
 No violations to record in Complexity Tracking.
 
@@ -2609,6 +2659,645 @@ Unchanged (verified reusable as-is, no edits needed) for Update 33:
 - `PurchaseOrderViewPage.jsx` (`012-eutr-purchase-orders`) — same change applied there too, but tracked in
   that feature's own plan.md since it owns a separate copy of this row/dialog wiring (not a shared
   component call, unlike the Upload/Edit popup).
+
+# Update 34/35 (2026-09-29/30) — Step 1 (Map File) & Selected Purchase Orders (View) read every column
+# (PO/Template/Order account/Vendor name/Variant/Material/Qty/Unit/Percentage used) directly from
+# reference type = 20 (`RSVNEutrSalesOrderPurchLines`) — 1 API record = 1 table row, replacing the
+# refType=16 + Update 17/18 string-join mechanism entirely. `QtyPercent` (Update 34) and `Unit`
+# (Update 35) are new fields added end-to-end (domain model -> shared response DTO -> `case 20:`
+# mapping). Additive backend change (2 new properties + 2 new DTO fields + 2 new assignment lines,
+# no new file/endpoint/migration); frontend edits confined to 2 existing pages (no new file):
+```
+compliance-sys-api/
+└── src/
+    ├── ComplianceSys.Domain/
+    │   └── Dynamics/
+    │       └── RSVNEutrSalesOrderPurchLines.cs      # EDIT: +QtyPercent, +Unit string properties
+    │                                                  #   (FR-202/FR-208) — FilterableFields left
+    │                                                  #   unchanged (unrelated to response shape,
+    │                                                  #   only used by ODataFilterBuilder for
+    │                                                  #   WHERE/sort-column validation)
+    └── ComplianceSys.Application/
+        ├── Dtos/
+        │   └── Response/
+        │       └── ComplDynReferenceResponseDto.cs   # EDIT: +QtyPercent, +Unit string properties
+        │                                                  #   (shared flat DTO across every refType)
+        └── Services/
+            └── ComplDynamicsService.cs               # EDIT: `case 20:` mapping gains
+                                                          #   `QtyPercent = x.QtyPercent` and
+                                                          #   `Unit = x.Unit` — every other line of
+                                                          #   `case 20:` (Code=ItemId, CustAccount=
+                                                          #   OrderAccount, etc.) is UNTOUCHED,
+                                                          #   including the pre-existing
+                                                          #   OrderAccount->CustAccount rename (kept
+                                                          #   as-is per Constitution Principle III —
+                                                          #   frontend reads `item.custAccount` for
+                                                          #   this refType's Order account instead of
+                                                          #   changing the mapping)
+
+compliance-client/
+└── src/
+    └── presentation/
+        └── pages/
+            └── eutr-sales-orders/
+                ├── MapFilePage.jsx                   # EDIT: removed `EUTR_SALES_ORDER_PURCHASE_
+                                                          #   REF_TYPE=16` const + its fetch effect;
+                                                          #   removed `poLinesByPurchId` grouped-Map
+                                                          #   state; `poList`/`poListLoading` (raw
+                                                          #   refType=16 state) replaced by a single
+                                                          #   `poLines` state (refType=20 raw records,
+                                                          #   1 array entry per API row, fields:
+                                                          #   purchId/name/orderAccount/eutrTemplate/
+                                                          #   variant/material/qty/unit/qtyPercent) +
+                                                          #   a new `poList` useMemo (dedupe poLines by
+                                                          #   purchId — feeds Save PO Mapping/
+                                                          #   `buildReferenceCodes`/
+                                                          #   `buildPurchIdToTemplateCodeMap`
+                                                          #   unchanged); Step 1 table body now maps
+                                                          #   `poLines` directly (1 row per record, no
+                                                          #   join/dedupe), header renamed
+                                                          #   Variants->Variant/Materials->Material,
+                                                          #   +Qty/+Unit columns added, colSpan fixed
+                                                          #   5->10 (was already stale pre-Update-34);
+                                                          #   outer loading/error now gates the WHOLE
+                                                          #   table (`poLinesLoading`/`poLinesError`,
+                                                          #   FR-205), not just 2 cells
+                └── ViewSalesOrderPage.jsx              # EDIT: same shape as MapFilePage.jsx —
+                                                          #   removed `EUTR_SALES_ORDER_PURCHASE_
+                                                          #   REF_TYPE=16` const + `allPos` state/
+                                                          #   effect + `poLinesByPurchId` grouped-Map
+                                                          #   state; added `poLines` raw state (same
+                                                          #   fields as MapFilePage.jsx) + a new
+                                                          #   `poInfoByPurchId` useMemo (dedupe by
+                                                          #   purchId, replaces `allPos`'s lookup role
+                                                          #   for `buildReferenceCodes`/
+                                                          #   `purchIdToTemplateCode`); `poList` useMemo
+                                                          #   kept (unique per saved PO — still feeds
+                                                          #   the header PO chips + "Selected Purchase
+                                                          #   Orders (N)" count, unaffected in shape)
+                                                          #   but now looks up display fields via
+                                                          #   `poInfoByPurchId`; new `poRows` useMemo
+                                                          #   (1 row per poLines record per saved PO,
+                                                          #   falls back to 1 blank row for a saved PO
+                                                          #   with zero matching type=20 records —
+                                                          #   preserves the Update 4 "saved PO no
+                                                          #   longer matched by D365" edge case) feeds
+                                                          #   the table body instead of `poList`; same
+                                                          #   header rename/new columns/colSpan fix/
+                                                          #   whole-table loading-error gating as
+                                                          #   MapFilePage.jsx
+```
+
+Unchanged (verified reusable as-is, no edits needed) for Update 34/35:
+- `SalesOrderOverviewPage.jsx` — its own, independent use of reference type = 16 (Vendor-code lookup for
+  its own Progress/Download batching) is untouched; this update's refType=16 removal is scoped to Step 1
+  (Map File) and Selected Purchase Orders (View) only.
+- `handleTogglePO`/`handleSavePOMapping` (`MapFilePage.jsx`) — both already keyed by `purchId` (a `Set`
+  and a `poList.filter(...)` respectively), so a PO now spanning multiple table rows needs no change to
+  either; ticking any one row toggles every row sharing that `purchId` automatically (FR-203).
+- `FilterableFields` on `RSVNEutrSalesOrderPurchLines.cs` — confirmed (codebase research) to be consumed
+  only by `ODataFilterBuilder`/`EtdWeekFilterBuilder` for WHERE/`$orderby` validation, never for response
+  shape; `QtyPercent`/`Unit` don't need an entry there since nothing filters/sorts by them.
+- Template Checklist / AVAILABLE FILES / Download / Back / Validation Summary (both screens), and Step 2
+  of Map File — none read `poList`/`poLines`/`poRows` for anything other than the PO table itself and the
+  already-unchanged `purchIdToTemplateCode`/`buildReferenceCodes` lookups.
+
+# Update 36 (2026-09-30) — Select/Save PO Mapping at Step 1 keyed by (PurchId, ProductVariant, ItemId)
+# instead of PurchId alone; `eutr_purchase_attachments` gains `ProductVariant`/`ItemId` columns.
+# New migration file (numbered convention); additive backend change; frontend edits confined to 2
+# existing pages plus the shared `progressUtils.js` util (no new file):
+```
+compliance-sys-api/
+└── src/
+    ├── ComplianceSys.Infrastructure/
+    │   ├── Sqls/Migration/
+    │   │   └── 32_add_productvariant_itemid_to_eutr_purchase_attachments.sql   # NEW: ALTER TABLE,
+    │   │                                                                        #   2 nullable
+    │   │                                                                        #   VARCHAR(50) cols
+    │   └── Repositories/
+    │       └── EutrPurchaseAttachmentsRepository.cs   # EDIT: GetBySalesIdAsync/GetBySalesIdsAsync
+    │                                                    #   SELECT lists gain ProductVariant, ItemId
+    ├── ComplianceSys.Domain/
+    │   └── Entities/
+    │       └── EutrPurchaseAttachments.cs             # EDIT: +ProductVariant, +ItemId (string?)
+    └── ComplianceSys.Application/
+        ├── Dtos/
+        │   ├── Request/PurchaseAttachmentItemDto.cs   # EDIT: +ProductVariant, +ItemId
+        │   └── Response/PurchaseAttachmentDto.cs      # EDIT: +ProductVariant, +ItemId
+        └── Services/
+            └── EutrPurchaseAttachmentsService.cs      # EDIT: SavePoMappingAsync's insert now sets
+                                                          #   ProductVariant/ItemId from the request
+                                                          #   item (no new validation — these 2 fields
+                                                          #   stay nullable, unlike TemplateCode)
+
+compliance-client/
+└── src/
+    └── presentation/
+        └── pages/
+            └── eutr-sales-orders/
+                ├── utils/
+                │   └── progressUtils.js               # EDIT: +makePoLineKey(purchId, variant,
+                                                          #   itemId) and +purchIdsFromPoLineKeys(keys)
+                                                          #   — shared composite-key helpers, used by
+                                                          #   both pages below
+                ├── MapFilePage.jsx                     # EDIT: `selectedPOs` (Set) now holds
+                                                          #   composite keys (was raw purchId) —
+                                                          #   `handleTogglePO(purchId)` renamed
+                                                          #   `handleToggleLine(line)`;
+                                                          #   `loadPurchaseAttachments` seeds
+                                                          #   `selectedPOs` from
+                                                          #   `makePoLineKey(purchId, productVariant,
+                                                          #   itemId)`; `handleSavePOMapping` now
+                                                          #   builds its payload from `poLines` (raw,
+                                                          #   not `poList` deduped-by-PO), filtered by
+                                                          #   composite-key membership, including
+                                                          #   `productVariant`/`itemId` per item; every
+                                                          #   place that needs a plain PurchId list
+                                                          #   (AVAILABLE FILES loading, header PO
+                                                          #   chips) now derives it via
+                                                          #   `purchIdsFromPoLineKeys(selectedPOs)`
+                └── ViewSalesOrderPage.jsx               # EDIT: `poList` (unique-PO memo, feeds header
+                                                          #   chips + "Selected Purchase Orders (N)"
+                                                          #   count) now explicitly dedupes
+                                                          #   `purchaseAttachments` by `purchId` (no
+                                                          #   longer 1:1, since a PO can now have
+                                                          #   multiple saved lines); `poRows` (table
+                                                          #   body) now matches each saved attachment's
+                                                          #   exact `(purchId, productVariant, itemId)`
+                                                          #   against `poLines` instead of exploding
+                                                          #   every `poLines` record for that `purchId`
+                                                          #   — so the table shows only the lines
+                                                          #   actually selected, not every line of a
+                                                          #   selected PO; Validation Summary's
+                                                          #   "N PO selected" text switched from
+                                                          #   `purchaseAttachments.length` to
+                                                          #   `poList.length` (unique PO count, not
+                                                          #   saved-line count)
+```
+
+Unchanged (verified reusable as-is, no edits needed) for Update 36:
+- `EutrPurchaseAttachmentsController.cs` — `save-po-mapping`/`by-sales-id`/`by-sales-ids-raw` routes,
+  request/response shapes, and authorization policies are all unchanged; only the DTOs flowing through
+  them gained 2 optional fields.
+- Step 2 (template tree, AVAILABLE FILES, Upload/Edit/View/Download) on both screens — `templateCodes`
+  is still derived via `[...new Set(purchaseAttachments.map(pa => pa.templateCode))]`, which already
+  dedupes correctly regardless of how many line-level rows now share the same `TemplateCode`.
+- `SalesOrderOverviewPage.jsx` and its own `eutr_purchase_attachments`-reading endpoints
+  (`by-sales-ids-raw`, `sales-ids-with-template`, `by-sales-ids`) — Progress/Template column formulas
+  operate on `PurchId`/`TemplateCode` only, unaffected by the 2 new columns being populated per line.
+- The disable-if-no-Template condition (FR-022) and the batch-loading mechanism (FR-206) — both stay
+  exactly as Update 34 left them, just now evaluated per line instead of per PO (already true since
+  Update 34's row grain change; Update 36 only changes the *selection*/*persistence* grain to match).
+
+# Update 37 (2026-09-30) — Template tree label shows the matched file's name (extension stripped) instead
+# of the Step name once mapped; download for Type = "PO" documents no longer recomputes the file name as
+# Step Name (inherits `004-eutr-documents` Update 29's matching/no-rename change automatically via the
+# shared Add/Edit popup — no code change needed for the Upload path itself):
+```
+compliance-client/
+└── src/
+    └── presentation/
+        └── pages/
+            └── eutr-sales-orders/
+                ├── utils/
+                │   └── progressUtils.js            # EDIT (Update 37): new exported helper
+                │                                     #   `stripFileExtension(name)` = strip
+                │                                     #   everything from the last '.' onward
+                │                                     #   (same regex `buildStepOnlyFileName.js`
+                │                                     #   already uses) — shared by MapFilePage.jsx
+                │                                     #   and PurchaseOrderViewPage.jsx (012)
+                └── MapFilePage.jsx                  # EDIT (Update 37):
+                                                       #   - TreeNode: primary label changes from
+                                                       #     `{node.stepName}` to
+                                                       #     `{mappedFiles.length > 0
+                                                       #        ? stripFileExtension(mappedFiles[0].name)
+                                                       #        : node.stepName}` (FR-216) — the
+                                                       #     existing secondary caption
+                                                       #     (`mappedFiles[0].name` + "(+N)") and the
+                                                       #     status-icon tooltip are unchanged
+                                                       #   - `handleDownloadFile(file)`: skip
+                                                       #     `buildStepOnlyFileName(...)` and use
+                                                       #     `loadedFile.fileName || file.name` as-is
+                                                       #     when `file.typeName` (already present on
+                                                       #     the `realAvailableFiles` item shape,
+                                                       #     Update 5) is `'PO'` (case-insensitive)
+                                                       #     (FR-217)
+                                                       #   - `EutrFileViewerDialog` call site: pass new
+                                                       #     `typeName={viewerFile.typeName}` prop
+                                                       #     (`viewerFile` state gains a `typeName`
+                                                       #     field alongside `stepNames`)
+            └── eutr-documents/
+                └── components/
+                    └── EutrFileViewerDialog.jsx      # EDIT (Update 37): new optional `typeName` prop;
+                                                       #   `handleDownload` skips
+                                                       #   `buildStepOnlyFileName(...)` and uses
+                                                       #   `loadedFile.fileName || fileName` as-is when
+                                                       #   `typeName` is `'PO'` (case-insensitive)
+                                                       #   (FR-217) — shared by both 005 and 012, so this
+                                                       #   one edit covers `PurchaseOrderViewPage.jsx`'s
+                                                       #   popup View Download too
+```
+
+Unchanged (verified reusable as-is, no edits needed) for Update 37:
+- Every backend file in `compliance-sys-api/` — the matching/no-rename change for Type = "PO" lives
+  entirely in `EutrUploadService.cs` (`004-eutr-documents` Update 29); this screen's Upload/Edit buttons
+  call the same shared popup/endpoint, so nothing here needs to change for the Upload path itself.
+- The per-row Download button and dedicated download handler added in Update 33 — still exist, only the
+  file-name computation inside them becomes Type-conditional (see `MapFilePage.jsx` above).
+- The "(+N)" badge and the status-icon tooltip (`Đã map: ...`, listing every matched file's full name) —
+  both keep showing the full stored name including extension, unaffected by the primary-label change.
+- `PurchaseOrderViewPage.jsx` (`012-eutr-purchase-orders`) — same two changes (tree label,
+  download-name skip for Type = "PO") applied there too, but tracked in that feature's own plan.md since
+  it owns a separate copy of `TreeNode`/`handleDownloadFile` (not a shared component call).
+
+# Update 38 (2026-09-30) — Bug fix: Qty column always showing "—" because the raw D365 value is a signed
+# decimal string and the mapping parsed it with `long.TryParse` (fails on any decimal point, silently
+# falling back to 0, which the frontend then treats as empty). Backend-only, shared by both
+# `MapFilePage.jsx` (Step 1) and `ViewSalesOrderPage.jsx` (Selected Purchase Orders) since both just
+# render whatever `qty` the API already returns:
+```
+compliance-sys-api/
+└── src/
+    ├── ComplianceSys.Application/
+    │   ├── Dtos/Response/
+    │   │   └── ComplDynReferenceResponseDto.cs   # EDIT: `Qty` type long -> decimal (needs to hold the
+    │   │                                           #   fractional part of the raw D365 value)
+    │   └── Services/
+    │       └── ComplDynamicsService.cs            # EDIT: `case 20:` mapping — replace
+    │                                                #   `long.TryParse(x.Qty, out var qty) ? qty : 0`
+    │                                                #   with `decimal.TryParse(x.Qty, NumberStyles.Any,
+    │                                                #   CultureInfo.InvariantCulture, out var qty) ?
+    │                                                #   Math.Round(Math.Abs(qty), 4,
+    │                                                #   MidpointRounding.AwayFromZero) : 0` (always
+    │                                                #   non-negative, rounded to 4 decimals,
+    │                                                #   AwayFromZero confirmed against the requester's
+    │                                                #   own worked example); new `using
+    │                                                #   System.Globalization;`
+```
+
+Unchanged (verified reusable as-is, no edits needed) for Update 38:
+- `MapFilePage.jsx`/`ViewSalesOrderPage.jsx` — both render `line.qty`/`row.qty` directly with no
+  client-side formatting; the corrected value arrives already non-negative and rounded, so no frontend
+  change was needed.
+- `case 16:`'s own `Qty = x.Qty` assignment (a different reference type, `RSVNEutrSalesOrderPurchases`,
+  whose `Qty` is already `long` on the domain model) — the implicit `long` → `decimal` conversion is
+  valid, no edit required there.
+- No new endpoint, entity, migration, or route — purely a type change on one existing response field
+  plus its one existing mapping.
+
+# Update 40 (2026-09-30) — Template tree toolbar (Step 2 Map File + View's Template Checklist) groups by
+# PurchId instead of TemplateCode — 1 template used by N POs now gets N independent tabs, each showing
+# only that PO's own files, instead of 1 merged tab whose Mapped/Missing could be satisfied by another
+# PO's files. Frontend-only, no backend/entity/DTO/endpoint change:
+```
+compliance-client/
+└── src/
+    └── presentation/
+        └── pages/
+            └── eutr-sales-orders/
+                ├── utils/
+                │   └── progressUtils.js            # EDIT: new exported
+                │                                     #   `buildPoTemplateComputations(poTemplates,
+                │                                     #   files)` — per-PO sibling of the existing
+                │                                     #   `buildTemplateComputations` (unchanged,
+                │                                     #   still used by SalesOrderOverviewPage.jsx/
+                │                                     #   PurchaseOrderOverviewPage.jsx/012's
+                │                                     #   PurchId/View); `filesForTemplate` matches
+                │                                     #   `f.poCode === purchId ||
+                │                                     #   f.poCode === orderAccount` (that PO's own
+                │                                     #   vendor code only — no more
+                │                                     #   `buildPurchIdToTemplateCodeMap`
+                │                                     #   ambiguity-avoidance, unnecessary once every
+                │                                     #   computation is already scoped to 1 PO)
+                ├── MapFilePage.jsx                  # EDIT:
+                │                                     #   - new `poTemplates` memo: 1 entry/PO (from
+                │                                     #     `purchaseAttachments`, deduped by
+                │                                     #     `purchId`), each looking up its
+                │                                     #     `templateName`/`flatDetails`/`tree` from
+                │                                     #     the already-fetched `templatesData` (still
+                │                                     #     deduped by templateCode — 1 fetch even if
+                │                                     #     N POs share it)
+                │                                     #   - `selectedTemplateCode` state renamed
+                │                                     #     `selectedPurchId`; default-selection effect
+                │                                     #     now keys off `poTemplates`
+                │                                     #   - `templateComputations` now calls
+                │                                     #     `buildPoTemplateComputations(poTemplates,
+                │                                     #     realAvailableFiles)` instead of
+                │                                     #     `buildTemplateComputations(templatesData,
+                │                                     #     ..., purchIdToTemplateCode)` — the local
+                │                                     #     `purchIdToTemplateCode` memo (built via
+                │                                     #     `buildPurchIdToTemplateCodeMap`) is removed,
+                │                                     #     unused now
+                │                                     #   - `allTrees`/`allDetails` now derive from
+                │                                     #     `poTemplates` instead of `templatesData`
+                │                                     #   - toolbar tab loop: `poTemplates.map(...)`
+                │                                     #     instead of `templatesData.map(...)`; each
+                │                                     #     button renders 2 lines (PurchId, then
+                │                                     #     templateName) instead of 1 (templateCode)
+                │                                     #   - tree-display lookup: `poTemplates.find(t =>
+                │                                     #     t.purchId === selectedPurchId)` instead of
+                │                                     #     by `templateCode`; header above the tree
+                │                                     #     gains a PurchId line above the existing
+                │                                     #     `templateName (templateCode)` line
+                └── ViewSalesOrderPage.jsx           # EDIT: same `poTemplates`/`selectedPurchId`/
+                                                       #   `buildPoTemplateComputations` changes as
+                                                       #   MapFilePage.jsx, plus:
+                                                       #   - toolbar: the single hardcoded
+                                                       #     `[{templateCode: null, templateName:
+                                                       #     'Template'}]` array (Update 26's "collapse
+                                                       #     to 1 tab") is replaced by
+                                                       #     `poTemplates.map(...)` — same 2-line
+                                                       #     button as MapFilePage.jsx; the `isAll`/
+                                                       #     `loadDefaultTemplate()`-on-click branch is
+                                                       #     removed from the click handler (no more
+                                                       #     "All" tab to click)
+                                                       #   - `availableFilesForPanel`'s `isAllActive`
+                                                       #     check becomes `selectedPurchId === null` —
+                                                       #     effectively always `false` now (kept as a
+                                                       #     defensive fallback, not deleted, since
+                                                       #     `defaultTemplate`/`allChipTree`/
+                                                       #     `allChipDerivedFileMappings`/`allChipFiles`
+                                                       #     are still live and still feed the
+                                                       #     Download "Combined All" format — see
+                                                       #     "Unchanged" below)
+                                                       #   - the tree-display `selectedTemplateCode ===
+                                                       #     null ? <All branch> : <individual branch>`
+                                                       #     ternary is kept structurally (the `null`
+                                                       #     branch is now unreachable through normal
+                                                       #     UI flow, but left in place rather than
+                                                       #     deleted — see research.md rationale); the
+                                                       #     individual branch now looks up by
+                                                       #     `poTemplates`/`purchId` and gains a
+                                                       #     PurchId header line
+                                                       #   - `buildDownloadFolders`'s `templateFolders`
+                                                       #     ("By Template" zip format) now maps over
+                                                       #     `templateComputations` directly (1 entry/
+                                                       #     PO) instead of `templatesData.map(t =>
+                                                       #     ...).find(c => c.templateCode ===
+                                                       #     t.templateCode)` — the old `.find()` would
+                                                       #     have silently kept only ONE of two POs'
+                                                       #     files once `templateComputations` could
+                                                       #     have 2 entries sharing 1 templateCode;
+                                                       #     folder name becomes `"{purchId} -
+                                                       #     {templateName}"` instead of just
+                                                       #     `templateName`
+```
+
+Unchanged (verified reusable as-is, no edits needed) for Update 40:
+- Every backend file in `compliance-sys-api/` — purely a frontend regrouping of already-fetched data;
+  no new endpoint, entity, DTO, migration, or route.
+- `buildTemplateComputations`/`buildPurchIdToTemplateCodeMap` (`progressUtils.js`) — kept verbatim,
+  still used by `SalesOrderOverviewPage.jsx`, `PurchaseOrderOverviewPage.jsx` (Progress column on the
+  Overview lists, computed per-row/per-PO already, never had this bug), and `012-eutr-purchase-orders`'s
+  `PurchId/View` (a single-PO page — no multi-PO grouping concept applies there at all).
+- `defaultTemplate`/`loadDefaultTemplate`/`allChipTree`/`allChipDerivedFileMappings`/`allChipFiles`/
+  `soStepIds` (`ViewSalesOrderPage.jsx`, Update 19/20/21) — kept verbatim; the Download button's
+  "Combined All" zip format still depends on them directly (independent of which toolbar tab is
+  selected), even though the toolbar no longer exposes an "All" tab to trigger this mode visually.
+
+# Update 41 (2026-09-30) — Remove the "Choose download format" popup entirely from both Download entry
+# points in `eutr-sales-orders/` (Overview's per-row button, View's toolbar button); Download now always
+# builds the per-PO, flat-file zip format Update 40 already produces for "By Template". Since nothing
+# reaches the "Combined (All)" nested-by-step format anymore (the popup was its only entry point besides
+# View's now-removed "All" toolbar tab), the entire All-mode computation stack becomes genuinely dead and
+# is deleted, not just unreachable — the opposite call made in Update 40, which kept it alive because the
+# popup still offered it:
+```
+compliance-client/
+└── src/
+    └── presentation/
+        └── pages/
+            └── eutr-sales-orders/
+                ├── components/
+                │   └── DownloadFormatDialog.jsx      # DELETE — no remaining importer after this update
+                ├── ViewSalesOrderPage.jsx             # EDIT:
+                │                                       #   - remove `import DownloadFormatDialog`,
+                │                                       #     `downloadDialogOpen` state, and the
+                │                                       #     `<DownloadFormatDialog>` JSX block; Download
+                │                                       #     button's `onClick` now calls
+                │                                       #     `handleDownload` directly (no `format` arg)
+                │                                       #   - `buildDownloadFolders`/`handleDownload` drop
+                │                                       #     the `format` parameter entirely — always
+                │                                       #     build the per-PO folders (unchanged formula
+                │                                       #     from Update 40)
+                │                                       #   - delete the entire All-mode stack:
+                │                                       #     `defaultTemplate`/`defaultTemplateLoading`/
+                │                                       #     `defaultTemplateError` state,
+                │                                       #     `loadDefaultTemplate` + its mount effect,
+                │                                       #     `soStepIds`, `allChipFlatDetails`,
+                │                                       #     `allChipTree`, `stepIdToFileIds`,
+                │                                       #     `allChipDerivedFileMappings`, `allChipFiles`
+                │                                       #   - `availableFilesForPanel` drops the
+                │                                       #     `isAllActive` branch entirely (always uses
+                │                                       #     `selectedTemplateComputation` now)
+                │                                       #   - the tree-display ternary drops its
+                │                                       #     `selectedPurchId === null` ("All") branch —
+                │                                       #     only the per-PO branch remains
+                │                                       #   - `allParentIds` drops `walk(allChipTree)`
+                │                                       #   - imports: drop `filterFlatListByStepIds`/
+                │                                       #     `flattenTreeToFolderEntries` from
+                │                                       #     `./utils/treeUtils` (keep `flatToTree`)
+                └── SalesOrderOverviewPage.jsx         # EDIT:
+                                                         #   - remove `import DownloadFormatDialog`,
+                                                         #     `downloadDialogRow` state, and the
+                                                         #     `<DownloadFormatDialog>` JSX block;
+                                                         #     Download `IconButton`'s `onClick` now calls
+                                                         #     `handleDownload(row.code, row.custAccount,
+                                                         #     row.name)` directly (no `format` arg)
+                                                         #   - delete `fetchDefaultTemplateForZip`
+                                                         #     entirely (was only called for the
+                                                         #     `format === 'combined'` branch)
+                                                         #   - `handleDownload` drops the `format`
+                                                         #     parameter; builds `poTemplates` inline
+                                                         #     (same shape/pattern as MapFilePage.jsx/
+                                                         #     ViewSalesOrderPage.jsx from Update 40) and
+                                                         #     calls the new `buildPoTemplateComputations`
+                                                         #     instead of `buildTemplateComputations` —
+                                                         #     this screen's own "By Template" folders had
+                                                         #     NOT been fixed in Update 40 (out of scope
+                                                         #     then), so this is also a correctness fix:
+                                                         #     without it, 2 POs sharing 1 template would
+                                                         #     still silently lose one PO's files here
+                                                         #   - imports: drop `GetPagingEutrTemplatesUseCase`/
+                                                         #     `GetEutrTemplatesUseCase` (only consumer was
+                                                         #     `fetchDefaultTemplateForZip`), add
+                                                         #     `buildPoTemplateComputations` from
+                                                         #     `./utils/progressUtils`, drop
+                                                         #     `filterFlatListByStepIds`/
+                                                         #     `flattenTreeToFolderEntries`/`flatToTree`
+                                                         #     from `./utils/treeUtils` (fully unused now)
+```
+
+Unchanged (verified reusable as-is, no edits needed) for Update 41:
+- Every backend file in `compliance-sys-api/` — purely a frontend simplification of already-fetched
+  data; no new endpoint, entity, DTO, migration, or route.
+- `buildTemplateComputations`/`buildPurchIdToTemplateCodeMap` (`progressUtils.js`) — kept verbatim,
+  `SalesOrderOverviewPage.jsx` still calls them from its separate Progress-column computation
+  (`fetchProgressForRows`), unrelated to `handleDownload`.
+- `012-eutr-purchase-orders` — no Download-format-choice feature exists there to begin with (single-PO
+  page), so nothing to change.
+
+# Update 42 (2026-09-30) — New precomputed table `eutr_progression` (Total/Missing/Finished), recomputed
+# at 4 trigger points (View open, Save PO Mapping, document Upload/Delete, `test-so-template-sync`);
+# Overview's Progress column switches from the dynamic 3-4-call/client-loop computation to a single
+# batched JOIN read; `test-so-template-sync` also starts persisting `ProductVariant`/`ItemId`:
+```
+compliance-sys-api/
+└── src/
+    ├── ComplianceSys.Domain/
+    │   └── Entities/
+    │       └── EutrProgression.cs                    # CREATE — Id, SalesId, Total, Missing, Finished
+    │                                                   #   + BaseEntity audit columns
+    ├── ComplianceSys.Infrastructure/
+    │   ├── Sqls/Migration/
+    │   │   └── 33_create_eutr_progression.sql         # CREATE — next sequential number after 32_...
+    │   └── Repositories/
+    │       └── EutrProgressionRepository.cs           # CREATE — GetBySalesIdsAsync(salesIds) (batched
+    │                                                   #   read for Overview), UpsertAsync(salesId,
+    │                                                   #   total, missing, finished)
+    ├── ComplianceSys.Application/
+    │   ├── Interfaces/Repositories/
+    │   │   └── IEutrProgressionRepository.cs           # CREATE
+    │   ├── Interfaces/Services/
+    │   │   └── IEutrProgressionService.cs               # CREATE — RecomputeAsync(salesId, ct),
+    │   │                                                 #   GetBySalesIdsAsync(salesIds, ct)
+    │   ├── Services/
+    │   │   ├── EutrProgressionService.cs                 # CREATE — RecomputeAsync re-reads
+    │   │   │                                              #   eutr_purchase_attachments + matched
+    │   │   │                                              #   documents for 1 SalesId, applies the
+    │   │   │                                              #   unchanged computeProgress()-equivalent
+    │   │   │                                              #   formula (Required, non-AUTO_SOURCES),
+    │   │   │                                              #   upserts eutr_progression
+    │   │   ├── EutrPurchaseAttachmentsService.cs          # EDIT: SavePoMappingAsync calls
+    │   │   │                                              #   IEutrProgressionService.RecomputeAsync
+    │   │   │                                              #   after its existing delete-then-reinsert
+    │   │   │                                              #   transaction commits — uses the NEW PO
+    │   │   │                                              #   list just saved
+    │   │   └── EutrSynchronizeDataService.cs              # EDIT: SyncSalesOrderTemplatesAsync's insert
+    │   │                                                  #   branch (lines 143-152) sets
+    │   │                                                  #   ProductVariant/ItemId from the refType=19
+    │   │                                                  #   item; after the fetch/add/skip loop
+    │   │                                                  #   finishes, calls RecomputeAsync once per
+    │   │                                                  #   SalesId the run touched (added OR
+    │   │                                                  #   skipped-as-existing)
+    │   └── Dtos/Response/
+    │       └── ComplDynReferenceResponseDto.cs           # EDIT: add `ItemId` field (refType=19 source
+    │                                                      #   — confirm D365 field name against the
+    │                                                      #   live OData response during implementation)
+    └── ComplianceSys.Api/
+        └── Controllers/
+            ├── EutrProgressionController.cs               # CREATE — POST /api/eutr-progression/
+            │                                              #   by-sales-ids (batched read, mirrors
+            │                                              #   EutrPurchaseAttachmentsController's
+            │                                              #   by-sales-ids-raw shape/policy pattern)
+            └── EutrPurchaseAttachmentsController.cs        # EDIT: GetBySalesId (View screen's data
+                                                             #   fetch, by-sales-id/{salesId}) also calls
+                                                             #   RecomputeAsync for that salesId before
+                                                             #   returning (trigger 1)
+
+compliance-client/
+└── src/
+    ├── application/usecases/eutr-progression/
+    │   └── GetProgressionBySalesIdsUseCase.js         # CREATE — thin wrapper over the new
+    │                                                   #   by-sales-ids endpoint, same shape as
+    │                                                   #   existing eutr-purchase-attachments use cases
+    └── presentation/pages/eutr-sales-orders/
+        └── SalesOrderOverviewPage.jsx                 # EDIT: fetchProgressForRows replaced —
+                                                         #   1 call to GetProgressionBySalesIdsUseCase
+                                                         #   instead of by-sales-ids-raw + by-codes +
+                                                         #   refType=16 + list-po-references; maps
+                                                         #   response rows to the SAME
+                                                         #   { status, completed, total, pct } shape
+                                                         #   already rendered (empty/no-required/ok/
+                                                         #   error states unchanged) — no template/
+                                                         #   file-matching logic left in this file
+```
+
+Cross-feature dependency (not edited under `005-eutr-sales-orders`, flagged for coordination): document
+Upload/Delete (trigger 4) lives in `004-eutr-documents`'s upload/delete service — that service needs to
+call `IEutrProgressionService.RecomputeAsync` for the `SalesId` owning the affected PO/step after a
+successful Upload/Delete. Exact call site to be confirmed against `004-eutr-documents`'s current upload/
+delete service during implementation.
+
+Unchanged (verified reusable as-is, no edits needed) for Update 42:
+- `progressUtils.js` (`computeProgress`/`buildTemplateComputations`/`buildPoTemplateComputations`) —
+  kept verbatim; `MapFilePage.jsx`/`ViewSalesOrderPage.jsx` keep using it for their own per-step
+  checklist display (FR-229), unrelated to Overview's Progress column.
+- `eutr_purchase_attachments` schema (Update 36's `ProductVariant`/`ItemId` columns) — no further schema
+  change; Update 42 only changes which code path (`test-so-template-sync`) populates those 2 columns.
+- `012-eutr-purchase-orders` — its own Progress column/computation is out of scope for this Update (see
+  spec Clarifications, same scoping precedent as Update 41).
+
+# Update 43 (2026-09-30) — New ItemId/ConfigId search on Overview: registers refType=21
+# (`RSVNSalesLineOpenInvoiceCogs`) for the lookup, adds a new AND-scoped `BuildFilterString` bucket
+# (`"salesidin"`) to narrow the main refType=11 query by the resulting SalesId list. No new endpoint,
+# no new table:
+```
+compliance-sys-api/
+└── src/
+    ├── ComplianceSys.Domain/
+    │   └── Dynamics/
+    │       └── RSVNSalesLineOpenInvoiceCogs.cs   # EDIT: add `: RSVNModelBase`, `ModelType => 21`,
+    │                                               #   `EntityName`, `FilterableFields`
+    │                                               #   ({ItemId, ConfigId, SalesId}) — existing
+    │                                               #   properties (SalesId/ItemId/ConfigId/...)
+    │                                               #   unchanged, so the 2 existing direct callers
+    │                                               #   (ComplSynchronizeDataService/DynamicsDataService)
+    │                                               #   are unaffected
+    └── ComplianceSys.Application/
+        ├── Dtos/Response/
+        │   └── ComplDynReferenceResponseDto.cs    # EDIT: add `ConfigId` field (mirrors `ItemId`
+        │                                            #   added Update 42)
+        └── Services/
+            └── ComplDynamicsService.cs             # EDIT: `EntityMappings` gets
+                                                     #   `{ 21, ("RSVNSalesLineOpenInvoiceCogs",
+                                                     #   "SalesId", "ItemId") }`; `MapDynamicsResponse`
+                                                     #   gets new `case 21` (Id/Code = SalesId, ItemId
+                                                     #   passthrough); `BuildFilterString` gets new
+                                                     #   `"salesidin"` bucket (entity-scoped to
+                                                     #   RSVNSalesOrderOpenInvoiceCogs) — own OR-group,
+                                                     #   pushed into `filterParts` (AND), NOT merged
+                                                     #   into the existing `searchFilters` OR-group
+                                                     #   (see research.md Decision 103)
+
+compliance-client/
+└── src/
+    └── presentation/pages/eutr-sales-orders/
+        └── SalesOrderOverviewPage.jsx              # EDIT:
+                                                     #   - new `itemId`/`configId` state + 2 new
+                                                     #     TextField inputs in the search Stack, right
+                                                     #     after the keyword TextField, before Search
+                                                     #     button
+                                                     #   - `handleSearchClick`/`fetchSalesOrders`: when
+                                                     #     itemId/configId has a value, first call
+                                                     #     getReferenceDataUseCase.execute(1, 500,
+                                                     #     'Code', 'asc', 21, [...]) to resolve SalesIds;
+                                                     #     empty result short-circuits to the existing
+                                                     #     empty-state render (no refType=11 call);
+                                                     #     non-empty result appends
+                                                     #     {column:'SalesIdIn', operator:'eq',
+                                                     #     value:salesId} entries (1/SalesId) to the
+                                                     #     existing combined filters array before the
+                                                     #     refType=11 call
+                                                     #   - Clear button handler resets itemId/configId
+                                                     #     state alongside existing search/Year/Week
+                                                     #     reset
+                                                     #   - Update 14's search/page restore-on-Back logic
+                                                     #     extended to also persist/restore itemId/
+                                                     #     configId (same mechanism as the existing
+                                                     #     keyword, no new persistence channel)
+```
+
+Unchanged (verified reusable as-is, no edits needed) for Update 43:
+- `RSVNSalesLineOpenInvoiceCogs`'s 2 existing direct callers (`ComplSynchronizeDataService.FetchAllSalesLinesAsync`,
+  `ViewCompliances/DynamicsDataService.GetSalesLineOpenInvoiceCogsFromDynamics`) — neither goes through
+  `EntityMappings`/`GetDynRefePagedAsync`, so adding `RSVNModelBase` inheritance to the class does not
+  affect them.
+- `ODataOperatorConverter` — unchanged; the new `"salesidin"` bucket reuses the existing `eq` operator
+  path, same as every other bucket.
+- `eutr_progression`/Progress column (Update 42) — completely orthogonal; ItemId/ConfigId only change
+  which SalesIds the Overview list itself contains, not how Progress is computed/displayed for them.
+- `012-eutr-purchase-orders` — no equivalent ItemId/ConfigId search requested there; out of scope.
 
 ## Complexity Tracking
 

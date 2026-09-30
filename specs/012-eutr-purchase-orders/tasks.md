@@ -533,3 +533,24 @@ backend change.
 
 **Checkpoint**: Nút Search hiển thị cạnh ô tìm kiếm; nhấn nút áp dụng ngay từ khóa đang nhập, về lại
 trang đầu, không cần đợi debounce; cơ chế tự động lọc hiện có (gõ xong đợi 500ms) không đổi.
+
+---
+
+## Phase 13: Spec Update 11 — Template tree label shows the mapped file's name once uploaded; download for Type = "PO" documents no longer recomputes the file name as Step Name (FR-040/FR-041)
+
+**Goal**: Same feature as `005-eutr-sales-orders` Update 37 (Phase 87 of that spec's tasks.md), applied
+to `PurchId/View`'s own copy of the tree/AVAILABLE FILES UI. Zero backend change — the Upload-time
+matching/no-rename change for Type = "PO" lives entirely in `004-eutr-documents` Update 29.
+
+**Independent Test**: [quickstart.md](./quickstart.md) "Update 11" section, frontend steps 1-5.
+
+- [X] T058 [US2] Sửa `compliance-client/src/presentation/pages/eutr-purchase-orders/PurchaseOrderViewPage.jsx`: import `stripFileExtension` từ `@presentation/pages/eutr-sales-orders/utils/progressUtils` (đã thêm ở `005-eutr-sales-orders` T444); trong `TreeNode`, đổi `{node.stepName}` (nhãn chính) thành `{mappedFiles.length > 0 ? stripFileExtension(mappedFiles[0].name) : node.stepName}` (FR-040) — không đổi caption phụ/badge "+N"/tooltip đã có.
+- [X] T059 [US2] Sửa `handleDownloadFile(file)` trong `PurchaseOrderViewPage.jsx` (T052, Phase 11): nếu `(file.typeName || '').trim().toLowerCase() === 'po'`, dùng thẳng `loadedFile.fileName || file.name` làm `link.download` (không gọi `buildStepOnlyFileName`); ngược lại giữ nguyên hành vi hiện có (FR-041, sau T058). `typeName` đã có sẵn trên item shape của document (dòng 472, `doc.typeName ?? null`).
+- [X] T060 [US2] Sửa lời gọi `<EutrFileViewerDialog>` trong `PurchaseOrderViewPage.jsx`: thêm prop `typeName={viewerFile.typeName}`; thêm `typeName` vào state `viewerFile`/`setViewerFile(...)` call tương ứng (`EutrFileViewerDialog.jsx` bản thân đã nhận prop `typeName` từ `005-eutr-sales-orders` T448, dùng chung không sửa lại) (sau T059).
+- [X] T061 [P] Build verify: `npx eslint` trên `PurchaseOrderViewPage.jsx` (sau T058-T060) — 0 lỗi mới; `npx vite build` (toàn bộ dự án, cả 3 feature) — thành công (chỉ warning chunk-size có sẵn, không liên quan).
+- [ ] T062 [US2] Kiểm thử thủ công theo [quickstart.md](./quickstart.md) "Update 11" section, bước 1-5, trên `PurchId/View` — **CHƯA chạy** (cần môi trường DB/SharePoint thật + trình duyệt, ngoài phạm vi phiên làm việc này).
+
+**Checkpoint**: Node Step có tài liệu khớp hiển thị nhãn = tên file (bỏ đuôi) của tài liệu đầu tiên; node
+chưa khớp hiển thị tên Step; Download trên document Type = "PO" giữ nguyên tên đã lưu (tên file gốc từ
+`004-eutr-documents` Update 29); Type khác "PO" không đổi. Không có backend/entity/DTO/endpoint/route
+mới.

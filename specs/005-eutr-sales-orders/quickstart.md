@@ -1576,3 +1576,272 @@ recomputed rather than read from storage.
   points) → frontend steps 2, 4.
 - FR-196 (multi-Step file uses first Step name) → frontend step 5.
 - FR-197 (no-Step fallback to stored name) → not directly exercised above (rare/abnormal data case).
+
+## Update 34/35 (2026-09-29/30) — Step 1 (Map File) & Selected Purchase Orders (View) read every column from `RSVNEutrSalesOrderPurchLines`; adds Qty/Unit/Percentage used
+
+Additive backend change (2 new fields threaded through the domain model → shared response DTO →
+`case 20:` mapping, no new endpoint/entity/migration) + frontend edits confined to `MapFilePage.jsx`/
+`ViewSalesOrderPage.jsx`. See plan.md "Update 34/35" and research.md Decisions 84-87.
+
+### Fixture setup
+
+At least one Sales Order with 1+ PO that has **2 or more** `RSVNEutrSalesOrderPurchLines` records
+(reference type = 20) for the same `RSVNRefPurchId` — needed to see the new 1-row-per-record behavior
+(a single PO occupying multiple table rows, each with its own Variant/Material/Qty/Unit/Percentage-used).
+A PO with only 1 line record is also useful as a contrast case (1 row, same as before).
+
+### Backend verification (manual — no automated test harness for `ComplDynamicsService` in this repo, same situation Update 17/24/27 already noted)
+
+1. Call `POST /api/dynamics/reference` with `refType = 20` filtered by a known `InterCompanyOriginalSalesId`.
+   **Expected**: each returned item now includes non-null `qtyPercent` and `unit` keys (previously absent
+   from the response shape entirely) whenever the underlying D365 record has those values populated; items
+   for a Sales Order with no such data show `qtyPercent`/`unit` as `null`/empty, not an error.
+2. Confirm every other field in the same response (`code`, `name`, `custAccount`, `productVariant`,
+   `eutrTemplate`, `rsvnRefPurchId`, `qty`) is unchanged from its pre-Update-34 value for the same fixture
+   — the two new fields are additive, nothing else in `case 20:` was touched.
+
+### Frontend verification (manual)
+
+1. Open Map File for the fixture Sales Order. **Expected**: Step 1's table header now reads Select / PO /
+   Template / Order account / Vendor name / **Variant** / **Material** / **Qty** / **Unit** / **Percentage
+   used** (singular Variant/Material, not the old plural Variants/Materials; 2 new columns Qty and Unit
+   before Percentage used).
+2. For the fixture PO with 2+ line records: **Expected**: the PO number appears on **multiple rows** (one
+   per line record), each row showing that record's own Variant/Material/Qty/Unit/Percentage-used values
+   — no row shows a comma-joined list of multiple values in one cell (the old Update 17/18 join behavior
+   is gone). Ticking the Select checkbox on **any** of that PO's rows immediately shows all of that PO's
+   other rows as checked too (same `purchId`-keyed selection, FR-203).
+3. Click **Save PO Mapping** with the multi-line PO ticked. **Expected**: exactly one
+   `{purchId, templateCode}` entry is persisted for that PO (not one per row) — reload the page and confirm
+   only one Select state per PO, still correctly checked.
+4. For a PO whose D365 record has no template (`eutrTemplate` empty): **Expected**: every row belonging to
+   that PO is disabled/unselectable (unchanged FR-022 behavior, now driven by each row's own `refType=20`
+   record instead of the old `refType=16` source).
+5. For a row whose `Qty`, `Unit`, or `QtyPercent` value is empty: **Expected**: that cell shows "—", never
+   "undefined"/"null".
+6. Temporarily break the `refType=20` call (e.g. stop the backend, or point `EUTR_SALES_ORDER_PURCH_LINE_REF_TYPE`
+   fetch at an invalid filter) and reload Step 1. **Expected**: the **entire** table shows an error state
+   (not just 2 cells as before Update 34) — since Step 1 has no fallback `refType=16` data anymore.
+7. Open View for the same Sales Order. **Expected**: the "Selected Purchase Orders" table shows the same
+   new columns/multi-row-per-PO/error-state behavior as Step 1 (steps 1-2 and 6 above), while the header's
+   **Purchase Order(s)** chips and the **"Selected Purchase Orders (N)"** count stay based on the number of
+   distinct saved POs (not the exploded per-line row count).
+8. Confirm `SalesOrderOverviewPage.jsx` (Overview) is completely unaffected — its own Progress/Download
+   columns and search still work exactly as before this update.
+
+### Success criteria mapping (Update 34/35)
+
+- SC-097 (Variant/Material read directly per record, no comma-joined string) → frontend step 2.
+- SC-098 (Qty/Unit/Percentage-used columns sourced correctly, no leftover header-Qty-as-percentage
+  placeholder) → frontend steps 1-2, backend step 1.
+- SC-099 (multi-line PO shows correct row count; Select/Save stay PO-scoped, no duplicate/missing saves)
+  → frontend steps 2-3.
+- SC-100 (no "undefined"/"null"; whole-table error state on load failure) → frontend steps 5-6.
+- SC-101 (Unit column populated from the new field) → frontend step 1, backend step 1.
+
+## Update 37 (2026-09-30) — Template tree label shows the mapped file's name once uploaded; download for Type = "PO" documents no longer recomputes the file name as Step Name
+
+100% frontend, zero backend change — the Upload-time matching/no-rename change for Type = "PO" lives in
+`004-eutr-documents` Update 29 (`EutrUploadService.cs`) and is inherited automatically via the shared
+Add/Edit popup. Edits confined to `MapFilePage.jsx`, `EutrFileViewerDialog.jsx` (shared with
+`004-eutr-documents`/`012`), and `progressUtils.js` (new shared helper).
+
+### Fixture setup
+
+In `006-eutr-reference-types` Assign Steps, assign Step "1.Invoice" to Type "PO". At Step 2 of Map File
+for a Sales Order with that template, upload a file named `1.Invoice AP-PD.pdf` with Type = "PO" (via the
+Upload button) — confirms `004-eutr-documents` Update 29 behavior end-to-end (no rename, matched by name
+containment) as a prerequisite for this update's own scenarios. Also have at least one document of a
+Type other than "PO" already mapped to some other Step, for the "unaffected" checks.
+
+### Frontend verification (manual)
+
+1. After the fixture upload above, look at the template tree. **Expected**: the node for Step
+   "1.Invoice" now shows the label **"1.Invoice AP-PD"** (no `.pdf`) instead of "1.Invoice" — the
+   secondary caption below it still shows the full `"1.Invoice AP-PD.pdf"` (unchanged from before this
+   update), and hovering the status icon still shows the full name in its tooltip.
+2. Look at a Step node with no uploaded document yet. **Expected**: label still shows the plain Step
+   name, unchanged.
+3. Upload a second file to the same Step "1.Invoice" (any other name also containing "1.Invoice").
+   **Expected**: the node label still shows the **first** matched file's name (extension stripped); the
+   secondary caption's "(+N)" badge increments to reflect the second file.
+4. Click the row-level Download button (or the popup View's Download button) for the fixture document
+   from step 1 (Type = "PO"). **Expected**: the downloaded file is named exactly `"1.Invoice AP-PD.pdf"`
+   — NOT recomputed to `"1.Invoice.pdf"` (the pre-Update-37/Update-33 behavior).
+5. Click Download for a document whose Type is NOT "PO" (from the fixture setup). **Expected**: download
+   name is still recomputed as that document's Step Name + original extension, exactly as Update 33 left
+   it — unaffected by this update.
+6. Repeat steps 1-5 on `012-eutr-purchase-orders`'s `PurchId/View` screen — same behavior (separate code,
+   same wiring).
+
+### Success criteria mapping (Update 37)
+
+- SC-103 (tree node label shows the mapped file's name minus extension; unmapped nodes show the Step
+  name) → frontend steps 1-3.
+- SC-104 (Type = "PO" downloads use the stored name as-is; Type ≠ "PO" downloads unaffected) → frontend
+  steps 4-5.
+
+## Update 40 (2026-09-30) — Template tree toolbar (Step 2 Map File + View's Template Checklist) groups by PurchId instead of TemplateCode
+
+100% frontend, zero backend change — a pure client-side regrouping of already-fetched data.
+
+### Fixture setup
+
+Save PO Mapping (Step 1) for 2 different POs of the same Sales Order that BOTH resolve to the SAME
+TemplateCode in D365 (e.g. both PO-A and PO-B have `RSVNEutrTemplate = "Templates-011"`). Upload a
+document to a Required step for PO-A only (leave PO-B without any document for that same step).
+
+### Frontend verification (manual)
+
+1. Open Map File Step 2 for the fixture Sales Order. **Expected**: the toolbar now shows 2 SEPARATE
+   tabs — one for PO-A, one for PO-B — each showing 2 lines (PurchId on top, template name below), NOT
+   a single merged tab for the shared template.
+2. Click the PO-A tab. **Expected**: the step that has a document shows "Mapped"; header shows
+   "Mapped: N/N" reflecting only PO-A's own required steps satisfied.
+3. Click the PO-B tab. **Expected**: the SAME step (same template, same step name) shows "Required -
+   missing" — NOT "Mapped" — because PO-B has no document of its own for that step, even though PO-A
+   does. This is the exact bug the fixture reproduces and Update 40 fixes.
+4. Open View for the same Sales Order. **Expected**: the Template Checklist toolbar also shows 2
+   separate PO-A/PO-B tabs (2-line format), not the single collapsed "Template" tab from Update 26 —
+   clicking each tab reproduces the same independent Mapped/Missing behavior as steps 2-3.
+5. Click Download → "By Template" format. **Expected**: the downloaded zip contains 2 separate folders
+   (one named `"{PO-A} - Templates-011"`, one `"{PO-B} - Templates-011"`), each containing only that
+   PO's own mapped files — not 1 merged `"Templates-011"` folder.
+6. Click Download → "Combined All" format. **Expected**: unchanged from before Update 40 — still 1
+   merged zip built from the default template's tree, independent of which toolbar tab was last
+   selected.
+7. Repeat steps 1-3 on `MapFilePage.jsx` again for a Sales Order where each PO has a DIFFERENT
+   TemplateCode (the common case). **Expected**: behavior is visually the same as before Update 40 (1
+   tab per PO already looked distinct when templates differed) — confirms no regression for the
+   non-shared-template case.
+
+### Success criteria mapping (Update 40)
+
+- SC-106 (N POs sharing 1 template get N independent tabs; no cross-PO Mapped leakage; Download "By
+  Template" produces N correctly-scoped folders) → frontend steps 1-3, 5, 7.
+
+## Update 42 (2026-09-30) — Precomputed table `eutr_progression`; Overview's Progress column reads it via JOIN instead of the dynamic 4-call computation; `test-so-template-sync` also saves `ProductVariant`/`ItemId`
+
+Backend: new table + service + 2 endpoint/controller changes. Frontend: `SalesOrderOverviewPage.jsx`'s
+Progress-loading logic simplified to 1 call.
+
+### Fixture setup
+
+A Sales Order (`SalesId`) with 2 saved POs (`eutr_purchase_attachments`) using 2 different templates,
+each with ≥1 Required step. Leave at least 1 Required step of 1 PO without a mapped document (so
+`Missing > 0`). Have a test user account able to trigger all 4 recompute points: open View, Save PO
+Mapping, Upload/Delete a document at Step 2, and access to run `GET /api/eutr-synchronize-data/test-so-template-sync`.
+
+### Backend verification (manual, via DB + API client)
+
+1. Before any trigger fires for this `SalesId` (fresh fixture, migration `33_create_eutr_progression.sql`
+   already applied), query `SELECT * FROM eutr_progression WHERE SalesId = '<fixture>'`. **Expected**: 0
+   rows.
+2. Open View (`GET /eutr/sales-orders/<fixture>/view` in the browser, or call
+   `GET /api/eutr-purchase-attachments/by-sales-id/<fixture>` directly). **Expected**: a row now exists
+   in `eutr_progression` for this `SalesId`, with `Total`/`Missing`/`Finished` matching the Required/
+   missing/mapped counts shown on the View screen itself (`requiredDetails`/`mappedRequired`/
+   `missingRequired`).
+3. Upload a document to the previously-missing Required step (Step 2 Map File), or delete a previously
+   mapped one. **Expected**: `eutr_progression`'s row for this `SalesId` updates immediately (`Finished`/
+   `Missing` change by 1; `Total` unchanged) — no need to reopen View or Save PO Mapping.
+4. Change the PO selection at Step 1 and click **Save PO Mapping**. **Expected**: `eutr_progression`'s
+   row updates to match the NEW PO/template set just saved (not the set before Save).
+5. Call `GET /api/eutr-synchronize-data/test-so-template-sync` (or trigger it via its usual entry point).
+   **Expected**: for every `SalesId` this run added a new `eutr_purchase_attachments` row for, the new
+   row's `ProductVariant`/`ItemId` are populated (non-null) when the D365 refType=19 source has a value
+   for them — confirm by inspecting `SELECT SalesId, PurchId, ProductVariant, ItemId FROM
+   eutr_purchase_attachments WHERE SalesId = '<a SalesId new to this run>'`. Also confirm
+   `eutr_progression` has a fresh row for that new `SalesId` right after the run (no separate trigger
+   needed). For a `SalesId` that already existed before this run (skipped by the existing dedupe),
+   confirm its `eutr_progression` row is **NOT** touched by this run (`UpdatedDate` unchanged) — revised
+   during implementation for performance (research.md Decision 99); it stays correct via trigger 4 and
+   the one-time backfill instead.
+6. One-time backfill (FR-230): call `GET /api/eutr-progression/backfill-all` once. For a `SalesId` that
+   has `eutr_purchase_attachments` rows from BEFORE this
+   Update's rollout and has not yet had any of the 4 triggers fire post-rollout, confirm the backfill step
+   run at deploy time already produced a correct `eutr_progression` row for it (no empty-state regression
+   for pre-existing data).
+
+### Frontend verification (manual)
+
+1. Open the Overview screen (`/eutr/sales-orders`) and locate the fixture `SalesId`'s row. **Expected**:
+   the Progress column shows `Finished/Total` and `pct` matching exactly what View/Map File show for the
+   same Sales Order at the same point in time (same check as SC-108/FR-086, now sourced from
+   `eutr_progression` instead of the old dynamic computation).
+2. Open the browser's network tab, then load/search/paginate the Overview table. **Expected**: no calls
+   to `by-sales-ids-raw`, `by-codes`, `refType=16`, or `list-po-references` fire for the Progress column
+   — only 1 batched call to the new progression-by-sales-ids endpoint.
+3. Upload a document at Step 2 for the fixture Sales Order, then navigate back to Overview (without
+   opening View or clicking Save PO Mapping again). **Expected**: the Progress column already reflects
+   the new `Finished`/`Missing` count — no stale value.
+4. For a `SalesId` with no `eutr_progression` row at all (never triggered, e.g. a brand-new Sales Order
+   with 0 saved POs): Overview shows the same empty state as before Update 42 (FR-083/FR-228) — not an
+   error, not `0/0`.
+5. For a `SalesId` with a `eutr_progression` row where `Total = 0` (all saved templates have 0 valid
+   Required steps after `AUTO_SOURCES` exclusion): Overview shows the same distinct "no required steps"
+   state as before Update 42 (FR-084/FR-228) — not 0%, not the empty state from step 4.
+
+### Success criteria mapping (Update 42)
+
+- SC-108 (Overview Progress read reduced to 1 JOIN; values match View/Map File at the same point in
+  time) → backend steps 2, 5; frontend steps 1-2.
+- SC-109 (all 4 triggers keep `eutr_progression` in sync; job-added rows get `ProductVariant`/`ItemId`)
+  → backend steps 3, 4, 5; frontend step 3.
+
+## Update 43 (2026-09-30) — ItemId/ConfigId search on Overview, filtered via a `RSVNSalesLineOpenInvoiceCogs` (refType=21) SalesId lookup
+
+Backend: new refType registration + one new `BuildFilterString` bucket, no new endpoint, no new table.
+Frontend: 2 new search inputs, 2-sequential-call search flow.
+
+### Fixture setup
+
+A known `ItemId`/`ConfigId` pair from a real D365 sales line (`RSVNSalesLineOpenInvoiceCogs`) that
+belongs to a known `SalesId` also visible on the Overview screen (via `refType=11`). Also note a second,
+unrelated `SalesId` that does NOT have any line with that ItemId/ConfigId, for the narrowing checks
+below.
+
+### Backend verification (manual, via API client)
+
+1. `POST /api/dynamics/reference?refType=21` with body `[{"column":"ItemId","operator":"eq","value":"<fixture ItemId>"}]`.
+   **Expected**: response includes at least one row whose `code`/`id` equals the fixture `SalesId`; no
+   `500` error (confirms `EntityMappings[21]`/`MapDynamicsResponse case 21` are wired correctly).
+2. Same call with both `ItemId` and `ConfigId` filters (`operator: "eq"` on each). **Expected**: results
+   narrow to rows matching BOTH (AND) — fewer or equal rows vs. step 1 alone.
+3. `POST /api/dynamics/reference?refType=11` with body
+   `[{"column":"SalesIdIn","operator":"eq","value":"<fixture SalesId>"}, {"column":"SalesIdIn","operator":"eq","value":"<second unrelated SalesId>"}]`
+   (simulating the frontend's 2-entry OR-chain from a step-1 result with 2 SalesIds). **Expected**: only
+   Sales Orders matching one of those 2 `SalesId`s are returned — confirms the new `"salesidin"` bucket
+   produces `(SalesId eq 'A' or SalesId eq 'B')` correctly.
+4. Same refType=11 call as step 3, but ALSO add an unrelated `{"column":"Code","operator":"like","value":"<substring not in either fixture SalesId>"}`
+   filter (simulating the keyword search box also having a value). **Expected**: zero results — confirms
+   `"salesidin"` combines via AND with the existing keyword OR-group, not OR (the bug this Update
+   specifically avoids — see research.md Decision 103).
+
+### Frontend verification (manual)
+
+1. Open Overview (`/eutr/sales-orders`). **Expected**: 2 new input boxes, **ItemId** and **ConfigId**,
+   appear in the search bar after the keyword search box, before the Search button.
+2. Enter only the fixture `ItemId`, click Search. **Expected**: table narrows to Sales Order(s) with a
+   line matching that ItemId; open the browser network tab and confirm exactly 2 `POST
+   /api/dynamics/reference` calls fired for this search — one `refType=21`, one `refType=11` with
+   `SalesIdIn` filters derived from the first call's result.
+3. Enter both fixture `ItemId` and `ConfigId`, click Search. **Expected**: same or narrower result set
+   than step 2 (AND semantics); confirm via network tab that both filters were sent together in the
+   refType=21 call.
+4. Enter an ItemId/ConfigId combination known to match nothing, click Search. **Expected**: table shows
+   the existing empty state ("No data") — confirm via network tab that NO `refType=11` call fires at all
+   (short-circuited after the empty refType=21 result, per FR-234).
+5. With ItemId/ConfigId still filled in from step 2/3, also type a keyword into the main search box
+   and/or pick a Year, click Search. **Expected**: results narrow further (AND across all active
+   filters) — not broadened.
+6. Click **Clear**. **Expected**: ItemId and ConfigId boxes are cleared along with every other filter;
+   table returns to the default unfiltered list.
+7. With ItemId/ConfigId filled in and a search active, open Map File or View on a visible row, then
+   click that screen's Back button. **Expected**: ItemId/ConfigId values are restored exactly as before
+   navigating away (same mechanism as the existing keyword/Year/Week restore, Update 14).
+
+### Success criteria mapping (Update 43)
+
+- SC-110 (ItemId/ConfigId narrows results via AND, combined correctly with other active filters; empty
+  lookup shows "No data") → backend steps 3-4; frontend steps 2-5.

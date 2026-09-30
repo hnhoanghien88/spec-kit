@@ -2185,3 +2185,119 @@ Phase 0 — chốt các quyết định kỹ thuật. Các điểm nghiệp vụ
   request.
 - **Alternatives considered**: Không có — thay đổi đơn giản, chỉ 2 hằng số, không có phương án khác cần
   cân nhắc.
+
+## Update 29
+
+## Quyết định 78 — Type = "PO": thay khớp Prefix (`eutr_master_documents`) bằng so khớp tên Step đã gán cho Type "PO" (`eutr_reference_type_details`), tái dùng `IEutrReferenceTypeDetailsRepository.GetByTypeIdAsync` có sẵn (spec Update 29, FR-020/FR-074/FR-075/FR-076)
+
+- **Decision**: Trong `EutrUploadService.UploadMultipleToSharePointAndSaveDataAsync`, xóa lời gọi
+  `_eutrMastersRepository.GetMatchingPrefixesAsync(file.FileName, ct)`. Inject thêm
+  `IEutrReferenceTypeDetailsRepository` (đã tồn tại từ feature `006-eutr-reference-types`, dùng cho
+  Assign Steps từ Update 20 của chính spec này). Trước vòng lặp file (1 lần/batch): `var poTypeId =
+  request.TypeId ?? PoRefType;` rồi `var assignedSteps = await _referenceTypeDetailsRepository.
+  GetByTypeIdAsync(poTypeId, ct);`. Với mỗi file: `var matchedSteps = assignedSteps.Where(s =>
+  !string.IsNullOrEmpty(s.StepName) && file.FileName.Contains(s.StepName,
+  StringComparison.OrdinalIgnoreCase)).ToList();`. `matchedSteps.Count == 0` → loại file, `ErrorMessage
+  = "No matching step found for this file name"`.
+- **Rationale**: Xác nhận qua `AskUserQuestion` trực tiếp với người yêu cầu — tập Step dùng để so khớp
+  phải là Step **đã gán cho Type "PO"** qua Assign Steps, không phải toàn bộ `eutr_steps` (tránh khớp
+  nhầm Step dành cho Type khác như "Invoice"/"Vendor"). `GetByTypeIdAsync` đã trả sẵn đúng hình dạng
+  cần (`StepId` + `StepName` JOIN `eutr_steps`), không cần SQL/repository mới — tái dùng triệt để hạ
+  tầng Assign Steps đã ổn định từ Update 20, thay vì xây một bảng/khái niệm riêng thứ hai cho PO như
+  `eutr_master_documents` đã làm trước đây (chính là phần bị loại bỏ ở Update này).
+- **Alternatives considered**: (a) So khớp trên toàn bộ `eutr_steps` — bị loại vì dễ khớp nhầm Step
+  không liên quan Type "PO" (ví dụ 1 Step tên trùng/là substring của Step khác thuộc Type "Invoice").
+  (b) Giữ `eutr_master_documents` nhưng đổi cơ chế so khớp bên trong nó từ Prefix sang tên Step — bị
+  loại vì yêu cầu gốc nêu rõ "bỏ logic kiểm tra với eutr_master_documents", không phải sửa logic bên
+  trong bảng đó.
+
+## Quyết định 79 — Khôi phục ghi `eutr_references` cho MỌI Step khớp (không còn giới hạn 1 bản ghi thắng cuộc) — ghi nhận drift giữa code thực tế và văn bản spec cũ trước Update 29
+
+- **Decision**: Vòng lặp `foreach (var matchedStep in matchedSteps)` ghi 1 dòng `eutr_references`/
+  `StepId` khớp (cùng `DocumentId`/`RefType`/`RefValue`), thay cho việc chỉ ghi 1 dòng cho
+  `winningMaster.StepId` như code hiện tại trước Update 29.
+- **Rationale**: Rà soát mã nguồn khi lập kế hoạch phát hiện: `EutrMastersRepository.
+  GetMatchingPrefixesAsync` (code thực tế, không phải văn bản spec) đã tự thu hẹp kết quả về **đúng 1**
+  bản ghi thắng cuộc (Prefix dài nhất, tie-break Id nhỏ nhất) ngay bên trong repository — khiến
+  `UploadMultipleToSharePointAndSaveDataAsync` trước Update 29 chỉ từng ghi đúng 1 dòng
+  `eutr_references`/file, khác với văn bản FR-023/FR-063 (cả hai đều mô tả "ghi 1 dòng cho **mỗi**
+  StepId khớp"). Đây là drift code-vs-spec có từ trước, phát hiện tình cờ khi đọc code cho Update 29,
+  không phải hành vi Update 29 chủ đích thay đổi. Vì spec (đã amend ở Update 29, FR-075/FR-076) tiếp
+  tục khẳng định rõ ràng multi-match ("một file có thể khớp 0, 1, hoặc nhiều Step... không giới hạn số
+  lượng"), quyết định ở đây là **khôi phục đúng hành vi multi-match theo văn bản spec hiện hành** làm
+  baseline mới cho logic viết lại, thay vì tiếp tục giữ nguyên hành vi single-match đã âm thầm tồn tại
+  trong code — vì logic khớp mới (tên Step chứa trong tên file) không còn khái niệm "Prefix dài nhất"
+  để tie-break chọn 1 bản ghi thắng cuộc nữa, single-match không còn ý nghĩa kỹ thuật rõ ràng nào để
+  giữ lại.
+- **Alternatives considered**: Giữ single-match (chỉ ghi 1 `eutr_references`, chọn 1 Step theo tiêu chí
+  nào đó, ví dụ tên Step dài nhất khớp) — bị loại vì không có căn cứ nào trong yêu cầu gốc của Update 29
+  cho một quy tắc tie-break mới, và văn bản spec (FR-075/FR-076, xác nhận qua toàn bộ lịch sử Update
+  25/26 trước đó) luôn mô tả multi-match là hành vi đúng; giữ single-match sẽ tiếp tục kéo dài một drift
+  không có tài liệu, gây khó hiểu cho người đọc spec sau này.
+
+## Quyết định 80 — Frontend: Edit-popup Step combobox cho document Type = "PO" đổi nguồn từ `eutr_master_documents` (qua `GetEutrMastersStepsUseCase`) sang Assign Steps + lọc tên chứa trong file name (spec Update 29, FR-079)
+
+- **Decision**: Thêm hàm mới `loadMatchingStepsForPoByName(typeId, fullSteps, fileName)` trong
+  `EutrDocumentsFormDialog.jsx` = gọi lại `loadFilteredSteps(typeId, fullSteps)` đã có sẵn (dùng
+  `getByTypeIdEutrReferenceTypeDetailsUseCase`, cùng cơ chế Assign Steps dùng cho Type khác "PO") rồi
+  `.filter(s => fileName?.toLowerCase().includes((s.name || '').toLowerCase()))`. Trong nhánh
+  `isPoTypeName(matchedType)` của `useEffect` nạp Edit, đổi `await loadDistinctMasterSteps(stepsList,
+  initialData.name)` thành `await loadMatchingStepsForPoByName(initialData.refType, stepsList,
+  initialData.name)`.
+- **Rationale**: Nhất quán trực tiếp với quyết định 78 (backend không còn tra `eutr_master_documents`
+  khi Upload) — danh sách Step hiển thị ở Edit combobox cho document Type = "PO" phải phản ánh đúng cơ
+  chế khớp mới (Assign Steps + tên chứa trong tên file đã lưu), không thể tiếp tục đọc từ
+  `GetMatchingStepsAsync`/`eutr_master_documents` (nguồn dữ liệu nay không còn liên quan tới việc xác
+  định Step của document PO nữa). `loadFilteredSteps` đã tồn tại sẵn, tái dùng nguyên vẹn — chỉ thêm 1
+  bước lọc theo tên ở tầng frontend (không cần endpoint mới, vì danh sách Step assigned cho 1 Type
+  thường nhỏ, lọc phía client chấp nhận được).
+- **Alternatives considered**: Thêm 1 endpoint backend mới nhận `typeId` + `fileName` trả thẳng danh
+  sách Step đã lọc — bị loại vì over-engineering cho một danh sách nhỏ (số Step gán cho 1 Type thường
+  chỉ vài chục), lọc phía client bằng dữ liệu đã tải sẵn (`loadFilteredSteps`) là đủ và giữ đúng
+  nguyên tắc "0 backend mới" đã áp dụng cho các Update tương tự trước đó (Update 20/27/28).
+- **Ghi chú dọn dẹp**: `loadDistinctMasterSteps`/import `GetEutrMastersStepsUseCase` trong
+  `EutrDocumentsFormDialog.jsx` không còn được gọi ở đây — xác nhận không còn lời gọi nào khác trong
+  file này lúc code rồi xóa hàm + import cục bộ (KHÔNG xóa `GetEutrMastersStepsUseCase.js`/endpoint
+  `GET /api/eutr-masters/steps`, vẫn dùng bởi `TemplateBuilderPage.jsx`/`AssignStepsPage.jsx`, ngoài
+  phạm vi feature này).
+
+## Quyết định 81 — Sửa lại Quyết định 78/80 ngay sau kiểm thử thật: dùng toàn bộ `eutr_steps` thay vì Step đã gán cho Type "PO" qua Assign Steps
+
+- **Bug report**: Ngay sau khi triển khai Quyết định 78/80, người yêu cầu tính năng thử upload file
+  `1.Invoice AP-PD.pdf` vào một template đang hiển thị rõ Step "1.Invoice" — hệ thống báo lỗi "No
+  matching step found for this file name" dù tên file khớp rõ ràng. Ảnh chụp màn hình kèm theo cho thấy
+  "0 file(s) uploaded successfully" với 1 file khác cũng bị từ chối cùng lý do.
+- **Root cause**: `assignedSteps` (nạp qua `_referenceTypeDetailsRepository.GetByTypeIdAsync(poTypeId,
+  ct)`, tức bảng `eutr_reference_type_details`/Assign Steps) hầu như luôn RỖNG cho Type "PO" trong thực
+  tế — vì `eutr_reference_type_details` là một cơ chế HOÀN TOÀN riêng biệt, không liên quan gì tới cây
+  Step hiển thị trên màn Map File (`005-eutr-sales-orders`)/`PurchId/View` (`012-eutr-purchase-orders`).
+  Cây đó lấy Step từ `eutr_template_details` (gắn theo Template, feature `003-eutr-templates`), không
+  phải từ Assign Steps. Không có gì đảm bảo (và thực tế không có) ai từng gán Step nào cho Type "PO" ở
+  màn Assign Steps trước đây — vì trước Update 29, nhánh Type = "PO" chưa từng đọc bảng đó, chỉ đọc
+  `eutr_master_documents`. Kết quả: `assignedSteps` rỗng → `matchedSteps` luôn rỗng → MỌI file bị từ
+  chối, bất kể tên file khớp Step nào trên cây.
+- **Decision**: Bỏ hẳn `IEutrReferenceTypeDetailsRepository` khỏi `EutrUploadService` (xóa field/tham
+  số constructor, không giữ lại dependency chết). Thay `assignedSteps` bằng `var allSteps = (await
+  _stepsRepository.GetAllAsync(ct)).ToList();` (dùng lại `IRepository<EutrStep, long>` đã inject sẵn,
+  method `GetAllAsync` đã có trên interface generic — không cần SQL/repository mới). Matching đổi từ so
+  `s.StepName`/`s.StepId` (DTO của Assign Steps) sang `s.Name`/`s.Id` (entity `EutrStep` thật). Tương
+  ứng ở frontend, `loadMatchingStepsForPoByName` trong `EutrDocumentsFormDialog.jsx` đổi từ gọi
+  `loadFilteredSteps(typeId, fullSteps)` (Assign Steps) sang lọc thẳng trên `fullSteps` (toàn bộ
+  `eutr_steps` đã tải sẵn ở component) — trở thành hàm đồng bộ (không còn `await`/gọi API nào).
+- **Rationale**: Quyết định ban đầu (78) lo ngại khớp nhầm Step của Type khác (Invoice/Vendor/...) nếu
+  dùng toàn bộ `eutr_steps` — một lo ngại hợp lý về mặt lý thuyết, nhưng sai lầm nằm ở chỗ giả định
+  Assign Steps *có dữ liệu* cho Type "PO" để lọc; thực tế nó không có, nên "biện pháp phòng ngừa" lại
+  biến thành "chặn toàn bộ". Việc quay lại toàn bộ `eutr_steps` khớp đúng tính chất **phẳng, không giới
+  hạn Type** mà cơ chế cũ (`eutr_master_documents`) vốn đã có — bảng đó cũng chưa từng có ràng buộc
+  Type nào (bất kỳ Step nào cũng có thể có 1 bản ghi Prefix). Rủi ro khớp nhầm Step tên trùng/là chuỗi
+  con giữa các Type là có thật nhưng chấp nhận được (giống hệt rủi ro đã tồn tại từ trước với
+  `eutr_master_documents`, vì bảng đó cũng không lọc theo Type) — hệ thống ưu tiên "không chặn nhầm
+  file hợp lệ" hơn "phòng ngừa lý thuyết cho một tình huống trùng tên hiếm gặp".
+- **Alternatives considered**: (a) Giữ Assign Steps nhưng thêm bước "tự động gán mọi Step của mọi
+  Template vào Assign Steps cho Type PO" (migration dữ liệu một lần) — bị loại vì đây là thay đổi dữ
+  liệu lớn, ngoài phạm vi yêu cầu, và không đồng bộ khi Template được sửa sau này (Step mới thêm vào
+  Template sẽ không tự động có trong Assign Steps). (b) Lấy Step theo Template của PO đang upload
+  (`eutr_template_details`, join qua `eutr_purchase_attachments`/tương đương) — bị loại vì Upload không
+  có ngữ cảnh Template tường minh ở tầng request hiện tại (chỉ có `PoCode`), việc suy ra Template từ
+  PoCode đòi hỏi thêm 1 round-trip/join mới ngoài phạm vi sửa lỗi tối thiểu cần thiết ở đây; có thể cân
+  nhắc lại nếu phát sinh yêu cầu tường minh về việc thu hẹp phạm vi khớp theo Template cụ thể.

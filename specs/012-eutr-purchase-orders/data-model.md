@@ -133,3 +133,24 @@ No new entity, field, endpoint, or filter logic — the new Search button calls 
 `fetchPurchaseOrders(0, pageSize, search)` (→ `GetReferenceDataUseCase.execute(...)` →
 `buildSearchFilters`, unchanged) that the existing debounced `onChange` handler already calls. Purely
 a second, immediate trigger for an already-existing query.
+
+## Update 11 (2026-09-30) — Template tree label shows the mapped file's name once uploaded; download for Type = "PO" documents no longer recomputes the file name as Step Name (FR-040/FR-041, no entity/DTO/API change)
+
+No new entity, field, endpoint, or migration. Both changes are the exact client-side rendering/
+computation decisions made at `005-eutr-sales-orders` Update 37 (see that feature's data-model.md
+"Update 37" for the full formulas), applied verbatim to `PurchaseOrderViewPage.jsx`'s own copy of the
+tree/row UI:
+
+```
+nodeLabel = stripFileExtension(mappedFiles[0].name)   // node has >= 1 mapped file
+nodeLabel = node.stepName                             // node has 0 mapped files (unchanged)
+
+downloadFileName = loadedFile.fileName || storedName                          // typeName === 'PO'
+downloadFileName = sanitizeFolderName(stepNames[0]) + extensionOf(storedName) // typeName !== 'PO', stepNames non-empty
+downloadFileName = storedName                                                 // typeName !== 'PO', stepNames empty
+```
+
+`typeName` is already present on this screen's document item shape (populated the same way as
+`005-eutr-sales-orders`'s `realAvailableFiles`, from `list-po-references`) — no new API field needed.
+The Upload-time matching/no-rename change for Type = "PO" itself (`004-eutr-documents` Update 29) needs
+no data-model change here — this screen's Upload/Edit buttons call that same shared popup/endpoint.

@@ -447,3 +447,42 @@ compliance-client/src/presentation/pages/eutr-purchase-orders/
 Unchanged: the debounced auto-search on every keystroke (`handleSearchChange`/`debouncedFetch`), the
 backend `GetReferenceDataUseCase`/`buildSearchFilters` query — no new/changed endpoint, entity, DTO, or
 route.
+
+## Update 11 (2026-09-30) — Template tree label shows the mapped file's name once uploaded; download for Type = "PO" documents no longer recomputes the file name as Step Name (FR-040/FR-041)
+
+Same pattern as Update 9 above — `PurchaseOrderViewPage.jsx`'s tree/row UI is this feature's own
+duplicated copy (not a shared component call), so both changes decided at `005-eutr-sales-orders`
+Update 37 (see that feature's research.md Decisions 88/89) had to be applied here too. The Upload-time
+matching/no-rename change for Type = "PO" itself needs **zero** code here — it lives entirely in
+`004-eutr-documents` Update 29's `EutrUploadService.cs`, and this screen's Upload/Edit buttons already
+call that same shared popup/endpoint.
+
+```text
+compliance-client/
+└── src/presentation/pages/eutr-purchase-orders/
+    └── PurchaseOrderViewPage.jsx   # EDIT:
+                                     #   - TreeNode: primary label changes from `{node.stepName}` to
+                                     #     `{mappedFiles.length > 0
+                                     #        ? stripFileExtension(mappedFiles[0].name)
+                                     #        : node.stepName}` (FR-040) — new import
+                                     #     `stripFileExtension` from
+                                     #     `@presentation/pages/eutr-sales-orders/utils/progressUtils`
+                                     #     (already added there for `005-eutr-sales-orders` Update 37);
+                                     #     the existing secondary caption (`mappedFiles[0].name` + "(+N)")
+                                     #     and status-icon tooltip are unchanged
+                                     #   - `handleDownloadFile(file)`: skip `buildStepOnlyFileName(...)`
+                                     #     and use `loadedFile.fileName || file.name` as-is when
+                                     #     `file.typeName` is `'PO'` (case-insensitive) (FR-041)
+                                     #   - `EutrFileViewerDialog` call site: pass new
+                                     #     `typeName={viewerFile.typeName}` prop; `viewerFile` state gains
+                                     #     a `typeName` field alongside `stepNames`
+```
+
+`EutrFileViewerDialog.jsx` itself (shared with `004-eutr-documents`/`005-eutr-sales-orders`) already
+gained its `typeName` prop/Type-conditional skip at `005-eutr-sales-orders` Update 37 — reused here
+verbatim, not duplicated.
+
+Unchanged: every backend file (matching/no-rename lives in `004-eutr-documents`'s `EutrUploadService.cs`
+only); the per-row Download button and its handler added in Update 9 (only the file-name computation
+inside it becomes Type-conditional); the "(+N)" badge and status-icon tooltip (still show the full stored
+name including extension).

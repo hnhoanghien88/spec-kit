@@ -984,6 +984,10 @@ the Edit/Upload controls (View stays read-only, FR-042/FR-100).
 
 ### Entity: Purchase Order Line (reference data, `refType = 20`, read-only — newly reachable)
 
+> **Superseded from Update 34/35** — see that section below. This entity became the sole data source for
+> both tables (not just the Variants/Materials columns), and gained 2 new fields (`QtyPercent`, `Unit`).
+> Kept here for history; the field table immediately below reflects the pre-Update-34 shape.
+
 Source: D365 entity `RSVNEutrSalesOrderPurchLines` (`compliance-sys-api/src/ComplianceSys.Domain/
 Dynamics/RSVNEutrSalesOrderPurchLines.cs`, `ModelType = 20`) — the class, its `FilterableFields`, the
 `MapDynamicsResponse` `case 20:`, and every `ComplDynReferenceResponseDto` field it assigns already exist
@@ -1513,3 +1517,386 @@ changes.
   matching the existing View button's visibility rule.
 - Applies identically to `012-eutr-purchase-orders` (`PurchaseOrderViewPage.jsx`), tracked in that
   feature's own data-model.md/plan.md since it owns a separate copy of this row wiring.
+
+## Update 34/35 (2026-09-29/30): Purchase Order Line (`refType = 20`) becomes the sole row source for both tables; adds `QtyPercent`/`Unit`
+
+> Covers spec FR-198..FR-210. Additive backend change (2 new domain-model properties + 2 new DTO
+> properties + 2 new assignment lines in an already-existing `case 20:` block — no new entity class,
+> endpoint, or migration). Frontend edits confined to `MapFilePage.jsx`/`ViewSalesOrderPage.jsx` (no new
+> file). See research.md Decisions 84-87.
+
+### Entity: Purchase Order Line (reference data, `refType = 20`) — now the ONLY source for Step 1/Selected Purchase Orders
+
+| Field (frontend use) | Source property (D365 entity, `RSVNEutrSalesOrderPurchLines`) | Response DTO property (`ComplDynReferenceResponseDto`) | JSON key (camelCase) | Type |
+|---|---|---|---|---|
+| PO | `RSVNRefPurchId` | `RSVNRefPurchId` | `rsvnRefPurchId` | string |
+| Template | `RSVNEutrTemplate` | `EutrTemplate` | `eutrTemplate` | string |
+| Order account | `OrderAccount` | `CustAccount` (pre-existing rename, kept as-is — research.md Decision 87) | `custAccount` | string |
+| Vendor name | `Name` | `Name` | `name` | string |
+| Variant | `ProductVariant` | `ProductVariant` | `productVariant` | string |
+| Material | `ItemId` | `Code` | `code` | string |
+| Qty | `Qty` | `Qty` (parsed via `long.TryParse`, defaults to `0`) | `qty` | long |
+| Unit **(new, Update 35)** | `Unit` **(new domain-model property)** | `Unit` **(new DTO property)** | `unit` | string |
+| Percentage used | `QtyPercent` **(new domain-model property, Update 34)** | `QtyPercent` **(new DTO property, Update 34)** | `qtyPercent` | string |
+| Sales Order link (filter key, not rendered) | `InterCompanyOriginalSalesId` | `InterCompanyOriginalSalesId` | `interCompanyOriginalSalesId` | string |
+
+Filtered per Sales Order via `[{ column: 'InterCompanyOriginalSalesId', operator: 'eq', value: salesId }]`
+only — unchanged from Update 17 (research.md Decision 64); still one batched call per Sales ID, no
+per-PO/per-line call.
+
+**Backend change — 3 files, additive only**:
+1. `RSVNEutrSalesOrderPurchLines.cs` (domain model) — `+ public string QtyPercent { get; set; }`,
+   `+ public string Unit { get; set; }`. `FilterableFields` unchanged (research.md Decision 86 — that
+   dictionary only feeds `ODataFilterBuilder`/`EtdWeekFilterBuilder`'s WHERE/`$orderby` validation, not
+   response shape).
+2. `ComplDynReferenceResponseDto.cs` — `+ public string QtyPercent { get; set; }`,
+   `+ public string Unit { get; set; }`.
+3. `ComplDynamicsService.cs`, `MapDynamicsResponse`'s `case 20:` — `+ QtyPercent = x.QtyPercent`,
+   `+ Unit = x.Unit`. Every other assignment in this `case` block (`Code = x.ItemId`, `CustAccount =
+   x.OrderAccount`, `Qty = long.TryParse(...)`, `ProductVariant`, `EutrTemplate`, `RSVNRefPurchId`) is
+   untouched.
+
+### Row grain change: 1 row per record, not 1 row per PO (FR-198)
+
+Before Update 34, both tables rendered 1 row per PO (sourced from `refType=16`), with a *separate*
+grouped fetch of `refType=20` joining every matching record's `ItemId`/`ProductVariant` into one
+comma-separated cell per PO. From Update 34, both tables render `refType=20`'s raw array directly — 1
+API record = 1 table row. A PO with N line records now produces N table rows, each with that record's
+own Variant/Material/Qty/Unit/Percentage-used values (no join, no grouping, no dedupe across records).
+
+| Screen | Row-source state | Table-body list | Still-deduped-by-PO list (unchanged consumers) |
+|---|---|---|---|
+| Map File (`MapFilePage.jsx`) | `poLines` (raw `refType=20` array) | `poLines` (mapped 1:1) | `poList` (`useMemo`, dedupe `poLines` by `purchId`) — feeds Save PO Mapping, `buildReferenceCodes`, `buildPurchIdToTemplateCodeMap` |
+| View (`ViewSalesOrderPage.jsx`) | `poLines` (raw `refType=20` array) | `poRows` (`useMemo` — 1 row per `poLines` record matching a saved `purchId`; 1 blank fallback row for a saved `purchId` with zero matching records) | `poList` (`useMemo`, dedupe via new `poInfoByPurchId` map) — feeds header PO chips + "Selected Purchase Orders (N)" count; `purchIdToTemplateCode`/`buildReferenceCodes` now read `poInfoByPurchId` instead of the removed `allPos` |
+
+### Select/disable/Save PO Mapping — unaffected (FR-203)
+
+`selectedPOs` (`Set<purchId>`) and `handleTogglePO(purchId)` in `MapFilePage.jsx` are unchanged — keyed
+by PO identity already, not row index, so a PO occupying multiple rows keeps every one of its rows'
+checkboxes in sync automatically. The disable condition (`!line.eutrTemplate`) now reads each row's own
+`eutrTemplate` field (from `refType=20` directly) instead of the old `refType=16`-sourced `po.eutrTemplate`
+— same value in practice, since `RSVNEutrTemplate` is a per-PO D365 attribute replicated onto every line.
+`handleSavePOMapping` is unchanged, still building its payload from `poList` (deduped).
+
+### Removed: refType=16 fetch and the grouped-Map state (both screens)
+
+- `EUTR_SALES_ORDER_PURCHASE_REF_TYPE = 16` constant and its `useEffect` — removed from both
+  `MapFilePage.jsx` and `ViewSalesOrderPage.jsx` (View's version also removed the `allPos` state it fed).
+- `poLinesByPurchId` (`Map<purchId, {materials: string[], variants: string[]}>`) — removed from both
+  screens; superseded by the raw `poLines` array.
+
+### Non-goals confirmed (Update 34/35)
+
+- No new entity class, DTO class, controller action, or migration — 2 new properties on 2 already-existing
+  backend classes, 2 new assignment lines in an already-existing `case` block.
+- No change to `SalesOrderOverviewPage.jsx`'s own, independent `refType=16` usage.
+- No change to Step 2, Template Checklist, AVAILABLE FILES, Download, Back, Validation Summary, or any
+  permission gating (Update 28/29) on either screen.
+- No change to the existing batch-loading mechanism (1 call per Sales ID, no N+1) established by
+  Update 17/125 — reused unchanged.
+- No change to `case 20:`'s pre-existing `OrderAccount`→`CustAccount` rename (research.md Decision 87) —
+  frontend reads `item.custAccount` for this refType's Order account, not `item.orderAccount`.
+
+## Update 37 (2026-09-30): Template tree label shows the mapped file's name once uploaded; download for Type = "PO" documents no longer recomputes the file name as Step Name (frontend-only, no entity/DTO/API change)
+
+### No new entity, field, endpoint, or migration
+
+Both changes are purely client-side rendering/computation decisions over data already available on the
+`realAvailableFiles` item shape (`typeName`, `stepNames`, `name`) — no new backend file, DTO, or route.
+
+### Client-side "tree node label" computation (not a DB field)
+
+```
+nodeLabel = stripFileExtension(mappedFiles[0].name)   // node has >= 1 mapped file
+nodeLabel = node.stepName                             // node has 0 mapped files (unchanged)
+```
+
+- `mappedFiles` — already computed per node (`fileMappings[node.id]` resolved against the `files` array
+  passed to `TreeNode`), unchanged from before this update.
+- `stripFileExtension` — new exported helper in `progressUtils.js`, same regex
+  `buildStepOnlyFileName.js` already uses (`name.replace(/\.[^/.]+$/, '')`).
+- The existing secondary caption (`mappedFiles[0].name` + `(+N)` badge) and the status-icon tooltip
+  (`Đã map: ...`, full names) are unchanged — still show the full stored name including extension.
+
+### Client-side "download file name" computation — now Type-conditional (extends Update 33)
+
+```
+downloadFileName = loadedFile.fileName || storedName                          // typeName === 'PO'
+downloadFileName = sanitizeFolderName(stepNames[0]) + extensionOf(storedName) // typeName !== 'PO', stepNames non-empty
+downloadFileName = storedName                                                 // typeName !== 'PO', stepNames empty
+```
+
+- `typeName` — already present on `realAvailableFiles` items (`doc.typeName ?? null`, populated from
+  `list-po-references`, added for Update 5) and passed through to `EutrFileViewerDialog` as a new prop
+  alongside the existing `stepNames` prop — no new API field.
+- For Type = "PO" documents, `storedName`/`loadedFile.fileName` already equals the original uploaded file
+  name for any document created after `004-eutr-documents` Update 29 (no rename at Upload time) — the
+  Update 33 recompute becomes unnecessary and is skipped for this Type specifically.
+
+### Non-goals confirmed (Update 37)
+
+- No new backend endpoint, controller, entity, table, migration, DTO, or authorization policy.
+- No change to `eutr_documents.Name`/`eutr_references` — both changes affect only what's rendered in the
+  tree and what file name the browser saves a Type = "PO" download as.
+- No change to Type ≠ "PO" download behavior — continues to recompute the file name as Step Name exactly
+  as Update 33 left it.
+- No change to the "(+N)" badge, the status-icon tooltip, Map status computation, or Upload/Edit/View
+  button gating (Update 28/29/30) on either screen.
+- Applies identically to `012-eutr-purchase-orders` (`PurchaseOrderViewPage.jsx`), tracked in that
+  feature's own data-model.md/plan.md since it owns a separate copy of this row/tree wiring.
+
+## Update 40 (2026-09-30): Template tree toolbar groups by PurchId instead of TemplateCode (frontend-only, no entity/DTO/API change)
+
+### No new entity, field, endpoint, or migration
+
+Purely a client-side regrouping of data already fetched by existing calls (`eutr_purchase_attachments`
+via `GetPurchaseAttachmentsBySalesIdUseCase`, template detail trees via `GetPagingEutrTemplatesUseCase`/
+`GetEutrTemplatesUseCase`, documents via `GetEutrDocumentsPoReferencesUseCase`) — no new backend file,
+DTO, or route.
+
+### Client-side "per-PO template entry" shape (not a DB table — derived in-memory)
+
+```
+poTemplates: [{
+  purchId,            // from eutr_purchase_attachments (deduped — 1 entry per unique PurchId)
+  templateCode,        // that PO's own TemplateCode (eutr_purchase_attachments.TemplateCode)
+  templateName,         // looked up from templatesData (already fetched, deduped by templateCode)
+  orderAccount,          // that PO's own Vendor code (from poList/poInfoByPurchId), or null
+  flatDetails,             // that template's step list — same object as templatesData's entry (shared
+                            //   reference across every PO using the same template; not duplicated data)
+  tree,                     // flatToTree(flatDetails) — same sharing as flatDetails
+}]
+```
+
+- 1 element per unique `purchId` — NOT deduped by `templateCode`. 2 POs sharing 1 template produce 2
+  separate `poTemplates` entries, each with its own `purchId`/`orderAccount` but pointing at the SAME
+  `flatDetails`/`tree` object reference (no extra template-detail fetch or duplication — `templatesData`
+  is still fetched once per unique `templateCode`).
+- `buildPoTemplateComputations(poTemplates, files)` (new, `progressUtils.js`) computes 1
+  Mapped/Missing/file-list result per `poTemplates` entry, filtering `files` to `f.poCode === purchId ||
+  f.poCode === orderAccount` — that PO's own documents only, never another PO's, even when both PO's
+  documents would otherwise match the same shared `flatDetails`/step names.
+
+### Non-goals confirmed (Update 40)
+
+- No new backend endpoint, controller, entity, table, migration, DTO, or authorization policy.
+- No change to `eutr_purchase_attachments`, `eutr_documents`, or `eutr_references` — this is a display/
+  computation regrouping only.
+- No change to `SalesOrderOverviewPage.jsx`/`PurchaseOrderOverviewPage.jsx`'s Progress column (still uses
+  the unchanged, per-row `buildTemplateComputations`) or `012-eutr-purchase-orders`'s `PurchId/View`
+  (single-PO page, no grouping concept applies).
+- No change to the Download button's "Combined All" zip format (still built from the unchanged
+  `defaultTemplate`/`allChipTree`/`allChipDerivedFileMappings`/`allChipFiles` computation stack,
+  independent of the toolbar's tab selection) — only the "By Template" format's folder grouping changes
+  (1 folder per PO instead of 1 per TemplateCode, to avoid dropping a second PO's files when 2 POs share
+  a template — see research.md Decision 93).
+
+## Update 42 (2026-09-30): New table `eutr_progression` (precomputed Total/Missing/Finished); Overview's Progress column reads it via JOIN instead of the dynamic 3-4-call/client-loop computation; `test-so-template-sync` also persists `ProductVariant`/`ItemId`
+
+### New entity: Progression (`eutr_progression`) — precomputed cache, not a source of truth
+
+```sql
+CREATE TABLE eutr_progression (
+    Id        INT IDENTITY(1,1) PRIMARY KEY,
+    SalesId   VARCHAR(50) NOT NULL,
+    Total     INT NOT NULL,
+    Missing   INT NOT NULL,
+    Finished  INT NOT NULL,
+    CreatedBy    VARCHAR(100) NULL,
+    CreatedDate  DATETIME NULL,
+    UpdatedBy    VARCHAR(100) NULL,
+    UpdatedDate  DATETIME NULL
+);
+CREATE UNIQUE INDEX IX_eutr_progression_SalesId ON eutr_progression (SalesId);
+```
+
+- 1 row per `SalesId` that has ever been recomputed (upsert — delete/replace the existing row's
+  `Total`/`Missing`/`Finished`, not an append-only history table). `SalesId` with no row = "never
+  recomputed yet" (Overview shows the empty state, FR-228), distinct from a row that exists with
+  `Total = 0` ("no required steps", FR-084/FR-228 unchanged).
+- `Total`/`Missing`/`Finished` MUST be computed with the exact same formula `computeProgress()`/
+  `buildTemplateComputations()` already use (`progressUtils.js:37-84`, FR-077 to FR-079): `Total` = the
+  count of steps across every `(PurchId, TemplateCode)` pair in `eutr_purchase_attachments` for that
+  `SalesId` where `requirementType = Required` and `takeFrom` is not in `AUTO_SOURCES`; `Finished` = of
+  those, the count with ≥1 matched document (same PO/Template-scoped matching rule as FR-055/FR-056);
+  `Missing = Total - Finished`.
+- Entity class: `ComplianceSys.Domain.Entities.EutrProgression` — mirrors `EutrPurchaseAttachments.cs`'s
+  shape (`Id`, plus `BaseEntity`'s `CreatedBy`/`CreatedDate`/`UpdatedBy`/`UpdatedDate`).
+- Migration file: next sequential number after `32_add_productvariant_itemid_to_eutr_purchase_attachments.sql`
+  in `compliance-sys-api/src/ComplianceSys.Infrastructure/Sqls/Migration/` (i.e. `33_...`), per this
+  repo's convention that every schema change ships as a new numbered migration file (not an edit to an
+  existing one).
+
+### Recompute: 1 service method, 4 call sites (no new dynamic-calc logic — reuses the existing formula)
+
+A single `IEutrProgressionService.RecomputeAsync(string salesId, ct)` (exact naming a plan-time
+decision) re-reads `eutr_purchase_attachments` + matched documents for that one `SalesId`, recomputes
+`Total`/`Missing`/`Finished` with the unchanged formula, and upserts the `eutr_progression` row. Called
+from exactly 4 places (FR-225):
+
+1. **View screen load** — `GET /eutr/sales-orders/:salesId/view` data-fetch path (the existing
+   `useEffect` keyed on `salesId` in `ViewSalesOrderPage.jsx` that already calls
+   `GET /api/eutr-purchase-attachments/by-sales-id/{salesId}`) — recompute happens server-side as part
+   of (or immediately after) that same request, scoped to the 1 `salesId` in the URL.
+2. **Save PO Mapping** — `EutrPurchaseAttachmentsService.SavePoMappingAsync` (called from
+   `POST /api/eutr-purchase-attachments/save-po-mapping`), after the existing delete-then-reinsert
+   transaction commits — recompute uses the NEW PO list just saved, not the list before the delete.
+3. **`test-so-template-sync`** — `EutrSynchronizeDataService.SyncSalesOrderTemplatesAsync`, after the
+   existing per-row add/skip loop finishes — recompute runs once per `SalesId` the run ADDED
+   (`summary.Added`) only. **Revised during implementation** (research.md Decision 99): the original
+   design recomputed for skipped-as-already-existing `SalesId`s too, but this job has processed
+   thousands of rows per run on real data — recomputing every one (each a `IEutrTemplatesService` call +
+   1 D365 refType=16 round trip + `IEutrDocumentsService` call) would turn the sync job itself into a
+   new performance bottleneck, defeating this Update's purpose. Skipped `SalesId`s stay correct via
+   trigger 4 (their documents changing already recomputes them directly) and the one-time backfill.
+4. **Upload/Delete a document of Type = "PO" in Map File Step 2** (feature `004-eutr-documents`'s
+   `EutrUploadService.UploadMultipleToSharePointAndSaveDataAsync`/`UploadMultipleForReferenceTypeAsync`
+   and `EutrDocumentsService.DeleteAsync`/`DeleteMultiAsync`) — recompute the `SalesId`(s) whose
+   `eutr_purchase_attachments.PurchId` matches the document's `RefValue`, after the upload/delete
+   succeeds. **Known gap**: documents of Type = "Vendor" (`RefValue` = Order account, matching every PO
+   of that vendor) do not trigger recompute — would need an extra D365 refType=16 lookup by Order
+   account to resolve back to PurchIds, not implemented in this Update.
+
+### `eutr_purchase_attachments` write path — `test-so-template-sync` now also sets `ProductVariant`/`ItemId`
+
+`EutrSynchronizeDataService.SyncSalesOrderTemplatesAsync` (`EutrSynchronizeDataService.cs:143-152`),
+insert branch, changes from:
+
+```csharp
+await _genericRepository.AddAsync(new EutrPurchaseAttachments
+{
+    SalesId = salesId,
+    PurchId = purchId,
+    TemplateCode = templateCode,
+    CreatedBy = "system", CreatedDate = now, UpdatedBy = "system", UpdatedDate = now
+}, ct);
+```
+
+to additionally set `ProductVariant = item.ProductVariant` (field already exists on
+`ComplDynReferenceResponseDto`, currently only populated for refType=15) and `ItemId = item.ItemId`
+(new field — needs adding to `ComplDynReferenceResponseDto` and to the refType=19 mapping in
+`ComplDynamicsService`, if D365's refType=19 payload carries an equivalent source field). The existing
+dedupe (`existingSalesIds.Add(salesId)` — skip the entire `SalesId` if it already has any row) is
+unchanged; rows inserted before this Update keep `ProductVariant`/`ItemId = NULL` (not backfilled
+retroactively by this job).
+
+### Overview's Progress column — read path changes from 4 dynamic calls to 1 JOIN
+
+`SalesOrderOverviewPage.jsx`'s `fetchProgressForRows` (previously: `by-sales-ids-raw` +
+`by-codes` + `refType=16` + `list-po-references`, then client-side `buildTemplateComputations`/
+`computeProgress` loop, `progressUtils.js:37-84`) is replaced by a single batched read keyed on the
+visible page's `SalesId`s:
+
+```sql
+SELECT SalesId, Total, Missing, Finished FROM eutr_progression WHERE SalesId IN (@salesIds);
+```
+
+exposed as a new endpoint (naming a plan-time decision, e.g.
+`POST /api/eutr-progression/by-sales-ids`) returning `ProgressionDto { SalesId, Total, Missing,
+Finished }[]`. Client maps this to the same `{ status: 'empty' | 'no-required' | 'ok', completed,
+total, pct }` shape `fetchProgressForRows` already produces (`completed` = `Finished`, `pct =
+round(Finished/Total*100)`), preserving the existing empty/no-required/ok/error states (FR-228) — a
+`SalesId` missing from the response = `empty`; present with `Total = 0` = `no-required`; present with
+`Total > 0` = `ok`.
+
+### Non-goals confirmed (Update 42)
+
+- `ViewSalesOrderPage.jsx`/`MapFilePage.jsx` keep their existing per-step dynamic computation
+  (`requiredDetails`/`mappedRequired`/`missingRequired`, FR-062/FR-077 to FR-081) unchanged — they need
+  step-level detail `eutr_progression`'s 3 counters cannot provide (FR-229). `eutr_progression` is read
+  ONLY by Overview's Progress column.
+- No change to `012-eutr-purchase-orders`'s own Progress column/computation — out of scope (that feature
+  has its own equivalent, not covered by this Update; see spec Clarifications for the explicit scoping
+  precedent set in Update 41).
+- `test-so-template-sync`'s existing dedupe-by-`SalesId` behavior is unchanged — this Update does not
+  add a path to retroactively backfill `ProductVariant`/`ItemId` on rows the job already inserted before
+  this Update, nor does it change which rows the job inserts vs. skips.
+- One-time historical backfill of `eutr_progression` for every `SalesId` already in
+  `eutr_purchase_attachments` before this Update ships (FR-230) is a rollout/operational step (e.g. a
+  one-off script or admin endpoint run once at deploy time), not a new recurring trigger — a plan-time
+  decision on exact mechanism.
+
+## Update 43 (2026-09-30): New refType=21 (`RSVNSalesLineOpenInvoiceCogs`) for ItemId/ConfigId search; new AND-search bucket for a derived SalesId list
+
+### D365 entity registration: `RSVNSalesLineOpenInvoiceCogs` → refType 21
+
+The domain class already exists (`ComplianceSys.Domain/Dynamics/RSVNSalesLineOpenInvoiceCogs.cs`) with
+`SalesId`, `ItemId`, `ConfigId` properties, but does not extend `RSVNModelBase` — used today only via
+direct `_paramManager`/`_dynamicService` calls in `ComplSynchronizeDataService`/`DynamicsDataService`
+(unrelated features). Update 43 adds:
+
+```csharp
+public class RSVNSalesLineOpenInvoiceCogs : RSVNModelBase
+{
+    public override int ModelType => 21;
+    public override string EntityName => "RSVNSalesLineOpenInvoiceCogs";
+    public override Dictionary<string, string> FilterableFields => new()
+    {
+        { "ItemId", "ItemId" },
+        { "ConfigId", "ConfigId" },
+        { "SalesId", "SalesId" },
+    };
+    // existing properties (SalesId, SalesStatus, ItemId, InventDimId, ConfigId, AreaId, ...) unchanged
+}
+```
+
+`ComplDynamicsService.cs`'s `EntityMappings` dictionary gets a new entry:
+`{ 21, ("RSVNSalesLineOpenInvoiceCogs", "SalesId", "ItemId") }` (CodeColumn/NameColumn follow the
+existing convention even though this refType is queried by `ItemId`/`ConfigId`, not `Code`/`Name` —
+those two columns are never used for this refType's own filters, only `MapDynamicsResponse`'s new
+`case 21` needs them for the response DTO shape).
+
+`MapDynamicsResponse`'s new `case 21`:
+```csharp
+case 21:
+    responseItems = items.ToObject<List<RSVNSalesLineOpenInvoiceCogs>>()
+        ?.Select(x => new ComplDynReferenceResponseDto
+        {
+            Id = x.SalesId,
+            Code = x.SalesId,
+            ItemId = x.ItemId,
+        })
+        .ToList() ?? new();
+    break;
+```
+
+`ComplDynReferenceResponseDto` gets a new `ConfigId` field (mirrors the `ItemId` field already added in
+Update 42) if the caller needs it echoed back — not required for the SalesId-extraction use case itself
+(only `Code`/`Id` = `SalesId` matters), but kept for forward-consistency/debuggability alongside `ItemId`.
+
+### New `BuildFilterString` bucket: `"salesidin"` (AND-search, entity-scoped)
+
+```csharp
+// inside the existing switch (ComplDynamicsService.cs:196-203)
+"salesidin" when mapping.Entity == "RSVNSalesOrderOpenInvoiceCogs" => "salesidin",
+```
+
+Unlike `"custaccount"`/`"vendorcode"` (which push into the shared `searchFilters` OR-group, merged with
+the main keyword search), `"salesidin"` entries are collected into their **own** list
+(`salesIdInFilters`), OR-joined into their own `(SalesId eq 'A' or SalesId eq 'B' or ...)` clause, and
+that clause is added directly to `filterParts` (AND-combined with everything else) — see research.md
+Decision 103 for why merging into `searchFilters` would be wrong here (opposite narrowing semantics).
+
+### Frontend: 2-sequential-call flow (no new backend endpoint)
+
+`SalesOrderOverviewPage.jsx`'s `fetchSalesOrders`/`handleSearchClick`: when `itemId`/`configId` state
+has a value, first call `getReferenceDataUseCase.execute(1, 500, 'Code', 'asc', 21, [
+  ...(itemId ? [{column:'ItemId', operator:'eq', value:itemId}] : []),
+  ...(configId ? [{column:'ConfigId', operator:'eq', value:configId}] : []),
+])`, extract distinct `Code` values (= `SalesId`s) from the response; if empty, short-circuit to the
+existing empty-state render (FR-234) without calling refType=11 at all. Otherwise, add
+`salesIds.map(id => ({column:'SalesIdIn', operator:'eq', value:id}))` to the existing
+`[...buildSearchFilters(searchValue), ...etdFiltersRef.current]` array before calling
+`getReferenceDataUseCase.execute(..., EUTR_SALES_ORDER_REF_TYPE, combinedFilters)` — same call site as
+today (`fetchSalesOrders`, no new use case needed beyond the existing `GetReferenceDataUseCase`).
+
+### Non-goals confirmed (Update 43)
+
+- No new local MySQL table, no migration — this Update is entirely a D365/OData query extension plus a
+  backend filter-string helper, consistent with how Update 24/27's Year/ETD Week/CustAccount search were
+  implemented (pure `ComplDynamicsService`/frontend changes, no local storage).
+- No new backend endpoint/controller — reuses `POST /api/dynamics/reference` (generic) for both the new
+  refType=21 lookup and the existing refType=11 query.
+- `eutr_progression`/`EutrProgressionService` (Update 42) is untouched — ItemId/ConfigId search is a
+  purely orthogonal filter on which Sales Orders the Overview list itself shows; it does not change how
+  Progress is computed or read for whichever rows end up displayed.

@@ -522,3 +522,112 @@
   `eutr-documents/utils/buildStepOnlyFileName.js` helper plus the `EutrFileViewerDialog.jsx`/
   `MapFilePage.jsx` code changes described here should be applied to match (also applied to
   `012-eutr-purchase-orders`'s own `PurchaseOrderViewPage.jsx`, tracked in that feature's own spec).
+- **2026-09-29 (Update 34)**: Re-validated after adding FR-198..FR-206, SC-097..SC-100, and related
+  Clarifications/edge cases/assumptions — replaces the two-source join used by Map File's Step 1 PO
+  table and View's Selected Purchase Orders table (`data-marker="selected-po-table"` on both screens)
+  with a single source: reference type = 20 (`RSVNEutrSalesOrderPurchLines`, confirmed via codebase
+  research to live at `ComplianceSys.Domain/Dynamics/RSVNEutrSalesOrderPurchLines.cs`, with fields
+  `ItemId`/`ProductVariant`/`Qty`/`RSVNEutrTemplate`/`OrderAccount`/`Name`/`RSVNRefPurchId`/
+  `InterCompanyOriginalSalesId` but no `QtyPercent`). Before Update 34, both tables combined reference
+  type = 16 (PO/Template/Order account/Vendor name, FR-017) with a client-side group-by-PO join of type
+  = 20 records into comma-separated Variants/Materials cells (Update 17/18, FR-113..FR-128); Update 34
+  removes that join entirely — every column (including PO/Template/Order account/Vendor name) now reads
+  directly off each type = 20 record, one table row per record (no longer one row per PO), plus two new
+  columns: **Qty** (from the record's `Qty`) and **Percentage used** (from a new `QtyPercent` field that
+  must be added to the model end-to-end, replacing the pre-Update-34 placeholder that displayed the
+  type = 16 header's `Qty` value with a "%" suffix). Codebase research (background agent, verified before
+  drafting) additionally confirmed the exact backend plumbing needed for `QtyPercent` to actually reach
+  the UI — `ComplDynReferenceResponseDto` is a fixed flat DTO and `ComplDynamicsService.MapDynamicsResponse`
+  hand-maps each `case <refType>` into it (case 20 currently renames `ItemId`→`Code` and, notably,
+  `OrderAccount`→`CustAccount` rather than passing it through as `orderAccount` the way case 16 does) —
+  this is recorded as an Assumption/FR-202 business requirement ("the field must be returned end-to-end")
+  without naming the internal DTO/service class in spec.md itself, consistent with this checklist's
+  established precedent of keeping internal application-layer class names out of the business-facing
+  spec text (D365 entity/reference-type/column names are treated as business-facing data-source facts per
+  Updates 1-33; internal C# DTO/service implementation is left to research.md/plan.md). No
+  [NEEDS CLARIFICATION] markers introduced: the request's own wording ("chỉ lấy dữ liệu từ api
+  RSVNEutrSalesOrderPurchLines để hiển thị, bỏ logic hiển thị chuỗi nối") is explicit enough to resolve
+  the one genuinely high-impact scope question — whether the table's row grain changes from one-row-per-PO
+  to one-row-per-line-record — as a documented default (FR-198/FR-203 and matching Assumptions) rather
+  than an open question: existing Select-checkbox/disable-if-no-Template/Save-PO-Mapping behavior is
+  explicitly preserved by keying off `RSVNRefPurchId` (unaffected by a PO now spanning multiple rows,
+  since the existing implementation already keys selection state by PO id in a `Set`, not by row index),
+  and scope is explicitly bounded to Map File Step 1 + View's Selected Purchase Orders table only — the
+  Overview screen's own independent use of reference type = 16 (`SalesOrderOverviewPage.jsx`, an
+  unrelated Order-account lookup) is untouched, recorded as an explicit Assumption.
+- **2026-09-30 (Update 35)**: Re-validated after adding FR-207..FR-210 and SC-101 — adds a new **Unit**
+  column to the same two tables touched by Update 34 (Map File Step 1, View's Selected Purchase Orders),
+  sourced from the same reference type = 20 (`RSVNEutrSalesOrderPurchLines`). Confirmed by re-reading
+  `RSVNEutrSalesOrderPurchLines.cs` that, like `QtyPercent` before it, the model has no `Unit` property
+  today — FR-208 requires adding it end-to-end (model + response plumbing), mirroring FR-202's pattern
+  exactly. No new [NEEDS CLARIFICATION] markers introduced: this is a small, additive, unambiguous
+  request ("thêm cột Unit, cũng lấy từ API trên") with a single reasonable column position (right after
+  Qty, since a quantity and its unit are conventionally shown together) — recorded as an explicit
+  Assumption rather than a question, consistent with how Update 17's column-placement ambiguity was
+  handled the same way. Scope stays bounded to the same two tables (not Overview), matching Update 34's
+  existing boundary.
+- **2026-09-30 (Update 36)**: Re-validated after adding FR-211..FR-215 and SC-102 — changes the Select
+  checkbox/Save PO Mapping grain at Step 1 (Map File) from "1 unit per PO" to "1 unit per PO line"
+  (`PurchId` + `ProductVariant` + `ItemId`), driven by a screenshot showing 2 lines of the same PO
+  independently checked. Adds 2 new nullable columns (`ProductVariant`, `ItemId`, `varchar(50)`) to
+  `eutr_purchase_attachments` via a new migration file (`32_add_productvariant_itemid_to_eutr_
+  purchase_attachments.sql`, following this repo's numbered-migration convention), threaded through the
+  domain entity, both request/response DTOs, the repository's `SELECT` lists, and the service's insert —
+  and reworks View's `poRows` to match saved lines exactly (not "every line of a saved PO") since a PO's
+  selected lines are no longer all-or-nothing. No new [NEEDS CLARIFICATION] markers introduced: the
+  request was explicit and unambiguous ("thêm 2 cột ... chỉnh lại logic mapping PO ... check select
+  cũng dựa vào PO, Variant, ItemId"); the one implicit design choice — keeping the 2 new columns
+  nullable rather than NOT NULL like `TemplateCode` — is resolved as an explicit Assumption (the
+  request specified only the column type, not a NOT NULL constraint), not a question.
+- **2026-09-30 (Update 42)**: Re-validated after adding FR-224..FR-230, SC-108..SC-109, and related
+  Clarifications/acceptance scenarios/edge cases/assumptions — replaces the Overview screen's dynamic
+  Progress computation (`fetchProgressForRows`, Update 12: 3-4 API calls + a client-side
+  `computeProgress()`/`buildTemplateComputations()` loop re-run on every page/search/paginate) with a
+  new precomputed table `eutr_progression` (`Id, SalesId, Total, Missing, Finished`), recomputed at 4
+  points (View open, Save PO Mapping, document Upload/Delete at Map File Step 2, and the
+  `test-so-template-sync` sync job) rather than at display time. Confirmed by codebase research (a
+  background agent plus direct reads of `progressUtils.js`, `SalesOrderOverviewPage.jsx`,
+  `EutrSynchronizeDataService.cs`, `EutrPurchaseAttachmentsController.cs`, and
+  `ComplDynReferenceResponseDto.cs`) that: the existing Total/Missing/Finished formula (Required steps
+  only, `AUTO_SOURCES`-excluded, PO/Template-paired, Update 11/12) is reused verbatim, not redefined;
+  `test-so-template-sync`'s insert branch currently omits `ProductVariant`/`ItemId` (added to the table
+  by Update 36 for the unrelated Save PO Mapping write path); and View/Map File's own step-level
+  checklist computation is unaffected (out of scope — `eutr_progression` only stores 3 counters, not
+  per-step detail). One [NEEDS CLARIFICATION]-worthy scope gap was found while researching (the
+  original 3 triggers listed by the requester do not include document Upload/Delete, the actual action
+  that changes `Finished`/`Missing` day to day) and resolved directly with the requester via
+  `AskUserQuestion` before drafting — confirmed as a 4th trigger (FR-225(4)) — rather than left as an
+  open marker or silently assumed either way, since the two readings (stale-until-next-View-or-Save vs.
+  always-fresh) have materially different correctness implications for the user. No new
+  [NEEDS CLARIFICATION] markers introduced: the remaining ambiguous points — historical backfill for
+  Sales Orders that already had `eutr_purchase_attachments` data before this Update ships, and whether
+  the sync job should recompute `eutr_progression` only for newly-inserted `SalesId`s or also for ones
+  it skips via its existing dedupe — are resolved as explicit FR/Assumption text (FR-230: one-time
+  backfill at rollout, not a recurring trigger; FR-225(3)/research Decision 99: recompute both added and
+  skipped `SalesId`s from the run, since a skipped `SalesId`'s documents — not its
+  `eutr_purchase_attachments` rows — may have changed since the last run) grounded in how the job's
+  existing dedupe behavior actually works today, rather than left open. Success criteria were revised
+  once during this validation pass (SC-108's first draft named specific internal endpoints —
+  `by-sales-ids-raw`/`by-codes`/`list-po-references` — failing the technology-agnostic bar; reworded to
+  the user-observable outcome, "Progress hiển thị ngay khi bảng tải xong trang, không còn độ trễ quan
+  sát được", before this checklist item was marked passing).
+- **2026-09-30 (Update 43)**: Re-validated after adding FR-231..FR-235, SC-110, and related
+  Clarifications/acceptance scenarios/edge cases/assumptions — adds **ItemId**/**ConfigId** search
+  inputs to the Overview screen, resolving a `SalesId` list from a new D365 `refType = 21`
+  (`RSVNSalesLineOpenInvoiceCogs`, already-existing domain class, only missing the `RSVNModelBase`
+  registration to be reachable through the generic reference-lookup endpoint this screen's every other
+  filter already uses) and narrowing the main `refType = 11` query by that list. Codebase research
+  (background agent) confirmed a real design fork worth resolving before drafting, not left implicit:
+  the existing `BuildFilterString` OR-search buckets (`"custaccount"`/`"vendorcode"`, Update 27) all
+  WIDEN results (any of several columns may match), but a derived-`SalesId`-list filter needs to NARROW
+  results — reusing the existing OR-bucket mechanism verbatim would have silently produced the opposite
+  of the requested behavior. This is documented as an explicit new AND-scoped bucket (`"salesidin"`,
+  FR-233, research.md Decision 103) rather than an extension of the existing bucket, with a dedicated
+  quickstart check (Update 43 backend step 4) specifically asserting AND, not OR, semantics against the
+  keyword search. No new [NEEDS CLARIFICATION] markers introduced: this session's two informed defaults
+  (ItemId+ConfigId combine via AND when both are given, mirroring how these two fields always describe
+  one line item together elsewhere in this spec — Variants/Materials, Update 17; and the match operator
+  is exact `eq`, not `like`, consistent with every other structured-identifier field in this codebase —
+  PurchId/TemplateCode/OrderAccount) are recorded as explicit Q&A entries in the Clarifications session
+  and Assumptions rather than left as open questions, since both have a single well-precedented answer
+  in this exact codebase and no requester ambiguity was actually present.

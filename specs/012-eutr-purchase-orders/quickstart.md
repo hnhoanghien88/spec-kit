@@ -164,6 +164,37 @@ applied to `PurchId/View`'s own copy of the AVAILABLE FILES UI.
    data" state, not an error.
 4. Confirm the existing auto-filter-after-typing behavior (no click needed) still works unchanged.
 
+## Update 11 (2026-09-30) — Template tree label shows the mapped file's name once uploaded; download for Type = "PO" documents no longer recomputes the file name as Step Name
+
+100% frontend, zero backend change — the Upload-time matching/no-rename change for Type = "PO" lives in
+`004-eutr-documents` Update 29 and is inherited automatically via the shared Add/Edit popup. Same
+behavior as `005-eutr-sales-orders` Update 37 (see that feature's quickstart.md for the full
+fixture/rationale), applied to `PurchId/View`'s own copy of the tree/AVAILABLE FILES UI.
+
+### Frontend verification (manual)
+
+1. Open `PurchId/View` for a Purchase Order whose Template has a Step assigned to Type "PO" (Assign
+   Steps, `006-eutr-reference-types`) — e.g. Step "1.Invoice". Upload a file named `1.Invoice AP-PD.pdf`
+   with Type = "PO" via the Upload button. **Expected**: upload succeeds; `eutr_documents.Name` for the
+   new document equals `1.Invoice AP-PD.pdf` (no rename) — confirms `004-eutr-documents` Update 29
+   end-to-end as a prerequisite.
+2. Look at the tree. **Expected**: the node for Step "1.Invoice" now shows the label
+   **"1.Invoice AP-PD"** (no `.pdf`) instead of "1.Invoice" — the secondary caption below it still shows
+   the full `"1.Invoice AP-PD.pdf"`, unchanged.
+3. Look at a Step node with no uploaded document. **Expected**: label still shows the plain Step name.
+4. Click the row-level Download button (or popup View's Download) for the document from step 1.
+   **Expected**: downloaded file is named exactly `"1.Invoice AP-PD.pdf"` — NOT recomputed to
+   `"1.Invoice.pdf"`.
+5. Click Download for a document whose Type is NOT "PO" (if any exist on this PO). **Expected**: download
+   name is still recomputed as that document's Step Name + original extension, unchanged from Update 9.
+
+### Success criteria mapping (Update 11)
+
+- SC-010 (tree node label shows the mapped file's name minus extension; unmapped nodes show the Step
+  name) → frontend steps 2-3.
+- SC-011 (Type = "PO" downloads use the stored name as-is; Type ≠ "PO" downloads unaffected) → frontend
+  steps 4-5.
+
 ### Success criteria mapping (Update 10)
 
 - SC-009 (Search button applies immediately) → frontend steps 1-2.

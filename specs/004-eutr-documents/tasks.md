@@ -1255,6 +1255,101 @@ loại kèm thông báo lỗi rõ ràng.
 
 ---
 
+## Phase 34: Update 29 - Type = "PO": bỏ khớp Prefix qua `eutr_master_documents`, thay bằng so khớp tên Step đã gán cho Type "PO"; bỏ đổi tên file khi Upload cho nhánh PO (User Story 2/3)
+
+**Goal**: Nhánh Type = "PO" của Upload không còn tra `eutr_master_documents`/`Prefix` — so khớp tên
+file gốc CHỨA `Name` của (các) Step đã gán cho Type "PO" (Assign Steps, `eutr_reference_type_details`,
+tái dùng nguyên vẹn từ Update 20); không khớp Step nào → loại file kèm lỗi rõ ràng; không còn đổi tên
+file khi Upload cho nhánh này (`eutr_documents.Name` = tên file gốc); khôi phục ghi `eutr_references`
+cho MỌI Step khớp (không còn giới hạn 1 bản ghi thắng cuộc — xem research Quyết định 79). Edit-popup
+Step combobox cho document Type = "PO" đổi nguồn tương ứng (spec FR-020/FR-074 đến FR-079). KHÔNG
+migration DB mới, KHÔNG entity/DTO/endpoint/route mới.
+
+**Independent Test**: Xem [quickstart.md](./quickstart.md) kịch bản 27/27a-27d.
+
+### Backend (`EutrUploadService.cs` — inject `IEutrReferenceTypeDetailsRepository` đã có sẵn, KHÔNG entity/DTO/endpoint/route mới)
+
+- [X] T335 [US2] Sửa `compliance-sys-api/src/ComplianceSys.Application/Services/EutrUploadService.cs`: thêm field `private readonly IEutrReferenceTypeDetailsRepository _referenceTypeDetailsRepository;` + tham số constructor tương ứng (gán trong constructor).
+- [X] T336 [US2] Sửa `UploadMultipleToSharePointAndSaveDataAsync` trong `EutrUploadService.cs`: trước vòng lặp file, thêm `var poTypeId = request.TypeId ?? PoRefType;` và `var assignedSteps = (await _referenceTypeDetailsRepository.GetByTypeIdAsync(poTypeId, ct)).ToList();` (1 lần/batch, sau T335).
+- [X] T337 [US2] Sửa tiếp `UploadMultipleToSharePointAndSaveDataAsync`: trong vòng lặp file, xóa lời gọi `_eutrMastersRepository.GetMatchingPrefixesAsync(file.FileName, ct)` và biến `winningMaster`/`winningStep`; thay bằng `var matchedSteps = assignedSteps.Where(s => s.StepId.HasValue && !string.IsNullOrEmpty(s.StepName) && file.FileName.Contains(s.StepName, StringComparison.OrdinalIgnoreCase)).ToList();` — `matchedSteps.Count == 0` → `results.Add(...)` với `ErrorMessage = "No matching step found for this file name"` rồi `continue;` (sau T336).
+- [X] T338 [US2] Sửa tiếp `UploadMultipleToSharePointAndSaveDataAsync`: xóa lời gọi `BuildRenamedFileName(...)` cho nhánh này — `entity.Name = file.FileName;` (tên file gốc); `GetUniqueFileName(file.FileName)` thay vì `GetUniqueFileName(renamedFileName)` (sau T337).
+- [X] T339 [US2] Sửa tiếp `UploadMultipleToSharePointAndSaveDataAsync`: trong transaction, thay đoạn tạo 1 `EutrReferences` (cho `winningMaster.StepId`) bằng vòng lặp `foreach (var matchedStep in matchedSteps)` ghi 1 dòng `eutr_references`/`matchedStep.StepId` (cùng `DocumentId`/`RefType`/`RefValue` — clone pattern vòng lặp `foreach (var refValue in request.RefValues)` đã có ở `UploadMultipleForReferenceTypeAsync`) (sau T338).
+- [X] T340 [P] Xác nhận `IEutrMastersRepository` còn được dùng ở method/nơi nào khác trong `EutrUploadService.cs` sau T335-T339 — KHÔNG còn dùng ở đâu khác trong file này → xóa hẳn field/tham số constructor (thay bằng `IEutrReferenceTypeDetailsRepository`, không giữ song song 2 dependency).
+- [X] T341 Build verify: `dotnet build compliance-sys-api/src/ComplianceSys.Application/ComplianceSys.Application.csproj`, `.../ComplianceSys.Infrastructure/ComplianceSys.Infrastructure.csproj` (sau T335-T340) — 0 lỗi biên dịch (chỉ warning có sẵn từ trước). `.../ComplianceSys.Api/ComplianceSys.Api.csproj` không rebuild được do process `dotnet run` đang chạy khóa file DLL (lỗi MSB3027 copy file, không phải lỗi biên dịch mã nguồn) — Application/Infrastructure đã xác nhận biên dịch sạch, đủ để kết luận thay đổi đúng cú pháp.
+
+### Frontend (`EutrDocumentsFormDialog.jsx` — Edit-popup Step combobox cho document Type = "PO", KHÔNG backend/endpoint mới)
+
+- [X] T342 [P] Sửa `compliance-client/src/presentation/pages/eutr-documents/components/EutrDocumentsFormDialog.jsx`: thêm hàm `loadMatchingStepsForPoByName(typeId, fullSteps, fileName)` = gọi `loadFilteredSteps(typeId, fullSteps)` rồi `.filter(s => fileName?.toLowerCase().includes((s.name || '').toLowerCase()))`.
+- [X] T343 [US3] Sửa nhánh `isPoTypeName(matchedType)` trong `useEffect` nạp Edit: đổi `await loadDistinctMasterSteps(stepsList, initialData.name)` thành `await loadMatchingStepsForPoByName(initialData.refType, stepsList, initialData.name)` (sau T342).
+- [X] T344 [P] Xác nhận `loadDistinctMasterSteps`/import `GetEutrMastersStepsUseCase` còn được gọi ở nơi nào khác trong file sau T343 — KHÔNG còn → xóa hàm + import + instance cục bộ (KHÔNG xóa `GetEutrMastersStepsUseCase.js`/endpoint `GET /api/eutr-masters/steps`, vẫn dùng bởi `TemplateBuilderPage.jsx`/`AssignStepsPage.jsx`).
+- [X] T345 Build verify: `npx eslint` trên `EutrDocumentsFormDialog.jsx` (sau T342-T344) — 0 lỗi; `npx vite build` — thành công (chỉ warning chunk-size có sẵn từ trước, không liên quan).
+- [X] T346 [US2] Kiểm thử thủ công theo [quickstart.md](./quickstart.md) kịch bản 27/27a-27d trên `/eutr/documents` — thực hiện ngay sau khi triển khai T335-T345, **phát hiện lỗi**: upload file `1.Invoice AP-PD.pdf` (Step "1.Invoice" hiển thị rõ trên cây Template) bị từ chối "No matching step found for this file name" — xem Phase 34b để biết nguyên nhân và bản sửa.
+
+**Checkpoint (bản nháp đầu tiên — ĐÃ PHÁT HIỆN LỖI, xem Phase 34b)**: T335-T345 build sạch nhưng T346
+phát hiện `assignedSteps` (Assign Steps) luôn rỗng cho Type "PO" trong thực tế → mọi file hợp lệ đều bị
+từ chối sai. Không đánh dấu Phase này là hoàn thành nghiệp vụ cho tới khi Phase 34b sửa xong.
+
+---
+
+## Phase 34b: Sửa lại Update 29 ngay sau kiểm thử thật — dùng toàn bộ `eutr_steps` thay vì Step đã gán cho Type "PO" qua Assign Steps (User Story 2/3)
+
+**Goal**: Sửa lỗi phát hiện ở T346 (research Quyết định 81) — `eutr_reference_type_details` (Assign
+Steps) không liên quan gì tới cây Step của Template (nguồn thật là `eutr_template_details`), luôn rỗng
+cho Type "PO" trong thực tế. Đổi nguồn Step sang **toàn bộ `eutr_steps`** — vừa sửa đúng lỗi, vừa khớp
+lại đúng tính chất "phẳng, không giới hạn Type" mà `eutr_master_documents` (cơ chế cũ) vốn đã có (spec
+FR-074/FR-079, sửa lại). KHÔNG migration DB mới, KHÔNG entity/DTO/endpoint/route mới — dùng lại
+`IRepository<EutrStep, long>.GetAllAsync` đã có sẵn.
+
+**Independent Test**: Xem [quickstart.md](./quickstart.md) kịch bản 27 (đã sửa) — upload
+`1.Invoice AP-PD.pdf` khi có Step "1.Invoice" tồn tại trong `eutr_steps` (KHÔNG cần Assign Steps) phải
+thành công.
+
+### Backend
+
+- [X] T347 [US2] Sửa `EutrUploadService.cs`: xóa field `_referenceTypeDetailsRepository`/tham số constructor `IEutrReferenceTypeDetailsRepository` (thêm ở T335) — không còn nơi nào dùng sau khi sửa xong.
+- [X] T348 [US2] Sửa `UploadMultipleToSharePointAndSaveDataAsync`: đổi `var assignedSteps = (await _referenceTypeDetailsRepository.GetByTypeIdAsync(poTypeId, ct)).ToList();` (T336) thành `var allSteps = (await _stepsRepository.GetAllAsync(ct)).ToList();` — bỏ luôn biến `poTypeId` (không còn dùng cho việc lọc Step nữa, `PoRefType`/`request.TypeId` vẫn dùng riêng cho `RefType` ở chỗ khác, không đổi) (sau T347).
+- [X] T349 [US2] Sửa tiếp: đổi điều kiện `matchedSteps` (T337) từ `s.StepId.HasValue && !string.IsNullOrEmpty(s.StepName) && file.FileName.Contains(s.StepName, ...)` sang `!string.IsNullOrEmpty(s.Name) && file.FileName.Contains(s.Name, ...)` (entity `EutrStep` thật dùng `Name`/`Id`, không phải `StepName`/`StepId` của DTO Assign Steps) (sau T348).
+- [X] T350 [US2] Sửa tiếp: đổi `StepId = matchedStep.StepId!.Value` (T339, trong vòng lặp ghi `eutr_references`) thành `StepId = matchedStep.Id` (sau T349).
+- [X] T351 Build verify: `dotnet build compliance-sys-api/src/ComplianceSys.Application/ComplianceSys.Application.csproj` (sau T347-T350) — 0 lỗi biên dịch (chỉ warning có sẵn từ trước).
+
+### Frontend (`EutrDocumentsFormDialog.jsx`)
+
+- [X] T352 [US3] Sửa `loadMatchingStepsForPoByName` (T342): đổi chữ ký từ `(typeId, fullSteps, fileName)` gọi `await loadFilteredSteps(typeId, fullSteps)` sang `(fullSteps, fileName)` lọc thẳng trên `fullSteps` — trở thành hàm đồng bộ (không còn `async`/`await`, không còn gọi API Assign Steps nào).
+- [X] T353 [US3] Sửa lời gọi ở nhánh `isPoTypeName(matchedType)` (T343): đổi `await loadMatchingStepsForPoByName(initialData.refType, stepsList, initialData.name)` thành `loadMatchingStepsForPoByName(stepsList, initialData.name)` (bỏ `await`, bỏ tham số `typeId`) (sau T352).
+- [X] T354 Build verify: `npx eslint` trên `EutrDocumentsFormDialog.jsx` (sau T352-T353) — 0 lỗi; `npx vite build` — thành công.
+- [ ] T355 [US2] Kiểm thử thủ công lại theo [quickstart.md](./quickstart.md) kịch bản 27/27a-27d (đã sửa) trên `/eutr/documents`, Map File (`005-eutr-sales-orders`), và `PurchId/View` (`012-eutr-purchase-orders`) — **CHƯA chạy** (cần môi trường DB/SharePoint thật + trình duyệt, ngoài phạm vi phiên làm việc này; người yêu cầu tính năng cần tự xác nhận file `1.Invoice AP-PD.pdf` upload thành công với Step "1.Invoice" hiển thị trên cây Template, không cần cấu hình Assign Steps).
+
+**Checkpoint**: Type = "PO" so khớp đúng theo tên Step trong toàn bộ `eutr_steps` — không còn tra
+`eutr_master_documents` LẪN không còn phụ thuộc Assign Steps; file khớp đúng tên Step hiển thị trên cây
+Template (không cần cấu hình gì thêm); file không khớp Step nào bị loại kèm lỗi rõ ràng;
+`eutr_references` được ghi đủ cho mọi Step khớp; Edit-popup Step combobox cho document Type = "PO"
+phản ánh đúng cơ chế khớp mới. Backend/frontend build sạch — xác nhận trực quan trên trình duyệt do
+người yêu cầu tính năng thực hiện (T355).
+
+---
+
+## Phase 35: Update 30 - Popup Add ẩn Valid from/Valid to trừ khi Type = "Vendor" (User Story 2)
+
+**Goal**: Ở popup Add, 2 trường Valid from/Valid to CHỈ hiển thị khi Type đã chọn = "Vendor"; Type
+khác ẩn hoàn toàn nhưng vẫn dùng đúng giá trị mặc định (hôm nay/`9999-12-31`) khi Upload; đổi Type ra
+khỏi "Vendor" MUST reset 2 giá trị về mặc định trước khi ẩn (spec FR-080). Popup Edit không đổi (luôn
+hiển thị cho mọi Type, FR-030). Thuần frontend — KHÔNG migration DB/entity/DTO/endpoint/route mới.
+
+**Independent Test**: Xem [quickstart.md](./quickstart.md) — mở popup Add, chọn Type = "PO", xác nhận
+2 trường Valid from/Valid to không hiển thị; đổi sang Type = "Vendor", xác nhận 2 trường hiển thị lại.
+
+- [X] T356 [P] Sửa `compliance-client/src/presentation/pages/eutr-documents/components/EutrDocumentsFormDialog.jsx`: thêm hàm `isVendorTypeName(refType)` (cùng mẫu `isPoTypeName`/`isInvoiceTypeName` đã có).
+- [X] T357 [US2] Sửa tiếp: thêm biến `const isVendorType = isVendorTypeName(type); const showValidDates = isEdit || isVendorType;` (sau T356).
+- [X] T358 [US2] Sửa tiếp: bọc 2 `TextField` Valid from/Valid to (và dòng lỗi `!dateValid`) trong `{showValidDates && (<>...</>)}` (sau T357).
+- [X] T359 [US2] Sửa `handleTypeChange`: thêm `if (!isVendorTypeName(newType)) { setValidFrom(todayInputValue()); setValidTo(MAX_VALID_TO); }` (dùng lại `todayInputValue()`/`MAX_VALID_TO` đã có từ Update 19) — reset về mặc định ngay khi đổi Type ra khỏi "Vendor" (FR-080) (sau T358).
+- [X] T360 Build verify: `npx eslint` trên `EutrDocumentsFormDialog.jsx` (sau T356-T359) — 0 lỗi; `npx vite build` — thành công.
+- [ ] T361 [US2] Kiểm thử thủ công theo kịch bản 37-40 (Update 30) trên `/eutr/documents`, Map File (`005-eutr-sales-orders`), và `PurchId/View` (`012-eutr-purchase-orders`) — **CHƯA chạy** (cần môi trường thật + trình duyệt, ngoài phạm vi phiên làm việc này).
+
+**Checkpoint**: Popup Add ẩn Valid from/Valid to trừ khi Type = "Vendor"; giá trị mặc định vẫn được
+dùng khi Upload dù ẩn; đổi Type ra khỏi "Vendor" reset đúng 2 giá trị; popup Edit không bị ảnh hưởng.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies

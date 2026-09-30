@@ -10,6 +10,414 @@
 
 ## Clarifications
 
+### Session 2026-09-30 (Update 43) — Thêm 2 ô tìm kiếm ItemId/ConfigId ở Overview, lọc qua danh sách SalesId tra từ `RSVNSalesLineOpenInvoiceCogs`
+
+- Input: "thêm 2 ô tìm theo ItemId, ConfigId. khi nhập item hoặc config id sẽ [tra cứu] sales id ở api
+  RSVNSalesLineOpenInvoiceCogs, lấy ra danh sách SalesId, rồi lọc ở API màn hình hiện tại dựa theo danh
+  sách salesId".
+- Bối cảnh (rà soát mã nguồn xác nhận): `RSVNSalesLineOpenInvoiceCogs.cs`
+  (`ComplianceSys.Domain/Dynamics/`) đã tồn tại sẵn làm model D365 dùng trực tiếp bởi
+  `ComplSynchronizeDataService.FetchAllSalesLinesAsync`/`DynamicsDataService.GetSalesLineOpenInvoiceCogsFromDynamics`
+  (feature khác, không liên quan `005-eutr-sales-orders`) — có sẵn 3 field cần dùng
+  (`SalesId`, `ItemId`, `ConfigId`) nhưng KHÔNG kế thừa `RSVNModelBase` (không có `ModelType`/
+  `EntityName`/`FilterableFields`) nên chưa dùng được qua cơ chế `refType` dùng chung
+  (`POST /api/dynamics/reference`, `ComplDynamicsService.GetDynRefePagedAsync`) mà Overview đang dùng
+  cho mọi ô tìm kiếm khác. `refType` cao nhất đang dùng là 20 (`RSVNEutrSalesOrderPurchLines`) — 21 là
+  số còn trống tiếp theo.
+- Bối cảnh: `BuildFilterString` (`ComplDynamicsService.cs`) hiện có 2 nhóm OR-search định danh riêng
+  theo entity (`"vendorcode"` cho `RSVNEutrPurchOrders`, `"custaccount"` cho
+  `RSVNSalesOrderOpenInvoiceCogs`, Update 27) — cả 2 đều gộp CHUNG vào đúng 1 cụm OR với ô tìm kiếm
+  chính (Sales ID/Customer name). Yêu cầu lần này khác về bản chất: danh sách SalesId tra được từ
+  ItemId/ConfigId phải **thu hẹp** (AND) kết quả cùng với ô tìm kiếm chính/Year/ETD Week đang có — nếu
+  gộp chung vào cùng 1 cụm OR như "custaccount" thì sẽ làm SAI hướng ngược lại (mở rộng kết quả thay vì
+  thu hẹp).
+- Change: Đăng ký `refType = 21` cho `RSVNSalesLineOpenInvoiceCogs` (thêm `RSVNModelBase`,
+  `FilterableFields = {ItemId, ConfigId, SalesId}`, entry mới trong `EntityMappings`, case mới trong
+  `MapDynamicsResponse`) — dùng qua đúng cơ chế `POST /api/dynamics/reference` dùng chung, không tạo
+  controller/endpoint riêng.
+- Change: Thêm bucket AND-search mới (`"salesidin"` hoặc tên tương đương) trong `BuildFilterString`,
+  CHỈ áp dụng cho entity `RSVNSalesOrderOpenInvoiceCogs` (refType=11) — nhận nhiều `FilterRequest` cùng
+  cột (1 giá trị/1 SalesId tra được ở bước trên), OR các giá trị đó lại thành 1 cụm
+  `(SalesId eq 'A' or SalesId eq 'B' or ...)`, rồi cụm đó được AND với phần còn lại của filter (khác
+  hẳn cụm OR-search hiện có của ô tìm kiếm chính) — cùng cơ chế OR-chain-nhiều-`eq` đã dùng ở
+  `EutrProgressionService.GetOrderAccountsByPurchIdsAsync` (Update 42) để tra Vendor code theo nhiều
+  PurchId.
+- Change: Quy trình 2 bước ở Overview khi Search: (1) nếu ItemId và/hoặc ConfigId có giá trị, gọi
+  `POST /api/dynamics/reference?refType=21` với filter tương ứng (AND nếu cả hai cùng có giá trị — 2
+  trường này cùng mô tả 1 dòng hàng cụ thể, giống cách ItemId/ProductVariant luôn đi cùng nhau ở cột
+  Variants/Materials, Update 17), lấy danh sách `SalesId` duy nhất từ kết quả; (2) đưa danh sách đó vào
+  filter chính (refType=11) qua bucket `"salesidin"` mới, kết hợp AND với từ khóa Sales ID/Customer và
+  Year/ETD Week đang có (nếu có).
+- Q: Nếu ItemId/ConfigId nhập vào không khớp bất kỳ dòng hàng nào ở `RSVNSalesLineOpenInvoiceCogs`
+  (bước 1 trả về danh sách SalesId rỗng)? → A: Bảng Overview hiển thị trạng thái trống ("No data") —
+  cùng quy tắc đã áp dụng cho mọi trường hợp tìm kiếm không khớp khác (FR-012), KHÔNG bỏ qua điều kiện
+  ItemId/ConfigId để hiện lại toàn bộ danh sách.
+- Q: Toán tử khớp cho ItemId/ConfigId là khớp đúng (`eq`) hay khớp "chứa" (`like`) giống ô tìm kiếm Sales
+  ID/Customer? → A: Khớp đúng (`eq`) — ItemId/ConfigId là mã định danh có cấu trúc (giống PurchId/
+  TemplateCode/OrderAccount ở các nơi khác trong hệ thống, đều dùng `eq`), khác với ô tìm kiếm chính vốn
+  tìm "chứa" tự do theo tên/mã khách hàng.
+
+- Input: "phần này sẽ hiển thị rõ theo từng PO ... phần tính progress, hiện tại tính động quá chậm, khi
+  hiển thị. tạo 1 bảng eutr_progression. trong đó có Id, SalesId, Total, Missing, Finished. Total là
+  toàn bộ step đã của các template, po đã attach vào salesId trong bảng eutr_purchase_attachments.
+  Missing là các step missing, finished là các step đã đủ hồ sơ. dữ liệu bảng eutr_progression sẽ tự
+  cập nhật khi user vào màn hình view, hoặc Save po mapping, hoặc khi chạy job
+  [HttpGet("test-so-template-sync")]. đồng thời trong hàm này cập nhật lưu thêm ProductVariant, ItemId
+  khi lưu vào bảng eutr_purchase_attachments. Khi có dữ liệu bảng eutr_progression. màn hình
+  eutr/sales-orders chỉ cần dựa vào SalesId, join với bảng eutr_progression để hiển thị cột progress".
+- Bối cảnh (rà soát mã nguồn xác nhận nguyên nhân/phạm vi): Cột **Progress** ở Overview
+  (`SalesOrderOverviewPage.jsx`, hàm `fetchProgressForRows`, dòng 203-338, Update 12) hiện KHÔNG lưu ở
+  đâu cả — tính lại từ đầu mỗi khi bảng hiển thị 1 trang (mở màn hình/tìm kiếm/chuyển trang), qua 3-4
+  lượt gọi API tuần tự/song song (`POST /api/eutr-purchase-attachments/by-sales-ids-raw`,
+  `POST /api/eutr-templates/by-codes`, `POST /api/dynamics/reference?refType=16` để lấy Vendor code,
+  `POST /api/eutr-documents/list-po-references`) rồi lặp ở client qua từng Sales ID đang hiển thị →
+  từng PO/Template đã lưu → từng step, dùng `computeProgress()`/`buildTemplateComputations()`
+  (`progressUtils.js:37-84`, Update 11/12: Total = số step `requirementType = Required` và `takeFrom`
+  KHÔNG thuộc `AUTO_SOURCES`, cộng dồn qua mọi PO/Template đã lưu của Sales ID đó; Finished = trong đó,
+  số step đã có ≥1 tài liệu khớp; Missing = Total − Finished, suy ra từ `progress.total - progress.completed`
+  theo FR-079). Càng nhiều dòng/PO/step, số lượt gọi và khối lượng tính client-side càng lớn — đúng
+  nguyên nhân "tính động quá chậm khi hiển thị" người yêu cầu tính năng nêu.
+- Bối cảnh: Bảng `eutr_purchase_attachments` (entity `EutrPurchaseAttachments.cs`, cột `Id, SalesId,
+  PurchId, TemplateCode, ProductVariant, ItemId` — 2 cột sau thêm ở Update 36) hiện có 2 nơi ghi: (a)
+  **Save PO Mapping** (`POST /api/eutr-purchase-attachments/save-po-mapping`,
+  `EutrPurchaseAttachmentsController.cs:66-83` → `SavePoMappingAsync`, Update 2/36) ghi đủ cả
+  `ProductVariant`/`ItemId` theo từng dòng hàng đã tick ở Step 1 Map File; (b) job đồng bộ
+  `SyncSalesOrderTemplatesAsync` (`EutrSynchronizeDataService.cs:81-173`, expose qua
+  `[HttpGet("test-so-template-sync")]` ở `EutrSynchronizeDataController.cs:24-29`, feature
+  `011-eutr-synchronize-data`) CHỈ ghi `SalesId`/`PurchId`/`TemplateCode` khi thêm bản ghi mới (dòng
+  143-152) — `ProductVariant`/`ItemId` luôn để trống (`null`) vì job này được viết trước Update 36 và
+  chưa đọc 2 trường đó từ nguồn D365 refType=19 (`ComplDynReferenceResponseDto` đã có sẵn trường
+  `ProductVariant` dùng cho refType=15, nhưng chưa có trường tương đương cho `ItemId`).
+- Change: Thêm bảng mới `eutr_progression` (`Id, SalesId, Total, Missing, Finished`) lưu sẵn kết quả
+  tính Progress theo đúng công thức hiện có (Total/Missing/Finished tính theo FR-077 đến FR-079, không
+  định nghĩa lại công thức) — mỗi `SalesId` có đúng 1 bản ghi (upsert, không cộng dồn lịch sử).
+- Change: Dữ liệu bảng `eutr_progression` MUST được tính lại (recompute) và ghi đè (upsert) cho đúng
+  (các) `SalesId` liên quan tại đúng 4 thời điểm sau — không có cơ chế tính động/fallback nào khác:
+  1. Khi người dùng mở màn hình **View** (`/eutr/sales-orders/:salesId/view`) cho một `SalesId`.
+  2. Khi **Save PO Mapping** (`POST /api/eutr-purchase-attachments/save-po-mapping`) lưu thành công cho
+     một `SalesId`.
+  3. Khi job `test-so-template-sync` chạy xong — cho các `SalesId` MỚI được job đó thêm vào
+     `eutr_purchase_attachments` trong lần chạy này. **Sửa lại khi triển khai** (xem research.md Quyết
+     định 99): bản đặc tả gốc dự kiến recompute cho cả `SalesId` bị bỏ qua vì đã tồn tại sẵn, nhưng rà
+     soát mã nguồn lúc triển khai cho thấy job này từng xử lý hàng nghìn `SalesId`/lần chạy trên dữ liệu
+     thật — recompute (vốn cần thêm 1 lượt D365 + 2 lượt đọc phụ trợ mỗi `SalesId`) cho MỌI `SalesId` job
+     đọc qua sẽ biến chính job đồng bộ thành điểm nghẽn hiệu năng mới, ngược mục tiêu của Update này.
+     `SalesId` bị bỏ qua được phủ bởi backfill 1 lần khi triển khai (FR-230) và trigger 4 (tài liệu của
+     nó thay đổi thì trigger 4 tự cập nhật ngay, không cần đợi job chạy lại).
+  4. **[Q1]** Khi người dùng Upload hoặc Xóa một tài liệu ở Step 2 Map File (hành động riêng, thuộc
+     feature `004-eutr-documents`, độc lập với nút Save PO Mapping) cho một PO thuộc `SalesId` đó. **Giới
+     hạn đã biết** (xác nhận lúc triển khai): chỉ áp dụng khi tài liệu gắn RefValue = chính PurchId đó
+     (Type = "PO", trường hợp phổ biến nhất/đúng yêu cầu gốc "Step 2 Map File"); tài liệu Type = "Vendor"
+     (RefValue = Order account, ảnh hưởng mọi PO cùng Vendor đó) CHƯA trigger recompute — cần 1 lượt tra
+     cứu D365 refType=16 theo Order account để suy ngược lại (các) PurchId liên quan, chưa triển khai ở
+     Update 42 này.
+- Q: Ngoài 3 thời điểm nêu trong yêu cầu gốc (mở View, Save PO Mapping, chạy job test-so-template-sync),
+  hành động Upload/Xóa tài liệu ở Step 2 Map File (làm thay đổi Finished/Missing nhưng không tự động
+  đi qua 1 trong 3 thời điểm trên) có cần tính lại `eutr_progression` ngay lúc đó không? → **A: Có** —
+  thêm làm thời điểm thứ 4 (khuyến nghị), để Progress ở Overview luôn đúng ngay sau khi Upload/Xóa tài
+  liệu, không phải đợi người dùng quay lại màn View hay bấm lại Save PO Mapping.
+- Change: Job `test-so-template-sync` (`SyncSalesOrderTemplatesAsync`) khi thêm bản ghi mới vào
+  `eutr_purchase_attachments` (nhánh thêm mới, dòng 143-152) MUST lưu thêm `ProductVariant`/`ItemId` lấy
+  từ nguồn D365 refType=19 cùng lượt đọc hiện có (cần bổ sung trường `ItemId` vào
+  `ComplDynReferenceResponseDto`/luồng đọc refType=19 nếu D365 trả về trường tương ứng; trường
+  `ProductVariant` đã có sẵn trên DTO, chỉ cần gán khi tạo `EutrPurchaseAttachments`) — hành vi dedupe
+  hiện có (bỏ qua toàn bộ `SalesId` nếu đã tồn tại bản ghi, `existingSalesIds.Add(salesId)`) KHÔNG đổi;
+  bản ghi cũ đã có từ trước Update này (đang `ProductVariant`/`ItemId` = `null`) không bị job này ghi đè
+  lại hồi tố.
+- Change: Overview (`/eutr/sales-orders`) cột **Progress** chỉ còn dựa vào `SalesId` của dòng đó JOIN
+  với `eutr_progression` để hiển thị `Finished`/`Total`/`pct` (= `Finished/Total`) — KHÔNG còn gọi 4 API
+  động/tính lặp ở client như trước Update này; nếu `SalesId` chưa có bản ghi nào trong `eutr_progression`
+  (chưa từng qua 1 trong 4 thời điểm trên — bao gồm cả trường hợp `SalesId` chưa có bản ghi nào trong
+  `eutr_purchase_attachments`), cột Progress hiển thị trạng thái trống, giữ đúng phân biệt hiện có giữa
+  trạng thái "trống" (FR-083) và "không có step bắt buộc" (`Total = 0` nhưng có bản ghi, FR-084).
+- Change: Màn hình **View**/**Map File** (`ViewSalesOrderPage.jsx`/`MapFilePage.jsx`) KHÔNG đổi cách
+  tính Progress/checklist chi tiết theo từng step (`requiredDetails`/`mappedRequired`/`missingRequired`,
+  FR-062/FR-077 đến FR-081) — 2 màn hình này cần biết CHÍNH XÁC step nào còn thiếu (không chỉ số đếm
+  tổng), dữ liệu mà `eutr_progression` (chỉ lưu 3 số đếm `Total/Missing/Finished`) không đáp ứng được;
+  phạm vi đọc từ `eutr_progression` chỉ áp dụng cho cột Progress ở Overview, đúng theo yêu cầu gốc "màn
+  hình eutr/sales-orders chỉ cần dựa vào SalesId, join với bảng eutr_progression để hiển thị cột
+  progress".
+- Q: Việc tính lại `eutr_progression` cho toàn bộ `SalesId` đã có sẵn dữ liệu `eutr_purchase_attachments`
+  TRƯỚC khi Update 42 triển khai (chưa từng qua 1 trong 4 thời điểm trigger ở trên) được xử lý thế nào?
+  → A: Một lượt backfill 1 lần khi triển khai (chạy lại đúng công thức Total/Missing/Finished cho mọi
+  `SalesId` đang có ≥1 bản ghi `eutr_purchase_attachments`) — bước vận hành khi rollout, không phải một
+  trigger tự động lặp lại theo mỗi lần chạy job `test-so-template-sync` sau này (job đó, do giữ nguyên
+  hành vi dedupe theo `SalesId`, chỉ động tới các `SalesId` nó thực sự xử lý ở lần chạy đó — xem Assumptions).
+
+- Input: "phần download trong sales-order không cần hiển thị popup này nữa, mặc định tách ra theo
+  từng po, trong foder PO là toàn bộ file, không cần tạo file theo step nữa" (kèm ảnh chụp popup
+  "Choose download format" với 2 lựa chọn "Combined (All)"/"By Template").
+- Bối cảnh (rà soát mã nguồn xác nhận phạm vi): Popup `DownloadFormatDialog` (Update 22, FR-152 đến
+  FR-160) được dùng ở CẢ HAI màn hình cùng thư mục `eutr-sales-orders` — nút Download trên mỗi dòng ở
+  Overview (`SalesOrderOverviewPage.jsx`) VÀ nút Download ở View (`ViewSalesOrderPage.jsx`) — cả hai
+  đều để người dùng chọn giữa "Combined (All)" (gộp mọi tài liệu vào 1 cây thư mục lồng nhau theo
+  Step, dựa trên template mặc định toàn hệ thống, Update 19-21) và "By Template" (1 thư mục phẳng/mỗi
+  template — từ Update 40, đã thành 1 thư mục phẳng/mỗi PO).
+- Change: CẢ HAI màn hình (Overview và View) MUST bỏ hẳn popup chọn định dạng — nút Download MUST tải
+  zip ngay khi nhấn, không cần xác nhận lựa chọn nào thêm.
+- Change: Định dạng zip duy nhất còn lại MUST là định dạng tương đương "By Template" cũ SAU Update 40
+  (đã tách theo PO) — mỗi PO đã lưu (`eutr_purchase_attachments`) có đúng 1 thư mục riêng trong file
+  zip (tên thư mục `"{PurchId} - {Tên Template}"`), thư mục đó chứa TOÀN BỘ tài liệu đã "Mapped" của
+  PO đó ở dạng PHẲNG (không có thư mục con theo Step) — đúng yêu cầu "trong folder PO là toàn bộ
+  file, không cần tạo file theo step nữa".
+- Change: Chế độ "Combined (All)" (cây thư mục lồng nhau theo Step của template mặc định toàn hệ
+  thống, Update 19-21, FR-129 đến FR-151) MUST bị loại bỏ hoàn toàn khỏi tính năng Download — không
+  còn cách nào để người dùng chọn chế độ này nữa (khác Update 40, khi hạ tầng "All" vẫn được giữ lại
+  ngầm cho riêng mục đích Download — nay Download cũng không cần nó nữa nên gỡ bỏ luôn phần code liên
+  quan, tránh code chết).
+- Q: Áp dụng cho những màn hình nào? → A: CẢ HAI màn hình dùng chung popup `DownloadFormatDialog` ở
+  thư mục `eutr-sales-orders` — Overview (nút Download từng dòng) và View (nút Download ở toolbar) —
+  theo đúng yêu cầu gốc "phần download trong sales-order". KHÔNG áp dụng cho `012-eutr-purchase-orders`
+  (không có tính năng Download zip nhiều-PO tương tự — `PurchId/View` chỉ có đúng 1 PO/trang).
+- Q: Component `DownloadFormatDialog.jsx` có bị xóa không? → A: **Có** — xác nhận không còn màn hình
+  nào import/dùng component này sau khi gỡ khỏi cả 2 nơi, xóa hẳn theo đúng nguyên tắc không giữ lại
+  code chết đã áp dụng nhất quán ở các bản cập nhật trước.
+
+### Session 2026-09-30 (Update 40) — Cây Template ở toolbar Step 2 (Map File) và Template Checklist (View) hiển thị RIÊNG theo từng PO, không còn gộp theo TemplateCode
+
+- Input: "phần này sẽ hiển thị rõ theo từng PO, không nhóm theo template nữa, vì 1 template có thể
+  dùng cho nhiều PO, nhưng file khác nhau. Hiển thị dạng 2 dòng PO00021493 / Tên Templates áp dụng cho
+  cả 2 màn hình view và map file link eutr/sales-orders" (kèm ảnh chụp toolbar Step 2 hiện tại, đang
+  hiển thị 2 tab theo TemplateCode: "TEMPLATES-011", "TEMPLATES-012").
+- Bối cảnh (rà soát mã nguồn xác nhận nguyên nhân/phạm vi): Toolbar cây Template ở cả 2 màn hình hiện
+  nhóm theo `TemplateCode` (`templatesData`, dedupe 1 phần tử/1 TemplateCode dù có bao nhiêu PO dùng
+  chung template đó) — hàm `buildTemplateComputations` gộp CHUNG tài liệu của MỌI PO dùng chung 1
+  template vào đúng 1 phép tính Mapped/Missing duy nhất. Hệ quả: nếu PO-A và PO-B cùng dùng
+  Templates-011, tài liệu PO-A upload có thể khiến một step hiển thị "Mapped" ngay cả khi PO-B (đang
+  thực sự cần tài liệu riêng cho step đó) chưa hề có tài liệu nào — đúng như mô tả trong yêu cầu gốc
+  ("1 template có thể dùng cho nhiều PO, nhưng file khác nhau"). Màn hình View (`ViewSalesOrderPage.jsx`)
+  còn thu gọn xa hơn từ Update 26 — chỉ còn đúng 1 tab "Template" duy nhất (chế độ "All" gộp mọi
+  template làm mặc định, các tab riêng theo TemplateCode bị ẩn hẳn từ Update 26) — càng làm mất khả
+  năng phân biệt PO nào đã có tài liệu, PO nào chưa.
+- Change: Toolbar cây Template ở CẢ 2 màn hình (Step 2 Map File và Template Checklist của View) MUST
+  đổi từ nhóm theo `TemplateCode` sang nhóm theo **PurchId** — mỗi PO đã lưu (`eutr_purchase_attachments`)
+  MUST có đúng 1 tab riêng, kể cả khi 2 PO dùng chung 1 TemplateCode (2 PO đó MUST có 2 tab riêng biệt,
+  không gộp lại thành 1). Tab MUST hiển thị 2 dòng: dòng 1 = **PurchId** (in đậm), dòng 2 = **tên
+  Template** (`templateName`) của template PO đó đang dùng.
+- Change: Với mỗi tab/PO, tài liệu dùng để tính Mapped/Missing/hiển thị trên cây MUST CHỈ gồm tài liệu
+  của chính PO đó (`poCode` = đúng PurchId của PO đó, hoặc = Order account/Vendor code của chính PO đó
+  cho tài liệu gắn theo Type = "Vendor") — KHÔNG còn gộp chung tài liệu của các PO khác dù cùng dùng 1
+  template.
+- Change: Số liệu tổng hợp "Mapped: X/Y required steps" (header, cả 2 màn hình) tiếp tục cộng dồn trên
+  TOÀN BỘ PO đã lưu của Sales Order — nhưng nay cộng dồn qua từng phép tính RIÊNG của từng PO (thay vì
+  từng template) — nếu 2 PO dùng chung template, số Required của template đó MUST được tính (và có thể
+  thiếu) ĐỘC LẬP cho từng PO, không còn coi 1 PO đã đủ tài liệu là đủ cho cả 2.
+- Change (View, bỏ chế độ "All" khỏi toolbar): Toolbar Template Checklist của View KHÔNG còn tab
+  "Template" gộp chung (All) duy nhất — thay bằng đúng N tab theo N PO đã lưu, cùng định dạng 2 dòng
+  như Step 2 Map File. Nút Download (zip) vẫn giữ nguyên 2 lựa chọn định dạng hiện có ("Combined All" /
+  "By Template", popup `DownloadFormatDialog`) — tùy chọn "Combined All" tiếp tục gộp mọi tài liệu vào
+  1 thư mục zip duy nhất theo cây template mặc định (không đổi); tùy chọn trước đây gọi "By Template"
+  nay tạo 1 thư mục zip riêng cho MỖI PO (đặt tên `"{PurchId} - {Tên Template}"`) thay vì 1 thư mục/1
+  TemplateCode — tránh mất tài liệu của 1 trong 2 PO khi chúng dùng chung template (hệ quả trực tiếp
+  của việc đổi cách nhóm ở trên).
+- Q: Áp dụng cho những màn hình nào? → A: CHỈ `005-eutr-sales-orders`'s Map File (Step 2) và View
+  (Template Checklist), theo đúng yêu cầu gốc ("áp dụng cho cả 2 màn hình view và map file link
+  eutr/sales-orders"). KHÔNG áp dụng cho `SalesOrderOverviewPage.jsx`/`PurchaseOrderOverviewPage.jsx`
+  (cột Progress ở danh sách tổng quan, không có toolbar tab nào) hay `012-eutr-purchase-orders`'s
+  `PurchId/View` (đã là 1 PO/1 trang, không có khái niệm nhiều tab để gộp/tách).
+- Q: Chế độ "All" (gộp mọi template, View, Update 19/20) có bị xóa hoàn toàn không? → A: **Không xóa
+  code** — hạ tầng tính toán (`defaultTemplate`, cây "All" đã lọc) vẫn được giữ nguyên vì nút Download
+  "Combined All" vẫn cần nó; chỉ KHÔNG còn tab nào trên toolbar dẫn tới chế độ này nữa (không còn cách
+  nào người dùng tự chọn xem chế độ "All" trên cây Template Checklist qua toolbar).
+
+### Session 2026-09-30 (Update 39) — Sắp xếp lại thứ tự cột bảng PO ở Step 1 (Map File) và Selected Purchase Orders (View)
+
+- Input: "sắp xếp các cột lại Template> Variant > Material > Qty > Percentage used > Unit > PO > Order
+  account > Vendor name" (kèm ảnh chụp bảng Step 1 hiện tại: Select, PO, Template, Order account,
+  Vendor name, Variant, Material, Qty, Unit, Percentage used).
+- Change: Cả 2 bảng (Step 1 Map File và Selected Purchase Orders ở View, cùng đọc dữ liệu type = 20
+  theo FR-198) MUST hiển thị các cột theo đúng thứ tự mới: (cột **Select** ở Step 1, không có ở View,
+  luôn đứng đầu, không đổi) → **Template** → **Variant** → **Material** → **Qty** → **Percentage
+  used** → **Unit** → **PO** → **Order account** → **Vendor name**.
+- Change: Chỉ đổi THỨ TỰ hiển thị cột (header lẫn cell dữ liệu tương ứng của từng dòng) — không đổi tên
+  cột, cách tính giá trị, định dạng, hay bất kỳ logic nào khác (Select checkbox, disable theo Template
+  rỗng, Map status, v.v.).
+
+### Session 2026-09-30 (Update 38) — Bug fix: cột Qty hiển thị "—" cho mọi dòng vì giá trị thô từ D365 là số thập phân (có thể âm); đổi công thức hiển thị thành trị tuyệt đối, làm tròn 4 chữ số thập phân
+
+- Input: "Qty có dữ liệu từ API, là số âm, kiểm tra sao cột Qty lại hiển thị -" — sau khi xác nhận
+  nguyên nhân qua kiểm tra mã nguồn, người yêu cầu xác nhận cách sửa: "thay đổi để hiển thị được. nếu
+  số âm như -49.154850 sẽ hiển thị thành số dương, làm tròn 4 chữ số 49.1549. nếu số dương thì giữ
+  nguyên, chỉ cần làm tròn".
+- Bối cảnh (rà soát mã nguồn xác nhận nguyên nhân gốc): `ComplDynamicsService.cs` (`case 20:`, mapping
+  cho reference type = 20 `RSVNEutrSalesOrderPurchLines`) tính `Qty` bằng `long.TryParse(x.Qty, out var
+  qty) ? qty : 0` — `x.Qty` là chuỗi thô từ D365, khi giá trị có phần thập phân (ví dụ `"-49.154850"`)
+  `long.TryParse` LUÔN thất bại (không parse được số có dấu chấm thập phân), rơi về `0` cho MỌI dòng.
+  Frontend (`MapFilePage.jsx`, `{line.qty || '—'}`) coi `0` là falsy nên hiển thị "—" — đúng như ảnh
+  chụp màn hình đính kèm cho thấy 100% dòng đều trống ở cột Qty dù "Percentage used" (tính từ cùng bản
+  ghi) vẫn có giá trị thật. Dấu âm không phải nguyên nhân trực tiếp (một số nguyên âm như `"-15"` vẫn
+  parse được bằng `long.TryParse`) — nguyên nhân thật là kiểu `long` không biểu diễn được phần thập
+  phân của giá trị Qty thật (đơn vị `DM3`/mét khối gỗ, vốn luôn có số lẻ).
+- Change: `ComplDynReferenceResponseDto.Qty` đổi kiểu từ `long` sang `decimal` (đủ biểu diễn phần thập
+  phân). Công thức tính lại: `decimal.TryParse(x.Qty, NumberStyles.Any, CultureInfo.InvariantCulture,
+  out var qty) ? Math.Round(Math.Abs(qty), 4, MidpointRounding.AwayFromZero) : 0` — luôn trả về giá trị
+  KHÔNG ÂM (lấy trị tuyệt đối), làm tròn đúng 4 chữ số thập phân. `MidpointRounding.AwayFromZero`
+  (không dùng mặc định `ToEven` của `Math.Round`) để khớp đúng ví dụ đã xác nhận: `-49.154850` →
+  `49.1549` (không phải `49.1548` mà `ToEven` sẽ cho ra, vì chữ số thứ 4 `8` đã chẵn).
+- Change: Giá trị dương giữ nguyên dấu, chỉ làm tròn theo đúng công thức trên (`Math.Abs` không ảnh
+  hưởng số dương).
+- Q: Có cần sửa gì ở frontend (`MapFilePage.jsx`/`ViewSalesOrderPage.jsx`) không? → A: **Không** — cả
+  hai chỉ hiển thị trực tiếp `item.qty`/`row.qty` (không định dạng số nào ở tầng UI); giá trị đã đúng
+  (dương, đã làm tròn 4 chữ số) ngay khi tới từ API nên không cần đổi gì ở tầng hiển thị.
+- Q: Áp dụng cho cả bảng Step 1 (Map File) lẫn Selected Purchase Orders (View)? → A: **Có** — cả hai
+  đọc cùng 1 nguồn dữ liệu type = 20 dùng chung (`ComplDynamicsService.cs` `case 20:`), sửa 1 nơi áp
+  dụng cho cả hai màn hình, không cần thay đổi riêng ở từng trang.
+
+### Session 2026-09-30 (Update 37) — Kế thừa `004-eutr-documents` Update 29 (matching Type = "PO" theo tên Step, bỏ đổi tên khi Upload); cây Template hiển thị tên file thay tên Step khi đã upload; bỏ đổi tên file khi Download cho document Type = "PO"
+
+- Input: "cập nhật 004-eutr-documents, 005-eutr-sales-orders, 012-eutr-purchase-orders khi upload
+  file với type = PO, bỏ logic kiểm tra với eutr_master_documents. thay đổi thành so sánh tên step
+  với tên file... Màn hình hiển thị template, khi file đã upload, phần tên step sẽ lấy tên file gắn
+  vào để hiện thị (...) file chưa upload thì hiển thị tên step bình thường, bỏ logic đổi tên file
+  theo tên step, tên file ntn giữ nguyên khi up và khi tải".
+- Kế thừa (không cần thay đổi riêng): Nút **Upload**/**Edit** ở Step 2 (AVAILABLE FILES) tiếp tục gọi
+  đúng popup Add/Edit dùng chung với `004-eutr-documents` — nên tự động kế thừa nguyên vẹn thay đổi
+  matching/bỏ đổi tên khi Upload cho Type = "PO" đã đặc tả ở `004-eutr-documents` Update 29 (FR-020,
+  FR-074 đến FR-079) mà không cần thay đổi gì thêm ở màn hình này cho phần Upload.
+- Bối cảnh (rà soát mã nguồn): Cây Step ở Step 2 (`MapFilePage.jsx`, component `TreeNode`) hiện LUÔN
+  hiển thị `node.stepName` làm nhãn — chưa có logic thay nhãn theo tên file đã upload (khác biểu tượng
+  "+N"/tooltip liệt kê tên file, đã có từ trước, xem Update 31). Nút Download ở AVAILABLE FILES
+  (`004-eutr-documents` Update 33/`005-eutr-sales-orders` Update 33, FR-194/FR-195/FR-196/FR-197) hiện
+  luôn tính lại tên file khi tải về = `Name` của Step (không đọc tên đã lưu) cho **mọi** document, bất
+  kể Type.
+- Change (MỚI — cây Template, Step 2): Với mỗi node Step trong cây, nếu Step đó đang có **ít nhất một**
+  tài liệu khớp (Map status "Mapped" theo FR-092/FR-093 hiện có), nhãn hiển thị của node đó MUST đổi
+  từ `Name` của Step sang **tên file** (bỏ phần mở rộng) của tài liệu khớp — ưu tiên tài liệu **đầu
+  tiên** trong danh sách tài liệu khớp Step đó nếu có nhiều hơn 1 (badge "+N"/tooltip liệt kê đủ các
+  tên file khác vẫn giữ nguyên, không đổi). Step CHƯA có tài liệu khớp nào (Map status "No map") MUST
+  tiếp tục hiển thị `Name` của Step như hành vi hiện có, không đổi. Áp dụng đồng nhất cho mọi Type tài
+  liệu (không riêng Type = "PO") — vì bản thân tài liệu khớp một Step có thể thuộc bất kỳ Type nào.
+- Change (Download, Type = "PO"): Với document có Type = "PO", tên file khi tải về (nút Download ở
+  dòng AVAILABLE FILES lẫn nút Download trong popup View, FR-194/FR-195) KHÔNG còn được tính lại =
+  Step Name nữa — MUST dùng đúng `eutr_documents.Name` đã lưu (từ `004-eutr-documents` Update 29 trở
+  đi, giá trị này chính là tên file gốc đã upload, không đổi) + đuôi file gốc (không đổi). Với document
+  Type khác "PO", hành vi tính lại tên = Step Name (FR-195/FR-196/FR-197) giữ nguyên không đổi.
+- Q: Document Type = "PO" tạo TRƯỚC `004-eutr-documents` Update 29 (File name đã lưu vẫn đang là Step
+  Name do bị đổi tên ở Update 25/26) thì tải về có tên gì? → A: Vẫn dùng đúng `eutr_documents.Name` đã
+  lưu (nay không còn tính lại) — tức tải về với tên = Step Name (tên cũ), KHÔNG khôi phục lại tên file
+  gốc đã mất (không có migration/backfill nào phục hồi tên gốc của dữ liệu cũ).
+- Q: Một Step có nhiều hơn 1 tài liệu khớp (badge "+N") thì nhãn cây dùng tên file nào? → A: Tên file
+  của tài liệu **đầu tiên** trong danh sách khớp Step đó (cùng nguyên tắc "đầu tiên" đã dùng ở FR-196
+  cho việc đặt tên khi Download) — badge "+N" và tooltip tiếp tục liệt kê đủ tên mọi tài liệu khác.
+- Q: Phần mở rộng file có bị cắt khỏi nhãn cây không? → A: Có — nhãn cây chỉ hiển thị phần tên file
+  (bỏ đuôi, ví dụ `.pdf`), giống đúng ví dụ trong yêu cầu gốc ("1.Invoice AP-PD.pdf" → hiển thị
+  "1.Invoice AP-PD").
+
+### Session 2026-09-30 (Update 36) — Step 1 (Map File): Select checkbox và Save PO Mapping khóa theo (PO, Variant, ItemId) thay vì chỉ PO; `eutr_purchase_attachments` lưu thêm `ProductVariant`/`ItemId`
+
+- Bối cảnh: Từ Update 34, bảng PO ở Step 1 hiển thị 1 dòng cho mỗi bản ghi type = 20 (một PO có nhiều
+  dòng hàng thì hiển thị nhiều dòng), nhưng Select checkbox/Save PO Mapping vẫn khóa ở cấp PO
+  (`RSVNRefPurchId`) — tick 1 dòng bất kỳ của 1 PO tự động tick mọi dòng khác cùng PO, và
+  `eutr_purchase_attachments` chỉ lưu `{SalesId, PurchId, TemplateCode}` (1 bản ghi/PO). Người yêu cầu
+  tính năng gửi kèm ảnh chụp màn hình cho thấy 1 PO có 2 dòng hàng (Variant/Material khác nhau) đều
+  đang được tick chọn độc lập, và muốn việc tick chọn/lưu phải phân biệt đúng theo từng dòng hàng cụ
+  thể — không chỉ theo PO. Yêu cầu bổ sung 2 cột `ProductVariant`, `ItemId` (kiểu `varchar(50)`) vào
+  bảng `eutr_purchase_attachments` để lưu đúng dòng hàng nào đã được chọn, lấy giá trị từ đúng cột
+  `ProductVariant`/`ItemId` của API (reference type = 20) — không phải do người dùng nhập tay.
+- Change: Bảng `eutr_purchase_attachments` MUST bổ sung 2 cột mới `ProductVariant VARCHAR(50) NULL` và
+  `ItemId VARCHAR(50) NULL` (không NOT NULL, khác `TemplateCode`).
+- Change: Select checkbox ở Step 1 MUST khóa theo bộ ba (`RSVNRefPurchId`, `ProductVariant`, `ItemId`)
+  của đúng dòng hàng đang xét — thay thế hoàn toàn cách khóa chỉ theo `RSVNRefPurchId` đã áp dụng từ
+  Update 2 đến trước Update 36 (FR-203). Một PO có nhiều dòng hàng MUST cho phép tick chọn độc lập
+  từng dòng — tick 1 dòng KHÔNG còn tự động tick các dòng khác cùng PO.
+- Change: Khi nhấn **Save PO Mapping**, hệ thống MUST lưu đúng 1 bản ghi `eutr_purchase_attachments`
+  cho MỖI dòng hàng đã tick chọn (không còn dedupe/gộp theo PO) — mỗi bản ghi gồm `SalesId`, `PurchId`,
+  `TemplateCode` (như hiện có) cộng thêm `ProductVariant`/`ItemId` lấy từ đúng dòng hàng type = 20
+  tương ứng đã tick — thay thế hoàn toàn FR-020/FR-021's cách lưu 1 bản ghi/PO trước đây.
+  Save PO Mapping vẫn thay thế toàn bộ tập bản ghi cũ của Sales ID đó bằng lựa chọn mới nhất (giữ
+  nguyên ngữ nghĩa "replace" của FR-021), chỉ đổi đơn vị lưu từ "1 bản ghi/PO" thành "1 bản ghi/dòng
+  hàng đã chọn".
+- Change: Khi mở lại Step 1, các dòng hàng đã tick sẵn (FR-019) MUST được xác định bằng cách khớp đúng
+  bộ ba (`PurchId`, `ProductVariant`, `ItemId`) của bản ghi `eutr_purchase_attachments` đã lưu với
+  đúng dòng hàng type = 20 tương ứng — không còn tick sẵn toàn bộ dòng hàng của 1 PO chỉ vì PO đó đã
+  từng được lưu.
+- Change: Màn hình View (bảng Selected Purchase Orders) MUST hiển thị đúng CÁC dòng hàng đã lưu (khớp
+  theo đúng bộ ba `PurchId`/`ProductVariant`/`ItemId`) — không còn hiển thị TOÀN BỘ dòng hàng type = 20
+  của một PO đã lưu như hành vi Update 34/35 (nay có thể chỉ 1/nhiều dòng hàng của PO đó được chọn,
+  không phải tất cả). Số đếm "Selected Purchase Orders (N)" và (các) chip PO ở header MUST tiếp tục
+  đếm/hiển thị theo số PO duy nhất (không đổi theo số dòng hàng đã chọn).
+- Change: Điều kiện vô hiệu hoá checkbox theo PO chưa có Template (FR-022) và cơ chế tải dữ liệu theo
+  lô (FR-206) không đổi — vẫn áp dụng như trước, chỉ đổi đơn vị khóa chọn/lưu từ PO sang dòng hàng.
+
+### Session 2026-09-30 (Update 35) — Step 1 (Map File) & bảng Selected Purchase Orders (View): bổ sung cột Unit, lấy từ `RSVNEutrSalesOrderPurchLines` (bổ sung trường `Unit` vào model)
+
+- Bối cảnh: Sau Update 34, bảng PO ở Step 1 (Map File) và bảng Selected Purchase Orders (View) đã lấy
+  toàn bộ dữ liệu hiển thị trực tiếp từ reference type = 20 (`RSVNEutrSalesOrderPurchLines`). Người yêu
+  cầu tính năng muốn bổ sung thêm 1 cột **Unit** (đơn vị tính của dòng hàng), cũng lấy từ chính nguồn
+  API này. Model `RSVNEutrSalesOrderPurchLines` hiện KHÔNG có trường `Unit` (cùng tình trạng như trường
+  `QtyPercent` ở Update 34) — cần tự động bổ sung trường này vào model để có dữ liệu hiển thị.
+- Change: Bảng PO ở Step 1 (Map File) và bảng Selected Purchase Orders (View) MUST hiển thị thêm 1 cột
+  mới **Unit**, đặt ngay sau cột **Qty** (trước cột **Percentage used**), lấy giá trị từ trường `Unit`
+  của đúng bản ghi type = 20 (`RSVNEutrSalesOrderPurchLines`) của dòng đó — theo đúng cơ chế lấy dữ liệu
+  trực tiếp, không gộp/nối chuỗi, đã áp dụng cho các cột khác ở Update 34 (FR-198/FR-199).
+- Change: Model D365 `RSVNEutrSalesOrderPurchLines` (reference type = 20, thư mục Dynamics) hiện KHÔNG
+  có trường `Unit` — hệ thống MUST tự động bổ sung trường này vào model, và bảo đảm nó được trả về xuyên
+  suốt qua nguồn tham chiếu dùng chung mà giao diện đang gọi (cùng cơ chế đã áp dụng cho `QtyPercent` ở
+  FR-202) để cột Unit có dữ liệu thật hiển thị — không phải giá trị demo/giả hay để trống vĩnh viễn.
+- Change: Nếu một bản ghi type = 20 có trường `Unit` rỗng/không có giá trị, ô Unit của dòng đó MUST hiển
+  thị trạng thái trống rõ ràng (ví dụ "—") — theo đúng quy ước trống đã áp dụng cho Qty/Percentage used
+  ở FR-204, không hiển thị "undefined"/"null".
+- Change: Cột Unit áp dụng đúng các quy tắc chung đã đặc tả ở Update 34 cho toàn bộ bảng — tải theo lô
+  cùng 1 lần gọi type = 20 (FR-206, không N+1), lỗi tải nguồn type = 20 khiến toàn bộ bảng hiển thị
+  trạng thái lỗi (FR-205), và không ảnh hưởng tới hành vi Select/disable-checkbox/Save PO Mapping
+  (FR-203).
+
+### Session 2026-09-29 (Update 34) — Step 1 (Map File) & bảng Selected Purchase Orders (View): chỉ lấy dữ liệu Variant/Material/Qty/Percentage used trực tiếp từ `RSVNEutrSalesOrderPurchLines` (bỏ logic gộp chuỗi), bổ sung trường `QtyPercent`
+
+- Bối cảnh: Bảng PO ở **Step 1** (Map File, `MapFilePage.jsx`, `data-marker="selected-po-table"`) và bảng
+  **Selected Purchase Orders** (View, `ViewSalesOrderPage.jsx`, cùng marker) hiện lấy dữ liệu từ **2**
+  nguồn tham chiếu dùng chung khác nhau rồi ghép lại: reference type = 16 cho 4 cột PO/Template/Order
+  account/Vendor name (FR-017), và reference type = 20 (model D365 `RSVNEutrSalesOrderPurchLines`, thư
+  mục `ComplianceSys.Domain/Dynamics`) cho 2 cột Variants/Materials — với mỗi PO, toàn bộ giá trị
+  `ItemId`/`ProductVariant` của các bản ghi type = 20 khớp PO đó bị **gộp/nối thành 1 chuỗi** phân tách
+  bằng dấu phẩy trong 1 ô (Update 17/18, FR-113 đến FR-128). Cột **Percentage used** hiện đang hiển thị
+  tạm giá trị `Qty` lấy từ PO header (type = 16) kèm ký hiệu "%" — không phải phần trăm sử dụng thật, vì
+  model `RSVNEutrSalesOrderPurchLines` **chưa có trường `QtyPercent`**. Người yêu cầu tính năng muốn bỏ
+  hoàn toàn cách ghép 2 nguồn + gộp chuỗi này: từ nay bảng chỉ lấy dữ liệu **duy nhất** từ
+  `RSVNEutrSalesOrderPurchLines` (reference type = 20) để hiển thị — Variant lấy trực tiếp từ cột
+  `ProductVariant`, Material lấy trực tiếp từ cột `ItemId` (không gộp/nối chuỗi nữa), bổ sung 1 cột **Qty**
+  mới lấy từ cột `Qty`, và cột **Percentage used** đổi sang lấy từ cột `QtyPercent` — cột này hiện chưa
+  tồn tại trên model, cần tự động bổ sung vào class `RSVNEutrSalesOrderPurchLines` để có dữ liệu hiển thị.
+- Change: Bảng PO ở Step 1 (Map File) và bảng Selected Purchase Orders (View) MUST lấy toàn bộ dữ liệu
+  hiển thị (PO, Template, Order account, Vendor name, Variant, Material, Qty, Percentage used) trực tiếp
+  từ reference type = 20 (`RSVNEutrSalesOrderPurchLines`), lọc theo `InterCompanyOriginalSalesId` = Sales
+  ID hiện tại — thay thế hoàn toàn việc kết hợp reference type = 16 (FR-017) với type = 20 gộp chuỗi
+  (FR-113 đến FR-128) đã áp dụng trước Update này. Mỗi bản ghi type = 20 khớp điều kiện MUST trở thành
+  đúng 1 dòng trong bảng — không còn gộp nhiều bản ghi của cùng 1 PO thành 1 dòng duy nhất.
+- Change: Trên mỗi dòng, giá trị hiển thị MUST lấy trực tiếp, không qua bước gộp/nối chuỗi nào: PO =
+  `RSVNRefPurchId`, Template = `RSVNEutrTemplate`, Order account = `OrderAccount`, Vendor name = `Name`,
+  Variant = `ProductVariant`, Material = `ItemId` — thay thế hoàn toàn cơ chế gộp nhiều `ItemId`/
+  `ProductVariant` duy nhất thành 1 chuỗi phân tách bằng dấu phẩy đã đặc tả ở FR-116/FR-124.
+- Change: Bảng MUST hiển thị thêm 1 cột mới **Qty**, đặt ngay sau cột **Material**, lấy giá trị từ
+  trường `Qty` của đúng bản ghi type = 20 của dòng đó.
+- Change: Cột **Percentage used** MUST đổi sang lấy giá trị từ trường `QtyPercent` của đúng bản ghi
+  type = 20 của dòng đó — thay thế hoàn toàn giá trị tạm hiện tại (giá trị `Qty` ở cấp PO header từ
+  reference type = 16, gắn thêm ký hiệu "%").
+- Change: Model D365 `RSVNEutrSalesOrderPurchLines` (reference type = 20, thư mục Dynamics) hiện KHÔNG
+  có trường `QtyPercent` — hệ thống MUST tự động bổ sung trường này vào model, và bảo đảm nó được trả về
+  xuyên suốt qua nguồn tham chiếu dùng chung mà giao diện đang gọi (cùng cơ chế các trường `Qty`/
+  `ProductVariant`/`ItemId` khác của model này đã được trả về) để cột Percentage used có dữ liệu thật
+  hiển thị — không phải giá trị demo/giả hay để trống vĩnh viễn.
+- Change: Checkbox **Select** và điều kiện vô hiệu hoá theo PO chưa có Template (FR-022) MUST tiếp tục
+  hoạt động đúng ở cấp PO (theo giá trị `RSVNRefPurchId`) như hành vi hiện có — khi cùng 1 PO xuất hiện
+  trên nhiều dòng (do PO đó có nhiều bản ghi type = 20), chọn/bỏ chọn ở bất kỳ dòng nào của PO đó MUST
+  phản ánh đồng bộ trạng thái chọn ở mọi dòng khác cùng PO, và Save PO Mapping (FR-020/FR-021) tiếp tục
+  lưu đúng 1 bản ghi cho mỗi PO duy nhất, không lưu trùng lặp theo số dòng hiển thị.
+- Change: Nếu một bản ghi type = 20 có trường `Qty` hoặc `QtyPercent` rỗng/không có giá trị, ô tương ứng
+  của dòng đó MUST hiển thị trạng thái trống rõ ràng (ví dụ "—") — theo đúng quy ước trống đã áp dụng cho
+  Variant/Material ở FR-118/FR-126, không hiển thị "undefined"/"null"/giá trị 0 giả định.
+- Change: Nếu nguồn dữ liệu type = 20 tạm thời không phản hồi hoặc trả lỗi, TOÀN BỘ bảng (Step 1 Map File
+  hoặc Selected Purchase Orders của View) MUST hiển thị trạng thái lỗi/tải thất bại rõ ràng — khác với
+  hành vi trước Update này (FR-119/FR-127), khi lỗi type = 20 chỉ ảnh hưởng riêng 2 cột Variants/
+  Materials còn các cột khác từ type = 16 vẫn hiển thị bình thường; từ Update này bảng không còn nguồn
+  type = 16 nào để hiển thị dự phòng.
+- Change: Cơ chế tải dữ liệu type = 20 theo lô (1 lần gọi theo `InterCompanyOriginalSalesId`, không gọi
+  riêng theo từng PO — N+1) đã đặc tả ở FR-117/FR-125 MUST tiếp tục được áp dụng cho cách tải mới này.
+- Change: Thay đổi này chỉ áp dụng cho bảng PO ở Step 1 (Map File) và bảng Selected Purchase Orders
+  (View) — KHÔNG áp dụng cho màn hình Overview (`SalesOrderOverviewPage.jsx`), nơi vẫn tiếp tục dùng
+  reference type = 16 cho mục đích riêng của nó (tra cứu Order account theo trang hiện tại), ngoài phạm
+  vi yêu cầu này.
+
 ### Session 2026-09-24 (Update 33) — Thêm nút Download riêng cho từng dòng AVAILABLE FILES; tải file với tên = Step Name
 
 - Input: "thêm nút download kế nút edit ở màn hình available file. Khi downfile về hiện tại có chỉnh
@@ -1334,6 +1742,27 @@ mọi Sales ID theo từ khóa đó bất kể đã có Template hay chưa.
 26. **Given** `permissionList` chứa cả quyền Update và quyền Download (Update 28), **When** bảng
     Overview hiển thị, **Then** cả icon Map File và icon Download đều hiển thị trên mỗi dòng, độc lập
     với nhau.
+27. **(Update 42)** **Given** một `SalesId` đã có bản ghi `eutr_progression` (`Total > 0`), **When**
+    bảng Overview hiển thị dòng đó, **Then** cột Progress hiển thị đúng `Finished`/`Total`/`pct` lấy
+    thẳng từ `eutr_progression` (JOIN theo `SalesId`) — không phát sinh lượt gọi
+    `by-sales-ids-raw`/`by-codes`/`list-po-references` nào để tính lại.
+28. **(Update 42)** **Given** người dùng vừa Save PO Mapping thành công cho một `SalesId`, **When**
+    người dùng quay lại/tải lại Overview, **Then** cột Progress của dòng `SalesId` đó hiển thị đúng số
+    liệu MỚI (khớp với lựa chọn PO vừa lưu), không hiển thị số liệu cũ trước khi Save.
+29. **(Update 42)** **Given** người dùng vừa mở màn hình View cho một `SalesId` lần đầu tiên sau khi
+    triển khai Update này (Sales Order đó đã có `eutr_purchase_attachments` từ trước nhưng chưa có bản
+    ghi `eutr_progression`), **When** người dùng quay lại Overview, **Then** cột Progress của dòng đó
+    hiển thị đúng số liệu tính từ dữ liệu thật (không còn trạng thái trống), vì việc mở màn View đã
+    trigger recompute.
+30. **(Update 42)** **Given** người dùng vừa Upload hoặc Xóa thành công 1 tài liệu ở Step 2 Map File
+    cho một PO thuộc một `SalesId`, **When** người dùng quay lại Overview, **Then** cột Progress của
+    dòng `SalesId` đó hiển thị đúng `Finished`/`Missing` MỚI (phản ánh tài liệu vừa Upload/Xóa), không
+    phải đợi người dùng mở lại màn View hay bấm Save PO Mapping.
+31. **(Update 42)** **Given** job `test-so-template-sync` vừa chạy xong và có thêm bản ghi mới vào
+    `eutr_purchase_attachments` cho các `SalesId` mới, **When** kiểm tra các bản ghi mới đó, **Then**
+    mỗi bản ghi có `ProductVariant`/`ItemId` khớp đúng dữ liệu nguồn D365 refType=19 tương ứng (khi
+    nguồn có giá trị khác rỗng); và cột Progress ở Overview cho các `SalesId` mới đó hiển thị đúng số
+    liệu (không còn trạng thái trống) ngay sau khi job chạy xong, không cần thêm thao tác nào khác.
 
 ---
 
@@ -1399,6 +1828,22 @@ chỉ còn hiển thị các dòng khớp; xóa từ khóa, xác nhận bảng q
     Customer của một dòng khác, **When** tìm kiếm, **Then** bảng hiển thị đồng thời cả hai dòng đó
     (khớp OR trên cả 3 cột Sales ID/Customer/Customer name), không giới hạn kết quả chỉ theo một cột
     (Update 27).
+16. **(Update 43)** **Given** danh sách đang hiển thị đầy đủ, **When** nhập đúng 1 ItemId hợp lệ vào ô
+    ItemId (để trống ô ConfigId) và nhấn Search, **Then** bảng chỉ hiển thị (các) Sales Order có ít nhất
+    1 dòng hàng khớp đúng ItemId đó.
+17. **(Update 43)** **Given** danh sách đang hiển thị đầy đủ, **When** nhập cả ItemId và ConfigId hợp lệ
+    (cùng thuộc về 1 dòng hàng thật) và nhấn Search, **Then** bảng chỉ hiển thị (các) Sales Order có dòng
+    hàng khớp ĐÚNG CẢ HAI giá trị đó (kết hợp AND) — không hiển thị Sales Order chỉ khớp 1 trong 2.
+18. **(Update 43)** **Given** ItemId/ConfigId nhập vào không khớp bất kỳ dòng hàng nào, **When** nhấn
+    Search, **Then** bảng hiển thị trạng thái trống ("No data"), không phải lỗi, và không tự động bỏ qua
+    điều kiện ItemId/ConfigId để hiển thị lại toàn bộ danh sách.
+19. **(Update 43)** **Given** đã nhập từ khóa Sales ID/Customer (hoặc chọn Year/ETD Week) VÀ nhập
+    ItemId/ConfigId, **When** nhấn Search, **Then** bảng chỉ hiển thị các dòng thỏa mãn ĐỒNG THỜI cả từ
+    khóa/Year/ETD Week lẫn điều kiện ItemId/ConfigId (kết hợp AND) — không mở rộng kết quả theo kiểu OR
+    như cách ô tìm kiếm chính tự kết hợp Sales ID/Customer name/Customer (mã).
+20. **(Update 43)** **Given** đang có giá trị ở ô ItemId và/hoặc ConfigId (cùng hoặc không cùng các điều
+    kiện khác), **When** nhấn nút **Clear**, **Then** cả hai ô ItemId/ConfigId bị xóa trắng cùng với mọi
+    điều kiện khác, và bảng trở về danh sách mặc định (không lọc, trang đầu).
 
 ---
 
@@ -1428,17 +1873,23 @@ thật liên quan tới Sales Order đó (lấy từ D365 theo điều kiện PO
 khớp Sales ID này), tick chọn (các) PO áp dụng cho hồ sơ EUTR rồi nhấn **Save PO Mapping** để lưu lại
 lựa chọn; nếu Sales Order đã từng được lưu PO trước đó, các PO đó tự động được tick sẵn khi mở lại, và
 người dùng vẫn có thể tick chọn thêm các PO khác chưa từng được lưu (miễn PO đó có sẵn template từ
-D365) trước khi Save lại. Bảng PO ở Step 1 còn hiển thị thêm hai cột **Variants** và **Materials**
-(từ Update 17) — lấy động từ một nguồn tham chiếu khác (reference type = 20) theo đúng PO của dòng đó,
-gộp lại thành danh sách trong 1 ô (ví dụ Materials hiển thị "M01, M02") khi PO có nhiều dòng hàng ứng
-với nhiều Material/Variant khác nhau; hai cột này chỉ để xem thêm thông tin, không ảnh hưởng tới việc
-tick chọn/Save PO Mapping. Người dùng cũng có thể nhấn nút **Back** để quay lại màn hình EUTR Sales
-Orders bất cứ lúc nào. Ở
+D365) trước khi Save lại. **Từ Update 34** (bổ sung cột **Unit** ở Update 35), bảng PO ở Step 1 lấy toàn
+bộ dữ liệu hiển thị (PO, Template, Order account, Vendor name, **Variant**, **Material**, **Qty**,
+**Unit**, **Percentage used**) trực tiếp từ một nguồn tham chiếu duy nhất (reference type = 20,
+`RSVNEutrSalesOrderPurchLines`) theo đúng PO của dòng đó
+— mỗi dòng hàng (line) của PO ứng với đúng 1 dòng hiển thị riêng biệt, không còn gộp nhiều dòng hàng của
+cùng 1 PO thành 1 ô dạng danh sách như trước Update 34; các cột này chỉ để xem thêm thông tin, không ảnh
+hưởng tới việc tick chọn/Save PO Mapping (vẫn hoạt động ở cấp PO). Người dùng cũng có thể nhấn nút
+**Back** để quay lại màn hình EUTR Sales Orders bất cứ lúc nào. Ở
 **Step 2**, người dùng thấy cây thư mục của (các) template gắn với PO đã lưu, cùng danh sách tài
 liệu (AVAILABLE FILES) đã có sẵn cho các PO đó, mỗi tài liệu hiển thị đúng vị trí (step) trong cây mà
-nó thuộc về. Nút **Upload** (UploadIcon) mở đúng popup Add tài liệu đã dùng ở màn hình EUTR Documents
+nó thuộc về. **(Update 37)** Mỗi node Step trong cây đã có ít nhất một tài liệu khớp MUST hiển thị
+nhãn = tên file (bỏ đuôi) của tài liệu khớp đầu tiên, thay cho tên Step; node CHƯA có tài liệu nào
+khớp tiếp tục hiển thị đúng tên Step. Nút **Upload** (UploadIcon) mở đúng popup Add tài liệu đã dùng ở màn hình EUTR Documents
 (004-eutr-documents), cho phép người dùng chọn Type/Step/Value và tải file thật lên, ghi bản ghi tài
-liệu/tham chiếu thật; nút **Edit** trên từng tài liệu mở đúng popup Edit tài liệu của 004-eutr-documents
+liệu/tham chiếu thật — **(Update 37)** với Type = "PO", tên file MUST được xác định bằng cách so khớp
+tên file với tên (các) Step đã gán cho Type "PO" (không còn qua `eutr_master_documents`) và MUST giữ
+nguyên tên file gốc, không đổi tên (kế thừa `004-eutr-documents` Update 29); nút **Edit** trên từng tài liệu mở đúng popup Edit tài liệu của 004-eutr-documents
 cho tài liệu đó (Type khóa, Step/Value chip/Valid dates chỉnh sửa theo đúng quy tắc của 004), Save trên
 popup này cập nhật dữ liệu thật. Sau khi Upload hoặc Save thành công, AVAILABLE FILES và Map status của
 cây template MUST cập nhật ngay theo dữ liệu mới. Toolbar cây template hiển thị đầy đủ các template đã
@@ -1586,6 +2037,23 @@ màn hình EUTR Sales Orders.
     dòng AVAILABLE FILES hoặc bên trong popup View), **When** nhấn nút Download có sẵn trong popup,
     **Then** tên file tải về cũng áp dụng đúng công thức = Step Name + đuôi file gốc như FR-194/FR-195
     (không còn dùng tên đã lưu như hành vi trước Update 33).
+35. **(Update 37, FR-216)** **Given** Step "1.Invoice" trong cây template đang có 1 tài liệu khớp với
+    `eutr_documents.Name` = `"1.Invoice AP-PD.pdf"`, **When** xem cây Step ở Step 2, **Then** node của
+    Step đó hiển thị nhãn = `"1.Invoice AP-PD"` (bỏ đuôi `.pdf`) thay cho `"1.Invoice"`.
+36. **(Update 37, FR-216)** **Given** Step "2.Packing list" trong cây template CHƯA có tài liệu nào
+    khớp, **When** xem cây Step, **Then** node đó tiếp tục hiển thị nhãn = `"2.Packing list"` (tên
+    Step, không đổi).
+37. **(Update 37, FR-216)** **Given** một Step có nhiều hơn 1 tài liệu khớp (badge "+N"), **When** xem
+    nhãn node đó, **Then** nhãn hiển thị = tên file (bỏ đuôi) của tài liệu **đầu tiên** trong danh sách
+    khớp; badge "+N" và tooltip tiếp tục liệt kê đầy đủ tên (kèm đuôi) của mọi tài liệu khớp còn lại,
+    không đổi.
+38. **(Update 37, FR-217)** **Given** một document có Type = "PO", tạo MỚI sau `004-eutr-documents`
+    Update 29 (File name = tên file gốc, không bị đổi tên), **When** nhấn nút Download (dòng AVAILABLE
+    FILES hoặc trong popup View), **Then** tên file tải về **đúng bằng** `eutr_documents.Name` đã lưu
+    (tên file gốc) — KHÔNG còn tính lại thành Step Name.
+39. **(Update 37, FR-217)** **Given** một document có Type khác "PO" (ví dụ "Invoice"), **When** nhấn
+    nút Download, **Then** tên file tải về tiếp tục áp dụng đúng công thức Step Name + đuôi file gốc
+    (FR-195/FR-196/FR-197) — không bị ảnh hưởng bởi Update 37.
 
 ---
 
@@ -1597,11 +2065,15 @@ dùng chung với Overview/Map File), hiển thị đúng thông tin Sales ID/Cu
 ô **Purchase Order(s)** ở header hiển thị (các) chip `PurchId` của (các) PO đã chọn cho Sales Order này
 (cùng nguồn dữ liệu với danh sách PO bên dưới — **thay cho ô "Template" hiển thị chip `TemplateCode`
 trước Update 26**), danh sách các **Purchase Order đã chọn** (lấy từ `eutr_purchase_attachments`, tra
-cứu thêm thông tin PO thật từ D365) — bảng này (`data-marker="selected-po-table"`) còn hiển thị hai cột
-**Variants** và **Materials** (từ Update 18), lấy dữ liệu thật theo đúng cách của bảng PO ở Step 1 Map
-File (Update 17): nguồn tham chiếu type = 20 lọc theo PO của từng dòng, gộp `ProductVariant`/`ItemId`
-duy nhất thành danh sách trong 1 ô — và **Template Checklist** — cây các bước của (các) template gắn
-với Sales Order đó.
+cứu thêm thông tin PO thật từ D365) — bảng này (`data-marker="selected-po-table"`) hiển thị các cột
+**Variant**, **Material**, **Qty**, **Unit**, **Percentage used** (Variants/Materials từ Update 18;
+Qty/Percentage used từ Update 34; Unit từ Update 35) lấy dữ liệu thật theo đúng cách của bảng PO ở Step 1
+Map File: **từ Update 34**, toàn bộ các cột này (cùng PO/Template/Order account/Vendor name) lấy trực
+tiếp từ một nguồn tham chiếu duy nhất (reference type = 20, `RSVNEutrSalesOrderPurchLines`) theo đúng PO
+của từng dòng — mỗi dòng hàng
+(line) của PO ứng với đúng 1 dòng hiển thị riêng biệt, không còn gộp `ProductVariant`/`ItemId` duy nhất
+thành danh sách trong 1 ô như trước Update 34 — và **Template Checklist** — cây các bước của (các)
+template gắn với Sales Order đó.
 Toolbar cây template (`data-marker="template-tree-toolbar"`) **từ Update 26 chỉ còn hiển thị đúng 1 tab
 duy nhất, nhãn "Template"** (trước đây là chip **All** cùng một chip riêng cho mỗi template đã lưu —
 (các) chip riêng đó nay bị ẩn); Template Checklist luôn hiển thị đúng cây gộp — cùng cơ chế dữ liệu đã
@@ -2179,6 +2651,94 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
   `FileId = null` (dữ liệu cũ trước khi có SharePoint): nút Download mới không kiểm tra riêng, gọi API
   như bình thường và nhận lỗi từ backend giống hệt hành vi hiện có của nút View khi thiếu `FileId`
   (không có xử lý đặc biệt mới nào cho trường hợp này).
+- (Update 34) Một PO có nhiều bản ghi type = 20 (nhiều dòng hàng): bảng Step 1/Selected Purchase Orders
+  hiển thị đúng từng dòng riêng biệt cho mỗi bản ghi; tick chọn ở 1 dòng bất kỳ của PO đó tự động phản
+  ánh trạng thái chọn ở các dòng còn lại cùng PO (do khóa chọn theo `RSVNRefPurchId`, không theo dòng
+  hiển thị) — không lưu trùng lặp khi Save PO Mapping.
+- (Update 34) Một bản ghi type = 20 có `Qty` hoặc `QtyPercent` rỗng: ô tương ứng hiển thị "—", không
+  suy diễn giá trị từ dòng khác của cùng PO.
+- (Update 34) Nguồn type = 20 lỗi/không phản hồi: toàn bộ bảng (không chỉ riêng 2 cột Variants/Materials
+  như trước Update 34) hiển thị trạng thái lỗi, vì bảng không còn nguồn type = 16 dự phòng cho các cột
+  PO/Template/Order account/Vendor name nữa.
+- (Update 34) Sales Order chưa có bản ghi type = 20 nào (0 dòng hàng cho mọi PO của Sales Order đó):
+  bảng hiển thị trạng thái trống ("No data"/tương đương), không phải trạng thái lỗi — khác với trường
+  hợp lỗi tải ở trên.
+- (Update 37) Step Name trùng với tên file của MỘT tài liệu khác (không khớp Step đó) tình cờ chứa
+  cùng chuỗi: không ảnh hưởng — nhãn cây (FR-216) chỉ đổi cho node Step thực sự có tài liệu khớp
+  (theo Map status "Mapped" hiện có, tính qua `eutr_references.StepId`), không dựa trên so khớp chuỗi
+  tên lần nữa ở bước hiển thị.
+- (Update 37) Tài liệu Type = "PO" tạo TRƯỚC `004-eutr-documents` Update 29 (File name đã lưu là Step
+  Name, không phải tên file gốc): nhãn cây (FR-216) vẫn hiển thị đúng giá trị đã lưu đó (trông giống
+  hệt tên Step) — không phải lỗi, chỉ là hệ quả của việc không backfill dữ liệu cũ; tải về (FR-217)
+  cũng cho ra tên tương tự (Step Name cũ).
+- (Update 37) Document Type = "PO" bị loại khỏi lượt upload vì "không tìm được step tương ứng" (kế
+  thừa `004-eutr-documents` FR-076): không tạo `eutr_documents`/`eutr_references`, nên không ảnh hưởng
+  AVAILABLE FILES/cây Step — hành vi giống hệt cách file bị loại vì sai định dạng/kích thước từ trước.
+- (Update 38, bug fix) Giá trị `Qty` thô từ D365 là số nguyên âm (không có phần thập phân, ví dụ
+  `"-15"`): công thức mới (FR-218) vẫn áp dụng đúng — trị tuyệt đối `15`, làm tròn 4 chữ số (không đổi
+  vì đã là số nguyên) → hiển thị `15`. Trước Update 38, giá trị này lẽ ra ĐÃ hiển thị đúng (vì
+  `long.TryParse` parse được số nguyên âm) — chỉ giá trị thập phân mới bị lỗi; Update 38 không làm thay
+  đổi kết quả hiển thị cho trường hợp số nguyên âm này, chỉ sửa đúng trường hợp có phần thập phân.
+- (Update 38, bug fix) Giá trị `Qty` thô đúng bằng `0` hoặc chuỗi rỗng: `decimal.TryParse` trả về
+  `false` cho chuỗi rỗng (fallback `0`, giống hành vi cũ) hoặc `true` với `qty = 0` cho chuỗi `"0"` —
+  cả hai trường hợp đều cho kết quả `0`, frontend tiếp tục coi `0` là falsy và hiển thị "—" (không đổi
+  so với trước Update 38 — đây là hành vi FR-204 đã có, không thuộc phạm vi sửa của Update 38).
+- (Update 40) 2 PO khác nhau, cùng TemplateCode, nhưng KHÔNG PO nào có Order account trùng nhau: mỗi
+  tab tính Mapped/Missing hoàn toàn độc lập theo đúng tài liệu của chính PO đó — không có tương tác
+  chéo nào giữa 2 tab.
+- (Update 40) 2 PO cùng Order account (cùng 1 Vendor): tài liệu Type = "Vendor" (RefValue = Order
+  account đó) MUST xuất hiện ở CẢ HAI tab (đúng theo công thức FR-221: khớp theo Order account của
+  chính PO đang xem) — khác hành vi trước Update 40, khi tài liệu dạng này chỉ tính vào 1 template duy
+  nhất nếu Vendor đó không gây "nhập nhằng nhiều template" (`buildPurchIdToTemplateCodeMap` cũ, nay
+  không còn dùng cho 2 màn hình này).
+- (Update 40) Sales Order chưa Save PO Mapping lần nào (`purchaseAttachments` rỗng): toolbar không có
+  tab nào, hiển thị đúng trạng thái "No template tree yet" hiện có (không đổi).
+- (Update 40) Xóa 1 PO khỏi Step 1 rồi Save lại (PO đó không còn trong `purchaseAttachments`): tab của
+  PO đó biến mất khỏi toolbar ngay; nếu tab đó đang được chọn xem, hệ thống tự chuyển sang tab đầu tiên
+  còn lại (cùng cơ chế "lựa chọn cũ không còn tồn tại" đã có ở Update 8/20).
+- (Update 41) PO chưa có tài liệu "Mapped" nào: thư mục của PO đó trong file zip rỗng (0 file) — không
+  bị loại khỏi zip, tiếp tục xuất hiện như 1 thư mục trống (giữ nguyên hành vi cũ của "By Template").
+- (Update 41) Toàn bộ PO đã lưu của Sales Order đều chưa có tài liệu "Mapped" nào: hiển thị đúng thông
+  báo "No documents available for download" hiện có (FR-074/FR-089), không gọi API tải file zip rỗng —
+  không đổi so với trước Update 41.
+- (Update 42) `SalesId` chưa từng qua bất kỳ 1 trong 4 thời điểm trigger ở FR-225 (kể cả sau khi đã
+  chạy backfill lần đầu — ví dụ 1 Sales Order hoàn toàn mới phát sinh giữa 2 lần chạy job và chưa có ai
+  Save PO Mapping/mở View/Upload tài liệu cho nó): Overview hiển thị trạng thái trống ở cột Progress,
+  giống hệt trường hợp chưa có bản ghi `eutr_purchase_attachments` (FR-228) — không phải lỗi.
+- (Update 42, SỬA LẠI sau khi triển khai — xem bug fix dưới FR-228) Người dùng mở màn hình View cho một
+  `SalesId`, nhưng `SalesId` đó chưa có bản ghi nào trong `eutr_purchase_attachments`: lượt recompute
+  (trigger 1) MUST **xóa** bản ghi `eutr_progression` của `SalesId` đó nếu có (KHÔNG ghi
+  `Total = Missing = Finished = 0`). Bản đặc tả gốc yêu cầu vẫn ghi `0/0/0` để "phân biệt với chưa từng
+  trigger" — phát hiện lỗi thực tế sau khi triển khai: cả hai trường hợp (chưa từng trigger, và đã
+  trigger nhưng không có attachment) đều PHẢI hiển thị giống hệt trạng thái trống (FR-083/FR-007b) cho
+  người dùng, nên phân biệt đó là thừa và gây lỗi hiển thị — Overview đọc bản ghi `Total = 0` không phân
+  biệt được đây là "0 vì chưa có Template" hay "0 vì có Template nhưng 0 step bắt buộc" (FR-084), hiển
+  thị sai thành "Không có step bắt buộc" cho những Sales Order thực ra CHƯA có Template nào (xác nhận
+  qua kiểm tra dữ liệu thật: nhiều `SalesId` có bản ghi `eutr_progression` với `Total = 0` nhưng 0 bản
+  ghi `eutr_purchase_attachments`). Từ bản sửa: "không có bản ghi `eutr_progression`" là điều kiện DUY
+  NHẤT cho trạng thái trống — khớp đúng 1-1 với FR-083, không cần phân biệt thêm.
+- (Update 42) Save PO Mapping XÓA hết PO cũ rồi lưu lại danh sách PO mới cho một `SalesId` (hành vi ghi
+  đè toàn bộ đã có từ Update 2) — lượt recompute `eutr_progression` sau khi Save PHẢI dùng đúng danh
+  sách PO MỚI (sau khi ghi đè), không dùng danh sách PO cũ trước khi Save.
+- (Update 42, sửa lại khi triển khai) Job `test-so-template-sync` chạy và không phát sinh `SalesId` mới
+  nào (toàn bộ đã tồn tại sẵn, bị bỏ qua theo dedupe hiện có): theo FR-225(3) bản đã sửa, KHÔNG có
+  `SalesId` nào được recompute trong lần chạy đó (khác dự kiến ban đầu — xem research.md Quyết định 99)
+  — `eutr_progression` của các `SalesId` này tiếp tục được giữ đúng qua trigger 4 (Upload/Xóa tài liệu
+  Type = "PO" cập nhật ngay tại thời điểm xảy ra) và backfill lúc triển khai (FR-230), không cần đợi job
+  chạy lại.
+- (Update 42) Upload/Xóa tài liệu ở Step 2 Map File cho một PO không có `TemplateCode` hợp lệ (PO chưa
+  từng Save PO Mapping — không xảy ra trong luồng UI bình thường vì Step 2 chỉ mở sau khi đã có PO đã
+  chọn ở Step 1): không có `SalesId`/PO nào để recompute, không phát sinh lỗi.
+- (Update 43) Chỉ nhập ConfigId, để trống ItemId (hoặc ngược lại): vẫn tra cứu bình thường, chỉ với
+  đúng 1 điều kiện đó (không bắt buộc phải nhập cả hai).
+- (Update 43) Danh sách `SalesId` tra được từ ItemId/ConfigId (FR-232) có số lượng rất lớn (ItemId phổ
+  biến, khớp hàng trăm/nghìn dòng hàng): không có giới hạn số lượng được đặc tả ở Update này — số lượng
+  `SalesId` đưa vào bucket AND-search (FR-233) tăng theo đúng số lượng đó; ảnh hưởng hiệu năng cụ thể
+  (nếu có) là quyết định kỹ thuật ở giai đoạn plan/implement, không thuộc phạm vi đặc tả nghiệp vụ.
+- (Update 43) Người dùng đã nhập ItemId/ConfigId và tìm kiếm, sau đó mở Map File/View của một dòng rồi
+  nhấn Back: áp dụng đúng cơ chế khôi phục từ khóa/trang đã có từ Update 14 — ItemId/ConfigId cũng MUST
+  được khôi phục lại đúng giá trị đã nhập trước đó (cùng nguyên tắc với từ khóa Sales ID/Customer và
+  Year/ETD Week, không có ngoại lệ riêng cho 2 ô mới này).
 
 ## Requirements *(mandatory)*
 
@@ -2673,7 +3233,9 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
   thay đổi bất kỳ hành vi nào khác đã có của màn hình View (chế độ chỉ đọc theo FR-042, các nút Edit /
   Map File, Download, Back, Template Checklist, Validation Summary, khu vực AVAILABLE FILES của
   Update 15).
-- **FR-129**: Toolbar `template-tree-toolbar` ở màn hình View MUST tiếp tục hiển thị chip **All** ở vị
+- **FR-129 (Update 26: bỏ chip khỏi toolbar, xem Update 26; Update 40: toolbar đổi hẳn sang 1 tab/1 PO;
+  Update 41: gỡ luôn phần dùng cho Download, xem FR-223)**: Toolbar `template-tree-toolbar` ở màn hình
+  View MUST tiếp tục hiển thị chip **All** ở vị
   trí đầu tiên, trước các chip template thật (giữ đúng vị trí hiện có) — nhưng thay thế hoàn toàn hành
   vi hiện tại (click All chỉ rơi về hiển thị lại cây/tài liệu của template đầu tiên, không có logic
   riêng) bằng logic thật ở các FR-130 đến FR-140 dưới đây.
@@ -2776,10 +3338,11 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
   FR-158.
 - **FR-151**: Việc bổ sung thư mục All KHÔNG MUST ghi/sửa/xóa bất kỳ bản ghi tài liệu/tham chiếu/purchase
   attachment/template nào — giữ đúng nguyên tắc chỉ đọc hiện có của thao tác Download (FR-076/FR-092).
-- **FR-152**: Nhấn nút Download (View: FR-069; Overview: FR-087) MUST hiển thị một popup cho người
-  dùng chọn đúng 1 trong 2 định dạng tải xuống trước khi tạo file zip — thay thế hoàn toàn hành vi tải
-  ngay lập tức cả hai góc nhìn (thư mục All và thư mục theo template) trong cùng 1 lần nhấn đã áp dụng
-  từ Update 21 (FR-149 trước khi cập nhật). **Mới từ Update 22**.
+- **FR-152 (Update 41, sửa lại — xem FR-223)**: ~~Nhấn nút Download (View: FR-069; Overview: FR-087)
+  MUST hiển thị một popup cho người
+  dùng chọn đúng 1 trong 2 định dạng tải xuống trước khi tạo file zip~~ — Update 41 bỏ hẳn popup này;
+  Download MUST tải ngay khi nhấn, không còn bước chọn định dạng nào (văn bản gốc bên dưới giữ lại làm
+  lịch sử Update 22, không còn phản ánh hành vi hiện tại).
 - **FR-153**: Popup MUST hiển thị đúng 2 lựa chọn, không thêm/bớt lựa chọn nào khác:
   1. **Combined (All)** — tương ứng nội dung/cấu trúc thư mục **All** (FR-142 đến FR-148).
   2. **By Template** — tương ứng nội dung/cấu trúc các thư mục con theo tên template (FR-071 đến
@@ -2846,19 +3409,34 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
   Sales Order xác định qua trường `InterCompanyOriginalSalesId` = Sales ID; mỗi PO có sẵn (các)
   thông tin định danh và một template gắn kèm từ D365. Dữ liệu này KHÔNG được tạo/sửa/xóa từ hệ
   thống này, chỉ được hiển thị và dùng làm nguồn để người dùng chọn lưu vào `eutr_purchase_attachments`.
-- **Purchase Order Line** (dữ liệu tham chiếu từ D365, reference type = 20, chỉ đọc — mới từ
-  Update 17): mỗi bản ghi gắn với một Sales Order (`InterCompanyOriginalSalesId`) và một PO
-  (`RSVNRefPurchId`), mang theo `ProductVariant` (Variant) và `ItemId` (Material) của dòng hàng đó;
-  một PO có thể có nhiều bản ghi loại này (nhiều dòng hàng). Dùng để dựng động hai cột **Variants**/
-  **Materials** ở bảng PO Step 1 của Map File, và từ Update 18, dùng đúng nguồn/cách gộp này cho hai
-  cột Variants/Materials ở bảng Selected Purchase Orders của màn hình View
-  (`data-marker="selected-po-table"`) — mỗi cột gộp các giá trị duy nhất của toàn bộ bản ghi khớp đúng
-  PO đó thành một danh sách hiển thị trong 1 ô. Dữ liệu này KHÔNG được tạo/sửa/xóa từ hệ thống này, chỉ
-  đọc và tổng hợp để hiển thị.
+  **Cập nhật từ Update 34**: không còn là nguồn dữ liệu hiển thị cho bảng PO Step 1 (Map File)/bảng
+  Selected Purchase Orders (View) — 2 bảng đó nay chỉ dùng **Purchase Order Line** (bên dưới) làm nguồn
+  duy nhất; reference type = 16 tiếp tục được dùng ở màn hình Overview cho mục đích riêng của nó, ngoài
+  phạm vi Update 34.
+- **Purchase Order Line** (model D365 `RSVNEutrSalesOrderPurchLines`, thư mục
+  `ComplianceSys.Domain/Dynamics`, reference type = 20, chỉ đọc — mới từ Update 17): mỗi bản ghi gắn với
+  một Sales Order (`InterCompanyOriginalSalesId`) và một PO (`RSVNRefPurchId`), mang theo `ProductVariant`
+  (Variant), `ItemId` (Material), `Qty`, `RSVNEutrTemplate` (Template), `OrderAccount`, `Name` (Vendor
+  name) của dòng hàng đó; một PO có thể có nhiều bản ghi loại này (nhiều dòng hàng). Từ Update 17/18 đến
+  trước Update 34, dùng để dựng động hai cột **Variants**/**Materials** (gộp giá trị duy nhất của toàn bộ
+  bản ghi khớp PO thành 1 chuỗi) ở bảng PO Step 1 của Map File và bảng Selected Purchase Orders của View
+  (`data-marker="selected-po-table"`), kết hợp thêm PO/Template/Order account/Vendor name lấy từ
+  **Purchase Order** (type = 16). **Cập nhật từ Update 34**: entity này trở thành nguồn dữ liệu **duy
+  nhất** cho cả 2 bảng trên — mỗi bản ghi ứng với đúng 1 dòng hiển thị (không gộp nhiều bản ghi cùng PO
+  thành 1 dòng nữa); ngoài `ProductVariant`/`ItemId`, các trường `RSVNRefPurchId`/`RSVNEutrTemplate`/
+  `OrderAccount`/`Name`/`Qty` cũng được dùng trực tiếp cho các cột PO/Template/Order account/Vendor
+  name/Qty tương ứng, và model được bổ sung thêm trường mới `QtyPercent` dùng cho cột **Percentage
+  used**. **Cập nhật từ Update 35**: model được bổ sung thêm trường mới `Unit`, dùng cho cột **Unit**
+  mới (đặt sau cột Qty, trước Percentage used) ở cả 2 bảng trên. Dữ liệu này KHÔNG được tạo/sửa/xóa từ
+  hệ thống này, chỉ đọc để hiển thị.
 - **Purchase Attachment** (bảng `eutr_purchase_attachments`) — **cập nhật từ Update 2**: ngoài vai
   trò nguồn đọc cho cột Template ở Overview (Update 1), bảng này nay còn là nơi Map File **ghi**
   lựa chọn PO của người dùng ở Step 1 (`SalesId`, `PurchId`, `TemplateCode`); Save PO Mapping thay
-  thế toàn bộ tập bản ghi hiện có của Sales ID đó theo đúng lựa chọn mới nhất trên UI.
+  thế toàn bộ tập bản ghi hiện có của Sales ID đó theo đúng lựa chọn mới nhất trên UI. **Cập nhật từ
+  Update 36**: bổ sung 2 cột `ProductVariant`/`ItemId` (`varchar(50)`, nullable) — mỗi bản ghi nay ứng
+  với đúng 1 dòng hàng PO cụ thể (`PurchId` + `ProductVariant` + `ItemId`) đã tick chọn, không còn 1
+  bản ghi/PO; 1 PO có nhiều dòng hàng được tick sẽ có nhiều bản ghi tương ứng, mỗi bản ghi độc lập với
+  các bản ghi khác cùng `PurchId`.
 - **Reference** (bảng `eutr_references`, nguồn dữ liệu thật cho AVAILABLE FILES ở Step 2): mỗi bản ghi
   gắn một tài liệu (`DocumentId`) với một PO (giá trị tham chiếu = `PurchId`) và một Step (`StepId`)
   trong cây template. Dùng để xác định tài liệu nào đã có sẵn cho (các) PO đã chọn ở Step 1, và tài
@@ -3059,20 +3637,210 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
   điều kiện với nút View hiện có, không phụ thuộc `permissionList`/quyền Edit ở FR-190).
   Nhấn nút MUST tải trực tiếp nội dung file thật qua `FileId` (dùng chung endpoint
   `get-file-by-idref` đã có, không cần endpoint mới) và lưu về máy người dùng — KHÔNG mở popup View.
-- **FR-195 (Update 33)**: Tên file khi tải về (cả nút Download mới ở FR-194 lẫn nút Download có sẵn
+- **FR-195 (Update 33; Type = "PO" sửa đổi ở Update 37, xem FR-217)**: Tên file khi tải về (cả nút
+  Download mới ở FR-194 lẫn nút Download có sẵn
   trong popup View, FR-097) MUST được **tính lại** tại thời điểm tải = `Name` của Step (không đọc
   thẳng giá trị đã lưu ở `eutr_documents.Name`/tên trả về từ `get-file-by-idref`) + đuôi file gốc
-  (giữ nguyên, không đổi) — áp dụng cho MỌI document, kể cả document tạo trước
-  `004-eutr-documents` Update 26 (còn giữ tên cũ dạng Prefix + Step Name trong `eutr_documents.Name`).
+  (giữ nguyên, không đổi) — áp dụng cho document Type khác "PO" (mọi document, kể cả document tạo trước
+  `004-eutr-documents` Update 26, còn giữ tên cũ dạng Prefix + Step Name trong `eutr_documents.Name`);
+  với Type = "PO", xem FR-217 (Update 37) — không còn tính lại.
   Việc tính lại tên này CHỈ ảnh hưởng thuộc tính `download` của link tải (tên file lưu về máy) — KHÔNG
   ghi đè `eutr_documents.Name` trong DB, KHÔNG ảnh hưởng cột File name hiển thị ở AVAILABLE FILES hay
   bất kỳ màn hình nào khác.
-- **FR-196 (Update 33)**: Khi 1 document khớp nhiều hơn 1 Step (nhiều chip Step name trên cùng dòng),
+- **FR-196 (Update 33)**: Khi 1 document Type khác "PO" khớp nhiều hơn 1 Step (nhiều chip Step name trên cùng dòng),
   tên file khi tải về (FR-195) MUST dùng Step **đầu tiên** trong danh sách Step đã khớp của document đó
   — không cần tie-break theo Prefix hay logic phức tạp khác.
-- **FR-197 (Update 33)**: Với document KHÔNG có Step nào khớp (danh sách Step rỗng — trường hợp hiếm/
+- **FR-197 (Update 33)**: Với document Type khác "PO" KHÔNG có Step nào khớp (danh sách Step rỗng — trường hợp hiếm/
   dữ liệu bất thường), tên file khi tải về MUST fallback về tên gốc đã lưu (`eutr_documents.Name`),
   giữ nguyên đuôi file gốc — không tạo tên rỗng.
+- **FR-216 (Update 37)**: Trên cây Step ở Step 2 (`TreeNode`, `MapFilePage.jsx`), mỗi node Step đang
+  có ít nhất một tài liệu khớp (Map status "Mapped") MUST hiển thị nhãn = tên file (bỏ phần mở rộng)
+  của tài liệu khớp **đầu tiên** trong danh sách khớp Step đó, thay cho `Name` của Step. Node Step
+  KHÔNG có tài liệu nào khớp (Map status "No map") MUST tiếp tục hiển thị `Name` của Step như hành vi
+  hiện có. Badge "+N"/tooltip liệt kê đầy đủ tên (kèm đuôi) của các tài liệu khớp còn lại (Update 31)
+  giữ nguyên không đổi. Áp dụng cho mọi Type tài liệu, không riêng Type = "PO".
+- **FR-217 (Update 37)**: Với document có Type = "PO", tên file khi tải về (cả nút Download mới ở
+  FR-194 lẫn nút Download có sẵn trong popup View) KHÔNG còn được tính lại theo FR-195/FR-196/FR-197 —
+  MUST dùng đúng `eutr_documents.Name` đã lưu (từ `004-eutr-documents` Update 29 trở đi, giá trị này
+  là tên file gốc đã upload) + đuôi file gốc, không đổi. Document Type = "PO" tạo TRƯỚC
+  `004-eutr-documents` Update 29 (còn giữ File name đã đổi theo Step ở Update 25/26) tải về đúng tên
+  đã lưu đó (Step Name cũ) — không có migration/backfill nào phục hồi lại tên file gốc đã mất.
+- **FR-198 (Update 34)**: Bảng PO ở Step 1 (Map File) và bảng Selected Purchase Orders (View,
+  `data-marker="selected-po-table"`) MUST lấy toàn bộ dữ liệu hiển thị (PO, Template, Order account,
+  Vendor name, Variant, Material, Qty, Percentage used) trực tiếp từ reference type = 20
+  (`RSVNEutrSalesOrderPurchLines`), lọc theo `InterCompanyOriginalSalesId` = Sales ID hiện tại — thay
+  thế hoàn toàn việc kết hợp reference type = 16 (FR-017) với type = 20 gộp chuỗi (FR-113 đến FR-128) đã
+  áp dụng trước Update này. Mỗi bản ghi type = 20 khớp điều kiện MUST trở thành đúng 1 dòng trong bảng —
+  không còn gộp nhiều bản ghi của cùng 1 PO thành 1 dòng duy nhất.
+- **FR-199 (Update 34)**: Trên mỗi dòng, giá trị hiển thị MUST lấy trực tiếp, không qua bước gộp/nối
+  chuỗi nào: PO = `RSVNRefPurchId`, Template = `RSVNEutrTemplate`, Order account = `OrderAccount`, Vendor
+  name = `Name`, Variant = `ProductVariant`, Material = `ItemId` — thay thế hoàn toàn cơ chế gộp nhiều
+  `ItemId`/`ProductVariant` duy nhất thành 1 chuỗi phân tách bằng dấu phẩy đã đặc tả ở FR-116/FR-124.
+- **FR-200 (Update 34; công thức sửa lại ở Update 38, xem FR-218)**: Bảng MUST hiển thị thêm 1 cột mới
+  **Qty**, đặt ngay sau cột **Material**, lấy
+  giá trị từ trường `Qty` của đúng bản ghi type = 20 của dòng đó.
+- **FR-201 (Update 34)**: Cột **Percentage used** MUST đổi sang lấy giá trị từ trường `QtyPercent` của
+  đúng bản ghi type = 20 của dòng đó — thay thế hoàn toàn giá trị tạm hiện tại (giá trị `Qty` ở cấp PO
+  header từ reference type = 16, gắn thêm ký hiệu "%").
+- **FR-202 (Update 34)**: Model D365 `RSVNEutrSalesOrderPurchLines` (reference type = 20, thư mục
+  Dynamics) hiện KHÔNG có trường `QtyPercent` — hệ thống MUST tự động bổ sung trường này vào model, và
+  bảo đảm nó được trả về xuyên suốt qua nguồn tham chiếu dùng chung mà giao diện đang gọi (cùng cơ chế
+  các trường `Qty`/`ProductVariant`/`ItemId` khác của model này đã được trả về) để cột Percentage used
+  ở FR-201 có dữ liệu thật hiển thị — không phải giá trị demo/giả hay để trống vĩnh viễn.
+- **FR-203 (Update 34)**: Checkbox **Select** và điều kiện vô hiệu hoá theo PO chưa có Template (FR-022)
+  MUST tiếp tục hoạt động đúng ở cấp PO (theo giá trị `RSVNRefPurchId`) như hành vi hiện có — khi cùng 1
+  PO xuất hiện trên nhiều dòng (do PO đó có nhiều bản ghi type = 20), chọn/bỏ chọn ở bất kỳ dòng nào của
+  PO đó MUST phản ánh đồng bộ trạng thái chọn ở mọi dòng khác cùng PO, và Save PO Mapping (FR-020/
+  FR-021) tiếp tục lưu đúng 1 bản ghi cho mỗi PO duy nhất, không lưu trùng lặp theo số dòng hiển thị.
+- **FR-204 (Update 34)**: Nếu một bản ghi type = 20 có trường `Qty` hoặc `QtyPercent` rỗng/không có giá
+  trị, ô tương ứng của dòng đó MUST hiển thị trạng thái trống rõ ràng (ví dụ "—") — theo đúng quy ước
+  trống đã áp dụng cho Variant/Material ở FR-118/FR-126, không hiển thị "undefined"/"null"/giá trị 0
+  giả định.
+- **FR-205 (Update 34)**: Nếu nguồn dữ liệu type = 20 tạm thời không phản hồi hoặc trả lỗi, TOÀN BỘ bảng
+  (Step 1 Map File hoặc Selected Purchase Orders của View) MUST hiển thị trạng thái lỗi/tải thất bại rõ
+  ràng — khác với hành vi trước Update này (FR-119/FR-127), khi lỗi type = 20 chỉ ảnh hưởng riêng 2 cột
+  Variants/Materials còn các cột khác từ type = 16 vẫn hiển thị bình thường; từ Update này bảng không
+  còn nguồn type = 16 nào để hiển thị dự phòng.
+- **FR-206 (Update 34)**: Cơ chế tải dữ liệu type = 20 theo lô (1 lần gọi theo
+  `InterCompanyOriginalSalesId`, không gọi riêng theo từng PO — N+1) đã đặc tả ở FR-117/FR-125 MUST tiếp
+  tục được áp dụng cho cách tải mới này.
+- **FR-207 (Update 35)**: Bảng PO ở Step 1 (Map File) và bảng Selected Purchase Orders (View) MUST hiển
+  thị thêm 1 cột mới **Unit**, đặt ngay sau cột **Qty** (trước cột **Percentage used**), lấy giá trị từ
+  trường `Unit` của đúng bản ghi type = 20 (`RSVNEutrSalesOrderPurchLines`) của dòng đó — lấy trực tiếp,
+  không qua bước gộp/nối chuỗi nào, theo đúng cơ chế đã áp dụng cho các cột khác ở FR-199.
+- **FR-208 (Update 35)**: Model D365 `RSVNEutrSalesOrderPurchLines` (reference type = 20, thư mục
+  Dynamics) hiện KHÔNG có trường `Unit` — hệ thống MUST tự động bổ sung trường này vào model, và bảo đảm
+  nó được trả về xuyên suốt qua nguồn tham chiếu dùng chung mà giao diện đang gọi (cùng cơ chế đã áp
+  dụng cho trường `QtyPercent` ở FR-202) để cột Unit ở FR-207 có dữ liệu thật hiển thị — không phải giá
+  trị demo/giả hay để trống vĩnh viễn.
+- **FR-209 (Update 35)**: Nếu một bản ghi type = 20 có trường `Unit` rỗng/không có giá trị, ô Unit của
+  dòng đó MUST hiển thị trạng thái trống rõ ràng (ví dụ "—") — theo đúng quy ước trống đã áp dụng cho
+  Qty/Percentage used ở FR-204, không hiển thị "undefined"/"null".
+- **FR-210 (Update 35)**: Cột Unit MUST áp dụng đúng các quy tắc chung đã đặc tả ở Update 34 cho toàn bộ
+  bảng — tải theo lô cùng 1 lần gọi type = 20 (FR-206, không N+1), lỗi tải nguồn type = 20 khiến toàn bộ
+  bảng hiển thị trạng thái lỗi (FR-205), và không ảnh hưởng tới hành vi Select/disable-checkbox/Save PO
+  Mapping (FR-203).
+- **FR-211 (Update 36)**: Bảng `eutr_purchase_attachments` MUST bổ sung 2 cột mới `ProductVariant` và
+  `ItemId` (kiểu `varchar(50)`, cho phép NULL) — lưu đúng Variant/Material của dòng hàng PO cụ thể đã
+  tick chọn, lấy từ trường `ProductVariant`/`ItemId` của reference type = 20 tương ứng.
+- **FR-212 (Update 36)**: Select checkbox ở Step 1 MUST khóa theo bộ ba (`RSVNRefPurchId`,
+  `ProductVariant`, `ItemId`) của đúng dòng hàng đang xét — thay thế hoàn toàn cách khóa chỉ theo
+  `RSVNRefPurchId` (FR-203). Một PO có nhiều dòng hàng MUST cho phép tick chọn độc lập từng dòng — tick
+  1 dòng KHÔNG còn tự động tick các dòng khác cùng PO.
+- **FR-213 (Update 36)**: Khi nhấn Save PO Mapping, hệ thống MUST lưu đúng 1 bản ghi
+  `eutr_purchase_attachments` cho MỖI dòng hàng đã tick chọn (không dedupe/gộp theo PO) — mỗi bản ghi
+  gồm `SalesId`/`PurchId`/`TemplateCode` (như FR-020) cộng thêm `ProductVariant`/`ItemId` của đúng dòng
+  hàng type = 20 đã tick — thay thế hoàn toàn cách lưu 1 bản ghi/PO của FR-020/FR-021. Ngữ nghĩa
+  "replace toàn bộ tập bản ghi cũ" của FR-021 MUST được giữ nguyên, chỉ đổi đơn vị lưu.
+- **FR-214 (Update 36)**: Khi mở lại Step 1, các dòng hàng đã tick sẵn (FR-019) MUST được xác định
+  bằng cách khớp đúng bộ ba (`PurchId`, `ProductVariant`, `ItemId`) của bản ghi `eutr_purchase_
+  attachments` đã lưu với đúng dòng hàng type = 20 tương ứng — không còn tick sẵn toàn bộ dòng hàng
+  của 1 PO chỉ vì PO đó đã từng được lưu.
+- **FR-215 (Update 36)**: Bảng Selected Purchase Orders ở màn hình View MUST hiển thị đúng CÁC dòng
+  hàng đã lưu (khớp theo đúng bộ ba `PurchId`/`ProductVariant`/`ItemId`) — không còn hiển thị toàn bộ
+  dòng hàng type = 20 của một PO đã lưu như hành vi FR-198 (Update 34/35). Số đếm "Selected Purchase
+  Orders (N)" và (các) chip PO ở header MUST tiếp tục đếm/hiển thị theo số PO duy nhất (dedupe theo
+  `PurchId`), không đổi theo số dòng hàng đã chọn.
+- **FR-218 (Update 38, bug fix)**: Giá trị hiển thị ở cột **Qty** (Step 1 và Selected Purchase Orders,
+  FR-200) MUST luôn KHÔNG ÂM (lấy trị tuyệt đối của giá trị thô từ nguồn type = 20) và MUST được làm
+  tròn đúng **4 chữ số thập phân** (`MidpointRounding.AwayFromZero`, không dùng mặc định `ToEven` của
+  `Math.Round`) — ví dụ giá trị thô `"-49.154850"` MUST hiển thị `49.1549`. Giá trị dương giữ nguyên
+  dấu, chỉ áp dụng bước làm tròn 4 chữ số thập phân như trên. Bản ghi type = 20 có `Qty` rỗng/không
+  parse được vẫn hiển thị trạng thái trống (FR-204 không đổi) — KHÔNG áp dụng công thức trị tuyệt
+  đối/làm tròn cho trường hợp này.
+- **FR-219 (Update 39)**: Bảng PO ở Step 1 (Map File) và bảng Selected Purchase Orders (View) MUST
+  hiển thị các cột dữ liệu theo đúng thứ tự: **Template** → **Variant** → **Material** → **Qty** →
+  **Percentage used** → **Unit** → **PO** → **Order account** → **Vendor name** — cột **Select**
+  (riêng của Step 1) MUST tiếp tục đứng đầu, trước Template. Không đổi tên cột, công thức tính, hay
+  logic nào khác ngoài thứ tự hiển thị.
+- **FR-220 (Update 40)**: Toolbar cây Template ở Step 2 (Map File) và Template Checklist (View) MUST
+  hiển thị đúng 1 tab cho MỖI PO đã lưu (`eutr_purchase_attachments`, dedupe theo `PurchId`) — KHÔNG
+  còn dedupe/gộp theo `TemplateCode`. 2 PO dùng chung 1 TemplateCode MUST có 2 tab riêng biệt. Mỗi tab
+  MUST hiển thị đúng 2 dòng: dòng 1 = PurchId, dòng 2 = tên Template của PO đó.
+- **FR-221 (Update 40)**: Với mỗi tab/PO, tài liệu dùng để tính Mapped/Missing và hiển thị trên cây
+  MUST chỉ gồm tài liệu của CHÍNH PO đó (`poCode` = PurchId của PO đó, hoặc = Order account/Vendor
+  code của chính PO đó cho tài liệu Type = "Vendor") — không còn gộp chung tài liệu của PO khác dù
+  cùng dùng 1 template. Số liệu "Mapped: X/Y required steps" (header) MUST cộng dồn qua từng phép tính
+  riêng của từng PO (không phải từng template).
+- **FR-222 (Update 40; sửa lại ở Update 41, xem FR-223)**: Toolbar Template Checklist của View KHÔNG
+  còn tab "Template" gộp chung
+  (chế độ "All", trước đây là tab duy nhất từ Update 26) — thay bằng đúng N tab theo N PO đã lưu, cùng
+  định dạng FR-220. Nút Download (zip) tạo 1 thư mục zip riêng cho MỖI PO (đặt tên `"{PurchId} - {Tên
+  Template}"`) thay vì 1 thư mục/1 TemplateCode — MUST áp dụng cho MỌI lượt Download (không còn là 1
+  trong 2 lựa chọn định dạng, xem FR-223).
+- **FR-223 (Update 41)**: Nút Download ở CẢ HAI màn hình dùng chung thư mục `eutr-sales-orders`
+  (Overview: mỗi dòng; View: toolbar) MUST tải file zip NGAY khi nhấn — KHÔNG còn hiển thị popup chọn
+  định dạng (`DownloadFormatDialog`, FR-152 đến FR-160 cũ). File zip MUST luôn có cấu trúc: mỗi PO đã
+  lưu có đúng 1 thư mục riêng (tên `"{PurchId} - {Tên Template}"`), chứa TOÀN BỘ tài liệu đã "Mapped"
+  của PO đó ở dạng PHẲNG (không có thư mục con theo Step). Chế độ "Combined (All)" (cây thư mục lồng
+  nhau theo Step của template mặc định toàn hệ thống, FR-129 đến FR-151) MUST bị loại bỏ hoàn toàn —
+  không còn đường nào để người dùng chọn chế độ này.
+- **FR-224 (Update 42)**: Hệ thống MUST có bảng `eutr_progression` (`Id, SalesId, Total, Missing,
+  Finished`) — đúng 1 bản ghi cho mỗi `SalesId` đã từng được tính, lưu sẵn kết quả tính Progress theo
+  đúng công thức hiện có (`Total`/`Missing`/`Finished` — không định nghĩa lại quy tắc Required/
+  `AUTO_SOURCES`/cặp PO-Template ở FR-077 đến FR-079): `Total` = tổng số step `requirementType =
+  Required` (loại trừ `AUTO_SOURCES`) cộng dồn qua MỌI (PO, Template) đã lưu trong
+  `eutr_purchase_attachments` của `SalesId` đó; `Finished` = trong `Total` đó, số step đã có ≥1 tài
+  liệu "đã map"; `Missing` = `Total − Finished`.
+- **FR-225 (Update 42; mục (3) sửa lại khi triển khai, xem research.md Quyết định 99)**: Hệ thống MUST
+  tính lại (recompute) và ghi đè (upsert — thay giá trị cũ, không cộng dồn lịch sử) bản ghi
+  `eutr_progression` của (các) `SalesId` liên quan tại đúng 4 thời điểm: (1) người dùng mở màn hình View
+  cho một `SalesId`; (2) Save PO Mapping lưu thành công cho một `SalesId`; (3) job `test-so-template-sync`
+  chạy xong, cho các `SalesId` MỚI được thêm vào `eutr_purchase_attachments` trong lần chạy đó — KHÔNG
+  còn bao gồm `SalesId` bị bỏ qua vì đã tồn tại sẵn (lý do hiệu năng, xem Clarifications Update 42 và
+  research.md Quyết định 99); (4) Upload hoặc Xóa thành công một tài liệu Type = "PO" ở Step 2 Map File
+  cho một PO thuộc `SalesId` đó (giới hạn: tài liệu Type = "Vendor" chưa trigger, xem Clarifications).
+  KHÔNG có cơ chế tính động/fallback nào khác ngoài 4 thời điểm này.
+- **FR-226 (Update 42)**: Job `test-so-template-sync` (`SyncSalesOrderTemplatesAsync`) khi thêm bản ghi
+  mới vào `eutr_purchase_attachments` MUST lưu thêm `ProductVariant`/`ItemId` lấy từ cùng lượt đọc
+  D365 refType=19 hiện có (không phát sinh lượt gọi D365 riêng) — hành vi dedupe hiện có (bỏ qua toàn
+  bộ `SalesId` nếu đã tồn tại bản ghi) KHÔNG đổi; bản ghi cũ đã tồn tại từ trước Update này (đang
+  `ProductVariant`/`ItemId` = `null`) KHÔNG bị job này ghi đè lại hồi tố.
+- **FR-227 (Update 42)**: Cột **Progress** ở Overview (`/eutr/sales-orders`) MUST chỉ dựa vào `SalesId`
+  của dòng đó JOIN với bảng `eutr_progression` để lấy `Finished`/`Total` (và tính `pct = Finished /
+  Total`) — thay thế hoàn toàn cơ chế tính động 3-4 lượt gọi API + vòng lặp client cũ (FR-082/FR-085
+  phiên bản trước Update 42); KHÔNG còn gọi `by-sales-ids-raw`/`by-codes`/`list-po-references` để tính
+  Progress cho Overview.
+- **FR-228 (Update 42; sửa lại sau khi triển khai — bug fix)**: Nếu `SalesId` của một dòng ở Overview
+  chưa có bản ghi nào trong `eutr_progression`, cột Progress của dòng đó MUST hiển thị trạng thái trống,
+  giữ đúng quy tắc trống hiện có (FR-083); nếu có bản ghi `eutr_progression` với `Total = 0`, cột
+  Progress MUST hiển thị trạng thái "không có step bắt buộc" (FR-084) — không suy diễn thành 0%.
+  **"Không có bản ghi" MUST là điều kiện DUY NHẤT cho trạng thái trống** — recompute (FR-225) MUST xóa
+  (không phải ghi `0/0/0`) bản ghi `eutr_progression` của một `SalesId` bất cứ khi nào `SalesId` đó
+  không còn bản ghi `eutr_purchase_attachments` nào, để "có bản ghi với `Total = 0`" luôn có nghĩa
+  chính xác là "có Template đã lưu nhưng 0 step bắt buộc" (FR-084), không bao giờ lẫn với "chưa có
+  Template" (bug đã phát hiện và sửa sau khi triển khai bản gốc — xem Edge Cases/research.md).
+- **FR-229 (Update 42)**: Màn hình View và Map File (`ViewSalesOrderPage.jsx`/`MapFilePage.jsx`) KHÔNG
+  đổi cách tính Progress/checklist chi tiết theo từng step hiện có (`requiredDetails`/`mappedRequired`/
+  `missingRequired`, FR-062/FR-077 đến FR-081) — 2 màn hình này tiếp tục tính động như trước Update 42
+  (cần biết đúng step nào còn thiếu, không chỉ 3 số đếm tổng mà `eutr_progression` lưu); bảng
+  `eutr_progression` chỉ được đọc bởi cột Progress ở Overview (FR-227).
+- **FR-230 (Update 42)**: Khi triển khai Update này, hệ thống MUST thực hiện một lượt backfill 1 lần,
+  tính và ghi bản ghi `eutr_progression` cho mọi `SalesId` đang có ≥1 bản ghi trong
+  `eutr_purchase_attachments` trước thời điểm triển khai — tránh Overview hiển thị trạng thái trống cho
+  các Sales Order đã có Template/tài liệu từ trước, chỉ vì `SalesId` đó chưa từng qua 1 trong 4 thời
+  điểm trigger ở FR-225 sau khi triển khai. Triển khai thực tế: `GET /api/eutr-progression/backfill-all`
+  (`EutrProgressionController.BackfillAll`) — gọi thủ công 1 lần sau khi deploy, không chạy tự động theo
+  lịch (xem research.md Quyết định 101).
+- **FR-231 (Update 43)**: Overview (`/eutr/sales-orders`) MUST hiển thị thêm 2 ô nhập liệu **ItemId** và
+  **ConfigId** trên cùng thanh công cụ tìm kiếm hiện có (cùng hàng với Year/ETD Week/ô tìm kiếm chính/
+  nút Search/Clear) — chỉ áp dụng khi nhấn **Search** (giống mọi điều kiện khác trên thanh này, KHÔNG tự
+  động lọc khi gõ).
+- **FR-232 (Update 43)**: Khi nhấn Search với ItemId và/hoặc ConfigId có giá trị, hệ thống MUST gọi
+  `POST /api/dynamics/reference` với `refType = 21` (`RSVNSalesLineOpenInvoiceCogs`, đăng ký mới ở
+  Update này) để lấy danh sách `SalesId` khớp — filter theo `ItemId`/`ConfigId` (khớp đúng, `eq`); nếu
+  CẢ HAI cùng có giá trị, hai điều kiện MUST kết hợp AND (khớp đúng 1 dòng hàng có cả ItemId VÀ ConfigId
+  đó).
+- **FR-233 (Update 43)**: Danh sách `SalesId` lấy được ở FR-232 MUST được dùng để lọc kết quả chính
+  (`refType = 11`) theo kiểu THU HẸP (AND) với các điều kiện khác đang áp dụng (từ khóa Sales ID/
+  Customer, Year/ETD Week) — KHÔNG được gộp chung vào cụm OR-search hiện có của ô tìm kiếm chính
+  (khác cơ chế `"custaccount"`/`"vendorcode"` đã có, vốn MỞ RỘNG kết quả).
+- **FR-234 (Update 43)**: Nếu bước tra cứu ở FR-232 trả về danh sách `SalesId` rỗng (ItemId/ConfigId
+  không khớp bất kỳ dòng hàng nào), bảng Overview MUST hiển thị trạng thái trống ("No data", cùng quy
+  tắc FR-012) — KHÔNG bỏ qua điều kiện ItemId/ConfigId để hiển thị lại danh sách không lọc.
+- **FR-235 (Update 43)**: Khi nhấn nút **Clear** hiện có, hệ thống MUST xóa luôn cả giá trị ô ItemId và
+  ConfigId (cùng với Year/ETD Week/từ khóa hiện có) và tải lại danh sách mặc định — cùng hành vi nhất
+  quán đã áp dụng cho mọi điều kiện khác trên thanh công cụ này.
 
 ## Success Criteria *(mandatory)*
 
@@ -3342,6 +4110,66 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
   gốc — kể cả với document tạo trước `004-eutr-documents` Update 26 (còn giữ tên cũ dạng Prefix + Step
   Name trong `eutr_documents.Name`, ví dụ document trong ảnh chụp màn hình gốc của yêu cầu này). 100%
   lượt tải cũng áp dụng đúng công thức này khi dùng nút Download có sẵn trong popup View.
+- **SC-097 (Update 34)**: 100% dòng trong bảng PO Step 1 (Map File) và bảng Selected Purchase Orders
+  (View) hiển thị đúng Variant/Material là giá trị `ProductVariant`/`ItemId` của chính bản ghi type = 20
+  tương ứng dòng đó — 0% dòng còn hiển thị chuỗi gộp nhiều giá trị phân tách bằng dấu phẩy.
+- **SC-098 (Update 34)**: 100% dòng hiển thị đúng cột **Qty** mới lấy từ trường `Qty` của bản ghi type =
+  20 tương ứng, và đúng cột **Percentage used** lấy từ trường `QtyPercent` — 0% dòng còn hiển thị giá
+  trị Qty ở cấp PO header (reference type = 16) tại cột Percentage used.
+- **SC-099 (Update 34)**: 100% PO có nhiều bản ghi type = 20 (nhiều dòng hàng) hiển thị đúng số dòng
+  tương ứng trong bảng (1 dòng / 1 bản ghi), và việc tick chọn ở bất kỳ dòng nào của PO đó phản ánh đồng
+  bộ ở mọi dòng còn lại cùng PO — 0% trường hợp Save PO Mapping lưu trùng lặp hoặc thiếu 1 PO đã chọn.
+- **SC-100 (Update 34)**: 0% bảng còn hiển thị "undefined"/"null" hoặc dữ liệu demo tại cột Qty/
+  Percentage used khi trường tương ứng rỗng; 100% trường hợp nguồn type = 20 lỗi hiển thị đúng trạng
+  thái lỗi rõ ràng cho toàn bộ bảng (không chỉ riêng 2 cột Variants/Materials như trước Update 34).
+- **SC-101 (Update 35)**: 100% dòng trong bảng PO Step 1 (Map File) và bảng Selected Purchase Orders
+  (View) hiển thị đúng cột **Unit** mới lấy từ trường `Unit` của bản ghi type = 20 tương ứng — 0% dòng
+  hiển thị "undefined"/"null" khi trường này rỗng (hiển thị "—" thay thế).
+- **SC-102 (Update 36)**: 100% trường hợp 1 PO có nhiều dòng hàng (Variant/Material khác nhau) cho
+  phép tick chọn độc lập từng dòng ở Step 1 — 0% trường hợp tick 1 dòng làm tự động tick/bỏ tick các
+  dòng khác cùng PO. Sau khi Save PO Mapping và tải lại trang, đúng các dòng đã tick (không thừa/thiếu
+  dòng nào) hiển thị tick sẵn, khớp theo cả PO lẫn Variant/Material — 0% trường hợp tick nhầm dòng khác
+  cùng PO có Variant/Material khác. Bảng Selected Purchase Orders ở View hiển thị đúng số dòng đã chọn
+  thực tế (không phải toàn bộ dòng hàng của PO đó), trong khi số đếm "Selected Purchase Orders (N)" và
+  chip PO ở header vẫn đúng bằng số PO duy nhất.
+- **SC-103 (Update 37)**: 100% node Step trong cây template có ít nhất một tài liệu khớp hiển thị nhãn
+  = tên file (bỏ đuôi) của tài liệu khớp đầu tiên thay cho tên Step; 100% node Step chưa có tài liệu
+  khớp tiếp tục hiển thị đúng tên Step.
+- **SC-104 (Update 37)**: 100% lượt Download (dòng AVAILABLE FILES hoặc popup View) trên document Type
+  = "PO" tải về file với tên đúng bằng `eutr_documents.Name` đã lưu (không còn tính lại thành Step
+  Name); 100% lượt Download trên document Type khác "PO" tiếp tục tính lại tên = Step Name như hiện có
+  (không thay đổi bởi Update 37).
+- **SC-105 (Update 38, bug fix)**: 100% dòng có `Qty` thô là số âm (kể cả có phần thập phân) hiển thị
+  đúng giá trị tuyệt đối, làm tròn 4 chữ số thập phân (ví dụ `-49.154850` → `49.1549`) — 0% dòng còn
+  hiển thị "—" sai do giá trị thật bị mất trong bước parse; 100% dòng có `Qty` dương tiếp tục hiển thị
+  đúng giá trị đó, chỉ làm tròn 4 chữ số thập phân, không đổi dấu.
+- **SC-106 (Update 40)**: 100% Sales Order có 2 PO trở lên dùng chung 1 TemplateCode hiển thị đúng N
+  tab riêng (N = số PO), mỗi tab hiển thị đúng 2 dòng (PurchId, tên Template); 0% trường hợp tài liệu
+  của PO này khiến step của PO khác (cùng template) hiển thị "Mapped" sai. Header "Mapped: X/Y" cộng
+  dồn đúng theo từng PO độc lập. Zip Download "By Template" tạo đúng N thư mục (N = số PO), không còn
+  gộp nhầm/mất tài liệu của 1 trong 2 PO dùng chung template.
+- **SC-107 (Update 41)**: 100% lượt nhấn nút Download (Overview lẫn View) tải file zip ngay lập tức,
+  0% lượt hiển thị popup chọn định dạng. 100% file zip tải về có đúng N thư mục (N = số PO đã lưu),
+  mỗi thư mục chứa toàn bộ tài liệu đã Mapped của đúng PO đó ở dạng phẳng (0% thư mục con theo Step
+  bên trong).
+- **SC-108 (Update 42)**: Cột Progress ở Overview hiển thị ngay khi bảng tải xong trang (không còn độ
+  trễ quan sát được do phải tính lại tiến độ mỗi khi hiển thị một trang mới) — 0% dòng hiển thị còn phải
+  chờ thêm sau khi các cột khác (Sales ID/Customer/Template) đã hiển thị xong. 100% giá trị
+  `Finished`/`Total`/`pct` hiển thị ở Overview khớp đúng với số liệu `mappedRequired`/`requiredDetails`/
+  `pct` mà Map File/View tính cho cùng Sales Order tại cùng thời điểm dữ liệu (0% lệch số, giữ đúng kỳ
+  vọng khớp nhau đã có ở FR-086/SC-026).
+- **SC-109 (Update 42; mục job sửa lại khi triển khai, xem research.md Quyết định 99)**: 100% lượt Save
+  PO Mapping thành công, mở màn hình View, hoặc Upload/Xóa tài liệu ở Step 2 Map File cập nhật đúng bản
+  ghi `eutr_progression` của `SalesId` liên quan trong cùng lượt thao tác đó — 0% trường hợp Overview còn
+  hiển thị số liệu Progress cũ (trước thao tác) sau khi quay lại màn hình Overview. 100% lượt chạy job
+  `test-so-template-sync` cập nhật đúng `eutr_progression` cho các `SalesId` MỚI job đó thêm vào (không
+  còn bao gồm `SalesId` bị bỏ qua — lý do hiệu năng), và 100% bản ghi mới do job thêm vào
+  `eutr_purchase_attachments` có `ProductVariant`/`ItemId` khớp đúng dữ liệu nguồn D365 refType=19 (khi
+  nguồn có giá trị) — 0% bản ghi mới còn để trống 2 trường này chỉ vì thiếu logic đọc/gán.
+- **SC-110 (Update 43)**: 100% lượt Search với ItemId và/hoặc ConfigId có giá trị hiển thị đúng tập Sales
+  Order có ít nhất 1 dòng hàng khớp (kết hợp AND với từ khóa/Year/ETD Week đang áp dụng, nếu có) — 0%
+  trường hợp kết quả bị MỞ RỘNG thêm (giống lỗi tiềm ẩn nếu gộp nhầm vào cụm OR-search hiện có).
+  100% lượt ItemId/ConfigId không khớp dòng hàng nào hiển thị đúng trạng thái trống ("No data").
 
 ## Assumptions
 
@@ -3699,3 +4527,125 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
   `permissionList` của menu `eutr-documents` đã đủ dữ liệu (không còn nơi nào gọi 2 endpoint đó); không
   đổi hành vi của `POST /api/eutr-documents`/`PUT /api/eutr-documents/{id}` hay bất kỳ policy backend
   nào — chỉ đổi nguồn dữ liệu quyết định hiển thị ở giao diện.
+- (Update 34) Việc đổi nguồn dữ liệu từ reference type = 16 (PO header) sang hoàn toàn reference type =
+  20 (`RSVNEutrSalesOrderPurchLines`) chỉ áp dụng cho bảng PO ở Step 1 Map File và bảng Selected Purchase
+  Orders ở View — KHÔNG áp dụng cho màn hình Overview (`SalesOrderOverviewPage.jsx`), nơi vẫn tiếp tục
+  dùng reference type = 16 cho mục đích tra cứu Order account riêng của nó, ngoài phạm vi yêu cầu này.
+- (Update 34) Trường `QtyPercent` bổ sung vào model `RSVNEutrSalesOrderPurchLines` được hiểu là kiểu dữ
+  liệu dạng chuỗi (string), nhất quán với kiểu hiện có của trường `Qty` trên cùng model — không giả định
+  kiểu số/decimal trừ khi có yêu cầu khác; cơ chế kỹ thuật cụ thể để trường mới này được truyền xuyên
+  suốt qua tầng dịch vụ/DTO trả về cho giao diện là quyết định kỹ thuật ở giai đoạn plan, không thuộc
+  phạm vi đặc tả nghiệp vụ ở đây.
+- (Update 34) "Percentage used" tiếp tục là nhãn cột tiếng Anh hiện có trên giao diện — Update này chỉ
+  đổi nguồn dữ liệu của cột, không đổi tên/nhãn cột hay vị trí cột.
+- (Update 34) Việc 1 PO xuất hiện trên nhiều dòng khi PO đó có nhiều bản ghi type = 20 là thay đổi cách
+  hiển thị được chủ đích của Update này (đúng theo yêu cầu "chỉ lấy dữ liệu từ API
+  `RSVNEutrSalesOrderPurchLines` để hiển thị, bỏ logic hiển thị chuỗi nối") — không phải lỗi cần khắc
+  phục thêm; vị trí cụ thể của cột Qty mới (ngay sau cột Material) là một mặc định hợp lý theo đúng thứ
+  tự nêu trong yêu cầu, có thể điều chỉnh ở giai đoạn plan nếu cần.
+- (Update 35) Trường `Unit` bổ sung vào model `RSVNEutrSalesOrderPurchLines` được hiểu là kiểu dữ liệu
+  dạng chuỗi (string), theo đúng cùng cách hiểu đã áp dụng cho trường `QtyPercent` ở Update 34 — không
+  giả định kiểu số/enum trừ khi có yêu cầu khác; cơ chế kỹ thuật cụ thể để trường mới này được truyền
+  xuyên suốt qua tầng dịch vụ/DTO trả về cho giao diện là quyết định kỹ thuật ở giai đoạn plan, không
+  thuộc phạm vi đặc tả nghiệp vụ ở đây.
+- (Update 35) Vị trí cụ thể của cột Unit mới (ngay sau cột Qty, trước cột Percentage used) là một mặc
+  định hợp lý (Qty đi liền với đơn vị tính của nó) do người yêu cầu tính năng không nêu vị trí cụ thể —
+  có thể điều chỉnh ở giai đoạn plan nếu cần. Cột Unit áp dụng cho cả bảng Step 1 (Map File) và bảng
+  Selected Purchase Orders (View), theo đúng phạm vi và quy tắc trống/lỗi/tải-theo-lô đã áp dụng cho
+  toàn bộ bảng ở Update 34 — không mở rộng phạm vi sang màn hình Overview.
+- (Update 36) 2 cột `ProductVariant`/`ItemId` mới trên `eutr_purchase_attachments` được hiểu là NULL
+  được (không NOT NULL như `TemplateCode`) vì người yêu cầu tính năng chỉ nêu kiểu `varchar(50)`, không
+  yêu cầu ràng buộc bắt buộc — không tự thêm validation từ chối lưu khi 2 trường này rỗng, khác với quy
+  tắc bắt buộc đã áp dụng cho `TemplateCode` (FR-022).
+- (Update 36) Đây là thay đổi CHỈ áp dụng cho Step 1 (Map File) và bảng Selected Purchase Orders
+  (View) — không mở rộng sang màn hình Overview (không liên quan tới `eutr_purchase_attachments` theo
+  cách này).
+- (Update 36) Template Checklist ở Step 2 (cây template theo TemplateCode đã lưu) không đổi — vẫn xây
+  dựng từ tập `TemplateCode` duy nhất trong `eutr_purchase_attachments` (nay có thể có nhiều bản ghi
+  cùng `TemplateCode` do nhiều dòng hàng của cùng 1 PO, nhưng `Set` khử trùng lặp nên không ảnh hưởng
+  kết quả).
+- (Update 37) Việc kế thừa matching/bỏ đổi tên khi Upload cho Type = "PO" (`004-eutr-documents` Update
+  29) không cần thay đổi backend riêng ở màn hình này — Upload/Edit ở Step 2 gọi đúng popup/luồng dùng
+  chung, không có logic đặt tên/matching độc lập.
+- (Update 37) Nhãn cây theo tên file (FR-216) và bỏ đổi tên khi Download cho Type = "PO" (FR-217) là
+  hai thay đổi RIÊNG của `005-eutr-sales-orders` (và `012-eutr-purchase-orders`, dùng chung cấu trúc
+  `TreeNode`) — không thuộc phạm vi `004-eutr-documents` vì bảng danh sách chính của
+  `004-eutr-documents` không có khái niệm cây Step/nút Download riêng theo Step.
+- (Update 37) Khi một Step có nhiều tài liệu khớp, "tài liệu đầu tiên" dùng để đặt nhãn cây (FR-216) và
+  "Step đầu tiên" dùng để đặt tên khi Download cho Type khác "PO" (FR-196) là hai khái niệm "đầu tiên"
+  độc lập, theo hai chiều dữ liệu khác nhau (nhiều file/1 Step, so với nhiều Step/1 file) — không nhất
+  thiết trỏ tới cùng một bản ghi.
+- (Update 38, bug fix) Quy tắc làm tròn dùng `MidpointRounding.AwayFromZero` (không phải mặc định
+  `ToEven`/"banker's rounding" của `Math.Round`) — xác nhận trực tiếp từ ví dụ người yêu cầu tính năng
+  đưa ra (`-49.154850` → `49.1549`); `ToEven` sẽ cho `49.1548` cho đúng ví dụ này (vì chữ số thập phân
+  thứ 4 là `8`, đã chẵn) nên không khớp. Áp dụng `AwayFromZero` cho MỌI giá trị Qty từ Update 38 trở đi,
+  không riêng trường hợp .5 chính xác ở ví dụ.
+- (Update 38, bug fix) Sửa ở tầng dùng chung (`ComplDynamicsService.cs`, `case 20:`) nên áp dụng đồng
+  thời cho cả Step 1 (Map File) lẫn Selected Purchase Orders (View) — không cần sửa riêng từng trang
+  frontend, vì cả hai chỉ hiển thị trực tiếp giá trị `qty` đã tính sẵn từ API, không tự định dạng/tính
+  toán lại ở tầng UI.
+- (Update 40) Hàm `buildTemplateComputations`/`buildPurchIdToTemplateCodeMap` (theo TemplateCode) KHÔNG
+  bị xóa hay sửa — vẫn dùng nguyên vẹn bởi `SalesOrderOverviewPage.jsx`/`PurchaseOrderOverviewPage.jsx`
+  (cột Progress ở danh sách tổng quan, tính theo từng dòng/1 PO nên vốn đã không bị lỗi gộp-nhầm-PO) và
+  `012-eutr-purchase-orders`'s `PurchId/View` (1 PO/1 trang, không cần khái niệm nhóm). Hàm mới
+  `buildPoTemplateComputations` (theo PurchId) chỉ được thêm và dùng RIÊNG ở `MapFilePage.jsx`/
+  `ViewSalesOrderPage.jsx` — không thay thế hàm cũ ở bất kỳ nơi nào khác.
+- (Update 40) Chế độ "All" (View, Update 19/20) không bị xóa code — hạ tầng tính toán
+  (`defaultTemplate`/`allChipTree`/`allChipDerivedFileMappings`/`allChipFiles`) vẫn được giữ nguyên vì
+  nút Download "Combined All" tiếp tục cần nó; chỉ không còn tab nào trên toolbar Template Checklist
+  dẫn người dùng tới chế độ này qua click nữa (không đổi được nữa qua UI, nhưng vẫn hoạt động ngầm cho
+  tính năng Download).
+- (Update 40) Nhãn 2 dòng trên tab (PurchId + tên Template) không có giới hạn độ dài rõ ràng — với
+  PurchId/tên Template rất dài, tab có thể xuống dòng hoặc bị cắt tùy trình duyệt/độ rộng màn hình;
+  không thuộc phạm vi Update này để xử lý riêng (chưa có yêu cầu cụ thể về giới hạn ký tự).
+- (Update 41) Xóa hẳn code của chế độ "Combined (All)" (state `defaultTemplate`/`loadDefaultTemplate`/
+  `soStepIds`/`allChipFlatDetails`/`allChipTree`/`stepIdToFileIds`/`allChipDerivedFileMappings`/
+  `allChipFiles`/`filesById`/nhánh render tương ứng ở `ViewSalesOrderPage.jsx`; biến cục bộ tương ứng
+  trong `handleDownload` của `SalesOrderOverviewPage.jsx`) và component `DownloadFormatDialog.jsx` —
+  theo đúng nguyên tắc không giữ lại code chết đã áp dụng nhất quán trong toàn bộ lịch sử cập nhật của
+  đặc tả này (ví dụ Update 26 xóa `GetPrefixByStepIdAsync`, Update 29 xóa
+  `IEutrReferenceTypeDetailsRepository` khỏi `EutrUploadService`). `getPagingEutrTemplatesUseCase`/
+  `getEutrTemplatesUseCase` (dùng riêng cho việc tải template mặc định IsDefault=1 ở
+  `SalesOrderOverviewPage.jsx`) cũng bị xóa theo vì không còn nơi nào gọi.
+- (Update 41) Việc gộp "By Template" (Update 22) và "tách theo PO" (Update 40) thành đúng 1 định dạng
+  duy nhất (không còn 2 lựa chọn) là điều chỉnh trực tiếp theo yêu cầu gốc — không cần giữ lại tham số
+  `format` trên `buildDownloadFolders`/`handleDownload` của cả 2 màn hình (bỏ hẳn tham số, không phải
+  chỉ đặt giá trị mặc định cố định), tránh code không còn ý nghĩa (tham số luôn nhận đúng 1 giá trị).
+- (Update 42) Job `test-so-template-sync` giữ nguyên hành vi dedupe theo `SalesId` (bỏ qua toàn bộ
+  `SalesId` nếu đã tồn tại ≥1 bản ghi trong `eutr_purchase_attachments`, không thêm/không cập nhật) —
+  Update này KHÔNG mở rộng job để tự động phát hiện/cập nhật lại các bản ghi cũ thiếu
+  `ProductVariant`/`ItemId`. Hệ quả: sau khi triển khai, job chỉ tự động recompute `eutr_progression`
+  cho các `SalesId` MỚI phát sinh ở D365 (chưa từng có bản ghi); phần còn lại của lịch sử được phủ bởi
+  lượt backfill 1 lần khi triển khai (FR-230) cộng với việc recompute dần qua 2 trigger còn lại (View/
+  Save PO Mapping/Upload tài liệu) khi người dùng thực sự thao tác trên từng Sales Order đó — không cần
+  một cơ chế "quét lại toàn bộ" chạy định kỳ, vì không thuộc yêu cầu gốc.
+- (Update 42) `eutr_progression` là bảng lưu TRẠNG THÁI TÍNH SẴN (derived/cache), không phải nguồn dữ
+  liệu gốc — nguồn sự thật (source of truth) vẫn là `eutr_purchase_attachments` (Total) và dữ liệu tài
+  liệu đã map thật ở `004-eutr-documents` (Finished/Missing); nếu công thức tính Progress (FR-077 đến
+  FR-079) thay đổi ở một Update sau, mọi bản ghi `eutr_progression` hiện có cần được recompute lại theo
+  công thức mới (không tự động, cần một bước vận hành tương tự backfill ở FR-230) để tránh Overview hiển
+  thị số liệu theo công thức cũ.
+- (Update 42) Cơ chế/kỹ thuật cụ thể để "tính lại và upsert" (ví dụ 1 stored procedure dùng chung cho cả
+  4 trigger, hay 1 service method gọi từ 4 nơi khác nhau trong code) là quyết định kỹ thuật ở giai đoạn
+  plan, không thuộc phạm vi đặc tả nghiệp vụ ở đây; yêu cầu duy nhất là kết quả `eutr_progression` sau
+  mỗi trigger phải khớp đúng công thức Total/Missing/Finished hiện có (FR-224) và không có đường nào bỏ
+  sót 1 trong 4 trigger ở FR-225.
+- (Update 42) Vì mỗi trigger (View/Save PO Mapping/Upload-Xóa tài liệu) chỉ cần recompute đúng 1
+  `SalesId` (không phải toàn bảng), thao tác recompute là một lượt tính nhỏ, độc lập với lượt đọc
+  `eutr_progression` theo lô (batch) mà Overview dùng để hiển thị cột Progress cho nhiều dòng cùng lúc —
+  hai luồng đọc/ghi này không xung đột hay phụ thuộc lẫn nhau về mặt nghiệp vụ.
+- (Update 43) ItemId và ConfigId cùng mô tả 1 dòng hàng cụ thể (giống cách 2 trường này luôn đi cùng
+  nhau ở cột Variants/Materials của Selected Purchase Orders/Step 1, Update 17) — khi cả hai cùng có
+  giá trị, kết hợp AND (phải khớp đúng cùng 1 dòng hàng có cả hai) là hành vi mặc định hợp lý, không
+  phải OR (tách rời, khớp dòng hàng bất kỳ có 1 trong 2 giá trị).
+- (Update 43) Toán tử khớp cho ItemId/ConfigId là khớp đúng (`eq`), không phải khớp "chứa" (`like`) như
+  ô tìm kiếm Sales ID/Customer — nhất quán với cách các mã định danh có cấu trúc khác trong hệ thống
+  (PurchId, TemplateCode, OrderAccount) đều dùng khớp đúng, khác với tìm kiếm tự do theo tên/mã.
+- (Update 43) `refType = 21` là số hiệu cụ thể chọn cho `RSVNSalesLineOpenInvoiceCogs` (số kế tiếp còn
+  trống sau `refType = 20`) — một quyết định kỹ thuật ghi lại ở đây để tránh đụng số với một `refType`
+  khác được đăng ký sau này trước khi Update 43 triển khai xong; không phải yêu cầu nghiệp vụ.
+- (Update 43) Cơ chế 2 bước (tra `SalesId` ở refType=21 rồi lọc refType=11 theo danh sách đó) chạy hoàn
+  toàn ở phía client (Overview gọi 2 lượt `POST /api/dynamics/reference` liên tiếp), giống đúng mô hình
+  hiện có của trang này (không có endpoint tổng hợp phía server riêng cho tìm kiếm) — nhất quán với cách
+  Update 27/Update 24 đã triển khai (mọi logic kết hợp filter đều ở tầng frontend, backend chỉ cung cấp
+  `BuildFilterString` dùng chung).

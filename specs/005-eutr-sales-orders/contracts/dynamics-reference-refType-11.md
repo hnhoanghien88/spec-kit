@@ -92,6 +92,26 @@ default-passthrough behavior in `MapSortColumn` — Overview's own default fetch
 literal values instead of `"Code"`/`"asc"`. No new `sortColumn` value is introduced by this endpoint;
 this section only documents that the frontend's own default choice changed.
 
+## Update 43: `column: "SalesIdIn"` — AND-scoped narrowing by a pre-resolved `SalesId` list
+
+- New bucket, entity-scoped to `RSVNSalesOrderOpenInvoiceCogs` (same guard style as `"CustAccount"`,
+  Update 27). Send one `FilterRequest` per `SalesId` to include: `{ column: "SalesIdIn", operator: "eq",
+  value: "<salesId>" }`. Multiple `SalesIdIn` entries are OR-joined into their own clause
+  (`(SalesId eq 'A' or SalesId eq 'B' or ...)`).
+- **Unlike** `"Code"`/`"Name"`/`"CustAccount"` (which OR-join into the SAME shared search clause as each
+  other), the `"SalesIdIn"` clause is combined via **AND** with everything else in the request —
+  including that shared `Code`/`Name`/`CustAccount` clause. Sending both a keyword search (`column:
+  "Code"`, `operator: "like"`) and `SalesIdIn` entries in the same request narrows to Sales Orders
+  matching the keyword AND present in the `SalesIdIn` list — it does not broaden results the way adding
+  another `Code`/`Name`/`CustAccount` filter would.
+- Intended caller: the Overview screen's ItemId/ConfigId search (spec Update 43, FR-231 to FR-235) —
+  the frontend resolves a `SalesId` list from a separate `refType = 21` lookup
+  (`RSVNSalesLineOpenInvoiceCogs`, see `dynamics-reference-refType-21.md`) first, then sends that list
+  here as `SalesIdIn` entries. This bucket has no other intended caller, but is not itself restricted to
+  any particular filter combination — any caller may send `SalesIdIn` entries for `refType = 11`.
+- An empty/absent `SalesIdIn` set (no entries sent) means no restriction — identical to today's
+  behavior; this bucket is purely additive.
+
 ## Before this feature (current behavior)
 
 `refType = 11` has no `EntityMappings` entry → `GetDynRefePagedAsync` returns
