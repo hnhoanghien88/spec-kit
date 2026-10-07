@@ -2250,3 +2250,13 @@ render would carry dead branches: matches the Update 25 precedent for the remove
 
 - **Decision**: Application-level check (EXISTS query) before inserting, case-insensitive on trimmed Name, across all non-deleted rows including hidden old versions. Rationale: version bump intentionally reuses Name, so a DB unique index on Name would break Request change. Alternatives: unique index on (Name, VersionId) (rejected — still lets two Codes share a Name); check only visible rows (rejected — old versions would let a duplicate through).
 - **Decision**: Applies to Create, Clone and Edit. Edit excludes rows with the same Code (other versions of the template being edited), so saving without renaming still works.
+
+## 45. Hide Default Column + Set-as-default Checkbox — UI-only Removal (Update 28)
+
+- **Decision**: Remove the `isDefault` grid column (and its filter), the Create-dialog checkbox and the TemplateBuilderPage checkbox + its confirm dialog/handlers. Rationale: request is to hide the feature from users; deleting dead UI code keeps eslint clean (no-unused-vars).
+- **Decision**: Keep backend (`IsDefault` column, set-default endpoint, FR-068), `SetDefaultEutrTemplatesUseCase` and repository method. Rationale: reversible, no data migration, existing defaults unaffected. Alternative rejected: drop backend support (irreversible, out of scope).
+
+## 46. Duplicate Step — Client-side Tree Insert, Single Step, Smallest-free "(Copy n)" (Update 29)
+
+- **Decision**: Add `duplicateStep` to `useStepTree` (client state only; persisted by existing Save). Copy only the selected node, inserted after it with later siblings' displayOrder shifted. Rationale: matches "copy 1 step"; subtree copy is ambiguous and can be added later.
+- **Decision**: Name = base + " (Copy n)", base strips an existing "(Copy k)" suffix, n = smallest free (case-insensitive across the whole tree) so Update 21/24 duplicate-name rules are not violated.

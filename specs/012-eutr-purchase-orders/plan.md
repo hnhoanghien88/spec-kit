@@ -491,3 +491,16 @@ name including extension).
 
 **Scope**: `compliance-client/src/presentation/pages/eutr-purchase-orders/PurchaseOrderViewPage.jsx` only. Delete `FILES_PER_PAGE`, the `filePage` state, the `pagedFiles`/`totalFilePages` derivations and the `<Pagination>` control; render the full file list (already loaded in one call, filtered by tree node) inside the existing scrollable box. Footer keeps only "N files". No backend, entity, DTO, route or menu change.
 **Constitution Check**: PASS — UI-only simplification, no new dependency or surface; no violations.
+
+# Update 13 (2026-10-07) — "Assign template" button on the Purchase Orders list (FR-043..FR-047, SC-013)
+
+**Scope**: Frontend `PurchaseOrderOverviewPage.jsx` (new button + new `AssignTemplateDialog.jsx` in the same folder) + new use cases/repository/api methods for two new endpoints; backend: new `EutrPurchaseOrdersController` (`api/eutr-purchase-orders`), `IEutrPurchaseOrdersService`/`EutrPurchaseOrdersService` (registered in `Application/DependencyInjection.cs`), request/response DTOs. No DB table/column/migration change, no new local entity.
+
+**Design**:
+- `GET api/eutr-purchase-orders/active-templates` (policy `EutrPurchaseOrders.Update`) → templates with `IsDeleted=0 AND IsHide=0 AND Status=1` (reuses `IEutrTemplatesRepository.GetEligibleForDynamicsSyncAsync`, the exact "active/Approved" rule the D365 sync already uses). Returns `{ id, code, name, versionId }`.
+- `POST api/eutr-purchase-orders/assign-template` body `{ purchId, templateId, versionId }` (all strings, policy `EutrPurchaseOrders.Update`) → service re-validates that `templateId`/`versionId` match a currently active template (reject 400 otherwise), then `IDynamicService.PostAsync($"{apiUrl}/data/RSVNPurchTables/Microsoft.Dynamics.DataEntities.updateEutr?cross-company=true", body)`; `apiUrl` from `Dynamics:ApiUrl` (same as `EutrSynchronizeDataService.GetDynamicsApiUrl`). D365 failures propagate as an error response (FR-046); nothing local is written.
+- Client: Action column gets an `AssignIcon` IconButton after View, rendered only when `permissionList` of menu `eutr-purchase-orders` includes `'Update'` (same mechanism as `PurchaseOrderViewPage` FR-033, `menuData.find(m => m.code === 'eutr-purchase-orders')`). Dialog loads active templates, single-select via radio list, current template (`row.eutrTemplate`, matched by Code) preselected + "Current" chip; OK disabled until selection ≠ current; on success close, snackbar, refetch list (`fetchPurchaseOrders(page, pageSize, search)`) so Template/Progress refresh; on error keep dialog open and show Alert. Double-submit blocked via `submitting` state.
+
+**Technical Context additions**: Storage — none (D365 only). Testing — backend xUnit for service (mock `IDynamicService`, `IEutrTemplatesRepository`): valid push, mismatched template/version rejected, D365 exception propagates; frontend manual per quickstart. Performance — one small list call on dialog open + one POST. Constraints — policy name derived from menu code (`EutrPurchaseOrders.Update`) is assumed from the existing `EutrDocuments.Update` convention; verify at implementation/run time.
+
+**Constitution Check**: PASS — no new dependency; follows existing Clean-architecture layering (controller → service → external `IDynamicService`).

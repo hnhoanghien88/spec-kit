@@ -3653,3 +3653,12 @@ no-dead-code convention.
 - **Decision 8**: View's Selected Purchase Orders reuses the same grouped table and full PO list as Map File; saved POs are shown ticked, checkboxes locked (`readOnly`), no Save PO Mapping button.
 
 - **Decision 9 (thay thế Decision 1–4, 7)**: Chỉ dùng `RSVNEutrSalesOrderPurchLines` (type = 20), gom theo ProductVariant, thêm ProductName/ProductDescription vào entity này; không gọi refType=21. Lý do: ProductVariant đã là khóa của nhóm, bỏ 1 lần gọi D365 và loại bỏ nhu cầu ghép khóa/chờ 2 nguồn.
+
+
+## Update 46 — Group header from `RSVNEutrOpenSalesLines`, POs matched by ProductVariant
+
+- **Decision 1**: Dùng refType mới = 22 (`RSVNEutrOpenSalesLines`, `ModelType` đã khai báo) qua cơ chế tham chiếu chung, lọc `SalesId eq <id>`; không thêm endpoint. Alternative: endpoint tổng hợp phía server (loại — các trang đã ghép nhiều lời gọi tham chiếu).
+- **Decision 2**: Khóa nhóm = `ItemId-configId` (chỉ `ItemId` nếu configId rỗng), so khớp với `ProductVariant` của PO đã trim/lowercase. Giữ cách so khớp của Update 45 nên Select/Save PO Mapping không đổi.
+- **Decision 3**: Tiêu đề = `ItemId-configId  Name / Description` lấy từ cột `Name`/`Description` của API 22; thay vai trò `ProductName/ProductDescription` của refType=20 (các trường này giữ lại nhưng không dùng cho tiêu đề).
+- **Decision 4**: Trùng ItemId-configId gộp một nhóm; nhóm không PO vẫn hiển thị "No purchase orders"; PO không khớp vào nhóm cuối "—" (không mất PO).
+- **Decision 5**: Chờ cả refType=20 và 22 xong mới render (cờ loading chung); lỗi refType=22 hiển thị thông báo lỗi sẵn có kèm retry.

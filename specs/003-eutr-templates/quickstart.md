@@ -1485,3 +1485,15 @@ implemented).
 - [ ] `EutrTemplatesController.cs`'s `Approve`/`RequestChange` actions required NO code changes for
       Update 23 — the D365-failure 400 reuses the existing `ValidationException` → `BadRequest`
       mapping (Update 23, FR-086)
+
+## Update 28 (2026-10-07) — Default column / checkbox hidden
+
+- Open Templates list: no "Default" column or filter (SC-075).
+- Click Create: dialog shows Name + Alert for only.
+- Open Add/Edit (Draft and Public D365): no "Set as default template" checkbox.
+
+## Update 29 (2026-10-08) — Duplicate step
+
+- Edit a Draft template, select step "A", click Duplicate: new step "A (Copy 1)" appears right after "A", selected, same Requirement Type/Take From, no children copied.
+- Click Duplicate again on "A": "A (Copy 2)". On "A (Copy 1)": "A (Copy 2)"/next free n.
+- Rename the copy, Save step; duplicate name still blocked. Button disabled with no selection or when Public D365 (SC-076).

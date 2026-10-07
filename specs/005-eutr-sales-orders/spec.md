@@ -10,6 +10,25 @@
 
 ## Clarifications
 
+### Session 2026-10-07 (Update 46) — Step 1 (Map File) & Selected Purchase Orders (View): tiêu đề nhóm lấy từ API `RSVNEutrOpenSalesLines` (theo SalesId), PO ở `RSVNEutrSalesOrderPurchLines` gom theo ProductVariant = ItemId-configId
+
+- Input: "cập nhật màn hình 005-eutr-sales-orders. logic hiển thị thông tin step1: Choose purchase order (PO)
+  sẽ lấy thông tin line từ API mới RSVNEutrOpenSalesLines theo điều kiện SalesId, phần hiển thị sẽ là
+  ItemId-configId Name / Description (do API tên cột khác). Sau đó dựa vào thông tin ItemId-configId để
+  nhóm PO ở RSVNEutrSalesOrderPurchLines theo điều kiện ProductVariant."
+- Bối cảnh: Update 45 (điều chỉnh cuối) tạo nhóm bằng cách gom chính các dòng PO theo ProductVariant và lấy
+  ProductName/ProductDescription từ `RSVNEutrSalesOrderPurchLines`; nhóm chỉ tồn tại khi đã có PO. Thực thể
+  `RSVNEutrOpenSalesLines` (refType = 22; trường `SalesId`, `ItemId`, `configId`, `Name`, `Description`) đã có
+  trong mã nguồn (`compliance-sys-api/.../Domain/Dynamics/RSVNEutrOpenSalesLines.cs`) nhưng chưa dùng cho Step 1/View.
+- Change: **Danh sách nhóm** (dòng hàng của Sales Order) lấy từ `RSVNEutrOpenSalesLines` lọc theo `SalesId`
+  của Sales Order đang xem. Tiêu đề mỗi nhóm = **"ItemId-configId  Name / Description"** (ItemId + "-" +
+  configId; `Name`/`Description` là tên cột của API này). **PO trong nhóm** lấy từ `RSVNEutrSalesOrderPurchLines`
+  (type = 20), gán vào nhóm khi `ProductVariant` của PO = "ItemId-configId" của nhóm. Thay thế nguồn/cách gom
+  của Update 45 (FR-237, FR-238, FR-241; FR-242 không còn dùng cho tiêu đề).
+- Không đổi: cột/thứ tự cột và cách tính trong nhóm (FR-239), mở/thu gọn (FR-240, mặc định thu gọn),
+  Select/Save PO Mapping khóa theo (PO, Variant, ItemId) (Update 36), Template, Map status, Progress,
+  Download; View dùng cùng nhóm/cùng danh sách PO với checkbox khóa, không nút Save.
+
 ### Session 2026-10-05 (Update 45) — Step 1 (Map File) & Selected Purchase Orders (View): nhóm theo dòng hàng từ `RSVNSalesLineOpenInvoiceCogs`, mở rộng/thu gọn, thêm ProductName/ProductDescription
 
 - Input: "cập nhật 005-eutr-sales-orders, màn hình view và map file, phần step 1 choose purchase order. khi
@@ -2087,6 +2106,9 @@ màn hình EUTR Sales Orders.
 41. **(Update 45, FR-240)** **Given** các nhóm đang mở rộng, **When** nhấn điều khiển thu gọn của 1 nhóm,
     **Then** chỉ nhóm đó ẩn danh sách PO; nhấn lại thì hiện lại, các PO đã Select vẫn giữ nguyên.
 42. **(Update 45, FR-241)** **Given** một dòng PO không có ProductVariant, **When** vào Step 1, **Then** dòng đó hiển thị trong nhóm có tiêu đề "—", không bị ẩn.
+43. **(Update 46, FR-244/245/246)** **Given** Sales Order có 2 dòng hàng trong `RSVNEutrOpenSalesLines` (vd ItemId "10628" + configId "016", và ItemId "10629" + configId "002"), **When** vào Step 1, **Then** hiển thị 2 nhóm với tiêu đề "10628-016  Name / Description" và "10629-002  Name / Description"; bên dưới mỗi nhóm là các PO có ProductVariant đúng bằng "10628-016" / "10629-002".
+44. **(Update 46, FR-247)** **Given** một dòng hàng chưa có PO nào, **When** vào Step 1, **Then** nhóm vẫn hiển thị với tiêu đề đầy đủ; khi mở rộng báo "No purchase orders".
+45. **(Update 46, FR-248)** **Given** có PO mà ProductVariant không khớp dòng hàng nào, **When** vào Step 1, **Then** các PO đó hiển thị trong nhóm cuối có tiêu đề "—", không bị mất.
 
 ---
 
@@ -2354,6 +2376,7 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
     View, **Then** bảng Selected Purchase Orders hiển thị cùng cấu trúc nhóm và cùng danh sách PO như Step 1
     (mọi PO của Sales Order, mặc định thu gọn); cột Select hiện trạng thái đã lưu nhưng checkbox bị khóa, và
     KHÔNG có nút Save PO Mapping.
+52. **(Update 46, FR-244/245/246/249)** **Given** Sales Order có dòng hàng và PO, **When** mở màn hình View, **Then** bảng Selected Purchase Orders hiển thị cùng nhóm (tiêu đề "ItemId-configId  Name / Description") và cùng danh sách PO như Step 1; checkbox khóa, không nút Save PO Mapping.
 
 ---
 
@@ -2784,6 +2807,9 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
 - (Update 45) Sales Order không có dòng PO nào: hiển thị trạng thái rỗng "No order lines"; lỗi tải dữ liệu hiển thị thông báo lỗi sẵn có.
 - (Update 45) Sales Order có rất nhiều nhóm ProductVariant: các nhóm cuộn dọc trong trang; thu gọn tất cả không
   làm mất lựa chọn Select đã chọn.
+- (Update 46) So khớp ItemId-configId với ProductVariant không phân biệt hoa/thường, bỏ khoảng trắng đầu/cuối; `configId` rỗng thì khóa nhóm chỉ là "ItemId" (không có dấu "-" thừa).
+- (Update 46) Hai dòng hàng trùng ItemId-configId trong `RSVNEutrOpenSalesLines`: gộp thành một nhóm duy nhất.
+- (Update 46) `RSVNEutrOpenSalesLines` rỗng cho SalesId: các PO (nếu có) hiển thị trong nhóm "—"; không có cả hai thì hiển thị "No order lines". Lỗi tải API hiển thị thông báo lỗi sẵn có.
 
 ## Requirements *(mandatory)*
 
@@ -3903,6 +3929,13 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
 - **FR-242 (Update 45)**: Thực thể `RSVNEutrSalesOrderPurchLines` MUST được bổ sung 2 trường **ProductName** và **ProductDescription**, trả về được qua cơ chế tham chiếu dùng chung hiện có (refType = 20).
 - **FR-243 (Update 45)**: Thay đổi này chỉ đọc — KHÔNG ghi/sửa/xóa bản ghi nào ngoài thao tác Save PO
   Mapping sẵn có.
+- **FR-244 (Update 46)**: Khi vào Step 1 (Map File) và View, hệ thống MUST lấy các dòng hàng từ `RSVNEutrOpenSalesLines` theo điều kiện `SalesId` = Sales Order đang xem; mỗi dòng hàng (duy nhất theo ItemId-configId) là một nhóm.
+- **FR-245 (Update 46)**: Tiêu đề nhóm MUST hiển thị **"ItemId-configId  Name / Description"** (ItemId-configId = `ItemId` + "-" + `configId`; `Name`/`Description` lấy từ cột cùng tên của `RSVNEutrOpenSalesLines`); giá trị rỗng hiển thị "—". Thay thế FR-238.
+- **FR-246 (Update 46)**: Các PO từ `RSVNEutrSalesOrderPurchLines` MUST được gán vào nhóm có ItemId-configId bằng `ProductVariant` của PO. Cột và cách hiển thị trong nhóm giữ nguyên FR-239.
+- **FR-247 (Update 46)**: Nhóm không có PO MUST vẫn hiển thị; khi mở rộng báo "No purchase orders".
+- **FR-248 (Update 46)**: PO có ProductVariant rỗng hoặc không khớp nhóm nào MUST hiển thị trong nhóm cuối có tiêu đề "—" (thay thế FR-241); không PO nào bị mất.
+- **FR-249 (Update 46)**: Bảng Selected Purchase Orders ở View MUST dùng cùng nhóm và danh sách PO như Step 1 (checkbox khóa, không nút Save PO Mapping).
+- **FR-250 (Update 46)**: Thay đổi chỉ đọc; trường `ProductName`/`ProductDescription` (FR-242) không còn dùng cho tiêu đề nhóm. Select/Save PO Mapping (Update 36) và mở/thu gọn (FR-240) giữ nguyên.
 
 ## Success Criteria *(mandatory)*
 
@@ -4238,6 +4271,8 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
 - **SC-112 (Update 45)**: 100% dòng PO của Sales Order hiển thị trong đúng 1 nhóm theo ProductVariant của nó (tiêu đề đủ ProductVariant, ProductName, ProductDescription); 0% dòng PO bị mất hoặc nằm sai nhóm; không còn lời gọi `RSVNSalesLineOpenInvoiceCogs` ở 2 màn hình này.
 - **SC-113 (Update 45)**: Người dùng thu gọn/mở rộng một nhóm trong 1 thao tác click, không tải lại trang
   và không mất các PO đã chọn ở Step 1.
+- **SC-114 (Update 46)**: 100% dòng hàng của Sales Order trong `RSVNEutrOpenSalesLines` xuất hiện thành nhóm có tiêu đề đúng định dạng "ItemId-configId  Name / Description", kể cả dòng chưa có PO.
+- **SC-115 (Update 46)**: 100% PO của Sales Order hiển thị đúng một lần, trong nhóm có ItemId-configId trùng ProductVariant (hoặc nhóm "—" nếu không khớp); không PO nào bị mất hoặc lặp.
 
 ## Assumptions
 

@@ -1569,6 +1569,19 @@ Edit trên dòng mới xác nhận có thể chỉnh sửa bình thường (khô
   mọi lệnh gọi D365 khác trong spec này (chặn lại, giữ nguyên phần đã lưu cục bộ, báo lỗi thay vì
   snackbar thành công — xem FR-082/FR-084/FR-093), ghi rõ ở FR-097 và Assumptions bên dưới.
 
+### Session 2026-10-08 (Update 29) — Nút Duplicate step trên màn hình Edit
+
+- Input: "cập nhật 003-eutr-templates màn hình Edit, thêm nút Duplicate. user click chuột ở step nào sẽ copy toàn bộ thông tin step đó ra 1 step mới với tên = tên cũ (Copy 1 > n). sau đó user có thể edit chỉnh lại tên step phù hợp".
+- Bối cảnh: toolbar của `TemplateBuilderPage.jsx` có Root Group / Child Step / Move Up / Move Down / Delete / Expand / Collapse; chưa có cách nhân đôi step. Update 21/24 chặn trùng tên step nên bản sao phải có tên khác.
+- Change: Thêm nút **Duplicate** (icon) vào toolbar, nằm cạnh Delete, dùng được khi đã chọn 1 step và template không ở trạng thái Public D365. Khi bấm, hệ thống tạo 1 step mới sao chép toàn bộ thông tin của step đang chọn (Step, Requirement Type, Take From), tên = "<tên gốc> (Copy n)" với n nhỏ nhất (bắt đầu từ 1) chưa trùng tên step nào trong cây. Bản sao nằm ngay sau step gốc, cùng cấp cha; được chọn sẵn để người dùng đổi tên rồi bấm Save step. Chỉ thay đổi trên cây ở client, chỉ lưu khi Save template.
+- Quyết định (mặc định hợp lý): chỉ nhân đôi 1 step, KHÔNG sao chép các step con; nhân đôi một bản sao "A (Copy 1)" tạo "A (Copy 2)" (không tạo "A (Copy 1) (Copy 1)").
+
+### Session 2026-10-07 (Update 28) — Ẩn cột Default và checkbox Set as default template
+
+- Input: "cập nhật và chỉnh 003-eutr-templates, ẩn cột Default và checkbox Set as default template đi".
+- Bối cảnh (rà soát mã nguồn): cột Default xuất hiện ở grid danh sách (`useEutrTemplatesColumns.jsx`); checkbox "Set as default template" xuất hiện ở `CreateTemplateDialog.jsx` và panel header của `TemplateBuilderPage.jsx` (kèm confirm dialog Update 18).
+- Change: Giao diện MUST **ẩn** cột Default (kèm bộ lọc của cột) trên grid danh sách và checkbox "Set as default template" ở dialog Create và trang Add/Edit (kể cả khi PublicD365). Chỉ thay đổi UI: backend, endpoint set-default, cột `IsDefault` và dữ liệu hiện có giữ nguyên; Save vẫn gửi `isDefault` hiện có (Create = 0).
+
 ### Session 2026-10-05 (Update 27) — Chặn tạo template trùng tên (trừ trường hợp nâng version)
 
 - Input: "cập nhật 003-eutr-templates khi tạo template, không cho đặt tên giống template đã có, trừ
@@ -2340,6 +2353,10 @@ Edit trên dòng mới xác nhận có thể chỉnh sửa bình thường (khô
   Name của template có Code khác; các version cùng Code với template đang sửa không bị tính là trùng.
 - **FR-100 (Update 27)**: Nâng version qua Request change MUST tiếp tục hoạt động bình thường với Name
   trùng template cũ (cùng Code) — không bị chặn bởi FR-099.
+- **FR-102 (Update 28)**: Grid danh sách MUST NOT hiển thị cột Default; dialog Create và trang Add/Edit MUST NOT hiển thị checkbox "Set as default template" (và confirm dialog đi kèm). Không đổi backend/schema.
+- **FR-103 (Update 29)**: Toolbar màn hình Edit MUST có nút Duplicate, chỉ bật khi có step được chọn và template không Public D365.
+- **FR-104 (Update 29)**: Duplicate MUST tạo 1 step mới cùng cấp, đặt ngay sau step gốc, sao chép Step, Requirement Type, Take From; không sao chép step con.
+- **FR-105 (Update 29)**: Tên bản sao MUST là "<tên gốc> (Copy n)", n nhỏ nhất ≥ 1 chưa trùng tên step nào trong cây (so khớp không phân biệt hoa/thường); bản sao được chọn sẵn để đổi tên, và vẫn tuân theo chặn trùng tên của FR-087/FR-088 khi sửa.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -2695,6 +2712,8 @@ Edit trên dòng mới xác nhận có thể chỉnh sửa bình thường (khô
 
 - **SC-074 (Update 27)**: 100% lượt Create/Clone/Edit với Name trùng template đã có bị từ chối kèm thông báo rõ
   ràng; 100% lượt nâng version thành công như trước.
+- **SC-075 (Update 28)**: 0 màn hình của EUTR Templates hiển thị cột Default hoặc checkbox Set as default template.
+- **SC-076 (Update 29)**: Người dùng nhân đôi một step và đổi tên bản sao trong dưới 10 giây, không phải nhập lại Requirement Type/Take From.
 
 ## Assumptions
 
@@ -3028,3 +3047,7 @@ Edit trên dòng mới xác nhận có thể chỉnh sửa bình thường (khô
 
 - (Update 27) Thay đổi chỉ ở phía server (kiểm tra khi tạo/sửa); dialog Create/Clone vốn đã hiển thị thông báo lỗi
   từ server nên không cần đổi giao diện. Không đổi schema DB.
+
+- (Update 28) Chỉ ẩn ở frontend; FR-068/Update 18 (set-default khi PublicD365) và các quy tắc IsDefault phía server vẫn còn nhưng không còn lối vào từ UI.
+
+- (Update 29) Chỉ thay đổi frontend, không đổi schema/API; bản sao là step mới (chưa có Id) nên được lưu như step thêm mới khi Save template.

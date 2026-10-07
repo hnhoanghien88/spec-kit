@@ -158,3 +158,11 @@ no data-model change here — this screen's Upload/Edit buttons call that same s
 ## Update 12 (2026-10-05): Remove AVAILABLE FILES pagination (FR-042, no entity/DTO/API change)
 
 No data-model change. Client-only view state `filePage` is removed; the file list model is unchanged.
+
+## Update 13 (2026-10-07): Assign template (FR-043..FR-047, no table/entity change)
+
+No DB change. New transport DTOs only:
+- `ActiveTemplateDto { long Id; string Code; string? Name; string VersionId }` (VersionId stringified).
+- `AssignPurchaseOrderTemplateRequestDto { string PurchId; string TemplateId; string VersionId }` — all required, non-empty.
+- D365 body class `UpdateEutrRequest { string purchId; string templateId; string versionId }` (lower-camel property names as sent on the wire).
+Validation: `TemplateId`+`VersionId` must equal `Code`+`VersionId` of a row in the active set (`IsDeleted=0, IsHide=0, Status=1`).

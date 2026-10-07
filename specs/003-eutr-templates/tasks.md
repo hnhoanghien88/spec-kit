@@ -3212,3 +3212,18 @@ T454 sequentially (build + end-to-end)
 - [X] T457 `dotnet build` Application + Infrastructure: 0 errors (Api project not rebuilt — DLLs locked by running ComplianceSys.Api process)
 - [X] T458a Extend to `UpdateAsync` (Edit) with `excludeCode = existing.Code` (FR-101); `dotnet build` Infrastructure 0 errors
 - [ ] T458 Manual test per quickstart Scenario 30 — **NOT run** (needs live env)
+
+## Phase 102: Hide Default column + Set as default checkbox (Update 28) (FR-102, SC-075)
+
+- [X] T459 Remove `isDefault` column from `useEutrTemplatesColumns.jsx`
+- [X] T460 Remove "Set as default template" checkbox from `CreateTemplateDialog.jsx`
+- [X] T461 Remove checkbox + set-default confirm dialog/handlers from `TemplateBuilderPage.jsx`
+- [X] T462 `eslint src/presentation/pages/eutr-templates`: 0 errors
+- [ ] T463 Manual UI check — **NOT run** (needs live env)
+
+## Phase 103: Duplicate step button (Update 29) (FR-103..FR-105, SC-076)
+
+- [X] T464 Add `duplicateStep` to `hooks/useStepTree.js` (insert after source, shift later siblings, no children)
+- [X] T465 Add Duplicate IconButton + `handleDuplicateNode` ("(Copy n)" naming, auto-select copy) in `TemplateBuilderPage.jsx`
+- [X] T466 `eslint src/presentation/pages/eutr-templates`: 0 errors
+- [ ] T467 Manual test per quickstart Update 29 — **NOT run** (needs live env)

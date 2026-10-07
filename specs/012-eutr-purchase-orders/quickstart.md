@@ -208,3 +208,15 @@ fixture/rationale), applied to `PurchId/View`'s own copy of the tree/AVAILABLE F
 4. With no files, the existing empty message still shows.
 
 Success criteria mapping: SC-012 → steps 1-3.
+
+## Update 13 (2026-10-07) — Assign template button
+
+Prerequisites: user with `Update` on menu `eutr-purchase-orders`; at least one Approved template and one Draft template; live D365.
+1. Open the Purchase Orders list: each row shows an Assign icon right of View. As a user WITHOUT `Update`, the icon is absent (FR-047).
+2. Click it: popup lists only Approved, non-hidden templates (Draft not shown); no multi-select; OK disabled (FR-044).
+3. For a PO that already has a template, that template is preselected with a "Current" chip; OK stays disabled until another is chosen.
+4. Choose another, OK: one `POST api/eutr-purchase-orders/assign-template` with `{purchId, templateId, versionId}`; popup closes, success message, row Template/Progress refresh (FR-045/046).
+5. Make D365 fail (bad URL/offline): popup stays open with error; list unchanged; double-click OK sends one request.
+6. Cancel sends nothing.
+
+Success criteria mapping: SC-013 → steps 1-6.

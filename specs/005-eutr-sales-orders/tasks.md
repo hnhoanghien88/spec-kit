@@ -6184,3 +6184,17 @@ ItemId/ConfigId (AND khi cả hai có giá trị, AND với mọi filter khác �
 - [ ] T486 Kiểm thử thủ công theo `quickstart.md` Update 45 — **CHƯA chạy** (cần D365 thật + trình duyệt); chưa viết unit test cho `groupPoLinesBySalesLine`.
 - [X] T487 [US4] Điều chỉnh sau phản hồi: tiêu đề nhóm `ItemId-ConfigId  ProductName / ProductDescription`; chờ cả refType=20 và 21 trước khi hiển thị (bỏ flash "Other purchase orders"); mặc định thu gọn; View dùng cùng danh sách PO như Map File với Select khóa (`readOnly`), không nút Save (`SalesLineGroupedPoTable.jsx`, `salesLineGroups.js`, `MapFilePage.jsx`, `ViewSalesOrderPage.jsx`). `vite build` OK; client chưa có framework unit-test nên chưa có test tự động.
 - [X] T488 [US4] Chỉnh lần cuối: bỏ refType=21 khỏi Step 1/View, hoàn tác ProductName/ProductDescription ở `RSVNSalesLineOpenInvoiceCogs`/case 21; thêm 2 trường vào `RSVNEutrSalesOrderPurchLines` + DTO + case 20; `groupPoLinesByVariant`; tiêu đề "ProductVariant  ProductName / ProductDescription". `vite build` OK, `dotnet build` Application OK; T486 vẫn CHƯA chạy.
+
+## Phase 96: Step 1 (Map File) & Selected Purchase Orders (View) — nhóm từ `RSVNEutrOpenSalesLines`, PO gom theo ProductVariant (Update 46) (FR-244..FR-250, SC-114/SC-115)
+
+**Goal**: Tiêu đề nhóm "ItemId-configId  Name / Description" lấy từ `RSVNEutrOpenSalesLines` theo SalesId; PO từ `RSVNEutrSalesOrderPurchLines` gán nhóm theo ProductVariant.
+
+**Independent Test**: Theo `quickstart.md` Update 46.
+
+- [X] T489 [P] Thêm `Description` (nếu chưa có) vào `compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/ComplDynReferenceResponseDto.cs`.
+- [X] T490 Thêm entry `{ 22, ("RSVNEutrOpenSalesLines", "SalesId", "ItemId") }` và `case 22` (Id/Code=SalesId, ItemId, ConfigId=configId, Name, Description) trong `compliance-sys-api/src/ComplianceSys.Application/Services/ComplDynamicsService.cs` (sau T489).
+- [X] T491 [P] [US4] Thay helper bằng `buildSalesLineGroups(salesLines, poLines)` tại `compliance-client/src/presentation/pages/eutr-sales-orders/salesLineGroups.js` (khóa ItemId-configId, gộp trùng, nhóm không PO, nhóm cuối "—" cho PO không khớp).
+- [X] T492 [US4] `compliance-client/src/presentation/pages/eutr-sales-orders/MapFilePage.jsx`: tải refType=22 lọc `SalesId eq`, chờ cùng refType=20, render tiêu đề mới + "No purchase orders" (sau T490, T491).
+- [X] T493 [US5] `compliance-client/src/presentation/pages/eutr-sales-orders/ViewSalesOrderPage.jsx`: cùng cấu trúc, checkbox khóa, không nút Save (sau T490, T491).
+- [X] T494 Build verify: `dotnet build` Application OK; `vite build` OK; ESLint trên salesLineGroups.js/SalesLineGroupedPoTable.jsx không lỗi.
+- [ ] T495 Kiểm thử thủ công theo `quickstart.md` Update 46 — **CHƯA chạy** (cần D365 thật + trình duyệt).

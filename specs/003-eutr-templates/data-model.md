@@ -539,3 +539,11 @@ logic above:
 ## Update 27 — Name uniqueness on create (no schema change)
 
 `eutr_templates.Name` stays non-unique at DB level (versions share Name+Code). Uniqueness is enforced at the service layer on Create/Clone/Edit (FR-099/FR-100/FR-101), Edit excluding same-Code rows.
+
+## Update 28 — Default flag hidden in UI (no schema change)
+
+`eutr_templates.IsDefault` is unchanged and still returned by the API; the UI no longer displays or edits it (FR-102). Existing values are preserved.
+
+## Update 29 — Duplicate step (no schema change)
+
+A duplicated step is a new in-memory `eutr_template_details` row (no Id) copying StepId/RequirementType/TakeFrom, same ParentId, DisplayOrder = source + 1; inserted on Save like any added step.

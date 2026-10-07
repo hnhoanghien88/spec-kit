@@ -1867,3 +1867,16 @@ Success criteria mapping: SC-111 → steps 1-3.
 Success criteria mapping: SC-112 → steps 1,3,4; SC-113 → step 2.
 
 **(Update 45 — chỉnh lần cuối)**: Bước 1: tiêu đề nhóm là `ProductVariant  ProductName / ProductDescription`, gom theo ProductVariant của dòng PO; không có nhóm "Other purchase orders"/"No purchase order" (PO không variant nằm nhóm "—"). Không có request refType=21 ở Map File/View (kiểm tra tab Network).
+
+
+## Update 46 (2026-10-07) — Nhóm Step 1/View lấy từ `RSVNEutrOpenSalesLines`
+
+1. Mở Map File của Sales Order có ≥2 dòng hàng: mỗi dòng hàng là 1 nhóm (mặc định thu gọn), tiêu đề `ItemId-configId  Name / Description`.
+2. Mở rộng nhóm: chỉ các PO có `ProductVariant` = ItemId-configId của nhóm; cột/thứ tự giữ nguyên Update 45.
+3. Dòng hàng chưa có PO: nhóm vẫn hiện, mở ra báo "No purchase orders". PO không khớp: nằm ở nhóm cuối "—".
+4. Select + Save PO Mapping vẫn lưu đúng các dòng đã tick; thu gọn không mất lựa chọn.
+5. View cùng SalesId: cùng nhóm/danh sách PO, checkbox khóa, không nút Save.
+6. SalesId không có dòng hàng: "No order lines"; giả lập lỗi API 22: thông báo lỗi.
+7. `dotnet build` backend và `npm run build` client thành công.
+
+Success criteria mapping: SC-114 → bước 1,3,6; SC-115 → bước 2,3,5.

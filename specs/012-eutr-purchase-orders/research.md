@@ -306,3 +306,11 @@ remove the now-unused probe code.
 - **Decision 1**: Render all files in one scrollable list; drop `filePage` state entirely. Rationale: data is already fully loaded client-side, pagination only sliced it; the container already scrolls. Alternatives: virtualization (rejected — overkill for tens/hundreds of rows); "show more" button (rejected — user asked to remove paging).
 - **Decision 2**: Footer shows "N files" (count after tree-node filter). Alternative: remove footer (rejected — losing the count is a regression).
 - **Decision 3**: Step-filter change no longer needs to reset the page; remove any `setFilePage(1)` calls.
+
+## Update 13 — Assign template to Purchase Order (D365 `updateEutr`)
+
+- **Decision 1**: "Active" templates = `IsDeleted=0 AND IsHide=0 AND Status=1 (PublicD365/Approved)`, via existing `GetEligibleForDynamicsSyncAsync`. Rationale: identical to the set already pushed to D365 `RSVNEutrTemplates`, so every selectable template is guaranteed to exist on D365. Alternative: reuse `eutr-templates/get-all` + Status filter — rejected (requires `EutrTemplates.ReadAll`, a different permission than the button's `Update` right; also returns paging/DTO overhead).
+- **Decision 2**: New dedicated controller/service instead of extending `EutrSynchronizeDataService`. Rationale: that service is sync-specific; the new call is a single-record write with its own policy.
+- **Decision 3**: Server re-validates templateId/versionId against the active set before calling D365. Rationale: stale popup (template re-versioned/hidden) must not push an obsolete pair.
+- **Decision 4**: `templateId` = `Code`, `versionId` = `VersionId` as strings (spec Assumptions). Body field names `purchId`, `templateId`, `versionId` per the user's D365 contract (use a named class, not anonymous type, for `PostAsync<T>` — see note at `EutrSynchronizeDataService` ~line 628).
+- **Decision 5**: Success refreshes the list from D365 rather than patching local row state — guarantees Template/Progress show what D365 actually holds.

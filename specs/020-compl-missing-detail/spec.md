@@ -12,6 +12,16 @@
 
 ## Clarifications
 
+### Session 2026-10-07 (Update 3) — Ẩn tạm Export/Import Excel và cột Follow up date/Note
+
+- Yêu cầu: ẩn tạm thời nút Export Excel, nút Import Excel và cột Follow up date, Note trên màn hình.
+- Quyết định: chỉ ẩn ở client bằng hai cờ `SHOW_EXPORT_IMPORT` (`compliance-missing-detail/index.jsx`) và `SHOW_FOLLOW_UP_COLUMNS` (`hooks/useComplMissingDetailColumns.jsx`), đều đặt `false`; đặt `true` để hiện lại. Backend (`search`/`export`/`note`/`note/import`), dữ liệu ghi chú và code liên quan giữ nguyên. Trong thời gian ẩn, FR-009 và FR-010 tạm không có UI; User Story 4 tạm không thực hiện được trên màn hình.
+
+### Session 2026-10-07 (Update 2) — Nút "Get from D365"
+
+- Bối cảnh/yêu cầu: thêm nút **Get from D365** trên màn hình; khi click chạy `compl-missing-detail/test-compliance-missing` trên Hangfire như class hiện tại.
+- Quyết định: endpoint `ComplMissingDetailController.RefreshSnapshot` đã `BackgroundJob.Enqueue<IComplMissingDetailRefreshService>(RefreshInBackgroundAsync)` và trả 202 ngay — **không đổi backend**. Chỉ thêm nút ở client (API `refresh` → repository → `RefreshComplMissingDetailUseCase` → nút trong `compliance-missing-detail/index.jsx`), cùng kiểu nút với màn open-orders. Nút hiện khi user có quyền Update; sau khi xếp job chỉ báo "Refresh has been queued", user tự reload danh sách khi job xong.
+
 ### Session 2026-10-05
 
 - Q: Quy tắc "Missing" trên compliance detail? → A: *(Superseded by Update 2026-10-05 above)* Missing/Expired are whatever the existing sales-order alert evaluation stores in `compl_so_missing`.
@@ -117,6 +127,8 @@ As on the open-orders screen, the user can enter a follow-up date and note per r
 - **FR-012**: The existing open-orders screen, the existing alert triggers and their data (`compl_so_missing` semantics, notes, jobs) MUST remain unchanged in behaviour; the open-orders screen is reachable at `/compliance-missing-open-orders`.
 - **FR-013**: Status and Days remaining MUST be computed from the current date at read time from each row's Code and Valid to: empty Code = Missing; Code present and today later than Valid to = Expired; Days remaining blank when Valid to is empty, otherwise "-n days left" as on the open-orders screen. Rows that are neither Missing nor Expired by this rule are not listed.
 - **FR-014**: Each row MUST be uniquely identified by the combination of Master code, Code, Type and Product; follow-up date/note MUST be attached to that combination.
+- **FR-016** *(Update 2)*: Màn hình MUST có nút "Get from D365" (chỉ hiện với quyền Update); click gọi `GET /api/compl-missing-detail/test-compliance-missing`, endpoint xếp job Hangfire (FR-005..FR-008 không đổi) và UI chỉ thông báo đã xếp hàng, không chờ job.
+- **FR-017** *(Update 3)*: Tạm thời UI MUST NOT hiển thị nút Export Excel, nút Import Excel, cột Follow up date và cột Note; hành vi backend của FR-009/FR-010 không đổi và có thể bật lại bằng cờ client.
 - **FR-015**: The feature MUST be built as new, separate functionality (new or copied-then-adapted screen, logic, endpoints, data stores). Existing functions, screens, endpoints, jobs and tables used by "Compliance missing open orders" and the existing alerts are in production use and MUST NOT be modified; reuse is limited to calling them unchanged.
 
 ### Key Entities

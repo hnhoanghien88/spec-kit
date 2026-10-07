@@ -565,3 +565,20 @@ mới.
 
 - [X] T063 Sửa `compliance-client/src/presentation/pages/eutr-purchase-orders/PurchaseOrderViewPage.jsx` — gỡ `FILES_PER_PAGE`/`filePage`/`pagedFiles`/`totalFilePages` và `Pagination`, render toàn bộ danh sách file, footer chỉ hiển thị tổng số file.
 - [ ] T064 Kiểm thử thủ công: >10 file, lọc theo Step, danh sách rỗng — **CHƯA chạy**. (ESLint chỉ báo lỗi unused-vars có sẵn, không liên quan; chưa build/chạy trình duyệt)
+
+---
+
+## Phase 15: Nút Assign template (Update 13) (FR-043..FR-047)
+
+**Goal**: Cột Action có nút Assign template cạnh View; popup chọn 1 template Approved; OK đẩy `purchId/templateId/versionId` lên D365 `updateEutr`.
+
+**Independent Test**: [quickstart.md](./quickstart.md) "Update 13", bước 1-6.
+
+- [X] T065 [P] Backend: DTO `ActiveTemplateDto`, `AssignPurchaseOrderTemplateRequestDto` trong `ComplianceSys.Application/Dtos`
+- [X] T066 Backend: `IEutrPurchaseOrdersService` + `EutrPurchaseOrdersService` (active templates; assign → validate + `IDynamicService.PostAsync` updateEutr), đăng ký trong `DependencyInjection.cs`
+- [X] T067 Backend: `EutrPurchaseOrdersController` (`active-templates`, `assign-template`, policy `EutrPurchaseOrders.Update`)
+- [X] T068 [P] Backend: unit test service (hợp lệ / cặp template-version sai / D365 ném lỗi)
+- [X] T069 [P] Frontend: api + repository + use cases (`GetActiveTemplatesForAssign`, `AssignPurchaseOrderTemplate`), đăng ký DI
+- [X] T070 Frontend: `AssignTemplateDialog.jsx` (chọn 1, Current chip, OK disabled, loading/error)
+- [X] T071 Frontend: `PurchaseOrderOverviewPage.jsx` — nút Assign cạnh View, ẩn theo permission `Update`, refetch sau thành công
+- [X] T072 Build + test: `dotnet test --filter EutrPurchaseOrdersServiceTests` 6/6 pass; ESLint sạch trên file mới/sửa; `vite build` thành công. Kiểm thử thủ công theo quickstart **CHƯA chạy** (cần D365 thật + trình duyệt); policy `EutrPurchaseOrders.Update` và hành vi `updateEutr` thật **chưa xác nhận** trên môi trường chạy.

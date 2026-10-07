@@ -1913,3 +1913,10 @@ No data-model change. Client-only view state `filePage` is removed; the file lis
 - State: `expandedGroups: Set<key>` (UI only, default empty = all collapsed). View derives `savedLineKeys` from `purchaseAttachments` for the locked Select column. No change to `eutr_purchase_attachments` or `selectedPOs`.
 
 **(Update 45 — chỉnh lần cuối)**: Thay thế các mục trên — `RSVNEutrSalesOrderPurchLines` (D365): + `ProductName`, + `ProductDescription`; `ComplDynReferenceResponseDto.ProductName/ProductDescription` nay gán ở refType=20. `RSVNSalesLineOpenInvoiceCogs` KHÔNG đổi. View-model `{ key = variant chuẩn hóa, variant, productName, productDescription, pos[] }`; không còn nhóm "Other purchase orders".
+
+
+## Update 46 (2026-10-07): groups from `RSVNEutrOpenSalesLines` (no DB change)
+
+- `RSVNEutrOpenSalesLines` (D365, domain, refType 22): `SalesId`, `ItemId`, `configId`, `Name`, `Description` — đã có.
+- `ComplDynReferenceResponseDto`: refType=22 gán `Id/Code = SalesId`, `ItemId`, `ConfigId = configId`, `Name`, `Description` (+ trường `Description` nếu chưa có).
+- Client view-model `SalesLineGroup { key = itemId-configId (hoặc itemId), itemId, configId, name, description, pos: PoLine[] }` + nhóm cuối "—" cho PO không khớp. `PoLine` giữ nguyên. `expandedGroups: Set<key>` chỉ là state UI (mặc định rỗng = thu gọn). Không đổi `eutr_purchase_attachments`/`selectedPOs`.

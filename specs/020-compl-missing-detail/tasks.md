@@ -79,6 +79,16 @@
 - [x] T029 [P] Tạo tài liệu `compliance-sys-api/docs/compliance-missing-detail/README.md` (mô tả trigger, bảng, rủi ro dùng chung `compl_so_missing`, thứ tự migration 35→36)
 - [ ] T030 Chạy quickstart.md (15 kịch bản) và ghi kết quả; xác nhận file cũ chỉ thay đổi bằng thêm dòng (`git diff` các file đăng ký)
 
+## Phase 8: Update 2 — Nút Get from D365
+
+- [x] T031 Client: thêm `refresh` vào `complMissingDetailApi.js`, `IComplMissingDetailRepository`, `RestComplMissingDetailRepository`, tạo `RefreshComplMissingDetailUseCase.js`, thêm nút "Get from D365" vào `compliance-missing-detail/index.jsx` (backend không đổi, đã chạy Hangfire; eslint sạch)
+- [ ] T032 Chạy thử thủ công: click nút → "Refresh has been queued", job hiện ở Hangfire dashboard (NOT run — cần môi trường live)
+
+## Phase 9: Update 3 — Ẩn tạm Export/Import và cột Follow up date/Note
+
+- [x] T033 Client: thêm cờ `SHOW_EXPORT_IMPORT = false` (`index.jsx`) và `SHOW_FOLLOW_UP_COLUMNS = false` (`useComplMissingDetailColumns.jsx`) để ẩn 2 nút và 2 cột; backend không đổi (eslint sạch)
+- [ ] T034 Kiểm tra thủ công trên UI: không còn nút Export/Import, cột Follow up date/Note (NOT run — cần môi trường live)
+
 ## Dependencies & Execution Order
 
 - Phase 1 → Phase 2 → US1 (P1) → US2 (P1) → US3 → US4 → Polish. US2 cần dữ liệu từ US1 để kiểm thử nhưng code độc lập sau Phase 2.

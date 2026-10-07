@@ -10,6 +10,37 @@
 
 ## Clarifications
 
+### Session 2026-10-07 (Update 14) — Chiều cao khung AVAILABLE FILES bằng chiều cao khung Template
+
+- Input: "màn hình AVAILABLE FILES (19), khi nhiều file hiển thị thanh scroll, chiều cao chỉnh cho bằng với cột template".
+- Change (FR-048): Khung AVAILABLE FILES MUST có chiều cao đúng bằng khung cây Template bên trái (không dài hơn
+  theo số file); khi nhiều file, danh sách cuộn bên trong khung. Chỉ đổi giao diện (`PurchaseOrderViewPage.jsx`).
+
+### Session 2026-10-07 (Update 13) — Nút "Assign template" ở cột Action của danh sách Purchase Orders: chọn 1 template active và đẩy lên D365
+
+- Input: "cập nhật 012-eutr-purchase-orders, thêm nút Asign template ở cột Action, kế nút View. Khi bấm
+  vào hiển thị popup list template active. User chỉ dc chọn 1. sau đó nhấn OK, dữ liệu sẽ đẩy lên D365
+  (`updateEutr` của `RSVNPurchTables`, cross-company) với 3 biến string: purchId, templateId, versionId".
+- Bối cảnh: Hiện cột Template của danh sách chỉ hiển thị Template đang gắn trên Purchase Order (đọc từ
+  D365); chưa có cách gán/đổi Template cho Purchase Order ngay từ màn hình này.
+- Change: Cột **Action** của danh sách Purchase Orders MUST có thêm nút **Assign template** đặt ngay
+  bên phải nút **View** ở mỗi dòng. Nhấn nút MUST mở popup liệt kê các template đang **active**; người
+  dùng chỉ được chọn **đúng 1** template; nhấn **OK** MUST đẩy lựa chọn lên D365 cho đúng Purchase Order
+  của dòng đó, gồm 3 giá trị chuỗi: `purchId` (Purch id của dòng), `templateId` (mã template được
+  chọn), `versionId` (version của template được chọn).
+- Quyết định (mặc định hợp lý, ghi ở Assumptions): "active" = template chưa bị xóa và là phiên bản hiện
+  hành (không phải dòng cũ đã ẩn do lên version) và đã Approved; `templateId` = mã (Code) của template, `versionId` =
+  VersionId của chính dòng template được chọn (cả hai gửi dạng chuỗi).
+- Không đổi: các cột hiện có, nút View, tìm kiếm/phân trang, màn hình `PurchId/View`.
+- Q: Popup Assign template có hiển thị template Draft không? → A: Không — chỉ template chưa xóa, là
+  phiên bản hiện hành và đã Approved.
+- Q: Popup xử lý template hiện tại của Purchase Order thế nào? → A: Chọn sẵn và đánh dấu "Current"; OK
+  chỉ bật khi chọn template khác template hiện tại.
+- Q: Có lọc template theo Vendor của Purchase Order không? → A: Không — hiển thị mọi template active
+  (Approved), không xét Vendor.
+- Q: Ai được thấy nút Assign template? → A: Chỉ người có quyền Update của menu EUTR Purchase Orders; nút
+  ẩn với người còn lại.
+
 ### Session 2026-10-05 (Update 12) — Bỏ phân trang ở khu vực AVAILABLE FILES — hiển thị toàn bộ file trong một danh sách cuộn
 
 - Input: "cập nhật 005-eutr-sales-orders, màn hình map file, bỏ phân trang ở Available files và
@@ -313,6 +344,19 @@ completed/total/% khớp với dữ liệu Template thật (003-eutr-templates) 
    buộc, không suy diễn thành 0% "chưa hoàn thành".
 8. **Given** một purchase order có Template và mọi step Required của Template đó đã có tài liệu,
    **When** bảng hiển thị dòng đó, **Then** cột Progress hiển thị 100% hoàn thành.
+9. **Given** danh sách Purchase Orders đang hiển thị, **When** nhìn cột Action, **Then** mỗi dòng có nút
+   Assign template ngay bên phải nút View (Update 13).
+10. **Given** nhấn Assign template ở một dòng, **When** popup mở, **Then** thấy danh sách template
+    active; template hiện tại của PO (nếu có) được chọn sẵn và đánh dấu "Current", nút OK đang vô hiệu
+    (Update 13).
+11. **Given** popup đang mở và đã chọn template A, **When** chọn template B, **Then** chỉ B được chọn
+    (A bỏ chọn) — luôn tối đa 1 template được chọn (Update 13).
+12. **Given** đã chọn 1 template, **When** nhấn OK và D365 xử lý thành công, **Then** purchId của dòng,
+    templateId và versionId của template đã chọn được gửi lên D365, popup đóng, báo thành công, và cột
+    Template/Progress của dòng cập nhật theo template mới (Update 13).
+13. **Given** đã chọn 1 template, **When** nhấn OK nhưng D365 trả lỗi/không phản hồi, **Then** popup vẫn
+    mở, hiển thị lỗi rõ ràng và dữ liệu danh sách không đổi (Update 13).
+14. **Given** popup đang mở, **When** nhấn Cancel/đóng, **Then** không gửi gì lên D365 (Update 13).
 
 ---
 
@@ -479,6 +523,11 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
 - (Update 12) Số file rất lớn (hàng trăm): danh sách vẫn hiển thị đầy đủ trong khung cuộn cố định chiều
   cao, chân khung luôn thấy được; khi lọc theo Step chỉ còn ít file, chân khung hiển thị đúng tổng số
   file sau lọc. Danh sách rỗng giữ nguyên thông báo hiện có.
+- (Update 13) Không có template active (Approved) nào: popup hiển thị trạng thái rỗng rõ ràng, OK luôn vô hiệu.
+  Purchase Order đã có template: nếu template hiện tại nằm trong danh sách thì được chọn sẵn và đánh
+  dấu "Current", OK vô hiệu cho tới khi chọn template khác; nếu không nằm trong danh sách (Draft/đã ẩn/đã xóa)
+  thì không chọn sẵn mục nào. Nhấn OK nhiều lần liên tiếp chỉ
+  gửi 1 yêu cầu. Template bị xóa/ẩn giữa lúc popup đang mở mà D365 từ chối: xử lý như lỗi (FR-046).
 
 ## Requirements *(mandatory)*
 
@@ -628,6 +677,23 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
 - **FR-042 (Update 12)**: Khu vực AVAILABLE FILES MUST hiển thị toàn bộ file đang áp dụng (sau lọc
   theo Step nếu có) trong một danh sách cuộn, KHÔNG có thanh phân trang/chọn trang; chân khung MUST hiển
   thị tổng số file.
+- **FR-043 (Update 13)**: Mỗi dòng ở cột Action của danh sách Purchase Orders MUST có nút **Assign
+  template** ngay bên phải nút View.
+- **FR-044 (Update 13)**: Nhấn Assign template MUST mở popup liệt kê các template **active** (chưa bị
+  xóa, là phiên bản hiện hành và đã Approved — template Draft KHÔNG hiển thị); mỗi mục hiển thị tối thiểu mã (Code), tên và version. Popup MUST chỉ cho
+  chọn **đúng 1** template (chọn mục khác thay cho mục đang chọn; không chọn nhiều). Template đang gắn
+  trên Purchase Order (nếu có trong danh sách) MUST được chọn sẵn và đánh dấu "Current"; nút **OK** MUST
+  bị vô hiệu cho tới khi đã chọn 1 template khác template hiện tại; có nút Cancel/đóng để thoát mà không gửi gì.
+- **FR-045 (Update 13)**: Nhấn **OK** MUST gửi lên D365 (hành động `updateEutr` trên `RSVNPurchTables`,
+  cross-company) đúng 3 giá trị chuỗi: `purchId` (Purch id của dòng), `templateId` (Code của template
+  đã chọn), `versionId` (VersionId của template đã chọn). Chỉ gửi cho Purchase Order của dòng đang thao tác.
+- **FR-046 (Update 13)**: Trong lúc gửi, popup MUST hiển thị trạng thái đang xử lý và chặn nhấn OK lặp.
+  Thành công → đóng popup, hiển thị thông báo thành công và làm mới danh sách để cột Template/Progress
+  của dòng phản ánh template mới. Thất bại → giữ popup mở, hiển thị thông báo lỗi rõ ràng, không làm
+  thay đổi dữ liệu hiển thị.
+- **FR-047 (Update 13)**: Nút Assign template MUST chỉ hiển thị cho người dùng có quyền **Update** của
+  menu EUTR Purchase Orders (theo `permissionList` của menu, cùng cơ chế FR-033); người dùng không có
+  quyền này không thấy nút, nút View không bị ảnh hưởng.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -681,6 +747,10 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
 
 - **SC-012 (Update 12)**: Với danh sách AVAILABLE FILES có hơn 10 file, 100% file hiển thị trong cùng
   một danh sách cuộn mà người dùng không cần chuyển trang; không còn điều khiển phân trang nào ở khu vực này.
+- **SC-013 (Update 13)**: 100% dòng trong danh sách có nút Assign template cạnh nút View; sau khi chọn
+  1 template và nhấn OK thành công, Purchase Order đó được cập nhật Template trên D365 và cột
+  Template/Progress của dòng phản ánh template mới mà không cần tải lại trang thủ công; không có
+  trường hợp nào gửi được nhiều hơn 1 template trong một lần nhấn OK.
 
 ## Assumptions
 
@@ -741,3 +811,10 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
   cấu trúc `TreeNode`/luồng Download.
 - (Update 12) Bỏ phân trang là thay đổi thuần giao diện phía client; không thêm/đổi API, entity, DTO
   hay route. Dữ liệu AVAILABLE FILES vốn đã tải đầy đủ một lần rồi mới chia trang ở client.
+- (Update 13) "Template active" được hiểu là template chưa bị xóa (IsDeleted ≠ 1) và là phiên bản hiện
+  hành (IsHide ≠ 1) và đã Approved (Status = 1) của 003-eutr-templates; `templateId` gửi D365 = Code của template, `versionId` =
+  VersionId của chính dòng được chọn, cả hai dạng chuỗi — khớp với cách đồng bộ template hiện có
+  (011/003) đang dùng Code làm khóa với D365. Việc gán template chỉ ghi lên D365 (nguồn dữ liệu của cột
+  Template), không ghi bảng cục bộ. Đã chốt ở bước clarify: chỉ template Approved mới được gán.
+- (Update 13) Danh sách popup Assign template KHÔNG lọc theo Vendor của Purchase Order (đã chốt ở clarify);
+  mọi template active (Approved) đều hiển thị cho mọi Purchase Order.

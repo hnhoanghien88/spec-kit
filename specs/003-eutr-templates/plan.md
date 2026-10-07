@@ -2122,3 +2122,11 @@ code rather than duplicating it a second time inside `EutrTemplatesService`. The
 ordering (D365 call before `BeginTransactionAsync`) adds no new error-handling paradigm — it reuses
 the exact `ValidationException` → 400 mapping every other Approve/Request-change/Clone rejection in
 this controller already relies on.
+
+## Update 28 (2026-10-07) — Hide Default column + Set-as-default checkbox (FR-102; frontend-only)
+
+Remove the `isDefault` column from `useEutrTemplatesColumns.jsx`, the checkbox from `CreateTemplateDialog.jsx`, and the checkbox + set-default confirm dialog/handlers from `TemplateBuilderPage.jsx`. No backend, API, or schema change; Create still sends `isDefault = 0`.
+
+## Update 29 (2026-10-08) — Duplicate step button (FR-103..FR-105; frontend-only)
+
+Add `duplicateStep` to `useStepTree.js` and a Duplicate toolbar button + `handleDuplicateNode` in `TemplateBuilderPage.jsx`. No backend/API/schema change.

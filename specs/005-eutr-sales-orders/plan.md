@@ -3319,3 +3319,13 @@ Unchanged (verified reusable as-is, no edits needed) for Update 43:
 **Open item**: whether D365 already exposes `ProductName`/`ProductDescription` on the entity must be confirmed on the live env; UI shows "—" if absent (spec Assumptions).
 
 **(Update 45 — chỉnh lần cuối)**: Bỏ hoàn toàn refType=21 khỏi Step 1/View và hoàn tác phần thêm ProductName/ProductDescription vào `RSVNSalesLineOpenInvoiceCogs`/case 21. Backend: `RSVNEutrSalesOrderPurchLines` + `ComplDynReferenceResponseDto` + `case 20` mang ProductName/ProductDescription. Frontend: `groupPoLinesByVariant(poLines)` (salesLineGroups.js) gom theo ProductVariant; tiêu đề "ProductVariant  ProductName / ProductDescription"; không còn lời gọi/loading riêng cho dòng hàng. Các mô tả refType=21/ItemId-ConfigId ở trên đã bị thay thế.
+
+
+# Update 46 (2026-10-07) — Step 1 (Map File) & Selected Purchase Orders (View): nhóm lấy từ `RSVNEutrOpenSalesLines` (FR-244..FR-250, SC-114/SC-115)
+
+**Scope**: (a) Backend: `ComplDynamicsService` thêm entry `{ 22, ("RSVNEutrOpenSalesLines", "SalesId", "ItemId") }` vào bảng ánh xạ refType và `case 22` trong `MapDynamicsResponse` (Id/Code = SalesId, ItemId, ConfigId = `configId`, Name = `Name`, Description = `Description`); `ComplDynReferenceResponseDto` thêm `Description` (nếu chưa có). Entity `RSVNEutrOpenSalesLines` (ModelType 22) đã có sẵn. (b) Client: `salesLineGroups.js` đổi thành `buildSalesLineGroups(salesLines, poLines)` — nhóm từ salesLines (khóa `ItemId-configId`, rút gọn còn `ItemId` khi configId rỗng, so khớp trim/không phân biệt hoa thường với `ProductVariant` của PO), PO không khớp vào nhóm cuối "—"; `MapFilePage.jsx` và `ViewSalesOrderPage.jsx` thêm 1 effect gọi refType=22 lọc `SalesId eq <salesId>` song song với refType=20 và render nhóm rỗng ("No purchase orders").
+**Storage**: none — D365 chỉ đọc; không bảng, không migration (quy tắc DB-migration không bị kích hoạt).
+**Testing**: client chưa có framework unit test → kiểm tra thủ công theo quickstart Update 46 (nhóm không PO, PO không khớp, configId rỗng, trùng ItemId-configId); backend: `dotnet build` ComplianceSys; client: `npm run build`/lint.
+**Performance/Constraints**: thêm 1 lời gọi refType=22 mỗi lần mở màn hình (cùng quy ước page size với refType=20); gom nhóm client-side qua `useMemo`; chờ cả hai lời gọi xong mới render (tránh PO nhảy sang nhóm "—" tạm thời). Khóa Select/Save PO Mapping `makePoLineKey(purchId, variant, itemId)` không đổi.
+**Constitution Check**: PASS — dùng lại endpoint tham chiếu chung, chỉ thêm 1 refType; không lớp/endpoint mới.
+**Open item**: tên cột thực tế của API (`configId` viết thường) cần xác nhận trên môi trường D365 thật.
