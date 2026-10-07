@@ -10,6 +10,20 @@
 
 ## Clarifications
 
+### Session 2026-10-05 (Update 12) — Bỏ phân trang ở khu vực AVAILABLE FILES — hiển thị toàn bộ file trong một danh sách cuộn
+
+- Input: "cập nhật 005-eutr-sales-orders, màn hình map file, bỏ phân trang ở Available files và
+  012-eutr-purchase-orders cũng bỏ phân trang ở Available files".
+- Bối cảnh (rà soát mã nguồn): Khu vực AVAILABLE FILES của `PurchId/View` (`PurchaseOrderViewPage.jsx`, clone của Map File Step 2) đang chia danh sách file thành từng trang 10 file
+  (hằng `FILES_PER_PAGE = 10`) kèm thanh phân trang và dòng đếm "x–y / N files" ở chân khung.
+- Change: Khu vực **AVAILABLE FILES** MUST hiển thị TOÀN BỘ file (sau khi áp dụng bộ lọc theo Step khi
+  click node cây, nếu có) trong một danh sách duy nhất, người dùng cuộn dọc trong khung để xem — KHÔNG
+  còn thanh phân trang. Chân khung (footer) hiển thị tổng số file ("N files") thay cho dải
+  "x–y / N files".
+- Không đổi: nguồn dữ liệu, bộ lọc theo Step, các nút View/Edit/Download trên từng dòng, thứ tự sắp xếp,
+  trạng thái rỗng/đang tải. Phân trang của danh sách Overview KHÔNG bị ảnh hưởng.
+- Kế thừa: Áp dụng nguyên vẹn quyết định đã chốt ở `005-eutr-sales-orders` Update 44 (FR-236) vào màn hình này.
+
 ### Session 2026-09-30 (Update 11) — Kế thừa `004-eutr-documents` Update 29 (matching Type = "PO" theo tên Step, bỏ đổi tên khi Upload); cây Template hiển thị tên file thay tên Step khi đã upload; bỏ đổi tên file khi Download cho document Type = "PO"
 
 - Input: "cập nhật 004-eutr-documents, 005-eutr-sales-orders, 012-eutr-purchase-orders khi upload
@@ -462,6 +476,10 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
   `eutr-documents`: màn hình `PurchId/View` chỉ còn hiển thị cây thư mục/AVAILABLE FILES ở chế độ gần
   như chỉ đọc (không còn nút Upload lẫn Edit) — không phải trạng thái lỗi.
 
+- (Update 12) Số file rất lớn (hàng trăm): danh sách vẫn hiển thị đầy đủ trong khung cuộn cố định chiều
+  cao, chân khung luôn thấy được; khi lọc theo Step chỉ còn ít file, chân khung hiển thị đúng tổng số
+  file sau lọc. Danh sách rỗng giữ nguyên thông báo hiện có.
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
@@ -607,6 +625,10 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
   upload) + đuôi file gốc, không đổi. Áp dụng nguyên vẹn quyết định đã chốt ở `005-eutr-sales-orders`
   FR-217 vào màn hình này.
 
+- **FR-042 (Update 12)**: Khu vực AVAILABLE FILES MUST hiển thị toàn bộ file đang áp dụng (sau lọc
+  theo Step nếu có) trong một danh sách cuộn, KHÔNG có thanh phân trang/chọn trang; chân khung MUST hiển
+  thị tổng số file.
+
 ### Key Entities *(include if feature involves data)*
 
 - **Purchase Order (ERP reference data, type = 15)**: Một đơn mua hàng lấy từ ERP qua nguồn tham
@@ -656,6 +678,9 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
 - **SC-011 (Update 11)**: 100% lượt Download trên document Type = "PO" tải về file với tên đúng bằng
   `eutr_documents.Name` đã lưu (không còn tính lại thành Step Name); document Type khác "PO" tiếp tục
   theo SC-008 như hiện có.
+
+- **SC-012 (Update 12)**: Với danh sách AVAILABLE FILES có hơn 10 file, 100% file hiển thị trong cùng
+  một danh sách cuộn mà người dùng không cần chuyển trang; không còn điều khiển phân trang nào ở khu vực này.
 
 ## Assumptions
 
@@ -714,3 +739,5 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
   dụng NGUYÊN VẸN quyết định đã chốt ở `005-eutr-sales-orders` Update 37 (FR-216/FR-217) — không phát
   sinh quyết định thiết kế riêng nào khác cho `012-eutr-purchase-orders`, vì cả hai màn hình dùng chung
   cấu trúc `TreeNode`/luồng Download.
+- (Update 12) Bỏ phân trang là thay đổi thuần giao diện phía client; không thêm/đổi API, entity, DTO
+  hay route. Dữ liệu AVAILABLE FILES vốn đã tải đầy đủ một lần rồi mới chia trang ở client.

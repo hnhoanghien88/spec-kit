@@ -1900,3 +1900,16 @@ today (`fetchSalesOrders`, no new use case needed beyond the existing `GetRefere
 - `eutr_progression`/`EutrProgressionService` (Update 42) is untouched — ItemId/ConfigId search is a
   purely orthogonal filter on which Sales Orders the Overview list itself shows; it does not change how
   Progress is computed or read for whichever rows end up displayed.
+
+## Update 44 (2026-10-05): Remove AVAILABLE FILES pagination (FR-236, no entity/DTO/API change)
+
+No data-model change. Client-only view state `filePage` is removed; the file list model is unchanged.
+
+## Update 45 (2026-10-05): sales-line grouping for Step 1 / View (no DB change)
+
+- `RSVNSalesLineOpenInvoiceCogs` (D365, domain): + `ProductName: string`, + `ProductDescription: string`.
+- `ComplDynReferenceResponseDto`: + `ProductName`, + `ProductDescription` (null for every refType except 21).
+- Client view-model `SalesLineGroup { key = `itemId-configId` (or `itemId`), compared to PO `variant` (ProductVariant), itemId, configId, productName, productDescription, pos: PoLine[] }` plus a synthetic `others` group; `PoLine` is the existing `poLines` item (purchId, name, orderAccount, eutrTemplate, variant, material, qty, unit, qtyPercent). Validation: key normalized trim+lowercase; PO assigned to exactly one group.
+- State: `expandedGroups: Set<key>` (UI only, default empty = all collapsed). View derives `savedLineKeys` from `purchaseAttachments` for the locked Select column. No change to `eutr_purchase_attachments` or `selectedPOs`.
+
+**(Update 45 — chỉnh lần cuối)**: Thay thế các mục trên — `RSVNEutrSalesOrderPurchLines` (D365): + `ProductName`, + `ProductDescription`; `ComplDynReferenceResponseDto.ProductName/ProductDescription` nay gán ở refType=20. `RSVNSalesLineOpenInvoiceCogs` KHÔNG đổi. View-model `{ key = variant chuẩn hóa, variant, productName, productDescription, pos[] }`; không còn nhóm "Other purchase orders".

@@ -300,3 +300,9 @@ remove the now-unused probe code.
   possible duplicate call — considered but not applied, since it would make this screen's behavior
   diverge from the established `005-eutr-sales-orders` reference pattern for a cosmetic-only benefit
   (no incorrect data results either way).
+
+## Update 12 — Remove AVAILABLE FILES pagination
+
+- **Decision 1**: Render all files in one scrollable list; drop `filePage` state entirely. Rationale: data is already fully loaded client-side, pagination only sliced it; the container already scrolls. Alternatives: virtualization (rejected — overkill for tens/hundreds of rows); "show more" button (rejected — user asked to remove paging).
+- **Decision 2**: Footer shows "N files" (count after tree-node filter). Alternative: remove footer (rejected — losing the count is a regression).
+- **Decision 3**: Step-filter change no longer needs to reset the page; remove any `setFilePage(1)` calls.

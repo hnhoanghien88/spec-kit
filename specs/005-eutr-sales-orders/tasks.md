@@ -6154,3 +6154,33 @@ bảng hiển thị "No data" (xác nhận AND, không phải OR).
 **Checkpoint**: `refType=21` hoạt động qua `POST /api/dynamics/reference`; Overview lọc đúng theo
 ItemId/ConfigId (AND khi cả hai có giá trị, AND với mọi filter khác đang áp dụng); không khớp hiển thị
 "No data"; Clear/Back-restore hoạt động nhất quán với các điều kiện tìm kiếm khác đã có.
+
+---
+
+## Phase 94: Bỏ phân trang ở AVAILABLE FILES (Update 44) (FR-236)
+
+**Goal**: Khu vực AVAILABLE FILES hiển thị toàn bộ file trong một danh sách cuộn, không còn phân trang.
+
+**Independent Test**: Với >10 file, mở màn hình — thấy đủ mọi file bằng cuộn dọc, không có thanh phân trang; chân khung hiện "N files".
+
+- [X] T477 Sửa `compliance-client/src/presentation/pages/eutr-sales-orders/MapFilePage.jsx` — gỡ `FILES_PER_PAGE`/`filePage`/`pagedFiles`/`totalFilePages` và `Pagination`, render toàn bộ danh sách file, footer chỉ hiển thị tổng số file.
+- [ ] T478 Kiểm thử thủ công: >10 file, lọc theo Step, danh sách rỗng — **CHƯA chạy**. (ESLint chỉ báo lỗi unused-vars có sẵn, không liên quan; chưa build/chạy trình duyệt)
+
+---
+
+## Phase 95: Step 1 (Map File) & Selected Purchase Orders (View) nhóm theo dòng hàng `RSVNSalesLineOpenInvoiceCogs` (Update 45) (FR-237..FR-243)
+
+**Goal**: Hiển thị PO theo nhóm dòng hàng (ItemId > ConfigId > ProductName > ProductDescription), mở rộng/thu gọn được.
+
+**Independent Test**: Theo `quickstart.md` Update 45.
+
+- [X] T479 Thêm `ProductName`/`ProductDescription` vào `compliance-sys-api/src/ComplianceSys.Domain/Dynamics/RSVNSalesLineOpenInvoiceCogs.cs`.
+- [X] T480 [P] Thêm `ProductName`/`ProductDescription` vào `compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/ComplDynReferenceResponseDto.cs`.
+- [X] T481 Map 2 trường mới ở `case 21` của `compliance-sys-api/src/ComplianceSys.Application/Services/ComplDynamicsService.cs` (sau T479, T480).
+- [X] T482 [P] [US4] Tạo helper `groupPoLinesBySalesLine(salesLines, poLines)` (khóa `ItemId-ConfigId` so với ProductVariant, fallback ItemId, gộp trùng, nhóm "Other purchase orders") tại `compliance-client/src/presentation/pages/eutr-sales-orders/salesLineGroups.js`.
+- [X] T483 [US4] `MapFilePage.jsx`: tải refType=21 theo SalesId, render bảng PO theo nhóm có mở/thu, giữ cột Select + `makePoLineKey` (sau T481, T482).
+- [X] T484 [US5] `ViewSalesOrderPage.jsx`: cùng cấu trúc nhóm, chỉ đọc, không cột Select (sau T481, T482).
+- [X] T485 Build verify: `vite build` OK; `dotnet build` biên dịch Domain/Application OK (chỉ lỗi MSB3021 khoá file do API đang chạy); ESLint: lỗi unused-vars có sẵn, không phát sinh lỗi mới.
+- [ ] T486 Kiểm thử thủ công theo `quickstart.md` Update 45 — **CHƯA chạy** (cần D365 thật + trình duyệt); chưa viết unit test cho `groupPoLinesBySalesLine`.
+- [X] T487 [US4] Điều chỉnh sau phản hồi: tiêu đề nhóm `ItemId-ConfigId  ProductName / ProductDescription`; chờ cả refType=20 và 21 trước khi hiển thị (bỏ flash "Other purchase orders"); mặc định thu gọn; View dùng cùng danh sách PO như Map File với Select khóa (`readOnly`), không nút Save (`SalesLineGroupedPoTable.jsx`, `salesLineGroups.js`, `MapFilePage.jsx`, `ViewSalesOrderPage.jsx`). `vite build` OK; client chưa có framework unit-test nên chưa có test tự động.
+- [X] T488 [US4] Chỉnh lần cuối: bỏ refType=21 khỏi Step 1/View, hoàn tác ProductName/ProductDescription ở `RSVNSalesLineOpenInvoiceCogs`/case 21; thêm 2 trường vào `RSVNEutrSalesOrderPurchLines` + DTO + case 20; `groupPoLinesByVariant`; tiêu đề "ProductVariant  ProductName / ProductDescription". `vite build` OK, `dotnet build` Application OK; T486 vẫn CHƯA chạy.

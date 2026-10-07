@@ -1255,6 +1255,14 @@ eslint`/`npm run build` once the code changes for Update 26 land (no code change
 planning time — this scenario documents the validation to run once FR-095 to FR-098 are
 implemented).
 
+### Scenario 30 (Update 27): Duplicate Name rejected on Create/Clone
+
+1. Create template "ABC" → success. Create another named "abc " → 400/dialog error "already exists"; no row added.
+2. Clone any template with Name "ABC" → same error.
+3. Request change on "ABC" (Public D365) → new version created with Name "ABC" (allowed).
+4. Edit template "XYZ" and rename to "ABC" → error; save "XYZ" unchanged (or rename to a new name) → success.
+5. Success criteria: SC-074.
+
 ## Post-Validation Checks
 
 - [ ] ~~TemplateListPage renders the Table + search-box layout (not a 9-column DataGrid)~~ —

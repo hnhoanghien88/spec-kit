@@ -62,3 +62,11 @@ Net-new `refType` registration — no existing caller sends `refType = 21` today
 conflict with). The 2 existing direct callers of `RSVNSalesLineOpenInvoiceCogs` (`ComplSynchronizeDataService`,
 `DynamicsDataService`) do not go through this endpoint/`EntityMappings` and are unaffected by this
 registration existing alongside their own direct usage of the same domain class.
+
+## Update 45 — added response fields
+
+`refType=21`, filter `SalesId eq '<id>'` (existing `filter` mechanism) now also returns `productName` and `productDescription` per row (one row per sales line). `id`/`code`/`itemId`/`configId` unchanged. Used by Step 1 (Map File) and Selected Purchase Orders (View) to build line groups; callers dedupe by (itemId, configId). Backward compatible (additive fields).
+
+Caller note: filter `SalesId eq '<id>'`; group key = `itemId-configId` matched to refType=20 `productVariant`.
+
+**(Update 45 — chỉnh lần cuối)**: Update 45 KHÔNG còn dùng refType=21; `productName`/`productDescription` nay do refType=20 trả về (xem `map-file-reused-endpoints.md`). Mục "added response fields" ở trên không còn hiệu lực.

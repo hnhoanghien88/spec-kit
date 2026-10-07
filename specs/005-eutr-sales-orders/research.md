@@ -3634,3 +3634,22 @@ no-dead-code convention.
   trigger" tách biệt với `Total` — rejected, thêm phức tạp không cần thiết khi giải pháp đơn giản hơn
   (xóa bản ghi) đã giải quyết đúng vấn đề và khớp lại đúng ngữ nghĩa gốc của FR-083 (không có bản ghi
   `eutr_purchase_attachments` = trạng thái trống) mà không cần khái niệm mới nào.
+
+## Update 44 — Remove AVAILABLE FILES pagination
+
+- **Decision 1**: Render all files in one scrollable list; drop `filePage` state entirely. Rationale: data is already fully loaded client-side, pagination only sliced it; the container already scrolls. Alternatives: virtualization (rejected — overkill for tens/hundreds of rows); "show more" button (rejected — user asked to remove paging).
+- **Decision 2**: Footer shows "N files" (count after tree-node filter). Alternative: remove footer (rejected — losing the count is a regression).
+- **Decision 3**: Step-filter change no longer needs to reset the page; remove any `setFilePage(1)` calls.
+
+## Update 45 — Group Step 1 / View PO table by sales line
+
+- **Decision 1**: Reuse refType=21 (Update 43) for the line list, extending its response with ProductName/ProductDescription; no new endpoint. Alternative: a new aggregate server endpoint (rejected — pages already compose generic reference calls client-side, Constitution II/III).
+- **Decision 2** (revised): Group key = `ItemId-ConfigId` (just `ItemId` when no ConfigId), compared case-insensitively/trimmed to the PO line's `ProductVariant`; header label `ItemId-ConfigId  ProductName / ProductDescription`. Alternative: match on PO ItemId/Material + variant (rejected by the business — ProductVariant already carries `ItemId-ConfigId`).
+- **Decision 3**: Dedupe refType=21 rows by (ItemId, ConfigId) since one sales line = one row but repeated keys must merge into one group (spec edge case).
+- **Decision 4**: Orphan POs go to an "Other purchase orders" group and lines without PO show "No purchase order", so nothing selectable/visible disappears.
+- **Decision 5** (revised): Expansion state is local UI state (`Set` of expanded group keys), independent from `selectedPOs`; default all collapsed.
+- **Decision 6**: ProductName/ProductDescription come from the D365 entity columns (as requested), not from the refType=6 enrichment used by the sync job.
+- **Decision 7**: Wait for both refType=20 and refType=21 before rendering groups (shared loading flag) — rendering early put every PO into "Other purchase orders" until the lines arrived. The two requests already run in parallel (independent effects).
+- **Decision 8**: View's Selected Purchase Orders reuses the same grouped table and full PO list as Map File; saved POs are shown ticked, checkboxes locked (`readOnly`), no Save PO Mapping button.
+
+- **Decision 9 (thay thế Decision 1–4, 7)**: Chỉ dùng `RSVNEutrSalesOrderPurchLines` (type = 20), gom theo ProductVariant, thêm ProductName/ProductDescription vào entity này; không gọi refType=21. Lý do: ProductVariant đã là khóa của nhóm, bỏ 1 lần gọi D365 và loại bỏ nhu cầu ghép khóa/chờ 2 nguồn.

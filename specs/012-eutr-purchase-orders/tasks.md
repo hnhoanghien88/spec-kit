@@ -554,3 +554,14 @@ matching/no-rename change for Type = "PO" lives entirely in `004-eutr-documents`
 chưa khớp hiển thị tên Step; Download trên document Type = "PO" giữ nguyên tên đã lưu (tên file gốc từ
 `004-eutr-documents` Update 29); Type khác "PO" không đổi. Không có backend/entity/DTO/endpoint/route
 mới.
+
+---
+
+## Phase 14: Bỏ phân trang ở AVAILABLE FILES (Update 12) (FR-042)
+
+**Goal**: Khu vực AVAILABLE FILES hiển thị toàn bộ file trong một danh sách cuộn, không còn phân trang.
+
+**Independent Test**: Với >10 file, mở màn hình — thấy đủ mọi file bằng cuộn dọc, không có thanh phân trang; chân khung hiện "N files".
+
+- [X] T063 Sửa `compliance-client/src/presentation/pages/eutr-purchase-orders/PurchaseOrderViewPage.jsx` — gỡ `FILES_PER_PAGE`/`filePage`/`pagedFiles`/`totalFilePages` và `Pagination`, render toàn bộ danh sách file, footer chỉ hiển thị tổng số file.
+- [ ] T064 Kiểm thử thủ công: >10 file, lọc theo Step, danh sách rỗng — **CHƯA chạy**. (ESLint chỉ báo lỗi unused-vars có sẵn, không liên quan; chưa build/chạy trình duyệt)

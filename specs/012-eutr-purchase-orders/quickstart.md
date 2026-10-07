@@ -199,3 +199,12 @@ fixture/rationale), applied to `PurchId/View`'s own copy of the tree/AVAILABLE F
 
 - SC-009 (Search button applies immediately) → frontend steps 1-2.
 - FR-039 (button present, immediate apply, auto-filter still works) → frontend steps 1, 2, 4.
+
+## Update 12 (2026-10-05) — AVAILABLE FILES shows all files, no pagination
+
+1. Open `PurchId/View` with >10 files for the selected PO(s).
+2. Expect all files in one scrollable list, no page control; footer shows "N files".
+3. Click a tree node to filter by Step — list and footer count reflect the filtered set.
+4. With no files, the existing empty message still shows.
+
+Success criteria mapping: SC-012 → steps 1-3.

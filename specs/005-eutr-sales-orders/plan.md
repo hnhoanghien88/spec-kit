@@ -3299,6 +3299,23 @@ Unchanged (verified reusable as-is, no edits needed) for Update 43:
   which SalesIds the Overview list itself contains, not how Progress is computed/displayed for them.
 - `012-eutr-purchase-orders` — no equivalent ItemId/ConfigId search requested there; out of scope.
 
+# Update 44 (2026-10-05) — Remove pagination from AVAILABLE FILES (FR-236, SC-111; frontend-only)
+
+**Scope**: `compliance-client/src/presentation/pages/eutr-sales-orders/MapFilePage.jsx` only. Delete `FILES_PER_PAGE`, the `filePage` state, the `pagedFiles`/`totalFilePages` derivations and the `<Pagination>` control; render the full file list (already loaded in one call, filtered by tree node) inside the existing scrollable box. Footer keeps only "N files". No backend, entity, DTO, route or menu change.
+**Constitution Check**: PASS — UI-only simplification, no new dependency or surface; no violations.
+
 ## Complexity Tracking
 
 *No entries — Constitution Check passed without violations.*
+
+
+# Update 45 (2026-10-05) — Step 1 (Map File) & Selected Purchase Orders (View) grouped by sales line (FR-237..FR-243, SC-112/SC-113)
+
+**Scope**: (a) Backend: `RSVNSalesLineOpenInvoiceCogs.cs` gains `ProductName`/`ProductDescription`; `ComplDynReferenceResponseDto` gains the same 2 fields; `ComplDynamicsService.MapDynamicsResponse` `case 21` maps them (không đổi `Id/Code/ItemId/ConfigId`). (b) Frontend: `MapFilePage.jsx` and `ViewSalesOrderPage.jsx` additionally call `POST /api/dynamics/reference` with `refType=21`, filtered by `SalesId`, and render `poLines` (existing refType=20 data) as collapsible groups keyed by `ItemId-ConfigId`, matched against the PO's `ProductVariant`; a shared `SalesLineGroupedPoTable` is used by both screens (Map File: selectable; View: all POs of the Sales Order, Select column shown but checkboxes locked to the saved state, no Save button). Groups default to collapsed; both fetches run in parallel (separate effects) and the table shows a spinner until both complete so no interim "Other purchase orders" flash.
+**Storage**: none — D365 read-only; no table, no migration (the DB-migration rule is not triggered). The sync table `compl_sync_sales_line` already has ProductName/ProductDescription and is untouched.
+**Testing**: the client has no unit-test framework configured, so the grouping helper (`salesLineGroups.js`) is verified manually (ItemId-ConfigId key, no-ConfigId fallback, empty group, "Other purchase orders"); manual run per quickstart Update 45. Existing `ComplSynchronizeDataService`/`DynamicsDataService` tests must still pass (additive properties).
+**Performance/Constraints**: one extra refType=21 call per screen open (same page size convention as refType=20); grouping done client-side in a memoized helper; Select/Save PO Mapping keys (`makePoLineKey`) unchanged. UI labels in English per existing screen; code comments Vietnamese (Constitution IV).
+**Constitution Check**: PASS — I (no new layer; extends existing Domain model/DTO/Application mapping), II/III (reuses the generic reference endpoint and refType=21 from Update 43, no new endpoint), IV (Vietnamese comments), V (no routing change). No violations.
+**Open item**: whether D365 already exposes `ProductName`/`ProductDescription` on the entity must be confirmed on the live env; UI shows "—" if absent (spec Assumptions).
+
+**(Update 45 — chỉnh lần cuối)**: Bỏ hoàn toàn refType=21 khỏi Step 1/View và hoàn tác phần thêm ProductName/ProductDescription vào `RSVNSalesLineOpenInvoiceCogs`/case 21. Backend: `RSVNEutrSalesOrderPurchLines` + `ComplDynReferenceResponseDto` + `case 20` mang ProductName/ProductDescription. Frontend: `groupPoLinesByVariant(poLines)` (salesLineGroups.js) gom theo ProductVariant; tiêu đề "ProductVariant  ProductName / ProductDescription"; không còn lời gọi/loading riêng cho dòng hàng. Các mô tả refType=21/ItemId-ConfigId ở trên đã bị thay thế.

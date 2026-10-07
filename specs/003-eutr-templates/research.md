@@ -2245,3 +2245,8 @@ render would carry dead branches: matches the Update 25 precedent for the remove
 3. No new use case, controller action, DTO, DB migration, or dependency — `_synchronizeDataService`
    and `DeleteTemplateFromDynamicsAsync` both already exist on `EutrTemplatesService`/
    `IEutrSynchronizeDataService` since Update 23.
+
+## 44. Duplicate-Name rejection on Create/Clone (Update 27)
+
+- **Decision**: Application-level check (EXISTS query) before inserting, case-insensitive on trimmed Name, across all non-deleted rows including hidden old versions. Rationale: version bump intentionally reuses Name, so a DB unique index on Name would break Request change. Alternatives: unique index on (Name, VersionId) (rejected — still lets two Codes share a Name); check only visible rows (rejected — old versions would let a duplicate through).
+- **Decision**: Applies to Create, Clone and Edit. Edit excludes rows with the same Code (other versions of the template being edited), so saving without renaming still works.

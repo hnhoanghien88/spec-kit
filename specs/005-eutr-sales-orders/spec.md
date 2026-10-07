@@ -10,6 +10,35 @@
 
 ## Clarifications
 
+### Session 2026-10-05 (Update 45) — Step 1 (Map File) & Selected Purchase Orders (View): nhóm theo dòng hàng từ `RSVNSalesLineOpenInvoiceCogs`, mở rộng/thu gọn, thêm ProductName/ProductDescription
+
+- Input: "cập nhật 005-eutr-sales-orders, màn hình view và map file, phần step 1 choose purchase order. khi
+  vào màn hình này sẽ lấy dữ liệu từ RSVNSalesLineOpenInvoiceCogs theo SalesId, hiển thị dạng group từng
+  line gồm ItemId > ConfigId > ProductName > ProductDescription; trong từng line là thông tin PO của line
+  đó: PO > Material > Qty > Percentage used > Unit > Order account > Vendor name; mỗi line có thể xổ ra
+  xem hoặc thu lại; RSVNSalesLineOpenInvoiceCogs chưa có 2 cột ProductName, ProductDescription, thêm vào."
+- Bối cảnh: Hiện bảng PO hiển thị phẳng (Template > Variant > Material > ... theo Update 39) từ
+  `RSVNEutrSalesOrderPurchLines`; `RSVNSalesLineOpenInvoiceCogs` đã dùng ở Update 43 (refType = 21) chỉ
+  với `SalesId`/`ItemId`/`ConfigId`, chưa có ProductName/ProductDescription.
+- Change: Danh sách ở Step 1 và View nhóm theo dòng hàng, PO nằm trong nhóm, nhóm mở/thu được
+  (FR-237 đến FR-243).
+- Không đổi: Select/Save PO Mapping (Update 36), Template, Map status, Progress, Download.
+- **Điều chỉnh cuối (thay thế các mô tả trước trong Update 45)**: KHÔNG còn dùng `RSVNSalesLineOpenInvoiceCogs` cho Step 1/View. Chỉ dùng `RSVNEutrSalesOrderPurchLines` (type = 20): các dòng PO được **gom theo ProductVariant**, tiêu đề nhóm = **"ProductVariant  ProductName / ProductDescription"**; `RSVNEutrSalesOrderPurchLines` được bổ sung 2 trường **ProductName**/**ProductDescription**. Bảng ở View dùng cùng danh sách PO và cùng cách gom như Step 1 (checkbox khóa, không nút Save).
+
+### Session 2026-10-05 (Update 44) — Bỏ phân trang ở khu vực AVAILABLE FILES — hiển thị toàn bộ file trong một danh sách cuộn
+
+- Input: "cập nhật 005-eutr-sales-orders, màn hình map file, bỏ phân trang ở Available files và
+  012-eutr-purchase-orders cũng bỏ phân trang ở Available files".
+- Bối cảnh (rà soát mã nguồn): Khu vực AVAILABLE FILES của Step 2 (Map File, `MapFilePage.jsx`) đang chia danh sách file thành từng trang 10 file
+  (hằng `FILES_PER_PAGE = 10`) kèm thanh phân trang và dòng đếm "x–y / N files" ở chân khung.
+- Change: Khu vực **AVAILABLE FILES** MUST hiển thị TOÀN BỘ file (sau khi áp dụng bộ lọc theo Step khi
+  click node cây, nếu có) trong một danh sách duy nhất, người dùng cuộn dọc trong khung để xem — KHÔNG
+  còn thanh phân trang. Chân khung (footer) hiển thị tổng số file ("N files") thay cho dải
+  "x–y / N files".
+- Không đổi: nguồn dữ liệu, bộ lọc theo Step, các nút View/Edit/Download trên từng dòng, thứ tự sắp xếp,
+  trạng thái rỗng/đang tải. Phân trang của danh sách Overview KHÔNG bị ảnh hưởng.
+
+
 ### Session 2026-09-30 (Update 43) — Thêm 2 ô tìm kiếm ItemId/ConfigId ở Overview, lọc qua danh sách SalesId tra từ `RSVNSalesLineOpenInvoiceCogs`
 
 - Input: "thêm 2 ô tìm theo ItemId, ConfigId. khi nhập item hoặc config id sẽ [tra cứu] sales id ở api
@@ -2054,6 +2083,10 @@ màn hình EUTR Sales Orders.
 39. **(Update 37, FR-217)** **Given** một document có Type khác "PO" (ví dụ "Invoice"), **When** nhấn
     nút Download, **Then** tên file tải về tiếp tục áp dụng đúng công thức Step Name + đuôi file gốc
     (FR-195/FR-196/FR-197) — không bị ảnh hưởng bởi Update 37.
+40. **(Update 45, FR-237/238/239)** **Given** Sales Order có PO thuộc 2 ProductVariant khác nhau, **When** vào Step 1, **Then** hiển thị 2 nhóm, mỗi nhóm có tiêu đề "ProductVariant  ProductName / ProductDescription" và bên dưới là các dòng PO của variant đó với cột PO > Material > Qty > Percentage used > Unit > Order account > Vendor name.
+41. **(Update 45, FR-240)** **Given** các nhóm đang mở rộng, **When** nhấn điều khiển thu gọn của 1 nhóm,
+    **Then** chỉ nhóm đó ẩn danh sách PO; nhấn lại thì hiện lại, các PO đã Select vẫn giữ nguyên.
+42. **(Update 45, FR-241)** **Given** một dòng PO không có ProductVariant, **When** vào Step 1, **Then** dòng đó hiển thị trong nhóm có tiêu đề "—", không bị ẩn.
 
 ---
 
@@ -2317,6 +2350,10 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
     28), **When** mở màn hình View, **Then** nút **Download** ở toolbar hiển thị bình thường.
 50. **Given** `permissionList` của user trên menu `eutr-sales-orders` KHÔNG chứa quyền **Download**
     (Update 28), **When** mở màn hình View, **Then** nút **Download** ở toolbar KHÔNG hiển thị.
+51. **(Update 45, FR-237/238/239/240)** **Given** Sales Order có dòng hàng và PO, **When** mở màn hình
+    View, **Then** bảng Selected Purchase Orders hiển thị cùng cấu trúc nhóm và cùng danh sách PO như Step 1
+    (mọi PO của Sales Order, mặc định thu gọn); cột Select hiện trạng thái đã lưu nhưng checkbox bị khóa, và
+    KHÔNG có nút Save PO Mapping.
 
 ---
 
@@ -2739,6 +2776,14 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
   nhấn Back: áp dụng đúng cơ chế khôi phục từ khóa/trang đã có từ Update 14 — ItemId/ConfigId cũng MUST
   được khôi phục lại đúng giá trị đã nhập trước đó (cùng nguyên tắc với từ khóa Sales ID/Customer và
   Year/ETD Week, không có ngoại lệ riêng cho 2 ô mới này).
+
+- (Update 44) Số file rất lớn (hàng trăm): danh sách vẫn hiển thị đầy đủ trong khung cuộn cố định chiều
+  cao, chân khung luôn thấy được; khi lọc theo Step chỉ còn ít file, chân khung hiển thị đúng tổng số
+  file sau lọc. Danh sách rỗng giữ nguyên thông báo hiện có.
+- (Update 45) Các dòng PO cùng ProductVariant (không phân biệt hoa/thường, bỏ khoảng trắng đầu/cuối) gộp thành một nhóm duy nhất.
+- (Update 45) Sales Order không có dòng PO nào: hiển thị trạng thái rỗng "No order lines"; lỗi tải dữ liệu hiển thị thông báo lỗi sẵn có.
+- (Update 45) Sales Order có rất nhiều nhóm ProductVariant: các nhóm cuộn dọc trong trang; thu gọn tất cả không
+  làm mất lựa chọn Select đã chọn.
 
 ## Requirements *(mandatory)*
 
@@ -3842,6 +3887,23 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
   ConfigId (cùng với Year/ETD Week/từ khóa hiện có) và tải lại danh sách mặc định — cùng hành vi nhất
   quán đã áp dụng cho mọi điều kiện khác trên thanh công cụ này.
 
+- **FR-236 (Update 44)**: Khu vực AVAILABLE FILES MUST hiển thị toàn bộ file đang áp dụng (sau lọc
+  theo Step nếu có) trong một danh sách cuộn, KHÔNG có thanh phân trang/chọn trang; chân khung MUST hiển
+  thị tổng số file.
+
+- **FR-237 (Update 45)**: Step 1 (Map File) và bảng Selected Purchase Orders (View) MUST lấy dữ liệu CHỈ từ `RSVNEutrSalesOrderPurchLines` (type = 20) theo Sales Order đang xem — KHÔNG gọi `RSVNSalesLineOpenInvoiceCogs` — và gom các dòng PO theo **ProductVariant**.
+- **FR-238 (Update 45)**: Mỗi nhóm ProductVariant MUST có tiêu đề **"ProductVariant  ProductName / ProductDescription"** (vd "10628-016  Calia Sofa Side Table… / Oak, Bianco Oil…"). Giá trị rỗng hiển thị "—".
+- **FR-239 (Update 45)**: Bên trong mỗi nhóm MUST liệt kê các dòng PO có ProductVariant đó, mỗi PO một dòng với các cột theo thứ tự: **PO** → **Material** → **Qty** → **Percentage
+  used** → **Unit** → **Order account** → **Vendor name**. Cách tính/định dạng từng cột giữ nguyên
+  Update 34/35/38; cột Select đứng đầu mỗi dòng PO — ở Step 1 tick được; ở View (Selected Purchase Orders) hiển thị đúng
+  danh sách PO như Step 1, checkbox phản ánh PO đã lưu nhưng bị khóa (chỉ đọc) và không có nút Save PO Mapping.
+- **FR-240 (Update 45)**: Mỗi nhóm MUST có điều khiển **mở rộng/thu gọn** độc lập; mặc định khi vào
+  màn hình là THU GỌN tất cả (điều chỉnh sau Update 45). Thu gọn KHÔNG làm mất trạng thái chọn (Select) của PO bên trong.
+- **FR-241 (Update 45)**: Dòng PO không có ProductVariant MUST vẫn hiển thị, gom chung vào 1 nhóm với tiêu đề "—"; không PO nào bị mất khỏi Step 1/View.
+- **FR-242 (Update 45)**: Thực thể `RSVNEutrSalesOrderPurchLines` MUST được bổ sung 2 trường **ProductName** và **ProductDescription**, trả về được qua cơ chế tham chiếu dùng chung hiện có (refType = 20).
+- **FR-243 (Update 45)**: Thay đổi này chỉ đọc — KHÔNG ghi/sửa/xóa bản ghi nào ngoài thao tác Save PO
+  Mapping sẵn có.
+
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
@@ -4170,6 +4232,12 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
   Order có ít nhất 1 dòng hàng khớp (kết hợp AND với từ khóa/Year/ETD Week đang áp dụng, nếu có) — 0%
   trường hợp kết quả bị MỞ RỘNG thêm (giống lỗi tiềm ẩn nếu gộp nhầm vào cụm OR-search hiện có).
   100% lượt ItemId/ConfigId không khớp dòng hàng nào hiển thị đúng trạng thái trống ("No data").
+
+- **SC-111 (Update 44)**: Với danh sách AVAILABLE FILES có hơn 10 file, 100% file hiển thị trong cùng
+  một danh sách cuộn mà người dùng không cần chuyển trang; không còn điều khiển phân trang nào ở khu vực này.
+- **SC-112 (Update 45)**: 100% dòng PO của Sales Order hiển thị trong đúng 1 nhóm theo ProductVariant của nó (tiêu đề đủ ProductVariant, ProductName, ProductDescription); 0% dòng PO bị mất hoặc nằm sai nhóm; không còn lời gọi `RSVNSalesLineOpenInvoiceCogs` ở 2 màn hình này.
+- **SC-113 (Update 45)**: Người dùng thu gọn/mở rộng một nhóm trong 1 thao tác click, không tải lại trang
+  và không mất các PO đã chọn ở Step 1.
 
 ## Assumptions
 
@@ -4649,3 +4717,22 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
   hiện có của trang này (không có endpoint tổng hợp phía server riêng cho tìm kiếm) — nhất quán với cách
   Update 27/Update 24 đã triển khai (mọi logic kết hợp filter đều ở tầng frontend, backend chỉ cung cấp
   `BuildFilterString` dùng chung).
+- (Update 44) Bỏ phân trang là thay đổi thuần giao diện phía client; không thêm/đổi API, entity, DTO
+  hay route. Dữ liệu AVAILABLE FILES vốn đã tải đầy đủ một lần rồi mới chia trang ở client.
+- (Update 45) Khóa ghép PO vào dòng hàng là cặp (**ItemId**, **ConfigId**): dòng PO ở
+  `RSVNEutrSalesOrderPurchLines` (type = 20) thuộc dòng hàng khi `ItemId` trùng và `ProductVariant` trùng
+  `ConfigId` (không phân biệt hoa/thường, bỏ khoảng trắng đầu/cuối); dòng hàng không có `ConfigId` thì
+  chỉ khớp theo `ItemId`. Mặc định dựa trên khóa (PO, Variant, ItemId) của Update 36, có thể điều chỉnh
+  khi làm rõ với nghiệp vụ.
+- (Update 45) ProductName/ProductDescription là trường bổ sung vào thực thể D365 dùng chung —
+  `ComplSynchronizeDataService`/`DynamicsDataService` không đổi hành vi; nếu D365 chưa trả dữ liệu cho 2
+  trường này thì hiển thị "—", không gây lỗi.
+- (Update 45) Không đổi quy tắc Select/Save PO Mapping (Update 36), Template, Map status, Progress; chỉ
+  đổi cách trình bày và nguồn danh sách dòng ở Step 1 (Map File) và Selected Purchase Orders (View).
+- (Update 45 — điều chỉnh) Thay thế khóa ghép ở trên: tiêu đề nhóm hiển thị **"ItemId-ConfigId  ProductName / ProductDescription"**
+  (vd "10628-016  Calia Sofa Side Table… / Oak, Bianco Oil…"); khóa **"ItemId-ConfigId"** (hoặc chỉ ItemId nếu
+  dòng hàng không có ConfigId) được so khớp trực tiếp với cột **ProductVariant** của dòng PO để gom nhóm
+  (không phân biệt hoa/thường, bỏ khoảng trắng đầu/cuối). FR-238 đọc theo định dạng tiêu đề này.
+- (Update 45 — điều chỉnh) Bảng Selected Purchase Orders ở View đổi từ "chỉ các PO đã lưu" sang cùng logic Step 1
+  (toàn bộ PO của Sales Order, gom nhóm theo dòng hàng); thay thế mô tả chỉ-đọc không có cột Select ở trên.
+- (Update 45 — chỉnh lần cuối) Khóa gom nhóm là **ProductVariant** của dòng PO (type = 20); ProductName/ProductDescription lấy từ chính các dòng PO đó (giá trị đầu tiên có dữ liệu trong nhóm). Các Assumption trước của Update 45 nói về khóa ItemId-ConfigId và `RSVNSalesLineOpenInvoiceCogs` được thay thế bởi dòng này. Nếu D365 chưa trả 2 trường này thì hiển thị "—".

@@ -535,3 +535,7 @@ logic above:
 | TakeFrom (**Update 19**) | *(dynamic)* | No longer a fixed enum — options/labels come from `eutr_reference_types` rows (Id → Name) at runtime, loaded via `GET /api/eutr-reference-types`. The struck-through 0/1 values above (and the frontend's separate 1-5 `TAKE_FROM_OPTIONS`/`TAKE_FROM_LABELS` constants in `helpers.js`, which disagreed with this table even before Update 19) are historical/superseded for this feature's own combobox and label lookups; `helpers.js`'s constants are NOT deleted because `eutr-sales-orders` (spec 005, out of scope) still reads them for its own read-only display — see research.md §36. |
 | Status (Update 16) | 0 | Draft |
 | Status (Update 16) | 1 | Approved |
+
+## Update 27 — Name uniqueness on create (no schema change)
+
+`eutr_templates.Name` stays non-unique at DB level (versions share Name+Code). Uniqueness is enforced at the service layer on Create/Clone/Edit (FR-099/FR-100/FR-101), Edit excluding same-Code rows.

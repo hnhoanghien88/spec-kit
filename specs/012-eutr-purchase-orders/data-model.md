@@ -154,3 +154,7 @@ downloadFileName = storedName                                                 //
 `005-eutr-sales-orders`'s `realAvailableFiles`, from `list-po-references`) — no new API field needed.
 The Upload-time matching/no-rename change for Type = "PO" itself (`004-eutr-documents` Update 29) needs
 no data-model change here — this screen's Upload/Edit buttons call that same shared popup/endpoint.
+
+## Update 12 (2026-10-05): Remove AVAILABLE FILES pagination (FR-042, no entity/DTO/API change)
+
+No data-model change. Client-only view state `filePage` is removed; the file list model is unchanged.

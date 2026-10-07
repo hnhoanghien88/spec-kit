@@ -486,3 +486,8 @@ Unchanged: every backend file (matching/no-rename lives in `004-eutr-documents`'
 only); the per-row Download button and its handler added in Update 9 (only the file-name computation
 inside it becomes Type-conditional); the "(+N)" badge and status-icon tooltip (still show the full stored
 name including extension).
+
+# Update 12 (2026-10-05) — Remove pagination from AVAILABLE FILES (FR-042, SC-012; frontend-only)
+
+**Scope**: `compliance-client/src/presentation/pages/eutr-purchase-orders/PurchaseOrderViewPage.jsx` only. Delete `FILES_PER_PAGE`, the `filePage` state, the `pagedFiles`/`totalFilePages` derivations and the `<Pagination>` control; render the full file list (already loaded in one call, filtered by tree node) inside the existing scrollable box. Footer keeps only "N files". No backend, entity, DTO, route or menu change.
+**Constitution Check**: PASS — UI-only simplification, no new dependency or surface; no violations.

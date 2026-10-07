@@ -2098,6 +2098,10 @@ are all unchanged.
 | Set as default while Approved (Update 18) | N/A | One exception to the Update 16 read-only gate — the Set-as-default checkbox stays enabled when Approved and persists immediately via a dedicated `POST {id}/set-default` endpoint (behind a Yes/No `ConfirmDialog`), independent of the (still hidden/disabled) Save button |
 | D365 sync on Approve/Request change (Update 23) | N/A | `POST {id}/approve` now pushes that template's Code/Name + active vendor mappings to D365 (reusing 011-eutr-synchronize-data's `SyncTemplatesToDynamicsAsync` Phase 2 logic) BEFORE committing `Status=Approved`; `POST {id}/request-change` now deletes the template's D365 record by Code (reusing the same feature's Phase 1 logic) BEFORE creating the new Draft version row. Either D365 call failing blocks the local change entirely (no partial commit) — same request/response contract, no frontend change |
 
+## Update 27 (2026-10-05) — Reject duplicate Name on Create/Clone (FR-099/FR-100; backend-only)
+
+Add `IEutrTemplatesRepository.ExistsByNameAsync` (non-deleted, `LOWER(TRIM(Name))` match, includes hidden old versions) and call a shared `EnsureNameNotDuplicateAsync` in `EutrTemplatesService.AddAsync` and `CloneAsync` before the transaction; it throws `ValidationException` → existing middleware maps to 400 with the message, which Create/Clone dialogs already display. `UpdateAsync` (Edit) also calls it with `excludeCode = existing.Code` (versions share Code/Name). `RequestChangeAsync` untouched. No schema/route/client change. **Constitution Check**: PASS.
+
 ## Complexity Tracking
 
 No constitution violations to justify. All principles pass cleanly. **(Update 16)** note: this

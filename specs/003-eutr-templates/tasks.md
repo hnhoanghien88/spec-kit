@@ -3202,3 +3202,13 @@ T449 and T450 in parallel
 T451, T452, T453 in parallel (once Phase 98 + Phase 99 are done)
 T454 sequentially (build + end-to-end)
 ```
+
+---
+
+## Phase 101: Reject duplicate Name on Create/Clone (Update 27) (FR-099/FR-100, SC-074)
+
+- [X] T455 Add `ExistsByNameAsync` to `IEutrTemplatesRepository` + `EutrTemplatesRepository`
+- [X] T456 Add `EnsureNameNotDuplicateAsync` and call it in `EutrTemplatesService.AddAsync`/`CloneAsync`
+- [X] T457 `dotnet build` Application + Infrastructure: 0 errors (Api project not rebuilt — DLLs locked by running ComplianceSys.Api process)
+- [X] T458a Extend to `UpdateAsync` (Edit) with `excludeCode = existing.Code` (FR-101); `dotnet build` Infrastructure 0 errors
+- [ ] T458 Manual test per quickstart Scenario 30 — **NOT run** (needs live env)

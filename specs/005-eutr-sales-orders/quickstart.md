@@ -1845,3 +1845,25 @@ below.
 
 - SC-110 (ItemId/ConfigId narrows results via AND, combined correctly with other active filters; empty
   lookup shows "No data") → backend steps 3-4; frontend steps 2-5.
+
+## Update 44 (2026-10-05) — AVAILABLE FILES shows all files, no pagination
+
+1. Open Map File Step 2 (`/eutr/sales-orders/{SalesId}/map-file`) with >10 files for the selected PO(s).
+2. Expect all files in one scrollable list, no page control; footer shows "N files".
+3. Click a tree node to filter by Step — list and footer count reflect the filtered set.
+4. With no files, the existing empty message still shows.
+
+Success criteria mapping: SC-111 → steps 1-3.
+
+## Update 45 (2026-10-05) — Sales-line groups in Step 1 / View
+
+1. Open Map File for a Sales Order with ≥2 lines (`/eutr/sales-orders/{SalesId}/map-file`): expect a spinner, then one group per line (all collapsed), header `ItemId-ConfigId  ProductName / ProductDescription`, PO rows (Select, PO, Material, Qty, Percentage used, Unit, Order account, Vendor name) inside after expanding; no interim "Other purchase orders" flash.
+2. Collapse/expand one group: only it toggles; selected checkboxes persist; Save PO Mapping still saves the ticked rows.
+3. A line without PO shows "No purchase order"; an unmatched PO appears under "Other purchase orders".
+4. Open View for the same SalesId: same groups and full PO list as Map File; saved POs ticked but checkboxes locked; no Save PO Mapping button.
+5. Sales Order with no lines: "No order lines"; simulate fetch failure: error + retry.
+6. Run existing sync/DynamicsData tests: still pass.
+
+Success criteria mapping: SC-112 → steps 1,3,4; SC-113 → step 2.
+
+**(Update 45 — chỉnh lần cuối)**: Bước 1: tiêu đề nhóm là `ProductVariant  ProductName / ProductDescription`, gom theo ProductVariant của dòng PO; không có nhóm "Other purchase orders"/"No purchase order" (PO không variant nằm nhóm "—"). Không có request refType=21 ở Map File/View (kiểm tra tab Network).

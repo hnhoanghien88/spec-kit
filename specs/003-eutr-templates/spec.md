@@ -1569,6 +1569,22 @@ Edit trên dòng mới xác nhận có thể chỉnh sửa bình thường (khô
   mọi lệnh gọi D365 khác trong spec này (chặn lại, giữ nguyên phần đã lưu cục bộ, báo lỗi thay vì
   snackbar thành công — xem FR-082/FR-084/FR-093), ghi rõ ở FR-097 và Assumptions bên dưới.
 
+### Session 2026-10-05 (Update 27) — Chặn tạo template trùng tên (trừ trường hợp nâng version)
+
+- Input: "cập nhật 003-eutr-templates khi tạo template, không cho đặt tên giống template đã có, trừ
+  trường hợp nâng version".
+- Bối cảnh (rà soát mã nguồn): `AddAsync` (nút Create) và `CloneAsync` (nút Clone) hiện không kiểm tra
+  trùng `Name`. Nâng version chạy qua `RequestChangeAsync` (Update 16): tạo dòng mới cùng Code, cùng Name,
+  VersionId+1 — không đi qua AddAsync/CloneAsync.
+- Change: Khi **tạo mới** template (Create và Clone), hệ thống MUST từ chối nếu Name (bỏ khoảng trắng đầu/
+  cuối, không phân biệt hoa/thường) trùng với Name của bất kỳ template chưa xoá nào — kể cả các version cũ
+  đã ẩn. Thông báo lỗi rõ ràng hiển thị trong dialog; không tạo bản ghi nào. Nâng version (Request change)
+  KHÔNG bị ảnh hưởng — vẫn giữ nguyên Name.
+- Mở rộng (cùng ngày, theo yêu cầu bổ sung "cả khi Edit"): quy tắc cũng áp dụng khi **Edit** (đổi tên) —
+  Name mới MUST không trùng với Name của template có Code KHÁC (các version của chính template đang sửa
+  dùng chung Code/Name nên bị loại trừ; Edit giữ nguyên tên vẫn thành công).
+- Edge: Hai lượt tạo cùng tên gần như đồng thời có thể lọt qua (không có ràng buộc ở mức DB) — chấp nhận.
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
@@ -2317,6 +2333,14 @@ Edit trên dòng mới xác nhận có thể chỉnh sửa bình thường (khô
   bước xóa D365 phòng thủ (FR-096) trước MỌI lượt push của Save template & Public D365 không phụ
   thuộc vào giả định vòng đời Draft↔Public D365 đã nêu ở FR-085.
 
+- **FR-099 (Update 27)**: Khi tạo mới template (Create hoặc Clone), hệ thống MUST từ chối nếu Name trùng
+  (sau Trim, không phân biệt hoa/thường) với Name của bất kỳ template chưa xoá (IsDeleted=0), kể cả
+  version cũ đã ẩn, và trả về thông báo lỗi nêu rõ Name đã tồn tại; không tạo bản ghi nào.
+- **FR-101 (Update 27)**: Khi Edit template, hệ thống MUST từ chối nếu Name mới trùng (cùng quy tắc FR-099) với
+  Name của template có Code khác; các version cùng Code với template đang sửa không bị tính là trùng.
+- **FR-100 (Update 27)**: Nâng version qua Request change MUST tiếp tục hoạt động bình thường với Name
+  trùng template cũ (cùng Code) — không bị chặn bởi FR-099.
+
 ### Key Entities *(include if feature involves data)*
 
 - **EUTR Template** *(Update 13: không còn gắn trực tiếp với vendor — xem EUTR Template
@@ -2669,6 +2693,9 @@ Edit trên dòng mới xác nhận có thể chỉnh sửa bình thường (khô
   Status khi lệnh gọi D365 xóa (SC-072) thất bại — thay đổi header/step tree đã lưu ở bước (1) vẫn
   được giữ nguyên và người dùng thấy thông báo lỗi rõ ràng.
 
+- **SC-074 (Update 27)**: 100% lượt Create/Clone/Edit với Name trùng template đã có bị từ chối kèm thông báo rõ
+  ràng; 100% lượt nâng version thành công như trước.
+
 ## Assumptions
 
 - Backend API cho EUTR Templates chưa tồn tại; feature này cần xây dựng cả backend (CRUD cho
@@ -2998,3 +3025,6 @@ Edit trên dòng mới xác nhận có thể chỉnh sửa bình thường (khô
   trùng lặp) đều có câu trả lời hợp lý duy nhất, suy ra trực tiếp từ hành vi đã thiết lập của FR-076/
   FR-077 (Update 21) và từ chính mục đích của tính năng (ngăn trùng lặp thật sự, không chặn nhầm
   trường hợp không đổi gì).
+
+- (Update 27) Thay đổi chỉ ở phía server (kiểm tra khi tạo/sửa); dialog Create/Clone vốn đã hiển thị thông báo lỗi
+  từ server nên không cần đổi giao diện. Không đổi schema DB.
