@@ -47,7 +47,7 @@
 
 ## R9 — Phân quyền, menu, trigger
 
-- **Decision**: Resource `ComplianceMissingDetail` với permission `ViewMenu`, `ReadAll`, `Download`, `Update`; trigger dùng policy `ComplianceMissingDetail.Update` (ghi/thay dữ liệu). Menu code `compliance-missing-detail`, url `/compliance-missing`, parent `compliance-new`. Menu/quyền (kể cả đổi url màn cũ) do app khác cập nhật, repo không có migration cho phần này.
+- **Decision**: Resource `ComplianceMissingDetail` với permission `ViewMenu`, `ReadAll`, `Download`, `Update`; trigger dùng policy `ComplianceMissingDetail.Update` (ghi/thay dữ liệu). Menu code `compliance-missing-detail`, url `/compliance-missing-bk` *(Update 4; trước là `/compliance-missing`, màn open-orders nay dùng `/compliance-missing`)*, parent `compliance-new`. Menu/quyền (kể cả đổi url màn cũ) do app khác cập nhật, repo không có migration cho phần này.
 - **Rationale**: FR-011/FR-012; route FE khớp theo `menus.Url` từ backend, component theo `code`.
 - **Alternatives**: Permission riêng `Refresh` (rõ ràng hơn nhưng thêm bước cấp quyền); `[AllowAnonymous]` như một số endpoint test (không chấp nhận được vì ghi dữ liệu).
 

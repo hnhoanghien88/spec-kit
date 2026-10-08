@@ -12,6 +12,16 @@
 
 ## Clarifications
 
+### Session 2026-10-08 (Update 5) — Dùng chung quyền ComplianceMissing
+
+- Yêu cầu: đổi quyền từ `ComplianceMissingDetail` sang `ComplianceMissing` để xóa được menu `compliance-missing-bk`.
+- Quyết định: 5 endpoint của `ComplMissingDetailController` dùng policy `ComplianceMissing.ReadAll/Download/Update` (trước là `ComplianceMissingDetail.*`); trang `compliance-missing-detail` đọc `permissionList` của menu `compliance-missing` (prefix `ComplianceMissing.`). Mọi mô tả `ComplianceMissingDetail.*` và menu code `compliance-missing-detail` ở dưới được hiểu theo quyền/menu `compliance-missing`. Màn detail chỉ truy cập qua Type = Compliance tại `/compliance-missing` (spec 022); link `/compliance-missing-bk` không còn menu riêng.
+
+### Session 2026-10-08 (Update 4) — Đổi link menu
+
+- Yêu cầu: đổi link `/compliance-missing` sang `/compliance-missing-bk` và `/compliance-missing-open-orders` sang `/compliance-missing`.
+- Quyết định: màn "Compliance missing detail" (code `compliance-missing-detail`) mở tại `/compliance-missing-bk`; màn "Compliance missing" open-orders (code `compliance-missing`) mở tại `/compliance-missing`. Chỉ đổi `url` trong `compliance-client/src/presentation/menu-items/ComplianceSystem.jsx`; code menu, quyền, route theo code và backend không đổi. `url` của hai menu trong `userMenu` (do app khác quản lý) phải đổi tương ứng. Các mô tả link `/compliance-missing` / `/compliance-missing-open-orders` ở phần dưới (US2, FR-001, FR-012, SC-005, Edge Cases, Assumptions) được hiểu theo link mới của Update 4.
+
 ### Session 2026-10-07 (Update 3) — Ẩn tạm Export/Import Excel và cột Follow up date/Note
 
 - Yêu cầu: ẩn tạm thời nút Export Excel, nút Import Excel và cột Follow up date, Note trên màn hình.
@@ -52,7 +62,7 @@ A Compliance Admin (or support engineer) calls the manual trigger `test-complian
 
 ### User Story 2 - View the missing and expired compliance list (Priority: P1)
 
-A compliance user opens the new "Compliance missing detail" screen (menu link `/compliance-missing`) and sees the list stored in `compl_missing_detail`, with Status "Missing" or "Expired", in the same interface as "Compliance missing open orders" (`/compliance-missing-open-orders`) but without the sales-order-derived columns.
+A compliance user opens the new "Compliance missing detail" screen (menu link `/compliance-missing-bk` *(Update 4; trước là `/compliance-missing`)*) and sees the list stored in `compl_missing_detail`, with Status "Missing" or "Expired", in the same interface as "Compliance missing open orders" (`/compliance-missing` *(Update 4; trước là `/compliance-missing-open-orders`)*) but without the sales-order-derived columns.
 
 **Why this priority**: This is what users actually use; it is the visible value of the feature.
 
@@ -106,14 +116,14 @@ As on the open-orders screen, the user can enter a follow-up date and note per r
 - A stored row's Valid to equals today: not expired.
 - A group's rows in `compl_so_missing` differ in non-key columns (for example name or valid dates): the first row of the group is kept, as the existing alert's grouping does.
 - A user without permission to the screen: cannot see the menu entry or open the link.
-- Existing bookmarks to the old `/compliance-missing` address now open this new screen; the open-orders screen is reachable only at `/compliance-missing-open-orders`.
+- Existing bookmarks to the old `/compliance-missing` address now open this new screen; the open-orders screen is reachable only at `/compliance-missing-open-orders`. *(Update 4: đảo lại — `/compliance-missing` mở màn open-orders, màn detail ở `/compliance-missing-bk`.)*
 - The same compliance item is listed here and on the open-orders screen: each screen is independent and neither affects the other's notes.
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
-- **FR-001**: System MUST provide a new screen "Compliance missing detail" reachable through a menu entry whose link is `/compliance-missing`.
+- **FR-001**: System MUST provide a new screen "Compliance missing detail" reachable through a menu entry whose link is `/compliance-missing-bk` *(Update 4)*.
 - **FR-002**: The screen MUST present the same interface as "Compliance missing open orders": same grid behaviour, column visibility control, paging and export action; the Year/Week (ETD) filter is not applicable and MUST NOT appear.
 - **FR-003**: The screen MUST NOT display the sales-order-derived columns "Sales order", "ETD", "Invoice date", "Customer code" and "Customer name", in the grid, in filters, or in the export. All other columns of the open-orders screen (master, status, code, name, valid from/to, days remaining, responsible emails, type, product, description, follow-up date, note) are kept.
 - **FR-004**: The screen MUST read its list only from the new store `compl_missing_detail`; it MUST NOT call the sales-order evaluation when the user opens or filters the screen.
@@ -124,7 +134,7 @@ As on the open-orders screen, the user can enter a follow-up date and note per r
 - **FR-009**: Users MUST be able to enter a follow-up date and a note per row; these MUST persist across snapshot refreshes and MUST be independent from those of the open-orders screen.
 - **FR-010**: Users MUST be able to export the displayed list to Excel with the same columns as the grid (including follow-up date and note) and the same Expired-row highlighting as the open-orders export.
 - **FR-011**: Access MUST be governed by its own screen permission (view, download, update), granted to the same roles that currently manage the open-orders screen; the trigger MUST be protected so only authorized users can run it.
-- **FR-012**: The existing open-orders screen, the existing alert triggers and their data (`compl_so_missing` semantics, notes, jobs) MUST remain unchanged in behaviour; the open-orders screen is reachable at `/compliance-missing-open-orders`.
+- **FR-012**: The existing open-orders screen, the existing alert triggers and their data (`compl_so_missing` semantics, notes, jobs) MUST remain unchanged in behaviour; the open-orders screen is reachable at `/compliance-missing` *(Update 4)*.
 - **FR-013**: Status and Days remaining MUST be computed from the current date at read time from each row's Code and Valid to: empty Code = Missing; Code present and today later than Valid to = Expired; Days remaining blank when Valid to is empty, otherwise "-n days left" as on the open-orders screen. Rows that are neither Missing nor Expired by this rule are not listed.
 - **FR-014**: Each row MUST be uniquely identified by the combination of Master code, Code, Type and Product; follow-up date/note MUST be attached to that combination.
 - **FR-016** *(Update 2)*: Màn hình MUST có nút "Get from D365" (chỉ hiện với quyền Update); click gọi `GET /api/compl-missing-detail/test-compliance-missing`, endpoint xếp job Hangfire (FR-005..FR-008 không đổi) và UI chỉ thông báo đã xếp hàng, không chờ job.
@@ -145,7 +155,7 @@ As on the open-orders screen, the user can enter a follow-up date and note per r
 - **SC-002**: The screen shows its first page in under 5 seconds, because it reads only the stored snapshot.
 - **SC-003**: A user familiar with the open-orders screen can use this screen without additional training (same controls and layout, differing only by the removed sales-order-derived columns and filter).
 - **SC-004**: Exported files match the on-screen columns and rows in 100% of exports, with no sales-order-derived column.
-- **SC-005**: Opening `/compliance-missing` always lands on this screen and `/compliance-missing-open-orders` always lands on the open-orders screen.
+- **SC-005**: Opening `/compliance-missing-bk` always lands on this screen and `/compliance-missing` always lands on the open-orders screen *(Update 4)*.
 - **SC-006**: A trigger run sends 0 emails and 0 notifications, and leaves the existing alert endpoints' behaviour unchanged.
 - **SC-007**: Follow-up notes entered before a trigger run are still shown after it for every combination that remains in the list.
 
@@ -155,5 +165,5 @@ As on the open-orders screen, the user can enter a follow-up date and note per r
 - "Missing" and "Expired" follow the existing sales-order alert's rule (empty Code = Missing; today after Valid to = Expired), so the list reflects what open sales orders currently lack, with the sales order itself removed.
 - The new screen shows the snapshot as of the last trigger run; it does not show data newer than that.
 - The trigger endpoint belongs to the new feature (new service/endpoint, not a change to the existing notification controller's methods) and shares the existing `compl_so_missing` store as an intermediate working area; concurrent runs with the existing alert are an accepted risk noted in Edge Cases.
-- The new screen gets its own menu entry and permission; role grants copy those of the open-orders screen. The existing menu code `compliance-missing` stays with the open-orders screen's permissions; the new screen uses a new code, and the `/compliance-missing` link is reassigned to it.
+- The new screen gets its own menu entry and permission; role grants copy those of the open-orders screen. The existing menu code `compliance-missing` stays with the open-orders screen's permissions; the new screen uses a new code, and the `/compliance-missing` link is reassigned to it. *(Update 4: link của màn mới là `/compliance-missing-bk`; `/compliance-missing` thuộc màn open-orders.)*
 - Follow-up notes use a new store keyed by Master code, Code, Type and Product, independent of the open-orders notes.

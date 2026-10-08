@@ -55,4 +55,4 @@ Không có `salesId`, không có filter ETD/Year/Week; không bắt buộc filte
 
 ## Menu (res_auth_db)
 
-`userMenu` trả mục `code = compliance-missing-detail`, `url = /compliance-missing`, `permissionList` chứa `ComplianceMissingDetail.*`.
+`userMenu` trả mục `code = compliance-missing-detail`, `url = /compliance-missing-bk` *(Update 4)*, `permissionList` chứa `ComplianceMissingDetail.*`.

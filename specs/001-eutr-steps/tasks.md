@@ -189,3 +189,11 @@ US1 (Phase 3) — xem + tìm kiếm + phân trang — là lát cắt tối thi�
 - Foundational = 6 (T004–T009), Setup = 3, Polish = 4.
 - Phase 8 (FR-005a, 2026-08-11) = 7 (T024–T030): backend gap = 4 (T024–T027), frontend = 2
   (T028–T029), kiểm thử = 1 (T030).
+
+## Phase 9: Update 2 (2026-10-08) — Xóa Step kèm dữ liệu phụ thuộc
+
+- [x] T031 `EutrStepRepository` + `IEutrStepRepository`: thêm `GetTemplateUsagesAsync` và `DeleteWithDependenciesAsync` (thứ tự theo khóa ngoại, nối lại ParentId)
+- [x] T032 `EutrStepService` + `IEutrStepService`: `DeleteAsync`/`DeleteMultiAsync` gọi cascade trong 1 transaction (bỏ chặn 1451 cũ, giữ làm lưới an toàn); thêm `GetTemplateUsageAsync`; DTO `EutrStepTemplateUsageDto`
+- [x] T033 `EutrStepsController`: `POST template-usage` (policy `EutrSteps.Delete`). `dotnet build` không có lỗi biên dịch CS (còn lỗi copy DLL do API đang chạy giữ file)
+- [x] T034 Client: `eutrStepApi.getTemplateUsage`, repository/interface, `GetEutrStepTemplateUsageUseCase`, `eutr-steps/index.jsx` dựng nội dung xác nhận liệt kê Template (xóa đơn + nhiều), `ConfirmDialog` pre-line; eslint sạch ở file mới/sửa
+- [ ] T035 Kiểm tra tay theo quickstart Update 2 trên DB thử nghiệm — CHƯA chạy (cần backend chạy lại + DB); SQL cascade chưa được chạy thử trên MySQL thật

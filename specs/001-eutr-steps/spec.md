@@ -10,6 +10,13 @@
 
 ## Clarifications
 
+### Session 2026-10-08 (Update 2) — Cho phép xóa Step kể cả khi đang nằm trong Template (xóa kèm dữ liệu liên quan)
+
+- Yêu cầu: "cho phép xóa step, dù step có nằm ở template hay không. Nếu step nằm ở template, hiển thị box confirm: step này ở template A, B.. xác nhận xóa không?, nếu có thì xóa luôn step và các dữ liệu step đó ở các bảng liên quan như eutr_template_details."
+- Quyết định: **thay thế** hành vi chặn của Update 2026-09-30 (FR-012/SC-006 cũ không còn hiệu lực). Xóa Step luôn được phép; khi xác nhận, hệ thống xóa Step cùng dữ liệu phụ thuộc có `StepId` đó: `eutr_template_details`, các dòng `eutr_references` trỏ tới những dòng template_details đó (khóa ngoại `RefId`), `eutr_master_documents`, `eutr_reference_type_details`. Tất cả trong MỘT transaction (lỗi giữa chừng thì rollback hết). Áp dụng cho cả xóa đơn lẫn xóa nhiều.
+- Q: Phạm vi dữ liệu bị xóa? → A: Cả 4 bảng nêu trên (không để dữ liệu mồ côi; mất cả liên kết tài liệu đã upload của step) — theo lựa chọn của người dùng.
+- Q: Hộp xác nhận? → A: Nếu Step nằm trong ít nhất một Template, hộp xác nhận liệt kê tên các Template (A, B, …) và hỏi xác nhận xóa; nếu không nằm trong Template nào thì dùng hộp xác nhận xóa chung như hiện nay (không liệt kê), nhưng vẫn xóa dữ liệu liên quan còn lại (nếu có).
+
 ### Session 2026-09-30 — Bug fix: xóa (đơn/nhiều) một Step đang được Template tham chiếu báo lỗi SQL thô thay vì thông báo rõ ràng
 
 - Input: "delete nhiều dòng trong eutr/steps link https://localhost:7141/api/eutr-steps/delete-multi.
@@ -121,6 +128,8 @@ cũng hỗ trợ xóa nhiều bước cùng lúc. **(Cập nhật 2026-09-30)** 
 thông báo lỗi rõ ràng — KHÔNG hiển thị văn bản lỗi SQL thô; xóa nhiều với ít nhất 1 bước bị chặn MUST
 rollback toàn bộ lượt xóa đó (không xóa một phần).
 
+**(Cập nhật 2026-10-08, Update 2)** Việc chặn xóa ở trên bị THAY THẾ: bước đang nằm trong Template vẫn xóa được sau khi người dùng xác nhận trong hộp thoại liệt kê các Template liên quan; khi đó bước và dữ liệu phụ thuộc bị xóa (xem FR-013 đến FR-015).
+
 **Why this priority**: Dọn dẹp các bước không còn dùng là cần thiết nhưng ít rủi ro nếu để sau.
 
 **Independent Test**: Nhấn Delete trên một dòng, xác nhận, và kiểm tra dòng đó biến mất khỏi bảng.
@@ -140,7 +149,11 @@ rollback toàn bộ lượt xóa đó (không xóa một phần).
 5. **(Cập nhật 2026-09-30)** **Given** đã chọn nhiều bước để xóa, trong đó CÓ ÍT NHẤT 1 bước đang được
    Template tham chiếu (các bước còn lại không bị tham chiếu), **When** thực hiện xóa nhiều, **Then**
    TOÀN BỘ lượt xóa bị chặn — kể cả các bước không bị tham chiếu cũng KHÔNG bị xóa (rollback toàn bộ,
-   không xóa một phần) — kèm thông báo lỗi rõ ràng.
+   không xóa một phần) — kèm thông báo lỗi rõ ràng. *(Scenario 4 và 5 bị thay thế bởi 6–9 theo Update 2.)*
+6. **(Update 2)** **Given** một bước đang nằm trong các Template A và B, **When** nhấn Delete, **Then** hộp xác nhận hiển thị rõ bước này đang ở Template A, B và hỏi có xác nhận xóa không; **When** xác nhận, **Then** bước bị xóa cùng các dòng `eutr_template_details`, `eutr_references` (và `eutr_reference_details` phụ thuộc chúng), `eutr_master_documents`, `eutr_reference_type_details` có StepId đó, và bước biến mất khỏi bảng.
+7. **(Update 2)** **Given** hộp xác nhận liệt kê Template A, B, **When** người dùng hủy, **Then** không có gì bị xóa.
+8. **(Update 2)** **Given** một bước không nằm trong Template nào, **When** nhấn Delete và xác nhận, **Then** hộp xác nhận xóa chung được dùng (không liệt kê Template) và bước bị xóa cùng mọi dữ liệu liên quan còn lại.
+9. **(Update 2)** **Given** chọn nhiều bước (một số nằm trong Template), **When** xóa nhiều, **Then** hộp xác nhận nêu từng bước đang ở Template nào; khi xác nhận toàn bộ bước và dữ liệu liên quan bị xóa trong một transaction, lỗi giữa chừng thì không xóa gì.
 
 ---
 
@@ -193,7 +206,10 @@ rollback toàn bộ lượt xóa đó (không xóa một phần).
   báo lỗi rõ ràng bằng tiếng Anh (theo FR-011) — KHÔNG được để lộ văn bản lỗi SQL thô
   (`MySqlException`/tên bảng/constraint) ra giao diện. Xóa nhiều với ít nhất 1 bước bị chặn MUST
   rollback TOÀN BỘ lượt xóa đó trong cùng 1 transaction — không xóa một phần các bước còn lại không bị
-  tham chiếu.
+  tham chiếu. *(Bị thay thế bởi FR-013 đến FR-015 theo Update 2.)*
+- **FR-013 (Update 2, thay thế FR-012)**: Hệ thống MUST cho phép xóa (đơn hoặc nhiều) một bước dù bước có nằm trong Template hay không; FR-012 (chặn xóa) không còn hiệu lực.
+- **FR-014 (Update 2)**: Nếu bước nằm trong ít nhất một Template, hộp xác nhận xóa MUST nêu tên các Template đó (ví dụ "This step is used in Template A, B. Confirm delete?") bằng tiếng Anh theo FR-011; nếu không, dùng hộp xác nhận xóa chung.
+- **FR-015 (Update 2)**: Khi người dùng xác nhận, hệ thống MUST xóa bước và toàn bộ dữ liệu phụ thuộc có StepId đó (`eutr_template_details`, `eutr_references` trỏ tới các dòng template_details đó cùng `eutr_reference_details` phụ thuộc chúng, `eutr_master_documents`, `eutr_reference_type_details`) trong MỘT transaction; lỗi giữa chừng MUST rollback toàn bộ; lỗi vẫn hiển thị thông báo rõ ràng, không lộ văn bản SQL thô.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -216,7 +232,8 @@ rollback toàn bộ lượt xóa đó (không xóa một phần).
 - **SC-006 (Cập nhật 2026-09-30, bug fix)**: 100% lượt xóa (đơn hoặc nhiều) một bước đang được Template
   tham chiếu hiển thị đúng thông báo lỗi rõ ràng bằng tiếng Anh — 0% lượt xóa như vậy còn hiển thị văn
   bản lỗi SQL thô ra giao diện. 100% lượt xóa nhiều có ít nhất 1 bước bị chặn không xóa bất kỳ bước nào
-  trong lượt đó (rollback toàn bộ).
+  trong lượt đó (rollback toàn bộ). *(Bị thay thế bởi SC-007 theo Update 2.)*
+- **SC-007 (Update 2)**: 100% lượt xóa bước có xác nhận đều thành công kể cả khi bước nằm trong Template, và sau đó không còn dòng nào ở 4 bảng liên quan mang StepId đó; 100% hộp xác nhận của bước nằm trong Template nêu đúng danh sách Template.
 
 ## Assumptions
 
@@ -229,3 +246,5 @@ rollback toàn bộ lượt xóa đó (không xóa một phần).
   ReadOne, Create, Update, Delete) và được tái sử dụng.
 - Màn hình tuân theo cùng mẫu trải nghiệm của các màn CRUD hiện có trong hệ thống (ví dụ
   document-type).
+- (Update 2) Xóa Step là thao tác phá hủy dữ liệu; chỉ người có quyền `EutrSteps.Delete` thực hiện được. Tên Template trong hộp xác nhận lấy từ các Template có dòng `eutr_template_details` mang StepId đó. Tài liệu gốc (`eutr_documents`) không bị xóa, chỉ xóa liên kết `eutr_references`.
+- (Update 2) `eutr_reference_details` (khóa ngoại tới `eutr_references`) buộc phải xóa trước `eutr_references`. Dòng template_details con (ParentId trỏ tới dòng bị xóa, thuộc Step khác) được nối lên cha của dòng bị xóa để cây Template không còn ParentId mồ côi.

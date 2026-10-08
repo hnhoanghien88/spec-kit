@@ -48,3 +48,12 @@ Mở SPA, đăng nhập, vào menu **EUTR steps** (đường dẫn `/eutr-steps`
 - Không có lỗi console; gọi đúng các endpoint trong [contracts/eutr-steps-api.md](./contracts/eutr-steps-api.md).
 - Toàn bộ văn bản hiển thị (label cột, nút, breadcrumb, thông báo, trạng thái rỗng, hộp thoại xác
   nhận) đều bằng **tiếng Anh** (FR-011).
+
+## Update 2 (2026-10-08) — Xóa Step kèm dữ liệu liên quan
+
+Chạy trên DB thử nghiệm (thao tác phá hủy dữ liệu).
+1. Step KHÔNG nằm trong Template: Delete → hộp xác nhận chung → xóa thành công (SC-007).
+2. Step nằm trong Template A, B: Delete → hộp nêu "used in template(s): A, B" → Hủy → không đổi gì.
+3. Như 2, bấm Delete xác nhận → Step biến mất; kiểm tra DB: không còn dòng `StepId` đó ở `eutr_template_details`, `eutr_master_documents`, `eutr_reference_type_details`, `eutr_references`/`eutr_reference_details` liên quan; Template A, B vẫn còn các step khác, cây không lỗi.
+4. Chọn nhiều Step (một số nằm trong Template) → hộp liệt kê theo từng Step → xác nhận → tất cả xóa.
+5. Lỗi giữa chừng (mô phỏng) → không xóa gì (transaction).

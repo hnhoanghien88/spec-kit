@@ -1880,3 +1880,20 @@ Success criteria mapping: SC-112 → steps 1,3,4; SC-113 → step 2.
 7. `dotnet build` backend và `npm run build` client thành công.
 
 Success criteria mapping: SC-114 → bước 1,3,6; SC-115 → bước 2,3,5.
+
+## Update 48 (2026-10-08) — Cột Template ở Step 1 / View
+
+1. Mở Map File của Sales Order có PO: mở rộng một nhóm → bảng có cột **Template** giữa PO và Material, giá trị = template D365 của PO.
+2. PO chưa gắn template: ô Template hiện "—", checkbox vẫn bị khóa với tooltip như trước.
+3. Mở View cùng SalesId: bảng Selected Purchase Orders có cùng cột Template.
+4. Dòng "No purchase orders" vẫn trải hết bề rộng bảng.
+
+Success criteria mapping: SC-116 → bước 1,2,3.
+
+## Update 49 (2026-10-08) — Download ở AVAILABLE FILES (View)
+
+1. Mở View, tài khoản có quyền Download: mỗi dòng file có nút Download cạnh View; bấm → tải đúng file (PO: tên đã lưu; Type khác: tên Step).
+2. Tài khoản không có quyền Download: không thấy nút.
+3. Giả lập lỗi tải: snackbar "Failed to download file".
+
+Success criteria mapping: SC-117 → bước 1–3.

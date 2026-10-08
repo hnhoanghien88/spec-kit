@@ -109,3 +109,13 @@ T014 ComplMissingDetailSearchService | T016 FE api/repository/usecase | T018 use
 - **MVP**: Phase 1–3 (US1) + Phase 4 (US2): có snapshot và màn hình xem được.
 - Tiếp theo US3 (lọc), US4 (ghi chú/export), cuối cùng Polish.
 - Migration chỉ tạo file; KHÔNG tự chạy trên DB (người dùng chạy theo thứ tự 35→36; menu/quyền do app khác quản lý).
+
+## Phase 10: Update 4 — Đổi link menu
+
+- [x] T032 Đổi `url` trong `WEB/presentation/menu-items/ComplianceSystem.jsx`: `compliance-missing` → `/compliance-missing`, `compliance-missing-detail` → `/compliance-missing-bk` (chỉ sửa code, chưa chạy kiểm thử UI)
+- [ ] T033 Cập nhật `url` của hai menu trong `userMenu` (app quản lý menu khác) — không có migration trong repo này
+
+## Phase 11: Update 5 — Dùng chung quyền ComplianceMissing
+
+- [x] T034 Đổi 5 `[Authorize(Policy=...)]` trong `API/ComplianceSys.Api/Controllers/ComplMissingDetailController.cs` sang `ComplianceMissing.*`; client `compliance-missing-detail/index.jsx` đọc menu `compliance-missing`; `compliance-missing-type/index.jsx` cho cả hai Type theo menu `compliance-missing`
+- [ ] T035 Cấp `ComplianceMissing.ReadAll/Download/Update` cho role đang có `ComplianceMissingDetail.*` rồi xóa menu `compliance-missing-bk` ở app quản lý menu (ngoài repo)

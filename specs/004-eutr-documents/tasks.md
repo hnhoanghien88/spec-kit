@@ -2247,3 +2247,19 @@ file) → **Update 21 / US6** (search box Type/Step name/Conditions/Search phía
   Phase 32 dù cùng 2 file), không sửa logic nào khác, đã xác nhận Kestrel `MaxRequestBodySize` (200MB)
   đủ dùng nên không cần sửa cấu hình server (research Quyết định 77). Không endpoint/entity/DTO/
   migration/route mới, độc lập hoàn toàn với mọi phase khác.
+
+## Phase 36: Update 31 - 1 document = 1 Step khi Upload Type "PO" (FR-081)
+
+- [X] T-U31-1 `EutrUploadService`: khi khớp >1 Step chọn Name dài nhất, hoà thì Id nhỏ nhất
+- [X] T-U31-2 `dotnet build` ComplianceSys.Application: 0 errors
+- [ ] T-U31-3 Kiểm thử thủ công (file tên chứa 2 Step) và dữ liệu cũ nhiều Step — **NOT run** (cần môi trường thật; chưa có migration xử lý dữ liệu cũ)
+
+## Phase 37: Update 32 - Type "PO" chỉ khớp Step của Template; PO chưa gắn Template chặn Upload (FR-082)
+
+- [X] T-U32-1 Service mới `IEutrPoTemplateStepResolver`/`EutrPoTemplateStepResolver` (PO → TemplateCode từ D365 refType 15, fallback 16 → Step của Template) + đăng ký DI + `EutrPoTemplateStepResolverTests`
+- [X] T-U32-2 `EutrUploadService`: inject `IEutrPoTemplateStepResolver`; lọc `eutr_steps` theo Step của Template của PO; PO chưa gắn Template → trả lỗi từng file trước khi tạo thư mục SharePoint
+- [X] T-U32-3 `EutrDocumentsService.GetPoTemplateStepIdsAsync` (dùng resolver) + endpoint `POST /api/eutr-documents/po-template-step-ids` (policy `EutrDocuments.ReadAll`)
+- [X] T-U32-4 Client: `eutrDocumentsApi.listPoTemplateStepIds`, `RestEutrDocumentsRepository`/`IEutrDocumentsRepository.getPoTemplateStepIds`, `GetEutrDocumentsPoTemplateStepIdsUseCase`; `EutrDocumentsFormDialog.loadMatchingStepsForPoByName` lọc thêm theo Step của Template
+- [X] T-U32-5 `EutrUploadServiceTests`: cập nhật constructor/mocks; thêm test "chỉ khớp Step của Template" và "chặn Upload khi PO chưa gắn Template" — 7/7 pass; `dotnet build` ComplianceSys.Api: 0 errors
+- [ ] T-U32-6 Kiểm thử thủ công (file `APH Business License(AP).pdf` với Template-015; PO chưa gắn Template; Edit document Type "PO") — **NOT run** (cần môi trường thật)
+- `005-eutr-sales-orders` (Update 47) và `012-eutr-purchase-orders` (Update 45) kế thừa, không có task riêng ngoài việc ghi nhận trong spec.

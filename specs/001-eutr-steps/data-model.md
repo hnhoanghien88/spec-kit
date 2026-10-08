@@ -35,3 +35,7 @@ Nguồn sự thật: `compliance-sys-api/src/ComplianceSys.Domain/Entities/EutrS
 ## Quan hệ
 
 - Không có quan hệ ràng buộc với thực thể khác trong phạm vi feature này.
+
+## Update 2 (2026-10-08)
+
+Không đổi schema. Xóa Step tác động: `eutr_steps`, `eutr_template_details` (StepId), `eutr_references` (StepId trực tiếp hoặc RefId trỏ tới template_details bị xóa) + `eutr_reference_details` (RefId), `eutr_master_documents` (StepId), `eutr_reference_type_details` (StepId). `eutr_documents` giữ nguyên. DTO mới `EutrStepTemplateUsageDto { StepId, StepName, TemplateNames[] }`.

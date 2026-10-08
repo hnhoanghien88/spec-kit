@@ -64,3 +64,10 @@ không còn NEEDS CLARIFICATION nào tồn đọng.
   Create/Update, lấy `err?.response?.data?.message || err?.message`, hiển thị qua
   `CustomSnackbar` (severity "error") — đúng cách `eutr-masters/index.jsx` đang xử lý lỗi trùng
   (StepId, Prefix); không thêm lỗi inline theo field vì không có tiền lệ trong codebase.
+
+## Update 2 (2026-10-08) — Xóa Step kèm dữ liệu phụ thuộc
+
+- **Decision 1**: Cascade bằng SQL tường minh trong `EutrStepRepository.DeleteWithDependenciesAsync`, chạy trong transaction của `EutrStepService` (không đổi FK sang `ON DELETE CASCADE`). Thứ tự: `eutr_reference_details` → `eutr_references` → nối lại ParentId → `eutr_template_details` → `eutr_master_documents` → `eutr_reference_type_details` → `eutr_steps`. **Rationale**: không cần migration/ALTER FK trên DB live; hành vi nằm trong code, dễ kiểm soát. **Alternatives**: `ON DELETE CASCADE` (đổi schema, rủi ro với các luồng xóa khác).
+- **Decision 2**: Endpoint `POST api/eutr-steps/template-usage` (policy `EutrSteps.Delete`) trả `[{stepId, stepName, templateNames[]}]` để hộp xác nhận liệt kê Template. Lỗi gọi endpoint không chặn xóa (dùng nội dung xác nhận chung).
+- **Decision 3**: Giữ catch MySQL 1451 làm lưới an toàn nếu còn bảng lạ tham chiếu Step; thông báo rõ ràng, không lộ SQL.
+- **Decision 4**: `ConfirmDialog` thêm `whiteSpace: pre-line` để hiển thị nhiều dòng.

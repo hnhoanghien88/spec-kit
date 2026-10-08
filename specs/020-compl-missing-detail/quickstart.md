@@ -9,7 +9,7 @@
 
 ## Scenarios
 
-1. **Menu và link** — Menu "Compliance missing detail" mở `/compliance-missing`; "Compliance missing" cũ mở `/compliance-missing-open-orders`; màn cũ không đổi (FR-001, FR-012, SC-005).
+1. **Menu và link** — Menu "Compliance missing detail" mở `/compliance-missing-bk`; "Compliance missing" cũ mở `/compliance-missing` *(Update 4)*; màn cũ không đổi (FR-001, FR-012, SC-005).
 2. **Màn hình khi chưa có dữ liệu** — Bảng `compl_missing_detail` rỗng → trang hiện trạng thái "no data", không lỗi (US2-3).
 3. **Chạy trigger** — `GET /api/compl-missing-detail/test-compliance-missing` với token: nhận `ApiResponse` có số liệu; kiểm tra không có email/notification mới được gửi (SC-006, US1-1).
 4. **Group, không SalesId** — `SELECT COUNT(*), COUNT(DISTINCT MasterCode, Code, MappedRefTypeCode, MappedInputValue) FROM compl_missing_detail` hai giá trị bằng nhau, và bảng không có cột `SalesId`; bằng số nhóm phân biệt (chuẩn hóa null/'') trong `compl_so_missing` (SC-001, US1-2).

@@ -2301,3 +2301,14 @@ Phase 0 — chốt các quyết định kỹ thuật. Các điểm nghiệp vụ
   có ngữ cảnh Template tường minh ở tầng request hiện tại (chỉ có `PoCode`), việc suy ra Template từ
   PoCode đòi hỏi thêm 1 round-trip/join mới ngoài phạm vi sửa lỗi tối thiểu cần thiết ở đây; có thể cân
   nhắc lại nếu phát sinh yêu cầu tường minh về việc thu hẹp phạm vi khớp theo Template cụ thể.
+
+## Quyết định 82 — Đảo lại Quyết định 79: 1 document chỉ 1 Step; multi-match chọn Step có Name dài nhất (spec Update 31, FR-081)
+
+- **Decision**: Giữ so khớp `Contains` trên toàn bộ `eutr_steps` nhưng thu về 1 Step: `OrderByDescending(Name.Length).ThenBy(Id)`. Lý do: khớp cụ thể nhất; deterministic; popup Edit và Save-ghi-đè-StepId vốn đã giả định 1 document = 1 Step.
+- **Rejected**: báo lỗi khi khớp nhiều Step; tạo 1 document/Step. Dữ liệu cũ nhiều Step chưa được chuẩn hoá (cần migration riêng nếu muốn).
+
+## Quyết định 83 — Type = "PO": tập Step khớp tên file = Step của Template đã gắn cho PO; PO chưa gắn Template thì chặn Upload (spec Update 32, FR-082)
+
+- **Decision**: Resolve Template của PO qua service mới `IEutrPoTemplateStepResolver` (`EutrPoTemplateStepResolver`): TemplateCode lấy từ D365 qua `IComplDynamicsService.GetDynRefePagedAsync` refType 15 (`RSVNEutrPurchOrders.EutrTemplate`, nguồn của màn hình 012) filter `Code eq PoCode`, không có thì refType 16 (`RSVNEutrSalesOrderPurchases`, màn hình 005) → `IEutrTemplatesRepository.GetManyByCodesWithDetailsAsync` (chỉ template `IsDeleted=0, IsHide=0`) → tập `StepId` của `eutr_template_details`. **Không dùng `eutr_purchase_attachments`** (chỉ có dòng sau Save PO Mapping; bản đầu của Update 32 dùng bảng này nên chặn nhầm PO có Template ở D365); lọc `eutr_steps` theo tập này trước khi so khớp `Contains` + chọn Name dài nhất (Quyết định 82). Tập rỗng (chưa gắn Template/Template không Step) → trả lỗi từng file, KHÔNG tạo thư mục SharePoint. Popup Edit dùng endpoint mới `POST /api/eutr-documents/po-template-step-ids` (`EutrDocumentsService.GetPoTemplateStepIdsAsync`, hợp Step của mọi PO truyền vào) để lọc cùng tập.
+- **Lý do**: nguồn Step thật sự của PO là cây Template (cùng nguồn `EutrProgressionService`/Map File); khớp toàn bộ `eutr_steps` + "Name dài nhất" gắn nhầm vào Step ngoài Template khi tên Step là tiền tố của Step khác (vd. `APH Business License` vs `APH Business License(AP)`).
+- **Rejected**: bỏ tie-break "dài nhất" (vẫn khớp Step ngoài Template); fallback toàn bộ `eutr_steps` khi PO chưa gắn Template (giữ nguyên lỗi gắn nhầm — người dùng đã chọn chặn Upload); ném exception thay vì kết quả từng file (UI hiện lỗi theo file ở Upload progress).

@@ -63,4 +63,4 @@ Như `SoMissingRowDto` nhưng **không có** `SalesId`, `CustAccount`, `CustName
 
 - resources: `ComplianceMissingDetail`
 - permissions: `ComplianceMissingDetail.{ViewMenu,ReadAll,Download,Update}`
-- menus: code `compliance-missing-detail`, name "Compliance missing detail", url `/compliance-missing`, parent `compliance-new`.
+- menus: code `compliance-missing-detail`, name "Compliance missing detail", url `/compliance-missing-bk` *(Update 4)*, parent `compliance-new`.

@@ -10,6 +10,30 @@
 
 ## Clarifications
 
+### Session 2026-10-08 (Update 50) — Map File: AVAILABLE FILES có thanh cuộn, chiều cao tối đa bằng khung Template tree
+
+- Input: "cho thanh cuộn xuống bên Available files ở màn hình map-file, để bằng với bên trái hiển thị các step của template".
+- Change: khung AVAILABLE FILES ở `MapFilePage.jsx` thêm `maxHeight: 668` (bằng khung Template tree bên trái); danh sách file cuộn bên trong, header giữ cố định. Chỉ đổi giao diện.
+
+### Session 2026-10-08 (Update 49) — View: nút Download ở AVAILABLE FILES
+
+- Input: "Thêm nút download ở Available files cho màn hình view".
+- Change: `ViewSalesOrderPage.jsx` thêm `handleDownloadFile` (cùng logic `MapFilePage.jsx`, Update 37) và nút Download cạnh nút View; ẩn nếu thiếu quyền `Download` (Update 28). Không đổi API/DTO.
+- **FR-253 (Update 49)**: xem Requirements.
+- **FR-254 (Update 50)**: Khung AVAILABLE FILES ở Map File MUST có chiều cao tối đa bằng khung Template tree (668px) và cuộn dọc bên trong khi có nhiều file; header (Upload) giữ cố định.
+
+### Session 2026-10-08 (Update 48) — Step 1 (Map File) & Selected Purchase Orders (View): thêm cột Template
+
+- Input: "cập nhật 005-eutr-sales-orders, màn hình chỗ Step 1: Choose purchase order (PO) ở Map file và view, hiển thị thêm cột Template".
+- Change: thêm cột **Template** (`line.eutrTemplate`) vào bảng PO trong mỗi nhóm, giữa PO và Material; Map File và View dùng chung `compliance-client/src/presentation/pages/eutr-sales-orders/SalesLineGroupedPoTable.jsx` nên sửa một chỗ. Dữ liệu đã có sẵn ở cả hai trang (`eutrTemplate`), không đổi API/DTO/migration. PO chưa gắn Template hiển thị "—" (vẫn bị khóa chọn như trước).
+- **FR-252 (Update 48)**: Bảng PO theo nhóm MUST có cột Template (xem Requirements).
+
+### Session 2026-10-08 (Update 47) — Upload file từ Map File: chỉ khớp Step của Template của PO; PO chưa gắn Template thì chặn Upload (kế thừa `004-eutr-documents` Update 32)
+
+- Input: "kiểm tra lại logic upload file ở 004-eutr-documents, 005-eutr-sales-orders, 012-eutr-purchase-orders … phải dựa vào step của template mà gắn chứ không phải toàn bộ step trong dữ liệu"; "PO chưa gắn template thì nên chặn upload và báo lỗi".
+- Change: Upload từ popup Add ở Map File dùng chung `POST /api/sharepoint/eutr-upload-multi` → MUST chỉ khớp tên file với Step thuộc Template của PO (vd. file `APH Business License(AP).pdf` gắn vào `APH Business License` của Template, không phải `APH Business License(AP)` ngoài Template — Step "Required - missing" được lấp đúng, Progress đúng). PO chưa gắn Template → Upload bị chặn, mỗi file báo lỗi "PO has no template assigned. Please assign a template before uploading.". Chi tiết: `004-eutr-documents` FR-082, research Quyết định 83. Không đổi cây Template, Progress hay endpoint của feature này.
+- **FR-251 (Update 47)**: Upload file ở Map File MUST tuân FR-082 của `004-eutr-documents` (chỉ khớp Step của Template của PO; chặn Upload nếu PO chưa gắn Template).
+
 ### Session 2026-10-07 (Update 46) — Step 1 (Map File) & Selected Purchase Orders (View): tiêu đề nhóm lấy từ API `RSVNEutrOpenSalesLines` (theo SalesId), PO ở `RSVNEutrSalesOrderPurchLines` gom theo ProductVariant = ItemId-configId
 
 - Input: "cập nhật màn hình 005-eutr-sales-orders. logic hiển thị thông tin step1: Choose purchase order (PO)
@@ -3936,6 +3960,9 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
 - **FR-248 (Update 46)**: PO có ProductVariant rỗng hoặc không khớp nhóm nào MUST hiển thị trong nhóm cuối có tiêu đề "—" (thay thế FR-241); không PO nào bị mất.
 - **FR-249 (Update 46)**: Bảng Selected Purchase Orders ở View MUST dùng cùng nhóm và danh sách PO như Step 1 (checkbox khóa, không nút Save PO Mapping).
 - **FR-250 (Update 46)**: Thay đổi chỉ đọc; trường `ProductName`/`ProductDescription` (FR-242) không còn dùng cho tiêu đề nhóm. Select/Save PO Mapping (Update 36) và mở/thu gọn (FR-240) giữ nguyên.
+- **FR-252 (Update 48)**: Bảng PO theo nhóm (Step 1 của Map File và Selected Purchase Orders ở View, dùng chung `SalesLineGroupedPoTable`) MUST hiển thị thêm cột **Template** (giá trị `EutrTemplate` của PO từ `RSVNEutrSalesOrderPurchLines`; trống hiển thị "—"), đặt giữa cột PO và Material. Thay đổi chỉ hiển thị, không đổi dữ liệu/API/logic chọn.
+- **FR-253 (Update 49)**: Mỗi dòng ở AVAILABLE FILES của màn hình View MUST có nút **Download** (cạnh nút View, chỉ hiện khi permissionList có `Download`) tải trực tiếp file thật qua FileId; tên file tải về như Map File (Type "PO" giữ tên đã lưu; Type khác = Step Name qua `buildStepOnlyFileName`). Lỗi → snackbar "Failed to download file".
+- **FR-254 (Update 50)**: Khung AVAILABLE FILES ở Map File MUST có chiều cao tối đa bằng khung Template tree (668px) và cuộn dọc bên trong khi có nhiều file; header (Upload) giữ cố định.
 
 ## Success Criteria *(mandatory)*
 
@@ -4273,6 +4300,8 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
   và không mất các PO đã chọn ở Step 1.
 - **SC-114 (Update 46)**: 100% dòng hàng của Sales Order trong `RSVNEutrOpenSalesLines` xuất hiện thành nhóm có tiêu đề đúng định dạng "ItemId-configId  Name / Description", kể cả dòng chưa có PO.
 - **SC-115 (Update 46)**: 100% PO của Sales Order hiển thị đúng một lần, trong nhóm có ItemId-configId trùng ProductVariant (hoặc nhóm "—" nếu không khớp); không PO nào bị mất hoặc lặp.
+- **SC-116 (Update 48)**: 100% dòng PO trong bảng nhóm của Step 1 (Map File) và Selected Purchase Orders (View) hiển thị cột Template với giá trị `EutrTemplate` của PO (hoặc "—" khi chưa gắn).
+- **SC-117 (Update 49)**: 100% dòng ở AVAILABLE FILES của View có nút Download (khi có quyền `Download`) tải đúng file.
 
 ## Assumptions
 

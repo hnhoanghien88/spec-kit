@@ -10,6 +10,18 @@
 
 ## Clarifications
 
+### Session 2026-10-08 (Update 32) — Type = "PO": chỉ khớp Step trong Template của PO; PO chưa gắn Template thì chặn Upload
+
+- Input: "template có step là `APH Business License`, dữ liệu step có `APH Business License` và `APH Business License(AP)`. File úp là `APH Business License(AP).pdf` => phải gắn step `APH Business License` nhưng lại gắn vào step `…(AP)`. Phải dựa vào step của template mà gắn chứ không phải toàn bộ step trong dữ liệu"; "PO chưa gắn template thì nên chặn upload và báo lỗi"; "edit dialog và cập nhật spec luôn".
+- Bối cảnh (rà soát mã): Update 29 khớp tên file trên TOÀN BỘ `eutr_steps`, Update 31 chọn Step có Name dài nhất → file khớp cả Step trong Template lẫn Step dài hơn nằm ngoài Template thì luôn bị gắn vào Step ngoài Template (file hiển thị "No map", Step của Template vẫn "Required - missing").
+- Change: (1) `EutrUploadService.UploadMultipleToSharePointAndSaveDataAsync` MUST chỉ khớp tên file với các Step thuộc Template đã gắn cho PO (TemplateCode của PO lấy từ D365 — cùng nguồn màn hình 012/005: `RSVNEutrPurchOrders.EutrTemplate`, fallback `RSVNEutrSalesOrderPurchases.RSVNEutrTemplate`; KHÔNG dùng bảng `eutr_purchase_attachments` vì PO có Template ở D365 chưa chắc đã có dòng ở bảng này → `eutr_template_details.StepId`); quy tắc "Name dài nhất, hoà Id nhỏ nhất" (Update 31) giữ nguyên nhưng chỉ áp dụng trong tập Step này. (2) PO chưa gắn Template (hoặc Template không có Step) → MUST chặn Upload: mọi file trả `Success=false`, `ErrorMessage` = "PO has no template assigned. Please assign a template before uploading.", không tạo thư mục/không upload SharePoint, không ghi DB. (3) Popup Edit document Type "PO": combobox Step MUST chỉ liệt kê Step thuộc Template của PO (lấy qua endpoint mới `POST /api/eutr-documents/po-template-step-ids`) mà tên có trong tên file; Step hiện tại của document vẫn luôn có mặt (FR-045). Upload theo Type khác (`eutr-upload-multi-by-type`, Step do người dùng chọn) KHÔNG đổi. Dữ liệu cũ không tự đổi.
+
+### Session 2026-10-08 (Update 31) — Type = "PO": 1 document chỉ thuộc 1 Step (đảo lại multi-match của Update 29)
+
+- Input: "1 document chỉ cho 1 step, nếu ở nhiều step là sai" → chọn phương án: khi tên file khớp nhiều Step, chọn 1 Step.
+- Bối cảnh (rà soát mã): `EutrUploadService.UploadMultipleToSharePointAndSaveDataAsync` ghi 1 dòng `eutr_references` cho MỖI Step khớp (multi-match, Update 29/Quyết định 79) → 1 document có nhiều Step; popup Edit chỉ thấy 1 Step và Save ghi đè mọi dòng về 1 Step.
+- Change: Khi file khớp nhiều Step, hệ thống MUST chọn đúng 1 Step — Step có Name dài nhất (khớp cụ thể nhất); bằng độ dài thì Step có Id nhỏ nhất — và chỉ ghi dòng reference cho Step đó. Khớp 0 Step vẫn báo lỗi như cũ. Dữ liệu cũ không tự đổi.
+
 ### Session 2026-09-30 (Update 30) — Popup Add: ẩn Valid from/Valid to trừ khi Type = "Vendor"
 
 - Input: "ẩn 2 thông tin valid from, to. mặc định là today > maxdate. Nếu type là vendor mới hiển thị"
@@ -1412,6 +1424,8 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   `9999-12-31`) khi Upload, và MUST reset lại 2 giá trị này về mặc định ngay khi Type đổi từ "Vendor"
   sang Type khác (trước khi ẩn). Popup Edit (mode `edit`) KHÔNG bị ảnh hưởng — tiếp tục hiển thị 2
   trường này cho mọi Type như FR-030 hiện có.
+- **FR-081 (Update 31)**: Khi Upload Type "PO", một file MUST tạo document gắn với đúng 1 Step; nếu tên file khớp nhiều Step thì chọn Step có Name dài nhất, hoà thì Id nhỏ nhất. Thay thế phần multi-match của FR-023/FR-074/FR-075.
+- **FR-082 (Update 32)**: Khi Upload Type "PO", tập Step dùng để khớp tên file MUST là các Step thuộc Template đã gắn cho PO (không phải toàn bộ `eutr_steps`); thay thế nguồn "toàn bộ `eutr_steps`" của Update 29/FR-074/FR-075 (quy tắc chọn 1 Step của FR-081 giữ nguyên, áp dụng trong tập này). PO chưa gắn Template (hoặc Template không có Step) MUST bị chặn Upload với thông báo lỗi trên từng file, không có tác dụng phụ (SharePoint/DB). Combobox Step của popup Edit document Type "PO" MUST dùng cùng tập Step này.
 
 ## Key Entities *(include if feature involves data)*
 

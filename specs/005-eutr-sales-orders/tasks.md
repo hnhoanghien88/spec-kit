@@ -6198,3 +6198,22 @@ ItemId/ConfigId (AND khi cả hai có giá trị, AND với mọi filter khác �
 - [X] T493 [US5] `compliance-client/src/presentation/pages/eutr-sales-orders/ViewSalesOrderPage.jsx`: cùng cấu trúc, checkbox khóa, không nút Save (sau T490, T491).
 - [X] T494 Build verify: `dotnet build` Application OK; `vite build` OK; ESLint trên salesLineGroups.js/SalesLineGroupedPoTable.jsx không lỗi.
 - [ ] T495 Kiểm thử thủ công theo `quickstart.md` Update 46 — **CHƯA chạy** (cần D365 thật + trình duyệt).
+
+## Phase 97: Step 1 (Map File) & Selected Purchase Orders (View) — thêm cột Template (Update 48) (FR-252, SC-116)
+
+**Goal**: Hiển thị cột Template trong bảng PO theo nhóm ở Map File và View.
+
+**Independent Test**: Theo `quickstart.md` Update 48.
+
+- [X] T496 [US4] `compliance-client/src/presentation/pages/eutr-sales-orders/SalesLineGroupedPoTable.jsx`: thêm cột header "Template" + cell `line.eutrTemplate || '—'` giữa PO và Material; cập nhật `colSpan` (9/8). Dùng chung cho Map File và View.
+- [ ] T497 Kiểm thử thủ công theo `quickstart.md` Update 48 — **CHƯA chạy** (cần D365 thật + trình duyệt); chưa chạy build/lint.
+
+## Phase 98: View — nút Download ở AVAILABLE FILES (Update 49) (FR-253, SC-117)
+
+- [X] T498 [US5] `compliance-client/src/presentation/pages/eutr-sales-orders/ViewSalesOrderPage.jsx`: thêm `handleDownloadFile` + nút Download (gated quyền `Download`) trên mỗi dòng AVAILABLE FILES. ESLint: chỉ còn 2 lỗi cũ (`canSubmit`, `isMapped`), không do thay đổi này.
+- [ ] T499 Kiểm thử thủ công theo `quickstart.md` Update 49 — **CHƯA chạy** (cần môi trường thật).
+
+## Phase 99: Map File — AVAILABLE FILES cuộn, cao bằng Template tree (Update 50) (FR-254)
+
+- [X] T500 `compliance-client/src/presentation/pages/eutr-sales-orders/MapFilePage.jsx`: thêm `maxHeight: 668` cho khung AVAILABLE FILES (bằng khung trái). Chưa chạy build/lint.
+- [ ] T501 Kiểm thử thủ công: Template có nhiều file → khung phải cuộn, cao bằng khung trái — **CHƯA chạy**.

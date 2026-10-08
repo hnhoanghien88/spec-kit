@@ -10,6 +10,11 @@
 
 ## Clarifications
 
+### Session 2026-10-08 (Update 45) — Upload file ở PurchId/View: chỉ khớp Step của Template của PO; PO chưa gắn Template thì chặn Upload (kế thừa `004-eutr-documents` Update 32)
+
+- Input: "kiểm tra lại logic upload file ở 004-eutr-documents, 005-eutr-sales-orders, 012-eutr-purchase-orders … phải dựa vào step của template mà gắn chứ không phải toàn bộ step trong dữ liệu"; "PO chưa gắn template thì nên chặn upload và báo lỗi".
+- Change: Upload ở màn hình View dùng chung `POST /api/sharepoint/eutr-upload-multi` → MUST chỉ khớp tên file với Step thuộc Template của PO đang xem; PO chưa gắn Template → Upload bị chặn với lỗi "PO has no template assigned. Please assign a template before uploading.". Chi tiết: `004-eutr-documents` FR-082, research Quyết định 83. Không đổi cây Template hay endpoint của feature này.
+
 ### Session 2026-10-07 (Update 14) — Chiều cao khung AVAILABLE FILES bằng chiều cao khung Template
 
 - Input: "màn hình AVAILABLE FILES (19), khi nhiều file hiển thị thanh scroll, chiều cao chỉnh cho bằng với cột template".
