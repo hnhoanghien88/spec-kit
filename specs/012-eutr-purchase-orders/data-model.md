@@ -166,3 +166,22 @@ No DB change. New transport DTOs only:
 - `AssignPurchaseOrderTemplateRequestDto { string PurchId; string TemplateId; string VersionId }` — all required, non-empty.
 - D365 body class `UpdateEutrRequest { string purchId; string templateId; string versionId }` (lower-camel property names as sent on the wire).
 Validation: `TemplateId`+`VersionId` must equal `Code`+`VersionId` of a row in the active set (`IsDeleted=0, IsHide=0, Status=1`).
+
+## Update 15 (2026-10-08): bảng mới `eutr_history` (FR-049)
+
+Bảng append-only, dùng chung với `005-eutr-sales-orders` Update 51.
+
+| Cột | Kiểu | Ghi chú |
+|-----|------|---------|
+| Id | BIGINT PK AUTO_INCREMENT | |
+| Type | TINYINT NOT NULL | 0 = Assign template (012), 1 = Map/Unmap PO (005) |
+| Value | VARCHAR(50) NOT NULL | Type 0: PurchId; Type 1: SalesId |
+| RefValue | VARCHAR(50) NOT NULL | Type 0: templateId (Code); Type 1: PurchId |
+| Version | INT NULL | Type 0: version template; Type 1: NULL |
+| Note | VARCHAR(50) NULL | Type 1: `checked`/`Unchecked`; Type 0: NULL |
+| CreatedBy | VARCHAR(50) NOT NULL | email/tên đăng nhập |
+| CreatedDate | DATETIME NOT NULL | UTC |
+
+Không FK, không UPDATE/DELETE. Entity `EutrHistory` không kế thừa `BaseEntity`.
+
+> Update 52 (005): thêm cột `ProductVariant` VARCHAR(50) NULL (sau `Version`) — chỉ dùng ở Type = 1; Type = 0 để NULL.

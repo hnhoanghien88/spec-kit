@@ -10,6 +10,15 @@
 
 ## Clarifications
 
+### Session 2026-10-08 (Update 15) — Assign template: ghi lịch sử vào bảng `eutr_history`
+
+- Input: "thêm bảng eutr_history gồm cột Id, Type, Value, RefValue, Version, Note, CreatedBy, CreatedDate (Id BIGINT, Type TINYINT, Value/RefValue/CreatedBy/Note VARCHAR(50), CreatedDate Datetime, Version Int). Khi user ở 012-eutr-purchase-orders sử dụng chức năng Assign template, sẽ lưu vào bảng eutr_history với type = 0, Value = PO, RefValue = templateId, Version = templateVersion".
+- Bối cảnh: Assign template (Update 13) chỉ đẩy lựa chọn lên D365; hệ thống không lưu dấu vết ai đã gán template/version nào cho PO nào, vào lúc nào.
+- Change: Bảng mới `eutr_history` (lịch sử thao tác) gồm: `Id` BIGINT, `Type` TINYINT, `Value` VARCHAR(50), `RefValue` VARCHAR(50), `Version` INT, `Note` VARCHAR(50), `CreatedBy` VARCHAR(50), `CreatedDate` DATETIME. Bảng dùng chung với `005-eutr-sales-orders` (Update 51); `Type`: **0 = Assign template**, **1 = Map/Unmap PO của Sales Order**.
+- Change (FR-049): Mỗi lần **Assign template** thành công (nhấn OK và đẩy lên D365 thành công) MUST thêm đúng 1 dòng vào `eutr_history` với `Type = 0`, `Value` = Purch id (PO) của dòng, `RefValue` = templateId (mã Template đã chọn), `Version` = version của Template đã chọn, `CreatedBy` = người dùng thực hiện, `CreatedDate` = thời điểm thực hiện, `Note` để trống.
+- Quyết định (mặc định hợp lý): chỉ ghi khi đẩy lên D365 thành công; thất bại thì không ghi. Lỗi ghi lịch sử không được làm hỏng việc gán template đã thành công.
+- Không đổi: popup, điều kiện active/Approved, quyền Update, các cột và nút khác.
+
 ### Session 2026-10-08 (Update 45) — Upload file ở PurchId/View: chỉ khớp Step của Template của PO; PO chưa gắn Template thì chặn Upload (kế thừa `004-eutr-documents` Update 32)
 
 - Input: "kiểm tra lại logic upload file ở 004-eutr-documents, 005-eutr-sales-orders, 012-eutr-purchase-orders … phải dựa vào step của template mà gắn chứ không phải toàn bộ step trong dữ liệu"; "PO chưa gắn template thì nên chặn upload và báo lỗi".
@@ -700,6 +709,8 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
   menu EUTR Purchase Orders (theo `permissionList` của menu, cùng cơ chế FR-033); người dùng không có
   quyền này không thấy nút, nút View không bị ảnh hưởng.
 
+- **FR-049 (Update 15)**: Mỗi lần Assign template thành công MUST ghi đúng 1 dòng vào bảng `eutr_history` với `Type = 0`, `Value` = Purch id, `RefValue` = templateId đã chọn, `Version` = version của Template đã chọn, `CreatedBy`/`CreatedDate` = người dùng/thời điểm thực hiện; Assign thất bại MUST NOT ghi dòng nào; lỗi ghi lịch sử MUST NOT làm thất bại việc gán template.
+
 ### Key Entities *(include if feature involves data)*
 
 - **Purchase Order (ERP reference data, type = 15)**: Một đơn mua hàng lấy từ ERP qua nguồn tham
@@ -714,6 +725,7 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
 - **Recorded Compliance Document (existing — 004-eutr-documents, chỉ đọc/ghi qua popup Add/Edit)**:
   Tài liệu đã tải lên và gắn với một Purchase Order và một step cụ thể của Template — dùng để xác
   định step nào đã có tài liệu, step nào còn thiếu, và hiển thị ở khu vực AVAILABLE FILES.
+- **EUTR History (mới — Update 15, dùng chung với 005)**: Một dòng lịch sử thao tác: Id, Type (0 = Assign template, 1 = Map/Unmap PO), Value (PO hoặc SalesId), RefValue (templateId hoặc PO), Version (version Template; chỉ dùng khi Type = 0), Note, CreatedBy, CreatedDate. Chỉ thêm mới, không sửa/xóa.
 
 ## Success Criteria *(mandatory)*
 
@@ -756,6 +768,7 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
   1 template và nhấn OK thành công, Purchase Order đó được cập nhật Template trên D365 và cột
   Template/Progress của dòng phản ánh template mới mà không cần tải lại trang thủ công; không có
   trường hợp nào gửi được nhiều hơn 1 template trong một lần nhấn OK.
+- **SC-014 (Update 15)**: 100% lần Assign template thành công tạo đúng 1 dòng lịch sử (Type = 0) với PO, templateId, version, người dùng và thời điểm chính xác; 0 dòng được tạo khi Assign thất bại.
 
 ## Assumptions
 
@@ -823,3 +836,4 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
   Template), không ghi bảng cục bộ. Đã chốt ở bước clarify: chỉ template Approved mới được gán.
 - (Update 13) Danh sách popup Assign template KHÔNG lọc theo Vendor của Purchase Order (đã chốt ở clarify);
   mọi template active (Approved) đều hiển thị cho mọi Purchase Order.
+- (Update 15) `Version` lấy từ VersionId của dòng template được chọn (cùng giá trị gửi D365 ở `versionId`, ép về số nguyên); `CreatedBy` lấy tên đăng nhập người dùng hiện tại (tối đa 50 ký tự); `Note` để trống ở Type = 0. Thay đổi DB MUST đi kèm file migration đánh số mới.

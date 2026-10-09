@@ -582,3 +582,16 @@ mới.
 - [X] T070 Frontend: `AssignTemplateDialog.jsx` (chọn 1, Current chip, OK disabled, loading/error)
 - [X] T071 Frontend: `PurchaseOrderOverviewPage.jsx` — nút Assign cạnh View, ẩn theo permission `Update`, refetch sau thành công
 - [X] T072 Build + test: `dotnet test --filter EutrPurchaseOrdersServiceTests` 6/6 pass; ESLint sạch trên file mới/sửa; `vite build` thành công. Kiểm thử thủ công theo quickstart **CHƯA chạy** (cần D365 thật + trình duyệt); policy `EutrPurchaseOrders.Update` và hành vi `updateEutr` thật **chưa xác nhận** trên môi trường chạy.
+
+## Phase 16: Assign template ghi lịch sử `eutr_history` (Update 15) (FR-049, SC-014)
+
+**Goal**: Assign template thành công ghi 1 dòng `eutr_history` Type=0.
+
+**Independent Test**: [quickstart.md](./quickstart.md) "Update 15", bước 1-4.
+
+- [X] T073 [P] DB: `Sqls/Tables/eutr_history.sql` + `Sqls/Migration/37_create_eutr_history.sql` (giống hệt nhau, `CREATE TABLE IF NOT EXISTS`, index `(Type, Value)`)
+- [X] T074 [P] Domain: entity `EutrHistory` (`[Table("eutr_history")]`, `long Id`, không kế thừa `BaseEntity`)
+- [X] T075 Backend: `EutrPurchaseOrdersService.AssignTemplateAsync(request, userEmail, ct)` — sau `PostAsync` thành công ghi 1 dòng Type=0 qua `IRepository<EutrHistory,long>`, try/catch + log; cập nhật interface + controller truyền `UserEmail`
+- [X] T076 [P] Unit test `EutrPurchaseOrdersServiceTests`: ghi đúng 1 dòng khi OK; không ghi khi D365 lỗi; lỗi ghi lịch sử không ném
+- [X] T077 Build + `dotnet test --filter "EutrPurchaseOrdersServiceTests|EutrPurchaseAttachmentsServiceTests"` 13/13 pass
+- [ ] T078 Kiểm thử thủ công theo quickstart Update 15 — cần môi trường thật

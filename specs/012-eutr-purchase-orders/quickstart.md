@@ -220,3 +220,14 @@ Prerequisites: user with `Update` on menu `eutr-purchase-orders`; at least one A
 6. Cancel sends nothing.
 
 Success criteria mapping: SC-013 → steps 1-6.
+
+## Update 15 (2026-10-08) — Assign template ghi `eutr_history`
+
+Tiền đề: đã chạy `Sqls/Migration/37_create_eutr_history.sql`.
+
+1. Assign template thành công cho PO `PO000123` (template `TPL-A`, version 3): `SELECT * FROM eutr_history ORDER BY Id DESC LIMIT 1` → Type=0, Value=PO000123, RefValue=TPL-A, Version=3, Note NULL, CreatedBy=email người dùng, CreatedDate≈hiện tại.
+2. Assign lần nữa với template khác: thêm đúng 1 dòng mới (dòng cũ giữ nguyên).
+3. Làm D365 lỗi (URL sai/offline): popup báo lỗi, KHÔNG có dòng mới.
+4. Tạm đổi tên bảng để ghi lịch sử lỗi: Assign vẫn thành công, log có cảnh báo, không có dòng.
+
+Success criteria mapping: SC-014 → bước 1–4.

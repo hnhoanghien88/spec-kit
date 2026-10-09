@@ -1897,3 +1897,15 @@ Success criteria mapping: SC-116 → bước 1,2,3.
 3. Giả lập lỗi tải: snackbar "Failed to download file".
 
 Success criteria mapping: SC-117 → bước 1–3.
+
+## Update 51 (2026-10-08) — Save PO Mapping ghi `eutr_history`
+
+Tiền đề: đã chạy `Sqls/Migration/37_create_eutr_history.sql`.
+
+1. Sales Order chưa map; tick PO1, PO2 → Save: có 2 dòng Type=1, Value=SalesId, RefValue=PO1/PO2, Note=`checked`, Version NULL.
+2. Mở lại, bỏ PO2, giữ PO1, tick PO3 → Save: thêm 2 dòng — PO2 `Unchecked`, PO3 `checked`; PO1 không có dòng mới.
+3. Save không đổi gì: không có dòng mới.
+4. Thêm/bớt một dòng hàng của PO1 (PO1 vẫn còn map): không có dòng mới.
+5. Save lỗi (thiếu TemplateCode): không có dòng.
+
+Success criteria mapping: SC-118 → bước 1–5.

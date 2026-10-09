@@ -1920,3 +1920,7 @@ No data-model change. Client-only view state `filePage` is removed; the file lis
 - `RSVNEutrOpenSalesLines` (D365, domain, refType 22): `SalesId`, `ItemId`, `configId`, `Name`, `Description` — đã có.
 - `ComplDynReferenceResponseDto`: refType=22 gán `Id/Code = SalesId`, `ItemId`, `ConfigId = configId`, `Name`, `Description` (+ trường `Description` nếu chưa có).
 - Client view-model `SalesLineGroup { key = itemId-configId (hoặc itemId), itemId, configId, name, description, pos: PoLine[] }` + nhóm cuối "—" cho PO không khớp. `PoLine` giữ nguyên. `expandedGroups: Set<key>` chỉ là state UI (mặc định rỗng = thu gọn). Không đổi `eutr_purchase_attachments`/`selectedPOs`.
+
+## Update 51 (2026-10-08): dùng bảng `eutr_history` (FR-255)
+
+Bảng định nghĩa đầy đủ ở `specs/012-eutr-purchase-orders/data-model.md` Update 15. 005 ghi Type=1: Value=SalesId, RefValue=PurchId, Version=NULL, Note=`checked`|`Unchecked`. Không đổi `eutr_purchase_attachments`.

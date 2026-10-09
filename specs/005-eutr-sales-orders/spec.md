@@ -10,6 +10,21 @@
 
 ## Clarifications
 
+### Session 2026-10-08 (Update 52) — `eutr_history` thêm cột `ProductVariant`; Save PO Mapping lưu ProductVariant của dòng hàng
+
+- Input: "thêm cột ProductVariant với varchar 50 trong bảng history. Khi lưu với type = 1 thì lấy thông tin ProductVariant lưu vào".
+- Change (FR-256): Bảng `eutr_history` thêm cột `ProductVariant` VARCHAR(50) NULL. Khi Save PO Mapping (Type = 1), mỗi dòng lịch sử MUST lưu ProductVariant của dòng hàng PO được chọn/bỏ chọn; Type = 0 để trống.
+- Quyết định: đơn vị diff của FR-255 đổi từ PO sang **(PO, ProductVariant)** — mỗi dòng hàng của PO được chọn/bỏ chọn là 1 dòng lịch sử (Note `checked`/`Unchecked`); thay đổi này thay thế quyết định "đổi dòng hàng không ghi" ở Update 51. ProductVariant rỗng → lưu NULL; dài hơn 50 ký tự bị cắt.
+
+### Session 2026-10-08 (Update 51) — Save PO Mapping: ghi lịch sử chọn/bỏ chọn PO vào bảng `eutr_history`
+
+- Input: "005-eutr-sales-orders khi user chọn PO để map hoặc bỏ map, sẽ lưu type = 1, value = SalesId, RefValue = PO đã chọn, nếu bỏ chọn thì note là Unchecked, còn chọn thì Note là checked, nếu chọn nhiều PO thì add nhiều dòng". Bảng `eutr_history` được định nghĩa ở `012-eutr-purchase-orders` Update 15.
+- Bối cảnh: Việc map/bỏ map PO vào Sales Order (Step 1 của Map File, lưu bằng **Save PO Mapping**) chỉ lưu trạng thái cuối; không biết ai đã chọn/bỏ PO nào, khi nào.
+- Change: Bảng mới `eutr_history` (lịch sử thao tác) gồm: `Id` BIGINT, `Type` TINYINT, `Value` VARCHAR(50), `RefValue` VARCHAR(50), `Version` INT, `Note` VARCHAR(50), `CreatedBy` VARCHAR(50), `CreatedDate` DATETIME (dùng chung với 012; `Type = 1` cho Map/Unmap PO).
+- Change (FR-255): Khi **Save PO Mapping** thành công, với **mỗi PO** thay đổi trạng thái map MUST thêm 1 dòng vào `eutr_history`: `Type = 1`, `Value` = SalesId, `RefValue` = PO, `Version` để trống, `CreatedBy`/`CreatedDate` = người dùng/thời điểm lưu. PO mới chọn → `Note = "checked"`; PO đã map nay bị bỏ chọn → `Note = "Unchecked"`. Nhiều PO trong một lần lưu → nhiều dòng (mỗi PO một dòng).
+- Quyết định (mặc định hợp lý): chỉ ghi các PO **thay đổi** so với trạng thái đã lưu trước đó (PO giữ nguyên không ghi); chỉ ghi khi lưu thành công; lỗi ghi lịch sử không làm thất bại Save PO Mapping.
+- Không đổi: giao diện Step 1, khóa mapping theo (PO, Variant, ItemId) (Update 36), Progress, các màn hình khác.
+
 ### Session 2026-10-08 (Update 50) — Map File: AVAILABLE FILES có thanh cuộn, chiều cao tối đa bằng khung Template tree
 
 - Input: "cho thanh cuộn xuống bên Available files ở màn hình map-file, để bằng với bên trái hiển thị các step của template".
@@ -3963,6 +3978,8 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
 - **FR-252 (Update 48)**: Bảng PO theo nhóm (Step 1 của Map File và Selected Purchase Orders ở View, dùng chung `SalesLineGroupedPoTable`) MUST hiển thị thêm cột **Template** (giá trị `EutrTemplate` của PO từ `RSVNEutrSalesOrderPurchLines`; trống hiển thị "—"), đặt giữa cột PO và Material. Thay đổi chỉ hiển thị, không đổi dữ liệu/API/logic chọn.
 - **FR-253 (Update 49)**: Mỗi dòng ở AVAILABLE FILES của màn hình View MUST có nút **Download** (cạnh nút View, chỉ hiện khi permissionList có `Download`) tải trực tiếp file thật qua FileId; tên file tải về như Map File (Type "PO" giữ tên đã lưu; Type khác = Step Name qua `buildStepOnlyFileName`). Lỗi → snackbar "Failed to download file".
 - **FR-254 (Update 50)**: Khung AVAILABLE FILES ở Map File MUST có chiều cao tối đa bằng khung Template tree (668px) và cuộn dọc bên trong khi có nhiều file; header (Upload) giữ cố định.
+- **FR-255 (Update 51)**: Khi Save PO Mapping thành công, mỗi PO thay đổi trạng thái map MUST được ghi 1 dòng vào `eutr_history` với `Type = 1`, `Value` = SalesId, `RefValue` = PO, `Note` = `checked` (PO mới chọn) hoặc `Unchecked` (PO bị bỏ chọn); nhiều PO → nhiều dòng; PO không đổi trạng thái MUST NOT ghi; Save thất bại MUST NOT ghi; lỗi ghi lịch sử MUST NOT làm thất bại Save PO Mapping.
+- **FR-256 (Update 52)**: `eutr_history` có cột `ProductVariant` VARCHAR(50) NULL; Save PO Mapping ghi ProductVariant của từng dòng hàng PO thay đổi (diff theo (PO, ProductVariant)), Type = 0 để trống.
 
 ## Success Criteria *(mandatory)*
 
@@ -4302,6 +4319,7 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
 - **SC-115 (Update 46)**: 100% PO của Sales Order hiển thị đúng một lần, trong nhóm có ItemId-configId trùng ProductVariant (hoặc nhóm "—" nếu không khớp); không PO nào bị mất hoặc lặp.
 - **SC-116 (Update 48)**: 100% dòng PO trong bảng nhóm của Step 1 (Map File) và Selected Purchase Orders (View) hiển thị cột Template với giá trị `EutrTemplate` của PO (hoặc "—" khi chưa gắn).
 - **SC-117 (Update 49)**: 100% dòng ở AVAILABLE FILES của View có nút Download (khi có quyền `Download`) tải đúng file.
+- **SC-118 (Update 51)**: 100% PO được chọn/bỏ chọn trong một lần Save PO Mapping thành công tạo đúng 1 dòng lịch sử (Type = 1) với SalesId, PO và Note (`checked`/`Unchecked`) chính xác; 0 dòng cho PO không đổi hoặc khi lưu thất bại.
 
 ## Assumptions
 
@@ -4800,3 +4818,4 @@ hoặc **Combined (All)** chỉ chứa đúng 1 thư mục **All** theo cây ste
 - (Update 45 — điều chỉnh) Bảng Selected Purchase Orders ở View đổi từ "chỉ các PO đã lưu" sang cùng logic Step 1
   (toàn bộ PO của Sales Order, gom nhóm theo dòng hàng); thay thế mô tả chỉ-đọc không có cột Select ở trên.
 - (Update 45 — chỉnh lần cuối) Khóa gom nhóm là **ProductVariant** của dòng PO (type = 20); ProductName/ProductDescription lấy từ chính các dòng PO đó (giá trị đầu tiên có dữ liệu trong nhóm). Các Assumption trước của Update 45 nói về khóa ItemId-ConfigId và `RSVNSalesLineOpenInvoiceCogs` được thay thế bởi dòng này. Nếu D365 chưa trả 2 trường này thì hiển thị "—".
+- (Update 51) Bảng `eutr_history` dùng chung với 012 (Update 15); `Version` để trống ở Type = 1; `CreatedBy` là tên đăng nhập người dùng (tối đa 50 ký tự); `Note` giữ đúng chữ `checked` / `Unchecked`. Thay đổi DB MUST đi kèm file migration đánh số mới.

@@ -47,11 +47,11 @@ This needs one small, additive backend change to `ComplDynamicsService.BuildFilt
 **Primary Dependencies**: Existing stack only — MUI (`@mui/material`), `react-router-dom`, `lodash`
 (debounce), Dapper (backend data access, no new queries needed beyond the one filter-builder change).
 
-**Storage**: MySQL via Dapper — **no new table, no migration**. All data this feature reads is
+**Storage**: MySQL via Dapper — **no new table, no migration**. All data this feature reads is **Update 15**: thêm bảng `eutr_history` (migration `37_create_eutr_history.sql`, entity `EutrHistory`, ghi qua `IRepository<EutrHistory,long>`) — Assign template ghi 1 dòng Type=0 sau khi D365 thành công; xem research.md Update 15.
 either live ERP reference data (via the existing `POST /api/dynamics/reference` proxy) or already
 read via existing `003-eutr-templates`/`004-eutr-documents` endpoints.
 
-**Testing**: Manual end-to-end validation per `quickstart.md` (matching this codebase's existing
+**Testing**: Manual end-to-end validation per `quickstart.md` (matching this codebase's existing **Update 15**: thêm unit test cho `EutrPurchaseOrdersService.AssignTemplateAsync` (ghi đúng 1 dòng khi D365 OK; không ghi khi D365 lỗi; lỗi ghi lịch sử không ném) + quickstart Update 15.
 practice for `003`/`004`/`005` — no automated test suite was added by those features either).
 
 **Target Platform**: Web (existing `compliance-client` SPA), same authenticated admin area as the

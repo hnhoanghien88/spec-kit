@@ -3662,3 +3662,17 @@ no-dead-code convention.
 - **Decision 3**: Tiêu đề = `ItemId-configId  Name / Description` lấy từ cột `Name`/`Description` của API 22; thay vai trò `ProductName/ProductDescription` của refType=20 (các trường này giữ lại nhưng không dùng cho tiêu đề).
 - **Decision 4**: Trùng ItemId-configId gộp một nhóm; nhóm không PO vẫn hiển thị "No purchase orders"; PO không khớp vào nhóm cuối "—" (không mất PO).
 - **Decision 5**: Chờ cả refType=20 và 22 xong mới render (cờ loading chung); lỗi refType=22 hiển thị thông báo lỗi sẵn có kèm retry.
+
+## Update 51 — Save PO Mapping ghi lịch sử `eutr_history` (FR-255)
+
+- **Decision 1**: Trong `EutrPurchaseAttachmentsService.SavePoMappingAsync`, TRƯỚC `DeleteBySalesIdAsync` đọc tập PurchId cũ (`_repository.GetBySalesIdAsync`, distinct); tập mới = distinct PurchId của `validItems`. Rationale: `SavePoMapping` xóa-rồi-ghi-lại toàn bộ theo SalesId nên phải diff trước khi xóa.
+- **Decision 2**: Đơn vị so sánh là **PO (PurchId)**, không phải (PO, Variant, ItemId): thêm/bớt dòng hàng của một PO đã map không sinh dòng lịch sử. Added = mới − cũ → Note `checked`; Removed = cũ − mới → Note `Unchecked`. Mỗi PO một dòng.
+- **Decision 3**: Ghi lịch sử SAU `CommitAsync` thành công (ngoài transaction), bọc try/catch + log; lỗi ghi không làm thất bại Save và không rollback mapping. Không ghi nếu Save lỗi/rollback.
+- **Decision 4**: Dòng: Type=1, Value=SalesId, RefValue=PurchId, Version=null, CreatedBy=userEmail (đã có trong chữ ký), CreatedDate=UtcNow. Không đổi controller/DTO/FE.
+- **Decision 5**: Bảng/entity/migration dùng chung với 012 Update 15: Entity `EutrHistory` ([Table("eutr_history")], `long Id`, KHÔNG kế thừa `BaseEntity` vì bảng không có UpdatedBy/UpdatedDate — cùng kiểu `ComplMasterDefaultLog`), ghi qua `IRepository<EutrHistory, long>` generic (đã đăng ký open-generic ở `Infrastructure/DependencyInjection.cs`), không cần repository riêng. Migration: `Sqls/Migration/37_create_eutr_history.sql` (CREATE TABLE IF NOT EXISTS, giống hệt `Sqls/Tables/eutr_history.sql`); cột: `Id` BIGINT AUTO_INCREMENT PK, `Type` TINYINT NOT NULL, `Value` VARCHAR(50) NOT NULL, `RefValue` VARCHAR(50) NOT NULL, `Version` INT NULL, `Note` VARCHAR(50) NULL, `CreatedBy` VARCHAR(50) NOT NULL, `CreatedDate` DATETIME NOT NULL. Index gợi ý `(Type, Value)` để tra theo PO/SalesId.
+- **Decision 6 (sửa sau khi chạy thật)**: `DapperRepository.AddAsync` ném "requires an active transaction" nếu gọi ngoài transaction → việc ghi `eutr_history` MUST bọc trong `BeginTransactionAsync`/`CommitAsync` riêng (rollback khi lỗi), sau transaction chính / sau khi D365 thành công.
+
+## Update 52 — `eutr_history.ProductVariant`
+
+- **Decision 1**: Cột mới gộp thẳng vào `37_create_eutr_history.sql` và `Sqls/Tables/eutr_history.sql` (không có migration riêng).
+- **Decision 2**: Diff `SavePoMappingAsync` theo khóa (PurchId, ProductVariant) thay vì PurchId (xem spec Update 52).

@@ -6217,3 +6217,20 @@ ItemId/ConfigId (AND khi cả hai có giá trị, AND với mọi filter khác �
 
 - [X] T500 `compliance-client/src/presentation/pages/eutr-sales-orders/MapFilePage.jsx`: thêm `maxHeight: 668` cho khung AVAILABLE FILES (bằng khung trái). Chưa chạy build/lint.
 - [ ] T501 Kiểm thử thủ công: Template có nhiều file → khung phải cuộn, cao bằng khung trái — **CHƯA chạy**.
+
+## Phase 100: Save PO Mapping ghi lịch sử `eutr_history` (Update 51) (FR-255, SC-118)
+
+**Goal**: Mỗi PO được chọn/bỏ chọn khi Save PO Mapping sinh 1 dòng `eutr_history` Type=1.
+
+**Independent Test**: [quickstart.md](./quickstart.md) "Update 51", bước 1-5. Phụ thuộc T073/T074 của `012-eutr-purchase-orders` (bảng + entity dùng chung).
+
+- [X] T502 Backend: `EutrPurchaseAttachmentsService.SavePoMappingAsync` — đọc PurchId cũ trước khi xóa, diff với mới, sau `CommitAsync` ghi các dòng `checked`/`Unchecked` (try/catch + log); inject `IRepository<EutrHistory,long>`
+- [X] T503 [P] Unit test `SavePoMappingAsync` (chọn mới, bỏ chọn, giữ nguyên, nhiều PO, đổi dòng hàng không ghi, lỗi ghi lịch sử không ném, Save lỗi không ghi)
+- [X] T504 Build + `dotnet test`
+- [ ] T505 Kiểm thử thủ công theo quickstart Update 51 — cần môi trường thật
+
+## Phase 101: `eutr_history.ProductVariant` (Update 52) (FR-256)
+
+- [X] T506 DB: cột `ProductVariant` ở `Sqls/Tables/eutr_history.sql` + `37_create_eutr_history.sql` (gộp, không còn file 38); entity `EutrHistory.ProductVariant`
+- [X] T507 Backend: `SavePoMappingAsync` diff theo (PurchId, ProductVariant), ghi ProductVariant; unit test cập nhật — 14/14 pass
+- [ ] T508 Kiểm thử thủ công: Save PO Mapping → `eutr_history.ProductVariant` đúng — **CHƯA chạy**
