@@ -2260,3 +2260,14 @@ render would carry dead branches: matches the Update 25 precedent for the remove
 
 - **Decision**: Add `duplicateStep` to `useStepTree` (client state only; persisted by existing Save). Copy only the selected node, inserted after it with later siblings' displayOrder shifted. Rationale: matches "copy 1 step"; subtree copy is ambiguous and can be added later.
 - **Decision**: Name = base + " (Copy n)", base strips an existing "(Copy k)" suffix, n = smallest free (case-insensitive across the whole tree) so Update 21/24 duplicate-name rules are not violated.
+
+## Update 30 (2026-10-12) — Export/Import Excel cho template
+
+Code audit: backend đã có `GET /api/eutr-templates/export`, `POST /api/eutr-templates/import`, `EutrTemplatesExportService`/`EutrTemplatesImportService` (ClosedXML) — nhưng chỉ ở mức header (Name/AlertFor/IsDefault, không có step) và frontend đã có `ImportEutrTemplatesUseCase`/`ExportEutrTemplatesUseCase`/`ImportResultDialog` nhưng TemplateListPage không có nút (Update 10). Update 30 mở rộng các điểm sẵn có, không tạo endpoint mới.
+
+- **Decision 1 — Tái dùng `AddAsync`/`UpdateAsync`**: Import dựng `EutrTemplatesRequestDto` (Details có `StepName`, `ParentId` = chỉ số tuần tự 1-based của dòng cha, như frontend vẫn gửi) rồi gọi `AddAsync` (Code trống) hoặc `UpdateAsync` (Code có sẵn). `UpdateAsync` đã thay toàn bộ step trong 1 transaction, chặn Public D365, kiểm tra trùng Name (FR-099/101) và tự tạo step mới (`ResolveOrCreateStepsByNameAsync`) → thỏa FR-110..FR-115, FR-114 (all-or-nothing) mà không viết lại logic. Rejected: diff từng step (phức tạp, ID step đổi vẫn như Save thông thường).
+- **Decision 2 — Cột file**: `Template Code | Template Name | Alert for | Step | Parent Step | Requirement Type | Take From`. Requirement Type = `Optional`/`Required`; Take From = `Name` trong `eutr_reference_types` (lấy qua `IEutrReferenceTypesService.GetAllAsync`); Alert for = Name group (đã có `ResolveAlertGroupIdByNameAsync`).
+- **Decision 3 — Thứ tự**: Export ghi cây theo DFS (cha trước con, anh em theo DisplayOrder). Import yêu cầu cha xuất hiện **trước** con trong file (để gán ParentId tuần tự); DisplayOrder = thứ tự xuất hiện giữa các anh em cùng cha.
+- **Decision 4 — Tra template theo Code**: thêm `GetCurrentByCodeAsync` (IsDeleted=0, IsHide=0) vào repository.
+- **Decision 5 — Kết quả**: mở rộng `ImportEutrTemplatesResultDto` (giữ `TotalRows/SuccessCount/FailCount/Errors`, thêm `Templates[]` {Code, Name, Action: Created|Updated|Failed, Rows, Message}); `ImportResultDialog` hiển thị thêm bảng theo template.
+- **Decision 6 — Vendor mapping/IsDefault**: không đọc/ghi (FR Assumption Update 30); `IsDefault` giữ nguyên giá trị hiện có khi Update.

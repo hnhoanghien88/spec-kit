@@ -3227,3 +3227,13 @@ T454 sequentially (build + end-to-end)
 - [X] T465 Add Duplicate IconButton + `handleDuplicateNode` ("(Copy n)" naming, auto-select copy) in `TemplateBuilderPage.jsx`
 - [X] T466 `eslint src/presentation/pages/eutr-templates`: 0 errors
 - [ ] T467 Manual test per quickstart Update 29 — **NOT run** (needs live env)
+
+## Phase 30: Update 30 — Export/Import Excel (FR-106..FR-117)
+
+- [X] T30-01 Repo: thêm `GetCurrentByCodeAsync` (IEutrTemplatesRepository + EutrTemplatesRepository)
+- [X] T30-02 DTO: mở rộng `ImportEutrTemplatesResultDto` (Templates[], TemplateCode)
+- [X] T30-03 Export service: 1 dòng/step, DFS, 7 cột (FR-107)
+- [X] T30-04 Import service: parse/group/validate, gọi AddAsync/UpdateAsync, kết quả theo template (FR-108..FR-116)
+- [X] T30-05 Unit test cho Import/Export
+- [X] T30-06 FE: nút Export/Import + input .xlsx trên TemplateListPage; cập nhật ImportResultDialog
+- [X] T30-07 Backend compile OK (Api exe locked by running process → copy step failed, không phải lỗi code); 6 unit test pass; FE eslint + vite build OK. NOT run — cần môi trường live: Export/Import thật với DB, tạo/sửa template qua file

@@ -2130,3 +2130,7 @@ Remove the `isDefault` column from `useEutrTemplatesColumns.jsx`, the checkbox f
 ## Update 29 (2026-10-08) — Duplicate step button (FR-103..FR-105; frontend-only)
 
 Add `duplicateStep` to `useStepTree.js` and a Duplicate toolbar button + `handleDuplicateNode` in `TemplateBuilderPage.jsx`. No backend/API/schema change.
+
+## Update 30 (2026-10-12) — Export/Import Excel cho template
+
+**Summary**: Mở rộng Export/Import hiện có (chỉ header) thành 1 dòng/step có cây; thêm nút Export/Import trên TemplateListPage. Chi tiết quyết định: research.md "Update 30". **Technical Context**: .NET 8 + ClosedXML (đã dùng), React/MUI; Storage không đổi (MySQL, không migration); Testing: unit test xUnit cho parser/builder Import + build FE; Constraints: tái dùng AddAsync/UpdateAsync (transaction, validation); Scale: vài trăm template/vài nghìn dòng. **Constitution Check**: không vi phạm (không schema mới, không endpoint mới). **Files**: BE `EutrTemplatesExportService`, `EutrTemplatesImportService`, `ImportEutrTemplatesResultDto`, `IEutrTemplatesRepository`+`EutrTemplatesRepository` (GetCurrentByCodeAsync); FE `TemplateListPage.jsx`, `ImportResultDialog.jsx`.

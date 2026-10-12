@@ -16,6 +16,12 @@
 
 **Update (2026-08-17, continued)**: "cập nhật lại spec. bảng eutr_templates left join với eutr_template_references, nếu eutr_template_references không tồn tại thì đẩy dữ liệu VendorCode = ''" — corrects User Story 3's join behavior: the join between eligible Templates and their currently active Vendor mappings is a **left join**, not an inner join. A Template with no currently active Vendor mapping row is no longer skipped in the push phase — it still gets exactly one push, with Vendor Code sent as an empty string (`''`), so every eligible Template ends the run with at least one ERP-side record. See Acceptance Scenario 6, FR-026/FR-027/FR-028, and the User Story 3 Assumptions' 2026-08-17 Correction entry for the full before/after.
 
+**Update (2026-10-12)**: "cập nhật 011-eutr-synchronize-data. viết 1 hàm test-clear-file. hàm này sẽ lấy toàn bộ file từ sharepoint ở thư mục cấu hình SharePointEutrPath. so sánh fileId với eutr_documents, nếu không có trong eutr_documents sẽ tiến hành xóa file trên sharepoint" — adds a fourth, independent manually-triggered action (User Story 4): a cleanup that finds orphan files in the EUTR SharePoint storage area (files with no matching recorded document) and deletes them.
+
+**Update (2026-10-12, Update 2)**: "cập nhật lại test-so-template-sync, thêm 2 cột vào RSVNEutrSalesOrderTemplates là ItemFG và ItemId đều là string. sau đó lấy 2 thông tin trên lưu vào eutr_purchase_attachments với ProductVariant = ItemFG và ItemId = ItemId" — User Story 1 now also reads the ERP's ItemFG and ItemId values and stores them on each newly created mapping record.
+
+**Update (2026-10-12, Update 3)**: "viết 1 hàm test-so-progression trong 011, sẽ lấy toàn bộ dữ liệu từ API RSVNSalesOrderOpenInvoiceCogs rồi dựa vào salesId để chạy hàm EutrProgression by-sales-Ids" (confirmed: recompute and write progress for each SalesId, then read back) — adds a fifth, independent manually-triggered action (User Story 5): refresh the stored Progress of every sales order known to the ERP.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Populate purchase attachment records from the ERP's Sales Order Template data (Priority: P1)
@@ -81,6 +87,44 @@ A Data Administrator needs the ERP system's own Template records to reflect the 
 
 ---
 
+### User Story 4 - Clear orphan files from the EUTR SharePoint storage (Priority: P2) (added 2026-10-12, Update 1)
+
+A Data Administrator needs to remove files that sit in the EUTR SharePoint storage area but are no longer referenced by any recorded EUTR document (for example, files left behind after an upload that failed to save its record, or after a document record was removed), so that the storage area only holds files the compliance system actually knows about.
+
+**Why this priority**: This is housekeeping on storage that has no effect on the three data-sync/alert actions above; it is valuable but not blocking. It is destructive, so correctness (never deleting a referenced file) matters more than speed.
+
+**Independent Test**: Place a mix of files in the EUTR SharePoint storage area — some whose SharePoint file ID matches a recorded document, some with no matching record, some in nested sub-folders — trigger the action, and confirm only the unmatched files are removed from SharePoint and every matched file and every recorded document remains untouched.
+
+**Acceptance Scenarios**:
+
+1. **Given** the configured EUTR SharePoint storage folder contains files (including files inside its sub-folders), **When** the clear-file action runs, **Then** the system retrieves the complete list of files under that folder, across all sub-folders.
+2. **Given** a retrieved file whose SharePoint file ID matches the file ID of at least one recorded EUTR document, **When** the action runs, **Then** that file is left in place.
+3. **Given** a retrieved file whose SharePoint file ID matches no recorded EUTR document, **When** the action runs, **Then** that file is deleted from SharePoint.
+4. **Given** the action finishes, **When** the caller reads the response, **Then** it reports success/failure, the number of files examined, the number kept, the number deleted, and the number that failed to delete.
+5. **Given** the storage folder contains no files, **When** the action runs, **Then** it completes successfully with zero files examined and zero deleted.
+6. **Given** the action has already been run once with no new files added since, **When** it is run again, **Then** it deletes nothing further (idempotent).
+
+---
+
+### User Story 5 - Refresh stored Progress for every ERP sales order (Priority: P2) (added 2026-10-12, Update 3)
+
+A Data Administrator needs to (re)calculate the stored Progress (total / missing / finished required document steps) of every sales order the ERP knows about in one go, so that the Progress column is populated for all sales orders without waiting for each one to be opened, mapped, or have a document uploaded.
+
+**Why this priority**: Progress is already kept up to date incrementally by other flows; this is a bulk catch-up/verification tool, valuable but not blocking.
+
+**Independent Test**: Trigger the action with a mix of sales orders (some with purchase-order/template mappings, some without), then confirm each sales order with mappings now has a stored Progress row consistent with its templates and uploaded documents, sales orders without mappings have none, and the response counts match.
+
+**Acceptance Scenarios**:
+
+1. **Given** purchase attachment records exist for several sales orders (some with many rows), **When** the action runs, **Then** the system collects the distinct, non-blank sales order IDs from those records (a sales order with several rows counts once); the ERP is not queried for this list.
+2. **Given** the collected sales order IDs, **When** the action runs, **Then** the system recalculates and stores Progress for each ID using the same calculation as the existing sales-order Progress feature (005-eutr-sales-orders).
+3. **Given** the recalculation finished, **When** the system reads the Progress back for all those IDs using the same lookup as the existing "Progress by sales IDs" function, **Then** the response reports success/failure, rows fetched, distinct sales orders, how many have a stored Progress and how many do not.
+4. **Given** there are no purchase attachment records, **When** the action runs, **Then** it completes successfully with all counts 0.
+5. **Given** the recalculation of one sales order fails, **When** the action runs, **Then** that failure is logged and the remaining sales orders are still processed.
+6. **Given** reading the sales order IDs fails, **When** the action runs, **Then** the run stops and is reported as a failure before any recalculation.
+
+---
+
 ### Edge Cases
 
 - What happens when the ERP reference data contains multiple records for the same sales order (e.g., two different purchase orders under the same sales order) within a single run? Only the first one encountered is added; subsequent records for that same sales order are treated as already existing and skipped, since the "already exists" check runs against the same table being written to.
@@ -100,6 +144,13 @@ A Data Administrator needs the ERP system's own Template records to reflect the 
 - What happens when an eligible Template's Name is blank? The push still proceeds with whatever Name value is available (blank if that's what local data holds) — a blank Name does not by itself exclude the Template or its mappings from being pushed.
 - What happens if the ERP is temporarily unavailable or returns an error partway through a synchronization run (User Story 3)? Consistent with User Story 1 and User Story 2's failure handling, the run stops and reports failure; any removal or push requests already sent to the ERP before the failure remain in effect (no automatic rollback), and a subsequent run can be retried.
 - What happens if the synchronization action (User Story 3) is triggered again while a previous run is still in progress? Out of scope for this feature; concurrent runs are not guarded against, consistent with how User Story 1 and User Story 2 treat this same scenario.
+
+- What happens when the list of files cannot be retrieved from SharePoint, or the recorded documents cannot be read (User Story 4)? The run stops and reports failure **before deleting anything** — a file is only ever deleted after both lists were obtained successfully, so a partial or empty comparison set can never cause referenced files to be removed.
+- What happens when deleting one specific file fails (User Story 4)? That failure is counted and reported, and the run continues with the remaining files; it does not abort the whole run.
+- What happens when a recorded document has a blank file ID (User Story 4)? It matches no SharePoint file and is ignored for the comparison; it never causes any file to be kept or deleted by itself.
+- What happens when a SharePoint item in the storage folder is a folder rather than a file (User Story 4)? Folders are never deleted by this action; only files are examined.
+- What happens when the same file ID appears on more than one recorded document (User Story 4)? The file is kept (a match on any one record is enough).
+- What happens if the clear-file action is triggered while a previous run is still in progress? Out of scope; concurrent runs are not guarded against, consistent with the other actions in this feature.
 
 ## Requirements *(mandatory)*
 
@@ -137,6 +188,21 @@ A Data Administrator needs the ERP system's own Template records to reflect the 
 - **FR-028**: An eligible Template with zero currently active Vendor mappings MUST still have exactly one record pushed to the ERP system for that run, carrying a blank Vendor Code (FR-026/FR-027) — every eligible Template MUST be represented in the ERP by at least one pushed record every run, never left with zero (updated 2026-08-17 — previously this Template received no push at all and was left without any ERP-side record; see Assumptions).
 - **FR-029**: System MUST report the outcome of a synchronization run (at minimum: success/failure, count of eligible Templates processed, count of ERP push records sent) back to the caller who triggered it.
 - **FR-030**: System MUST restrict this synchronization action to authenticated/authorized callers, consistent with FR-008 and FR-019.
+- **FR-031** (Update 1): System MUST provide a manually triggerable "clear-file" action that retrieves the complete list of files stored under the configured EUTR SharePoint storage folder (the `SharePointEutrPath` setting), including files in all nested sub-folders.
+- **FR-032** (Update 1): For each retrieved file, System MUST compare the file's SharePoint file ID against the file IDs of the recorded EUTR documents.
+- **FR-033** (Update 1): System MUST delete from SharePoint every retrieved file whose file ID matches no recorded EUTR document, and MUST NOT delete any file whose file ID matches at least one recorded EUTR document.
+- **FR-034** (Update 1): System MUST NOT delete any file unless both the SharePoint file list and the recorded-document file IDs were retrieved successfully; a failure retrieving either MUST end the run as a failure with zero deletions.
+- **FR-035** (Update 1): System MUST NOT delete folders, and MUST NOT modify or delete any recorded EUTR document as part of this action.
+- **FR-036** (Update 1): If deleting an individual file fails, System MUST record that failure, continue with the remaining files, and include the failed count in the outcome.
+- **FR-037** (Update 1): System MUST report the outcome back to the caller: success/failure, count of files examined, kept, deleted, and failed-to-delete.
+- **FR-038** (Update 1): System MUST restrict this action to authenticated/authorized callers, consistent with FR-008, FR-019 and FR-030.
+- **FR-039** (Update 2): The Sales Order Template reference data read by User Story 1 MUST include the ERP's ItemFG and ItemId values (both text).
+- **FR-040** (Update 2): When creating a new mapping record (FR-005), System MUST store the ERP ItemFG value as the record's Product Variant and the ERP ItemId value as the record's Item ID (blank/absent when the ERP value is blank). Existing mapping records remain untouched (FR-004).
+- **FR-041** (Update 3, revised 2026-10-12): System MUST provide a manually triggerable "so-progression" action that collects the distinct, non-blank sales order IDs from the existing purchase attachment (mapping) records — not from the ERP.
+- **FR-042** (Update 3): For each collected sales order ID, System MUST recalculate and store its Progress using the existing calculation (005-eutr-sales-orders), processing IDs one at a time.
+- **FR-043** (Update 3): After recalculation, System MUST read the stored Progress for the collected IDs through the existing "Progress by sales IDs" lookup (in batches) to determine how many IDs have a stored Progress.
+- **FR-044** (Update 3): A failure recalculating one sales order MUST NOT stop the run; a failure reading the sales order IDs MUST end the run as a failure before any recalculation.
+- **FR-045** (Update 3): System MUST report success/failure, rows fetched, distinct sales orders, with-Progress count and without-Progress count; and MUST restrict the action to authenticated/authorized callers (consistent with FR-008, FR-019, FR-030, FR-038).
 
 ### Key Entities
 
@@ -149,6 +215,8 @@ A Data Administrator needs the ERP system's own Template records to reflect the 
 - **Template (existing local record — 003-eutr-templates)**: The compliance Template record read (not modified) by this action. Key attributes used here: Code, Name, IsDeleted, IsHide, Status (Draft/Approved) — used to determine eligibility (FR-024) and to populate each ERP push (FR-027).
 - **Template Vendor Mapping (existing local record — 003-eutr-templates "Apply to Customer/Vendor")**: The record linking a Template to a Vendor for a specific effective date range (From Date, To Date), read (not modified) by this action. Used to determine each eligible Template's currently active Vendor(s) via a left join (FR-026) and to supply the Vendor Code for each ERP push (FR-027) — a Template with no matching mapping row still yields one push with a blank Vendor Code (updated 2026-08-17).
 - **ERP Template Record (external, ERP-side)**: The Template record held by the ERP system, identified there by Template Code. This action removes the ERP-side record(s) for each eligible Template (FR-025) and then recreates one ERP-side record per that Template's currently active Vendor mapping — or exactly one record with a blank Vendor Code when the Template has none (FR-026/FR-027/FR-028, updated 2026-08-17). Not read back or stored locally by this feature — this action only writes to it.
+- **EUTR SharePoint Storage File (external, SharePoint-side, User Story 4)**: A file under the configured EUTR storage folder, identified by its SharePoint file ID. Examined and, if unreferenced, deleted by the clear-file action.
+- **Recorded EUTR Document (existing — 004-eutr-documents, read-only here)**: A document record carrying the SharePoint file ID of its uploaded file. Only its file ID is read by the clear-file action; the record is never changed.
 
 ## Success Criteria *(mandatory)*
 
@@ -166,6 +234,13 @@ A Data Administrator needs the ERP system's own Template records to reflect the 
 - **SC-010**: After a synchronization run (User Story 3), the ERP holds exactly one record per eligible Template's currently active Vendor mapping, with Code, Name, and Vendor Code matching local data — plus exactly one record with a blank Vendor Code for every eligible Template with no currently active mapping (updated 2026-08-17) — and 0 stale or duplicate ERP records left over from a prior run, and 0 eligible Templates left with no ERP record at all.
 - **SC-011**: After a synchronization run, no ERP record exists or is created for any Template that is deleted, hidden, or not Approved, and no ERP record is created from any Vendor mapping whose effective date range does not include the current date — 0 ineligible records ever pushed.
 - **SC-012**: A Data Administrator can determine, from the synchronization action's response alone (without inspecting logs or the ERP directly), whether the run succeeded and how many Templates were processed and how many ERP records were pushed.
+- **SC-013** (Update 1): After a clear-file run, 0 files that match a recorded EUTR document have been deleted (no false deletions).
+- **SC-014** (Update 1): After a clear-file run, 100% of files in the EUTR storage folder (including sub-folders) that matched no recorded document at run time have been deleted, except those explicitly reported as failed.
+- **SC-015** (Update 1): Running clear-file twice in succession with no new files added deletes nothing on the second run.
+- **SC-016** (Update 1): A Data Administrator can determine, from the action's response alone, whether the run succeeded and how many files were examined, kept, deleted, and failed to delete.
+- **SC-017** (Update 3): After a so-progression run, 100% of distinct sales orders that have purchase attachment records at run time have been recalculated (except those logged as failed).
+- **SC-018** (Update 3): `withProgression + withoutProgression = distinctSalesIds` in the response, and a sales order that appears on multiple ERP rows is counted once.
+- **SC-019** (Update 3): Running the action twice in succession with unchanged data yields identical Progress values (idempotent).
 
 ## Assumptions
 
@@ -209,3 +284,22 @@ A Data Administrator needs the ERP system's own Template records to reflect the 
 - A Template with no currently active Vendor mapping therefore now ends the run with exactly one ERP-side record (Code, Name, blank Vendor Code) — not the "no ERP-side record at all" outcome the pre-correction version of this story described.
 - Consistent with User Story 1 and User Story 2's established failure handling, an ERP error mid-run (during either the removal phase or the push phase) stops the run and is reported as a failure; requests already sent to the ERP before the failure are not rolled back, and a subsequent run can be retried — this feature does not introduce a different, per-item continue-on-error behavior for this action.
 - This update does not change User Story 1's `eutr_purchase_attachments` table, User Story 2's `eutr_purchase_missing` table, or 003-eutr-templates' own `eutr_templates`/`eutr_template_references` tables — this action only reads the latter two and writes to the ERP; no new local table is introduced.
+
+**User Story 4 (added 2026-10-12, Update 1):**
+
+- Like the other actions in this feature, clear-file is manually triggered and test-oriented (endpoint named "test-clear-file"); scheduling is out of scope.
+- "All files" means every file under the configured storage folder at any depth, not only its top level.
+- A recorded document counts as "referencing" a file whenever its file ID equals the file's SharePoint file ID, regardless of any other state of that document record (e.g., a soft-deleted record still protects its file from deletion — the safer reading, since deleting is irreversible from this action's point of view).
+- The action performs the deletion directly (no dry-run/preview mode); the response counts are the audit trail. SharePoint's own recycle bin is relied on for recovery of mistaken deletions.
+- This action does not touch User Story 1/2/3 tables, the ERP, or any email/alert flow; the four actions are independent.
+
+**User Story 5 (added 2026-10-12, Update 3):**
+
+- Like the other actions, so-progression is manually triggered and test-oriented (endpoint named "test-so-progression"); scheduling is out of scope.
+- "Run the Progress-by-sales-IDs function" is interpreted (confirmed with the requester) as: recalculate and persist Progress for each sales order, then read the result back through that lookup — the lookup alone only reads stored values.
+- The action writes only the existing stored-Progress table (create/update/delete of per-sales-order rows, as the existing calculation already does); it does not touch User Story 1/2/3/4 data, the ERP, or any email flow.
+- Sales orders are processed sequentially; a large ERP data set therefore makes the run long - acceptable for a manual test action.
+- (Update 3a, 2026-10-12) Because the run can take several minutes, so-progression is executed as a background job: the action returns immediately with a job identifier and the outcome counts are recorded in the application log rather than in the immediate response. FR-045's "report" is therefore satisfied by the job's log entry for this action.
+- (Update 3b, 2026-10-12) Supersedes the earlier "read from ERP" source: the sales order list comes from `eutr_purchase_attachments` (grouped by SalesId) because only sales orders with attachments can have Progress, and querying ~5,000 ERP sales orders made the job too long. Report wording "rows fetched" now equals the distinct count.
+- (Update 3c, 2026-10-12) The Progress refresh that follows User Story 1's synchronization (FR-225(3) of 005-eutr-sales-orders) is executed as a single background job that processes the newly added sales orders sequentially, instead of one background job per sales order. Behavior and results are unchanged; only the job granularity changes.
+- (Update 3e, 2026-10-12) Progress is computed only from local data: for each sales order, its purchase attachment records give the (purchase order, template) pairs; each template's Required steps are compared with the files already uploaded for that purchase order (recorded in the document/reference tables, stored on SharePoint) by step name; Total = Required steps over all pairs, Finished = those with a file, Missing = Total - Finished. The ERP is no longer queried. Consequence (accepted by the requester's instruction): a step whose file is attached at Vendor level (reference value = vendor code instead of purchase order) is no longer counted as finished, so this stored Progress can differ from the Map File/View screen (005 FR-086) for such steps until the client calculation is aligned.

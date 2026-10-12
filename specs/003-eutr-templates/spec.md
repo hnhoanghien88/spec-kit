@@ -986,6 +986,8 @@ loạt, xác nhận, kiểm tra toàn bộ các dòng đã chọn biến mất k
 
 ### User Story 5 - Import templates (Priority: P3) — Hoãn lại (Deferred, Update 10)
 
+> **Cập nhật (Update 30)**: Import/Export đã được đưa lại dưới dạng Excel xuất-nhập hai chiều — xem User Story 10.
+>
 > **Lưu ý (Update 10)**: Nút Import/Export **KHÔNG** xuất hiện trên giao diện Table mới của
 > TemplateListPage (không có vị trí tương ứng trong thiết kế tham chiếu). User Story này giữ lại
 > trong tài liệu để tham khảo hành vi đã có ở TemplateListPageOld, nhưng KHÔNG thuộc phạm vi triển
@@ -1293,6 +1295,26 @@ Edit trên dòng mới xác nhận có thể chỉnh sửa bình thường (khô
    KHÔNG đổi VersionId/Status/IsHide của dòng hiện tại (vẫn Public D365, VersionId=1), và hiển thị
    thông báo lỗi cho người dùng thay vì snackbar thành công.
 
+### User Story 10 - Export / Import template qua Excel (Priority: P2, Update 30)
+
+Người dùng xuất các template ra file Excel, chỉnh sửa trên Excel (đổi tên, thêm/xóa/đổi step, hoặc soạn template mới theo cùng định dạng) rồi import lại. Template chưa tồn tại được tạo mới; template đã tồn tại được cập nhật theo nội dung file.
+
+**Why this priority**: Giúp tạo và chỉnh sửa hàng loạt template (đặc biệt cây step dài) nhanh hơn nhiều so với thao tác từng step trên màn hình Edit.
+
+**Independent Test**: Export một template, xóa một step và thêm một step mới trong file, Import lại, mở Edit và xác nhận cây step khớp file; sau đó để trống Code + đổi Name, Import và xác nhận có template mới.
+
+**Acceptance Scenarios**:
+
+1. **Given** danh sách có template, **When** nhấn Export, **Then** tải về file .xlsx chứa mọi template hiện hành (chưa xóa, không phải version cũ đã ẩn), mỗi step một dòng kèm thông tin template.
+2. **Given** file có Code của template Draft đã tồn tại, **When** Import, **Then** template được cập nhật: step bị bỏ khỏi file bị xóa, step mới được thêm, step thay đổi Requirement Type/Take From/cha/thứ tự được cập nhật, Name/Alert for cập nhật theo file.
+3. **Given** file có Code để trống và Name chưa trùng template nào, **When** Import, **Then** tạo template mới (Draft, VersionId=1, Code tự sinh) với cây step đúng như file.
+4. **Given** file chứa Code của template Public D365, **When** Import, **Then** template đó bị từ chối kèm lý do và không bị thay đổi.
+5. **Given** file có một template với một dòng lỗi (ví dụ Parent Step không tồn tại, trùng tên step, Requirement Type sai), **When** Import, **Then** template đó không bị thay đổi, kết quả liệt kê dòng lỗi kèm lý do; các template hợp lệ khác trong file vẫn được xử lý.
+6. **Given** file không phải .xlsx, **When** chọn Import, **Then** bị từ chối kèm thông báo, không xử lý dòng nào.
+7. **Given** Import xong, **Then** hiển thị kết quả theo từng template/dòng (OK hoặc lỗi + lý do) và danh sách tự làm mới.
+
+---
+
 ---
 
 ### Edge Cases
@@ -1475,6 +1497,7 @@ Edit trên dòng mới xác nhận có thể chỉnh sửa bình thường (khô
 - **(Update 15)** Khi người dùng đóng dialog Clone Template (Cancel/đóng) mà chưa nhấn nút
   Clone/Confirm, hoặc hủy ở hộp thoại cảnh báo xác nhận, hệ thống KHÔNG tạo template mới, KHÔNG sao
   chép bất kỳ dữ liệu nào.
+- (Update 30) Edge: hai dòng cùng step trong một template → lỗi trùng tên; Parent Step trỏ tới step không tồn tại trong file → lỗi; xóa một step cha khỏi file thì các step con còn trong file có Parent Step không hợp lệ → lỗi (không tự xóa lan); các dòng cùng Template Code ở những khối không liên tiếp vẫn gom thành một template; Name mới trùng template khác → lỗi cho template đó; khoảng trắng thừa được Trim; file không có dòng dữ liệu → thông báo không có gì để import.
 
 ### Session 2026-09-10 (Update 24) — Chặn chọn trùng step khi Edit step trong cây
 
@@ -1568,6 +1591,13 @@ Edit trên dòng mới xác nhận có thể chỉnh sửa bình thường (khô
   khi chính lệnh gọi xóa D365 mới này thất bại — được resolve theo đúng pattern lỗi đã thiết lập cho
   mọi lệnh gọi D365 khác trong spec này (chặn lại, giữ nguyên phần đã lưu cục bộ, báo lỗi thay vì
   snackbar thành công — xem FR-082/FR-084/FR-093), ghi rõ ở FR-097 và Assumptions bên dưới.
+
+### Session 2026-10-12 (Update 30) — Export template ra Excel và Import từ Excel (tạo mới hoặc chỉnh sửa template)
+
+- Input: "cập nhật 003-eutr-templates làm tính năng export template ra excel, và từ excel đó có thể import lên để tạo template nếu chưa tồn tại, hoặc chỉnh sửa template (xóa, thêm step, đổi step..) nếu đã tồn tại".
+- Bối cảnh: User Story 5 (Import templates) đã bị hoãn ở Update 10 (không có nút Import/Export trên TemplateListPage mới). Update 14 đã có Import/Export Excel cho vendor mapping trên ApplyCustomerPage (kết quả theo từng dòng OK/lỗi) — tính năng này dùng cùng kiểu trải nghiệm. Template có header (Code, Name, Alert for) và cây step (Step, Requirement Type, Take From, cha–con, thứ tự).
+- Quyết định (mặc định hợp lý, không cần hỏi thêm): (1) Khóa nhận diện template trong file là **Template Code** (Name có thể đổi nên không dùng làm khóa); Code để trống = tạo template mới (Code tự sinh theo quy tắc hiện hành); Code có trong hệ thống = chỉnh sửa template đó; Code không tồn tại = báo lỗi cho các dòng của template đó. (2) File mô tả cây step bằng **một dòng cho mỗi step**, cột "Parent Step" ghi tên step cha (rỗng = Root Group) — hợp lệ vì tên step là duy nhất trong một template (Update 21/24). (3) Khi chỉnh sửa, danh sách step trong file là **trạng thái mong muốn cuối cùng**: step có trong cây hiện tại mà không có trong file bị xóa, step mới trong file được thêm, step khác Requirement Type/Take From/cha/thứ tự thì được cập nhật. (4) Template ở trạng thái **Public D365** là chỉ-đọc nên bị từ chối (người dùng phải Request change trước). (5) Mỗi template xử lý theo kiểu tất cả-hoặc-không: có lỗi ở bất kỳ dòng nào của template đó thì template đó không bị thay đổi gì; các template khác trong cùng file vẫn xử lý độc lập. (6) Step chưa có trong danh sách step chuẩn được tự tạo khi import, giống cơ chế gõ tự do khi Save template (FR-007a).
+- Change: Thêm nút **Export** và **Import** trên toolbar TemplateListPage — xem User Story 10, FR-106 đến FR-117.
 
 ### Session 2026-10-08 (Update 29) — Nút Duplicate step trên màn hình Edit
 
@@ -2357,6 +2387,18 @@ Edit trên dòng mới xác nhận có thể chỉnh sửa bình thường (khô
 - **FR-103 (Update 29)**: Toolbar màn hình Edit MUST có nút Duplicate, chỉ bật khi có step được chọn và template không Public D365.
 - **FR-104 (Update 29)**: Duplicate MUST tạo 1 step mới cùng cấp, đặt ngay sau step gốc, sao chép Step, Requirement Type, Take From; không sao chép step con.
 - **FR-105 (Update 29)**: Tên bản sao MUST là "<tên gốc> (Copy n)", n nhỏ nhất ≥ 1 chưa trùng tên step nào trong cây (so khớp không phân biệt hoa/thường); bản sao được chọn sẵn để đổi tên, và vẫn tuân theo chặn trùng tên của FR-087/FR-088 khi sửa.
+- **FR-106 (Update 30)**: TemplateListPage MUST có nút **Export** và **Import** trên toolbar.
+- **FR-107 (Update 30)**: Export MUST tải về file Excel (.xlsx) chứa mọi template hiện hành (IsDeleted=0, IsHide=0), mỗi step một dòng, gồm tối thiểu: Template Code, Template Name, Alert for, Step, Parent Step (rỗng = Root Group), Requirement Type, Take From. Thứ tự dòng thể hiện thứ tự step trong cây; template chưa có step vẫn xuất 1 dòng chỉ có thông tin template. Khi không có template nào, file vẫn có dòng tiêu đề (dùng làm file mẫu).
+- **FR-108 (Update 30)**: Import MUST chỉ chấp nhận file .xlsx; định dạng khác bị từ chối kèm thông báo rõ ràng, không xử lý dòng nào.
+- **FR-109 (Update 30)**: Import MUST gom các dòng theo Template Code (dòng Code trống gom theo Template Name) và xử lý mỗi nhóm như một template độc lập.
+- **FR-110 (Update 30)**: Template Code để trống MUST tạo template mới (Draft, VersionId=1, Code tự sinh, IsDefault=0); Name và Alert for bắt buộc, Name tuân theo chặn trùng tên của FR-099; Alert for phải khớp một Alert group có sẵn.
+- **FR-111 (Update 30)**: Template Code đã tồn tại và ở trạng thái Draft MUST được chỉnh sửa tại chỗ (không tăng VersionId): cập nhật Name/Alert for theo file (tuân theo FR-101) và đồng bộ cây step theo file — xóa step không còn trong file, thêm step mới, cập nhật Requirement Type/Take From/cha/thứ tự của step đã có (đối chiếu step theo tên).
+- **FR-112 (Update 30)**: Template Code không tồn tại trong hệ thống MUST được xử lý như tạo mới (Code tự sinh theo quy tắc hiện hành, báo thành công kèm ghi chú Code gốc không tồn tại và Code mới); Template Public D365 MUST bị từ chối (chỉ-đọc) — không thay đổi dữ liệu.
+- **FR-113 (Update 30)**: Mỗi dòng step MUST được kiểm tra: Step bắt buộc; Requirement Type và Take From thuộc giá trị hợp lệ như trên màn hình Edit (Take From theo danh sách tham chiếu hiện hành); Parent Step (nếu có) phải là step khác trong cùng template và không tạo vòng; tên step không trùng trong cùng template (cùng quy tắc FR-076/FR-087).
+- **FR-114 (Update 30)**: Mỗi template MUST được xử lý tất cả-hoặc-không: nếu bất kỳ dòng nào của template lỗi thì không có thay đổi nào được lưu cho template đó; template khác trong file không bị ảnh hưởng.
+- **FR-115 (Update 30)**: Step có tên chưa tồn tại trong danh sách step chuẩn MUST được tự tạo khi Import thành công, cùng cơ chế với FR-007a.
+- **FR-116 (Update 30)**: Sau Import, hệ thống MUST hiển thị kết quả chi tiết theo từng template và từng dòng (OK hoặc lỗi + lý do, kèm số dòng trong file) và tự làm mới danh sách.
+- **FR-117 (Update 30)**: File do Export xuất ra, Import lại không chỉnh sửa gì MUST không làm đổi dữ liệu của template Draft (idempotent); template Public D365 trong file đó được báo là bị từ chối.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -2714,6 +2756,9 @@ Edit trên dòng mới xác nhận có thể chỉnh sửa bình thường (khô
   ràng; 100% lượt nâng version thành công như trước.
 - **SC-075 (Update 28)**: 0 màn hình của EUTR Templates hiển thị cột Default hoặc checkbox Set as default template.
 - **SC-076 (Update 29)**: Người dùng nhân đôi một step và đổi tên bản sao trong dưới 10 giây, không phải nhập lại Requirement Type/Take From.
+- **SC-077 (Update 30)**: Người dùng đổi một template Draft có 30 step (thêm, xóa, đổi step) qua Excel và nhận kết quả trong dưới 2 phút, nhanh hơn thao tác thủ công trên màn hình Edit.
+- **SC-078 (Update 30)**: 100% dòng lỗi trong file Import được báo kèm số dòng và lý do, và 0 template có lỗi bị thay đổi dữ liệu một phần.
+- **SC-079 (Update 30)**: Export rồi Import lại cùng file với template Draft cho 0 thay đổi dữ liệu.
 
 ## Assumptions
 
@@ -3051,3 +3096,6 @@ Edit trên dòng mới xác nhận có thể chỉnh sửa bình thường (khô
 - (Update 28) Chỉ ẩn ở frontend; FR-068/Update 18 (set-default khi PublicD365) và các quy tắc IsDefault phía server vẫn còn nhưng không còn lối vào từ UI.
 
 - (Update 29) Chỉ thay đổi frontend, không đổi schema/API; bản sao là step mới (chưa có Id) nên được lưu như step thêm mới khi Save template.
+
+
+- (Update 30) Chỉ có Export/Import ở mức danh sách (không có trên màn hình Edit/ApplyCustomerPage); vendor mapping (eutr_template_references) KHÔNG nằm trong file này và không bị đổi khi Import (đã có Import/Export riêng ở Update 14). Import chỉnh sửa tại chỗ nên không tạo version mới; muốn sửa template Public D365 phải Request change trước. IsDefault không bị Import thay đổi (UI đã ẩn ở Update 28). Template mới từ Import tuân theo mọi ràng buộc của Create (FR-099). Quyền truy cập dùng cùng quyền hiện có của màn hình EUTR Templates. Giới hạn kích thước file/số dòng dùng mặc định chung của hệ thống cho import Excel.

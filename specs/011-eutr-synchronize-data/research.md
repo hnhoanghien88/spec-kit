@@ -630,3 +630,51 @@ actually contains.
 eligibility filter (FR-024, R18), `GetActiveByTemplateIdsAsync`'s own query and return type (R19), the
 two-phase ordering and failure-handling shape (R21), the `?cross-company=true`/JSON body format (R20),
 and the response DTO's field set (R22) are all unchanged.
+
+## Update 1 (2026-10-12) — User Story 4: `test-clear-file`
+
+### R25: How to list all files under `SharePointEutrPath` recursively
+**Decision**: `ISharepointService.GetAllFilesAndFolders(basePath)` then walk the returned tree, collecting
+nodes whose `File` is non-null (same technique as `ComplComplianceImportService.CollectFiles`).
+**Rationale**: only existing recursive listing; already proven in-repo. **Alternatives**: `GetFolders`
+per level (N calls, no files) — rejected.
+
+### R26: Where to read `eutr_documents.FileId`
+**Decision**: new `IEutrReferencesRepository.GetAllDocumentFileIdsAsync` (`SELECT DISTINCT FileId FROM
+eutr_documents WHERE FileId IS NOT NULL AND FileId <> ''`), no IsDeleted filter.
+**Rationale**: that repository already owns SQL over `eutr_documents`; ignoring soft-delete is the safer
+reading (spec Assumption). **Alternatives**: generic repository `GetAll` — loads whole rows, rejected.
+
+### R27: Failure handling
+**Decision**: retrieval failures abort before any delete; per-file delete failures are counted and the
+loop continues. **Rationale**: irreversible operation must never run on a partial comparison set (FR-034).
+
+## Update 3 (2026-10-12) — User Story 5: `test-so-progression`
+
+### R28: What "run by-sales-ids" means
+**Decision**: recompute (`RecomputeAsync`) per SalesId, then read back with `GetBySalesIdsAsync`.
+**Rationale**: `eutr-progression/by-sales-ids` only reads `eutr_progression`; confirmed with requester that the
+action should refresh stored values. **Alternative**: read-only batch lookup - rejected.
+
+### R29: Source of SalesIds
+**Decision**: `GetDynRefePagedAsync(11, ...)` (`ObjectType.SALE_ORDER`, `Code` = SalesId), 1000/page, `Code asc`
+for stable OData paging; dedupe with OrdinalIgnoreCase. **Rationale**: reuses the existing paged pipeline used by
+refType 19 sync. **Alternative**: `GetRSVNSalesOrderOpenInvoiceCogsFromDynamics("")` - rejected (single
+1000-row cached page).
+
+### R30: Error handling
+**Decision**: fetch failure -> `Success=false` before any recompute; per-SalesId failures are swallowed/logged by
+`RecomputeAsync` itself. Sequential execution (no Hangfire enqueue) so the response counts reflect final state.
+
+### R31 (Update 3b): SalesId source revised
+**Decision**: supersedes R29 — take SalesIds from `eutr_purchase_attachments` (grouped by SalesId) via
+`GetSalesIdsWithTemplateAsync`. **Rationale**: log analysis showed ~394 of ~4,950 ERP sales orders have attachments;
+the rest only trigger a no-op delete, and the long run was aborted before late SalesIds. Same source as
+`BackfillAllAsync`.
+
+### R32 (Update 3e): Progress calculation without D365
+**Decision**: drop the refType 16 (`RSVNEutrSalesOrderPurchases`) OrderAccount lookup; match files by PurchId only.
+**Rationale**: that lookup was the bottleneck (wildcard filter + `$count`, 100 s timeouts, same PO queried repeatedly)
+and made `eutr_progression` stay near-empty. **Trade-off**: Vendor-type step files (RefValue = vendor code) are
+not matched any more. **Side fix**: group template versions by Code (prefer IsHide=0, highest VersionId) instead of a
+plain `ToDictionary`.

@@ -2,7 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-07-02
-**Updated**: 2026-09-21 (Update 26)
+**Updated**: 2026-10-12 (Update 30)
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -1021,3 +1021,4 @@
   call-sequencing changes at the business/UX level; the exact frontend removal mechanism (deleting
   the JSX block vs. a permanently-false render condition) and the precise backend call placement
   within `ApproveAsync` are implementation details left to `/speckit-plan`.
+- Update 30 (Excel export/import): all items pass; no [NEEDS CLARIFICATION] markers (defaults documented in Update 30 session + Assumptions).

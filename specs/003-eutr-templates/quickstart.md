@@ -1497,3 +1497,12 @@ implemented).
 - Edit a Draft template, select step "A", click Duplicate: new step "A (Copy 1)" appears right after "A", selected, same Requirement Type/Take From, no children copied.
 - Click Duplicate again on "A": "A (Copy 2)". On "A (Copy 1)": "A (Copy 2)"/next free n.
 - Rename the copy, Save step; duplicate name still blocked. Button disabled with no selection or when Public D365 (SC-076).
+
+## Update 30 (2026-10-12) — Export/Import Excel
+
+1. TemplateListPage → **Export**: file .xlsx có đúng 7 cột, cây DFS (SC-079 chuẩn bị).
+2. Import lại file vừa export (không sửa): template Draft không đổi (SC-079); Public D365 báo từ chối (FR-117).
+3. Sửa file: xóa 1 dòng step, thêm 1 dòng step mới (Parent Step có sẵn), đổi Requirement Type → Import → mở Edit, cây khớp file (FR-111).
+4. Để trống Template Code + Name mới → Import → có template Draft mới (FR-110); Name trùng → lỗi (FR-099).
+5. Lỗi: Parent Step không tồn tại / trùng tên step / Take From sai → template đó không đổi, dialog kết quả báo số dòng (FR-113/114/116).
+6. Chọn file .csv → bị từ chối (FR-108).

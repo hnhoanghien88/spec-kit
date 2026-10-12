@@ -263,3 +263,33 @@ If reachable in a test environment (e.g. by temporarily misconfiguring `Dynamics
 forcing a D365 call to fail), confirm the run stops at the first failure, `data.success = false`, and
 `data.message` reports how many delete/push calls completed before the failure — with no automatic
 rollback of calls already sent.
+
+## Update 1 (2026-10-12) — User Story 4: `test-clear-file`
+
+**Prerequisites**: backend running, valid bearer token, `SharePointEutrPath` configured, a test storage
+folder containing (a) a file whose SharePoint ID is stored in `eutr_documents.FileId`, (b) an uploaded
+file with no matching row, (c) an orphan inside a sub-folder.
+
+1. `GET /api/eutr-synchronize-data/test-clear-file`. Expected: `data.success=true`; orphan (b) and (c)
+   gone from SharePoint, file (a) still present, `eutr_documents` unchanged (SC-013, SC-014).
+2. Check counts: `filesExamined = filesKept + filesDeleted + filesFailed` (SC-016).
+3. Re-run immediately: `filesDeleted = 0` (SC-015).
+4. Empty folder → success with all counts 0.
+5. Misconfigure SharePoint access → `success=false`, nothing deleted (FR-034).
+
+Contract: [contracts/eutr-synchronize-data-test-clear-file.md](./contracts/eutr-synchronize-data-test-clear-file.md).
+
+## Update 3 (2026-10-12) — User Story 5: `test-so-progression`
+
+**Prerequisites**: backend running, valid bearer token, D365 reachable, some SalesIds with
+`eutr_purchase_attachments` + templates.
+
+1. `GET /api/eutr-synchronize-data/test-so-progression`. Expected: `data.success=true`,
+   `withProgression + withoutProgression = distinctSalesIds` (SC-018).
+2. Compare a mapped SalesId's `eutr_progression` row (or `POST /api/eutr-progression/by-sales-ids`) with its
+   templates/documents - values consistent (SC-017).
+3. Re-run: identical values (SC-019).
+4. SalesId without mappings -> no `eutr_progression` row (counted in `withoutProgression`).
+5. Break D365 access -> `success=false`, no recompute started (FR-044).
+
+Contract: [contracts/eutr-synchronize-data-test-so-progression.md](./contracts/eutr-synchronize-data-test-so-progression.md).

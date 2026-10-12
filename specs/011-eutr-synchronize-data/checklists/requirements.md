@@ -73,3 +73,17 @@
   a new capability — documented as a **Correction** entry in the User Story 3 Assumptions per this
   spec's own established pattern for in-place corrections (see the 2026-08-14 condition-type
   correction under User Story 2's Assumptions).
+
+## Update 1 (2026-10-12) — User Story 4: test-clear-file
+
+- [x] No implementation details leak into the new story/FR-031..038 (SharePoint and `SharePointEutrPath` are named only because the user's request names them as the business-facing storage/setting)
+- [x] No [NEEDS CLARIFICATION] markers; ambiguities (recursion, soft-deleted records, dry-run) resolved as documented Assumptions
+- [x] Requirements testable (FR-031..038), success criteria measurable (SC-013..016), edge cases and safety rule (no deletion on failed retrieval) identified
+- [x] Scope bounded: files only, no folders, no document-record changes
+
+## Update 3 (2026-10-12) — User Story 5: test-so-progression
+
+- [x] No implementation details leak into the new story/FR-041..045 (D365 endpoint and existing Progress functions named only because the request names them)
+- [x] No [NEEDS CLARIFICATION] markers; the one ambiguity (read-only vs recompute) was confirmed with the requester and recorded as an Assumption
+- [x] Requirements testable (FR-041..045), success criteria measurable (SC-017..019), edge cases covered (empty ERP data, per-item failure, fetch failure)
+- [x] Scope bounded: writes only the existing stored-Progress table

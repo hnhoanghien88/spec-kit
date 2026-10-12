@@ -311,3 +311,37 @@ feature, alongside the pure-reuse touch points already established in the 2026-0
 ## Complexity Tracking
 
 *No Constitution Check violations — this section is not applicable.*
+
+## Update 1 (2026-10-12) — User Story 4: `test-clear-file` (orphan SharePoint file cleanup)
+
+**Technical Context delta**: Backend-only, same stack. One new controller action
+`GET /api/eutr-synchronize-data/test-clear-file` on the existing `EutrSynchronizeDataController`; one
+new method `ClearOrphanFilesAsync(CancellationToken)` on `IEutrSynchronizeDataService` /
+`EutrSynchronizeDataService` (no new service class, no new constructor dependency — `ISharepointService`
+and `IConfiguration` are already injected); one new response DTO `EutrClearFileSummaryDto`
+(FilesExamined, FilesKept, FilesDeleted, FilesFailed, Success, Message); one new repository method
+`IEutrReferencesRepository.GetAllDocumentFileIdsAsync` (reads `FileId` from `eutr_documents`, which that
+repository already queries). **No new table, no schema change, no migration, no new DI registration, no
+frontend.** SharePoint file listing reuses `ISharepointService.GetAllFilesAndFolders(SharePointEutrPath)`
+(recursive tree, file nodes carry `File`) with the same node-walk technique as
+`ComplComplianceImportService.CollectFiles`; deletion reuses `ISharepointService.DeleteFile(fileId)`
+(already exposed by `SharePointController.delete-file`).
+
+**Constitution Check**: unchanged from earlier updates — backend-only, follows existing service/repository
+layering; Principle V (frontend) N/A. No violations.
+
+**Design rules**: (1) fetch SharePoint file list AND DB file-id set first; any failure → return
+`Success=false`, zero deletions (FR-034). (2) Build a case-sensitive-safe `HashSet<string>` (OrdinalIgnoreCase)
+of non-blank `FileId`s; ignore soft-delete flag (spec Assumption). (3) Per-file delete in try/catch;
+failures counted, run continues (FR-036). (4) Only file nodes (`File != null`) are considered; folders never
+deleted (FR-035). (5) Log each deletion via Serilog.
+
+## Update 3 (2026-10-12) — User Story 5: `test-so-progression`
+
+New `IEutrSynchronizeDataService.RunSoProgressionAsync` + `[HttpGet("test-so-progression")]` in
+`EutrSynchronizeDataController`. Reads D365 refType 11 (`RSVNSalesOrderOpenInvoiceCogs`) page by page via
+`IComplDynamicsService.GetDynRefePagedAsync` (sorted by `Code`), distinct SalesIds, then
+`IEutrProgressionService.RecomputeAsync(salesId, "system")` per ID and `GetBySalesIdsAsync` in batches of 1000.
+`EutrSynchronizeDataService` gains an `IEutrProgressionService` constructor dependency - no DI cycle
+(`EutrProgressionService` depends only on repositories + `IComplDynamicsService`). New DTO
+`EutrSoProgressionSummaryDto`. Constitution Check unchanged (backend-only, Principle V N/A).

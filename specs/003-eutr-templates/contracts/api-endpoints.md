@@ -1181,3 +1181,8 @@ the "PO" default for them); StepId 8 defaults to TypeId 3.
 - The "PO" half of the default (FR-079) needs no new endpoint — the frontend already loads the full
   `eutr_reference_types` list via `GET /api/eutr-reference-types` (see section above) and finds the
   row where `Name` matches "PO" (case-insensitive, trimmed) client-side.
+
+## Update 30 — Export/Import Excel (endpoint hiện có, đổi định dạng)
+
+- `GET /api/eutr-templates/export` → `.xlsx`, sheet "EUTR Templates", cột: Template Code, Template Name, Alert for, Step, Parent Step, Requirement Type (Optional/Required), Take From. Mỗi step 1 dòng, DFS; template không có step → 1 dòng chỉ có 3 cột đầu.
+- `POST /api/eutr-templates/import` (multipart `file`, chỉ `.xlsx`) → `ApiResponse<ImportEutrTemplatesResultDto>`: `{totalRows, successCount, failCount, errors:[{row, templateCode, name, alertFor, message}], templates:[{code, name, action, rows, message}]}`. Code trống = tạo; Code Draft = sửa; Code lạ / Public D365 = lỗi. Mỗi template all-or-nothing.

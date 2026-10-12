@@ -872,3 +872,36 @@ T001 → T002 → {T003, T004 in either order} → T005 → {T006, T008 in eithe
 - No frontend (`compliance-client/`) tasks exist for this feature — it is backend-only (plan.md
   Constitution Check, Principle V: N/A), for all three user stories, including the 2026-08-14
   persistence redesign and the 2026-08-17 outbound Template sync.
+
+---
+
+## Phase 7: User Story 4 - `test-clear-file` orphan SharePoint file cleanup (Priority: P2) (added 2026-10-12, Update 1)
+
+**Goal**: Delete SharePoint files under `SharePointEutrPath` that match no `eutr_documents.FileId`.
+**Independent Test**: [quickstart.md](./quickstart.md) Update 1.
+
+- [X] T040 [P] [US4] Add `EutrClearFileSummaryDto` in `compliance-sys-api/src/ComplianceSys.Application/Dtos/Response/EutrClearFileSummaryDto.cs`
+- [X] T041 [P] [US4] Add `GetAllDocumentFileIdsAsync` to `IEutrReferencesRepository` and implement in `EutrReferencesRepository` (research R26)
+- [X] T042 [US4] Add `ClearOrphanFilesAsync` to `IEutrSynchronizeDataService` and implement in `EutrSynchronizeDataService` (R25, R27; FR-031..037)
+- [X] T043 [US4] Add `[HttpGet("test-clear-file")]` action in `EutrSynchronizeDataController`
+- [X] T044 [US4] Unit test in `EutrSynchronizeDataServiceTests`: orphan deleted, referenced kept, retrieval failure → zero deletions, delete failure counted
+- [X] T045 [US4] Build + run unit tests (live SharePoint verification NOT run — requires live env) — 38/38 EutrSynchronizeDataServiceTests passed; full-solution build only blocked by running Api process file lock (no compile errors).
+
+## Phase 8: Update 2 - ItemFG/ItemId on test-so-template-sync (2026-10-12)
+
+- [X] T050 [US1] `RSVNEutrSalesOrderTemplates`: replace `ProductVariant` with `ItemFG`, keep `ItemId` (both string)
+- [X] T051 [US1] `ComplDynamicsService` case 19: `ProductVariant = x.ItemFG`; `EutrSynchronizeDataService` already stores ProductVariant/ItemId on insert. Application project builds; live D365 check NOT run — requires live env.
+
+## Phase 9: User Story 5 - `test-so-progression` (Priority: P2) (added 2026-10-12, Update 3)
+
+**Goal**: Fetch all SalesIds from D365 `RSVNSalesOrderOpenInvoiceCogs` (refType 11), recompute `eutr_progression` for each, then read back via `GetBySalesIdsAsync` (the function behind `eutr-progression/by-sales-ids`). Contract: [contracts/eutr-synchronize-data-test-so-progression.md](./contracts/eutr-synchronize-data-test-so-progression.md).
+
+- [X] T060 [P] [US5] Add `EutrSoProgressionSummaryDto`
+- [X] T061 [US5] Add `RunSoProgressionAsync` to `IEutrSynchronizeDataService`/`EutrSynchronizeDataService` (injects `IEutrProgressionService`; no circular DI — progression service only depends on repositories + `IComplDynamicsService`)
+- [X] T062 [US5] Add `[HttpGet("test-so-progression")]` in `EutrSynchronizeDataController`
+- [X] T063 [US5] Unit test `RunSoProgressionAsync_ShouldRecomputeEachDistinctSalesId_AndReportCoverage` — 39/39 EutrSynchronizeDataServiceTests passed; live D365 run NOT done.
+- [X] T064 [US5] Run via Hangfire (2026-10-12): live check found the inline request was cancelled at ~123 s (client/proxy timeout), so SalesIds late in `Code` order (e.g. SO007248) were never recomputed. `test-so-progression` now `BackgroundJob.Enqueue<IEutrSynchronizeDataService>(s => s.RunSoProgressionAsync(CancellationToken.None))` and returns the job id immediately; the summary is written to the log ("RunSoProgressionAsync - Hoan tat ..."). Build: no compile errors (output copy blocked by running Api process); live re-run NOT done.
+- [X] T065 [US5] Source of SalesIds changed (2026-10-12, Update 3b): `RunSoProgressionAsync` now uses `IEutrPurchaseAttachmentsRepository.GetSalesIdsWithTemplateAsync` (`SELECT DISTINCT SalesId FROM eutr_purchase_attachments`) instead of D365 refType 11 paging; test updated (asserts D365 refType 11 is never called). 39/39 passed; live re-run NOT done.
+- [X] T066 [US1] Update 3c (2026-10-12): `SyncSalesOrderTemplatesAsync` no longer enqueues one `RecomputeAsync` Hangfire job per newly added SalesId (thousands of jobs on the dashboard). It now enqueues ONE job, `IEutrProgressionService.RecomputeManyAsync(addedSalesIds, "system")`, which processes SalesIds one after another (new method added to `IEutrProgressionService`/`EutrProgressionService`; per-SalesId errors still swallowed by `RecomputeAsync`). 39/39 tests passed; live run NOT done.
+- [X] T067 [US5] Update 3d (2026-10-12): `[DisableConcurrentExecution(timeoutInSeconds: 0)]` added on the interface methods `SyncSalesOrderTemplatesAsync`, `SendPurchaseMissingAlertAsync`, `SyncTemplatesToDynamicsAsync`, `ClearOrphanFilesAsync`, `RunSoProgressionAsync` of `IEutrSynchronizeDataService` (pattern of `IComplMissingDetailRefreshService`). Effective only when run through Hangfire (currently `RunSoProgressionAsync`). Reason: after an Api restart Hangfire re-queued earlier aborted jobs, so 3 `RunSoProgressionAsync` jobs ran at once. Tests 39/39 passed; live check NOT done.
+- [X] T068 [US5] Update 3e (2026-10-12): Progress calculation (`EutrProgressionService.RecomputeAsync`) no longer uses D365 `RSVNEutrSalesOrderPurchases` (OrderAccount / vendor-code documents). Logic per SalesId: rows of `eutr_purchase_attachments` -> distinct (PurchId, TemplateCode) -> Required steps of the Template -> files uploaded per PurchId (`eutr_references` -> `eutr_documents`, stored on SharePoint) matched by step name -> Total / Missing / Finished -> upsert `eutr_progression` (delete when the SalesId has no attachment). Removed the `IComplDynamicsService` dependency. Also fixed a latent "same key" exception (Template Code with several versions, IsHide 0/1) that `RecomputeAsync` silently swallowed. New `EutrProgressionServiceTests` (2 tests); 41/41 passed; live run NOT done.

@@ -295,3 +295,16 @@ EutrSynchronizeDataController.TestSynchronizeTemplates (GET test-synchronize-tem
             -> any failure -> stop run, Success=false, return summary                // R21
        -> return EutrSynchronizeTemplatesSummaryDto
 ```
+
+## Update 1 (2026-10-12) — User Story 4: `test-clear-file`
+
+No table, column or entity changes. Reads only `eutr_documents.FileId` (existing). New in-memory response
+DTO `EutrClearFileSummaryDto`: `FilesExamined:int`, `FilesKept:int`, `FilesDeleted:int`,
+`FilesFailed:int`, `Success:bool`, `Message:string`. Invariant: `FilesExamined = FilesKept + FilesDeleted +
+FilesFailed`.
+
+## Update 3 (2026-10-12) — User Story 5: `test-so-progression`
+
+No table/column changes. Writes only existing `eutr_progression` (via `RecomputeAsync`). New in-memory DTO
+`EutrSoProgressionSummaryDto`: `TotalFetched`, `DistinctSalesIds`, `WithProgression`, `WithoutProgression`
+(ints), `Success:bool`, `Message:string`. Invariant: `WithProgression + WithoutProgression = DistinctSalesIds`.
