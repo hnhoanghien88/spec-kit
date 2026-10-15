@@ -323,3 +323,74 @@ remove the now-unused probe code.
 - **Decision 4**: `AssignTemplateAsync` nhận thêm `userEmail` (controller lấy từ `HttpContext.Items["UserEmail"]`, mặc định "system" — giống `SavePoMapping`).
 - **Decision 5**: Bảng/entity/migration dùng chung với 005 Update 51: Entity `EutrHistory` ([Table("eutr_history")], `long Id`, KHÔNG kế thừa `BaseEntity` vì bảng không có UpdatedBy/UpdatedDate — cùng kiểu `ComplMasterDefaultLog`), ghi qua `IRepository<EutrHistory, long>` generic (đã đăng ký open-generic ở `Infrastructure/DependencyInjection.cs`), không cần repository riêng. Migration: `Sqls/Migration/37_create_eutr_history.sql` (CREATE TABLE IF NOT EXISTS, giống hệt `Sqls/Tables/eutr_history.sql`); cột: `Id` BIGINT AUTO_INCREMENT PK, `Type` TINYINT NOT NULL, `Value` VARCHAR(50) NOT NULL, `RefValue` VARCHAR(50) NOT NULL, `Version` INT NULL, `Note` VARCHAR(50) NULL, `CreatedBy` VARCHAR(50) NOT NULL, `CreatedDate` DATETIME NOT NULL. Index gợi ý `(Type, Value)` để tra theo PO/SalesId.
 - **Decision 6 (sửa sau khi chạy thật)**: `DapperRepository.AddAsync` ném "requires an active transaction" nếu gọi ngoài transaction → việc ghi `eutr_history` MUST bọc trong `BeginTransactionAsync`/`CommitAsync` riêng (rollback khi lỗi), sau transaction chính / sau khi D365 thành công.
+
+## Update 53 — Dialog tiến trình khi Download file
+
+- **Decision 3**: Dùng lại `ExportProgressDialog` + `useDownloadProgress` (xem `005-eutr-sales-orders` research Update 57); `TotalFiles = 1`, `0/1 → 1/1`, đóng trong `finally`. Không đổi backend.
+
+## Update 54 — Trích Vendor từ tên file PO
+
+- **Decision 1**: Hook vào `RecomputeForPurchOrderAsync` (không tạo hàm/job riêng) vì đây là hàm tính Progress duy nhất cho PO và đã được gọi từ View/Assign/Upload/đồng bộ 013. Rationale: yêu cầu "mỗi lần chạy kiểm tra". Alternative: job riêng — bị loại, dễ lệch dữ liệu.
+- **Decision 2**: Nguồn tên file = `referenceRows` (`GetDocumentsByPoCodesAsync`: `FileName`, `StepName`) đã tải sẵn; chạy bước này ngay cả khi PO không có step Required, và chỉ dùng file khớp `PurchId` (`PoCode == purchId`), không dùng file Type Vendor (RefValue = OrderAccount). Cần tải lại tài liệu nếu nhánh Progress bỏ qua việc tải (total = 0).
+- **Decision 3**: Cắt tên Step: bỏ đuôi mở rộng (`Path.GetFileNameWithoutExtension`), bỏ tiền tố bằng `StepName` (so sánh không phân biệt hoa/thường; nếu tên file không bắt đầu bằng StepName thì dùng toàn bộ tên). Phần còn lại tách bằng ký tự không phải chữ/số (`[^\p{L}\p{N}]+`) → token; token khớp `Code` Vendor (OrdinalIgnoreCase) là Vendor. Rationale: chịu được `(AP-PD)`, `(AP PD)`, `(AP,PD)`.
+- **Decision 4**: Đồng bộ bằng `SyncAsync`: xóa `WHERE PurchId=@p AND Vendor NOT IN @vendors` (xóa hết theo PurchId nếu rỗng) rồi `INSERT IGNORE` các Vendor; idempotent nhờ UNIQUE (PurchId, Vendor). Lưu `Vendor` theo `Code` chuẩn của 026.
+- **Decision 5**: Bọc try/catch riêng, chỉ log; không đổi `UpsertByPurchIdAsync`.
+
+## Update 55 — Trader relationship giữa các Vendor của PO
+
+- **Decision 1**: Bảng mới `eutr_trader_relationship` (PurchId, FromVendor, ToVendor) thay vì thêm cột vào `eutr_purchase_relationship`, vì quan hệ là cạnh có hướng nhiều-nhiều giữa các Vendor. Alternative: cột `ParentVendor` — loại vì không biểu diễn được A→C và B→C cùng lúc.
+- **Decision 2**: Save = thay thế toàn bộ theo PurchId (DELETE + INSERT trong 1 transaction, dùng `BeginTransactionAsync`/`CommitAsync` như Update 15 Decision 6). Rationale: popup luôn gửi toàn bộ đồ thị; tránh diff phức tạp.
+- **Decision 3**: Validate ở backend (tập Vendor hợp lệ, không tự nối, không trùng, không vòng — Kahn/DFS) và lặp lại ở frontend. Rationale: không tin client.
+- **Decision 4**: Frontend dùng `@xyflow/react` (sẵn kéo handle→handle, xóa edge, layout node) thay vì tự vẽ SVG. Alternative: SVG tự viết — loại vì tốn công xử lý kéo/hit-test. Node tự xếp theo lớp topological; không lưu tọa độ.
+- **Decision 5**: Dọn mũi tên mồ côi ngay trong `EutrPurchaseRelationshipRepository.SyncAsync` (Update 54) để một nơi duy nhất quyết định Vendor nào còn hiệu lực.
+- **Decision 6**: Endpoint đặt dưới controller hiện có: `GET`/`PUT /api/eutr-purchase-orders/{purchId}/trader-relationship`.
+
+## Update 56 — Cột Trader relationship ở index
+
+- **Decision 1**: Endpoint theo lô `POST /api/eutr-purchase-orders/trader-relationships` (giống `eutr-progression/by-purch-ids`) thay vì nhét vào API reference D365 — dữ liệu nằm ở DB cục bộ. Alternative: gọi `GET .../{purchId}/trader-relationship` từng dòng — loại vì N request/trang và trả cả danh sách vendor không cần.
+- **Decision 2**: Ghép Name bằng LEFT JOIN `eutr_vendors` hai lần (From/To) trong 1 câu SQL; `COALESCE(NULLIF(Name,''), Code)`. Dựng chuỗi `A > B` ở service.
+- **Decision 3**: Policy `EutrPurchaseOrders.Read` (xem danh sách), khác với `.Update` của popup cấu hình.
+
+## Update 58 — Gom nhóm file theo Trader relationship ở PurchId/View
+
+- **Decision 1**: Gom nhóm hoàn toàn ở client (cây đã có `fileMappings` + tên file; dữ liệu relationship nhỏ), không đổi API cây/Progress. Alternative: backend trả cây đã gom — loại vì cây Template dựng ở client.
+- **Decision 2**: Nhóm = Vendor hạng thấp nhất có mặt trong tên file (hạng = đường đi dài nhất từ nguồn). Ví dụ `(AP-PD)`→AP, `(PD)`→PD. Rationale: khớp mô tả "AP > ..., DS > ..., còn lại PD". Alternative: nhóm theo từng cặp mũi tên — loại vì tạo nhóm trùng file.
+- **Decision 3**: `IsGroup` cấu hình ở `eutr_steps` (001 Update 3), không hardcode tên Step; đi kèm chi tiết Template qua JOIN sẵn có.
+- **Decision 4**: Hạ policy GET trader-relationship xuống `.Read` vì màn View cần cho mọi người xem; ghi vẫn `.Update`.
+
+## Update 59 — Tìm theo Vendor name (`eq '*ten*'`)
+
+- **Decision 1**: Thực hiện Vendor name search bằng tra cứu 2 bước ở client (refType=14 `Name like` → `VendorOrganizationName eq '*ten*'`, rồi OR các `OrderAccount` khớp vào refType=15). Đảo lại việc hoãn ở Decision 6. Alternative: join phía backend/D365 — loại vì cần đổi API/entity.
+- **Decision 2**: Giới hạn 100 Vendor khớp (page size 100) để bộ lọc OData không quá dài; lỗi tra cứu chỉ log.
+
+## Update 60 — So khớp tên file với tên Step bỏ khoảng trắng + UPPERCASE (kế thừa 004 Update 35)
+
+- **Decision 1**: Chuẩn hoá cả tên file lẫn `eutr_steps.Name` bằng "bỏ mọi ký tự khoảng trắng + đổi HOA" rồi mới `Contains` (ordinal). Backend: `EutrUploadService.NormalizeForStepMatch` (`char.IsWhiteSpace`, `ToUpperInvariant`); client: `loadMatchingStepsForPoByName` (regex khoảng trắng, `toUpperCase`) — hai nơi PHẢI cùng quy tắc để combobox Edit và kết quả Upload không lệch nhau.
+- **Decision 2**: Chuẩn hoá chỉ để so sánh; tên file lưu/đặt lại và Step Name hiển thị giữ nguyên (không đổi dữ liệu, không cần migration).
+- **Decision 3**: Tie-break FR-081 ("Name dài nhất, bằng nhau lấy Id nhỏ nhất") đo theo độ dài Name sau chuẩn hoá để nhất quán với phép so khớp.
+- **Decision 4**: Không bỏ dấu câu/dấu tiếng Việt và không dùng so khớp mờ — chỉ khoảng trắng + hoa/thường theo đúng yêu cầu; Step Name rỗng/chỉ khoảng trắng bị bỏ qua để tránh khớp mọi file.
+- **Rejected**: chỉ `Replace(" ", "")` (bỏ sót tab/NBSP); chuẩn hoá ở DB/cột tính sẵn (thừa, không cần đổi schema).
+- **Phạm vi**: `progressUtils.js` (`stepNames.includes(detail.stepName)`) giữ nguyên — so khớp Step Name đã lưu trên document, không phải tên file.
+
+## Update 61 — Chuẩn hoá HOA tên file và Code Vendor trước khi tạo relationship sau Upload (kế thừa Update 54/57, cùng tinh thần Update 60)
+
+- **Decision 1**: Chuẩn hoá bằng bỏ toàn bộ khoảng trắng + `ToUpperInvariant` (cùng Update 60) ở cả ba chuỗi: tên file đã bỏ đuôi, tên Step, `Code` Vendor (từ `GetAllCodesAsync`), rồi mới so sánh ordinal. Khoá `codeMap` = Code đã chuẩn hoá, giá trị = Code gốc để ghi vào `eutr_purchase_relationship`/`eutr_trader_relationship` (giữ JOIN `eutr_vendors`).
+- **Decision 2**: Bỏ khoảng trắng (thống nhất với Update 60, một hàm chuẩn hoá dùng chung). Dấu tách token là các ký tự không phải chữ/số còn lại (`-`, `(`, `)`…), nên `(AP-PD)` vẫn tách thành `AP`, `PD`. Đánh đổi: Vendor chỉ ngăn cách bằng khoảng trắng (`AP PD`) dính thành `APPD` và không khớp — chấp nhận, yêu cầu tên file dùng `-`.
+- **Decision 3**: Cắt tên Step khỏi tên file làm trên chuỗi đã chuẩn hoá bằng bỏ tiền tố (ordinal `StartsWith`), không cần so khớp từng ký tự; phần còn lại giữ ký tự phân cách (không phải khoảng trắng) để tách token.
+- **Decision 4**: `ExtractVendors` và `ExtractTraderEdges` dùng chung `BuildCodeMap`/`OrderedVendorsOfFile` nên một thay đổi phủ cả Vendor lẫn mũi tên; dedupe theo giá trị HOA.
+- **Rejected**: lưu Code Vendor dạng HOA vào bảng relationship (phải sửa dữ liệu/JOIN `eutr_vendors`, đụng 026); UPDATE `eutr_vendors.Code` sang HOA (đổi dữ liệu nguồn); đổi collation DB (ngoài phạm vi, không kiểm soát được ở tầng service).
+- **Phạm vi**: Không đổi `RecomputeForPurchOrderAsync` (công thức Progress), API, DB, client. 013 (đồng bộ dữ liệu) gọi cùng hàm nên được hưởng thay đổi.
+
+## Update 62 — Upload Type "General": chỉ chọn Step, ẩn Value (FR-258)
+
+- **Decision 1**: Nhận diện Type theo Name "General" (`trim` + lower-case) như `isPoTypeName`; không thêm cờ/cột DB.
+- **Decision 2**: Vẫn ghi 1 dòng `eutr_references` với `RefValue = NULL` (thay vì không ghi dòng nào) vì Step của document chỉ lưu ở `eutr_references.StepId` — không ghi sẽ mất liên kết Step.
+- **Decision 3**: Step lấy từ Assign Steps (`eutr_reference_type_details`) — cơ chế `loadFilteredSteps` sẵn có (FR-043) nên không đổi.
+- **Decision 4**: Controller `eutr-upload-multi-by-type` bỏ ràng buộc "RefValues ≥ 1" chỉ cho "General"; Type khác vẫn trả 400.
+- **Rejected**: gán RefValue giả (`"GENERAL"`) — sinh dòng rác khi JOIN theo PO/Vendor và `RecomputeForPurchIdAsync`; tạo luồng Upload riêng — trùng lặp với `UploadMultipleForReferenceTypeAsync`.
+- **Phạm vi**: client `EutrDocumentsFormDialog.jsx` (`isGeneralTypeName`, `showValue`, `canSubmit`); backend `SharePointController`, `EutrUploadService`; không đổi schema.
+- **Decision 5 (Update 62)**: Document General (`RefValue = NULL`) dùng chung mọi PO — nhân bản trong `GetDocumentsByPoCodesAsync` để mọi consumer (list-po-references, Progress, đồng bộ) nhận cùng dữ liệu, thay vì sửa từng nơi. Đánh đổi: bản nhân bản khớp cả PurchId và Vendor code nên client khử trùng theo id.
+- **Decision 6 (Update 62)**: Khớp theo Type chỉ siết cho file General (General ↔ Step General); file Type khác giữ khớp theo tên để không đổi hành vi cũ.
+- **Decision 7 (Update 62)**: Nhãn TakeFrom lấy từ `eutr_reference_types` qua `TakeFromName` vì TakeFrom là FK; bảng hằng số `TAKE_FROM_LABELS` chỉ còn là fallback.
+- **Decision 8 (Update 62)**: Progress backend mã hoá Step General bằng tiền tố khoá thay vì đổi kiểu danh sách Step sang tuple (ít sửa ở 3 điểm so khớp).
+- **Rejected**: gán RefValue = PurchId cho General (không còn "dùng chung"); enqueue Recompute mọi PO khi upload General (tốn kém).

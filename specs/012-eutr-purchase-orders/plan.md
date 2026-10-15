@@ -67,10 +67,10 @@ Documents lookups needed for Progress **once per visible page** (same batching p
 `SalesOrderOverviewPage.jsx` already uses for its own Progress column — spec 005 Update 12), not
 once per row.
 
-**Constraints**: Must not duplicate the `computeProgress`/step-vs-document matching logic that
+**Constraints**: Must not duplicate the `computeProgress`/step-vs-document matching logic that **Update 62**: Upload Type "General" chỉ chọn Step, ẩn Value; `RefValue = NULL`, không đổi schema (FR-258).
 already exists in `eutr-sales-orders/utils/progressUtils.js` — reuse it directly per Constitution
 Principle II precedent (005 Update 12 already centralized this specifically to prevent drift across
-consumers).
+consumers). **Update 60**: so khớp tên file với Name của Step bỏ mọi khoảng trắng và đổi HOA ở cả hai vế (backend `EutrUploadService.NormalizeForStepMatch` + client `loadMatchingStepsForPoByName`), không đổi API/DB (FR-256). **Update 61**: hàm lấy Vendor sau Upload (`EutrProgressionService.SyncPurchaseVendorsAsync`/`BuildCodeMap`/`OrderedVendorsOfFile`) bỏ khoảng trắng + đổi HOA tên file, tên Step, Code Vendor trước khi so sánh, ghi relationship bằng Code gốc; không đổi API/DB (FR-257).
 
 **Scale/Scope**: 2 new frontend pages (Overview list, Purchase Order View/manage-documents), 1
 small additive backend change (search filter), 1 new route + 1 new top-level menu entry (operational
@@ -504,3 +504,62 @@ name including extension).
 **Technical Context additions**: Storage — none (D365 only). Testing — backend xUnit for service (mock `IDynamicService`, `IEutrTemplatesRepository`): valid push, mismatched template/version rejected, D365 exception propagates; frontend manual per quickstart. Performance — one small list call on dialog open + one POST. Constraints — policy name derived from menu code (`EutrPurchaseOrders.Update`) is assumed from the existing `EutrDocuments.Update` convention; verify at implementation/run time.
 
 **Constitution Check**: PASS — no new dependency; follows existing Clean-architecture layering (controller → service → external `IDynamicService`).
+
+## Update 54 — Trích Vendor từ tên file PO vào `eutr_purchase_relationship` (đồng thời 013 Update 3)
+
+**Summary**: Trong `EutrProgressionService.RecomputeForPurchOrderAsync` (điểm duy nhất tính Progress `Type = 1`, cũng được luồng đồng bộ 013 gọi), sau khi tính xong completed/total, trích mã Vendor từ tên các file đã upload của PO và đồng bộ vào bảng mới `eutr_purchase_relationship`.
+
+**Technical Context delta**: Language/Dependencies — không đổi (.NET 8, Dapper). **Storage** — thêm bảng `eutr_purchase_relationship (PurchId VARCHAR(50), Vendor VARCHAR(50))`, UNIQUE (PurchId, Vendor), migration `43_create_eutr_purchase_relationship.sql` trong `compliance-sys-api/src/ComplianceSys.Infrastructure/Sqls/Migration/`. **Testing** — xUnit cho `EutrProgressionService` (mock repo). **Constraints** — không đổi API/UI; lỗi trích Vendor chỉ log. Client không đổi.
+
+**Constitution Check**: PASS — dùng đúng layering controller→service→repository, không phụ thuộc vòng (service chỉ thêm repository mới, giống các repo đã inject).
+
+### Project Structure delta
+- `Domain/Entities/EutrPurchaseRelationship.cs` (mới, không BaseEntity)
+- `Application/Interfaces/Repositories/IEutrPurchaseRelationshipRepository.cs` (mới): `SyncAsync(purchId, IReadOnlyCollection<string> vendors)`
+- `Application/Interfaces/Repositories/IEutrVendorsRepository.cs`: thêm `GetAllCodesAsync`
+- `Infrastructure/Repositories/EutrPurchaseRelationshipRepository.cs` (mới) + đăng ký DI; `EutrVendorsRepository` thêm `GetAllCodesAsync`
+- `Application/Services/EutrProgressionService.cs`: thêm bước trích Vendor
+- Unit test trong `EutrProgressionServiceTests.cs`
+
+## Update 55 — Trader relationship (popup kéo mũi tên giữa các Vendor của PO)
+
+**Summary**: Thêm nút **Trader relationship** ở cột Action của danh sách Purchase Orders mở popup React Flow hiển thị các Vendor của PO (từ `eutr_purchase_relationship`) thành khối Code/Name; user kéo mũi tên có hướng và Save vào bảng mới `eutr_trader_relationship`.
+
+**Technical Context delta**: Language/Dependencies — client thêm `@xyflow/react`; backend không đổi (.NET 8, Dapper). **Storage** — bảng `eutr_trader_relationship (Id, PurchId, FromVendor, ToVendor, CreatedBy, CreatedDate)`, UNIQUE (PurchId, FromVendor, ToVendor), migration `44_create_eutr_trader_relationship.sql`. **Testing** — xUnit cho service (hợp lệ, tự nối, trùng, vòng, Vendor ngoài PO, replace-all, dọn mồ côi); eslint client. **Constraints** — thay thế toàn bộ trong 1 transaction; ẩn nút khi thiếu quyền `Update` của `eutr-purchase-orders`. **Scale/Scope** — vài Vendor/PO, vài mũi tên.
+
+**Constitution Check**: PASS — theo layering controller→service→repository; 1 dependency client có lý do (research Update 55 Decision 4).
+
+### Project Structure delta
+- `Sqls/Migration/44_create_eutr_trader_relationship.sql` (mới) + bản tham chiếu `Sqls/Tables/`
+- `Domain/Entities/EutrTraderRelationship.cs` (mới)
+- `IEutrTraderRelationshipRepository` + `EutrTraderRelationshipRepository` (mới, đăng ký DI): `GetByPurchIdAsync`, `ReplaceAsync`, `DeleteOrphansAsync`
+- `IEutrPurchaseRelationshipRepository`: thêm `GetByPurchIdAsync`; `SyncAsync` gọi dọn mồ côi
+- `EutrPurchaseOrdersService` + `EutrPurchaseOrdersController`: `GetTraderRelationshipAsync`, `SaveTraderRelationshipAsync` (validate DAG)
+- Client: `TraderRelationshipDialog.jsx` (mới), nút ở `PurchaseOrderOverviewPage.jsx`, API service
+
+## Update 56 — Cột Trader relationship ở index
+
+**Summary**: Thêm cột **Trader relationship** vào bảng Purchase Orders; mỗi mũi tên của PO là 1 line `<Name From> > <Name To>`, nạp theo lô cho trang hiện tại.
+
+**Technical Context delta**: Dependencies — không đổi. **Storage** — không đổi (đọc `eutr_trader_relationship` JOIN `eutr_vendors`). **Testing** — xUnit service (gom line theo PO, input rỗng); eslint + vite build client. **Constraints** — lỗi nạp chỉ log, ô trống; không lọc/sắp xếp theo cột. **Performance** — 1 request/trang (IN @PurchIds).
+
+**Constitution Check**: PASS.
+
+### Project Structure delta
+- `IEutrTraderRelationshipRepository.GetNamedEdgesByPurchIdsAsync` + implementation; `TraderRelationshipSummaryDto`
+- `EutrPurchaseOrdersService.GetTraderRelationshipSummariesAsync` + `POST trader-relationships` ở controller
+- Client: `GetTraderRelationshipSummariesUseCase`, API/repository, cột mới trong `PurchaseOrderOverviewPage.jsx` (widths `trader: 260`, colSpan 7)
+
+## Update 58 — Gom nhóm file theo Trader relationship (IsGroup)
+
+**Summary**: Step có `IsGroup = 1` (001 Update 3) hiển thị các mục con theo nhóm Vendor ở `PurchId/View`.
+
+**Technical Context delta**: **Storage** — `eutr_steps.IsGroup`, migration `45_alter_eutr_steps_add_isgroup.sql`. **Testing** — eslint + vite build; hàm gom nhóm là hàm thuần `utils/traderGrouping.js` (kiểm tra bằng script Node); xUnit không đổi. **Constraints** — chỉ đổi hiển thị; lỗi nạp relationship thì hiển thị phẳng.
+
+**Constitution Check**: PASS.
+
+### Project Structure delta
+- Backend: `EutrStep.IsGroup`, `EutrStepRequestDto.IsGroup`, `EutrTemplateDetailsResponseDto.IsGroup`, 3 SQL chi tiết Template, policy GET trader-relationship → Read
+- Client: `eutr-steps` (modal + cột Group); `progressUtils.normalizeTemplateDetail` thêm `isGroup`; `utils/traderGrouping.js` (mới); `PurchaseOrderViewPage.jsx` TreeNode gom nhóm
+
+**Update 59**: Tìm theo Vendor name — chỉ đổi client (`PurchaseOrderOverviewPage.jsx`), không đổi backend/DB/API. **Constitution Check**: PASS.

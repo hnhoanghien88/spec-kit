@@ -185,3 +185,42 @@ Bảng append-only, dùng chung với `005-eutr-sales-orders` Update 51.
 Không FK, không UPDATE/DELETE. Entity `EutrHistory` không kế thừa `BaseEntity`.
 
 > Update 52 (005): thêm cột `ProductVariant` VARCHAR(50) NULL (sau `Version`) — chỉ dùng ở Type = 1; Type = 0 để NULL.
+
+## Update 54 — Bảng `eutr_purchase_relationship`
+
+| Cột | Kiểu | Ràng buộc |
+|---|---|---|
+| PurchId | VARCHAR(50) | NOT NULL |
+| Vendor | VARCHAR(50) | NOT NULL (= `eutr_vendors.Code`) |
+
+UNIQUE (`PurchId`, `Vendor`). Không FK, không cột audit. Entity `EutrPurchaseRelationship` không kế thừa `BaseEntity`. Vòng đời: ghi/xóa hoàn toàn bởi hàm tính Progress của PO.
+
+## Update 55 — Bảng `eutr_trader_relationship`
+
+| Cột | Kiểu | Ràng buộc |
+|---|---|---|
+| Id | BIGINT | PK, AUTO_INCREMENT |
+| PurchId | VARCHAR(50) | NOT NULL |
+| FromVendor | VARCHAR(50) | NOT NULL (= `eutr_vendors.Code`, đầu mũi tên) |
+| ToVendor | VARCHAR(50) | NOT NULL (= `eutr_vendors.Code`, đích mũi tên) |
+| CreatedBy | VARCHAR(50) | NOT NULL |
+| CreatedDate | DATETIME | NOT NULL |
+
+UNIQUE (`PurchId`, `FromVendor`, `ToVendor`); INDEX (`PurchId`). Không FK. Entity `EutrTraderRelationship` (`[Table("eutr_trader_relationship")]`, không kế thừa `BaseEntity`). Ràng buộc nghiệp vụ (ở service): FromVendor ≠ ToVendor, cả hai ∈ `eutr_purchase_relationship` của PurchId, đồ thị không có vòng. Vòng đời: ghi bởi Save của popup; xóa mũi tên mồ côi bởi `SyncAsync` (Update 54).
+
+## Update 58
+
+Không thêm bảng. Dùng `eutr_steps.IsGroup` (001 Update 3) và `eutr_trader_relationship` (Update 55).
+
+## Update 60 — Không đổi DB (FR-256)
+
+Không thêm/sửa bảng, cột, stored procedure; không cần migration. Chuẩn hoá khoảng trắng/HOA chỉ áp dụng khi so sánh `file.FileName` với `eutr_steps.Name` trong bộ nhớ; `eutr_documents.Name` và `eutr_steps.Name` lưu nguyên văn.
+
+## Update 61 — Không đổi DB (FR-257)
+
+Không thêm/sửa bảng, cột, stored procedure; không cần migration. `eutr_purchase_relationship.Vendor` và `eutr_trader_relationship.FromVendor/ToVendor` tiếp tục lưu `Code` gốc của `eutr_vendors`; chuẩn hoá (bỏ khoảng trắng + HOA) chỉ áp dụng trong bộ nhớ khi so sánh token tên file với Code Vendor.
+
+## Update 62 — Không đổi DB (FR-258)
+
+- `eutr_references.RefValue` đã `VARCHAR(255) NULL`; document Type "General" ghi `RefValue = NULL`, `StepId` = Step đã chọn, `RefType` = Id Type "General". Không migration, không đổi SP.
+- API chi tiết Template (`EutrTemplateDetailsResponseDto`) thêm `TakeFromName` (JOIN `eutr_reference_types` theo `TakeFrom`) — chỉ DTO/query, không đổi bảng.

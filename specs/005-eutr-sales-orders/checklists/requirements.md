@@ -631,3 +631,5 @@
   PurchId/TemplateCode/OrderAccount) are recorded as explicit Q&A entries in the Clarifications session
   and Assumptions rather than left as open questions, since both have a single well-precedented answer
   in this exact codebase and no requester ambiguity was actually present.
+
+- **2026-10-15 (Update 60)**: Re-validated after adding FR-264, SC-125 và acceptance scenario/edge case/assumption liên quan — so khớp tên file với Step bỏ khoảng trắng + UPPERCASE. Không [NEEDS CLARIFICATION]: yêu cầu có ví dụ cụ thể; ngoài phạm vi: bỏ dấu câu/dấu tiếng Việt, so khớp mờ.

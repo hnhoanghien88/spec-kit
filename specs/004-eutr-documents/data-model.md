@@ -1712,3 +1712,12 @@ function loadMatchingStepsForPoByName(fullSteps, fileName) {
   return (fullSteps || []).filter(s => normalizedFileName.includes((s.name || '').toLowerCase()));
 }
 ```
+
+## Update 35 — Không đổi DB (FR-085)
+
+Không thêm/sửa bảng, cột, stored procedure; không cần migration. Chuẩn hoá khoảng trắng/HOA chỉ áp dụng khi so sánh `file.FileName` với `eutr_steps.Name` trong bộ nhớ; `eutr_documents.Name` và `eutr_steps.Name` lưu nguyên văn.
+
+## Update 61 — Không đổi DB (FR-086)
+
+- `eutr_references.RefValue` đã `VARCHAR(255) NULL`; document Type "General" ghi `RefValue = NULL`, `StepId` = Step đã chọn, `RefType` = Id Type "General". Không migration, không đổi SP.
+- API chi tiết Template (`EutrTemplateDetailsResponseDto`) thêm `TakeFromName` (JOIN `eutr_reference_types` theo `TakeFrom`) — chỉ DTO/query, không đổi bảng.

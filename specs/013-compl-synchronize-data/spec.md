@@ -122,3 +122,34 @@ Once the Sales Line data (User Story 1) has been synchronized, a Data Administra
 **Rationale**: A full truncate of `compl_sync_variant_attributes` on every run discards data for Product/Config combinations that simply weren't part of the current run's Sales Line data (e.g., a transient ERP gap or a narrower ad-hoc run), even though nothing about those combinations actually changed. Scoping the delete to only the combinations being refreshed avoids this unnecessary data loss.
 
 **Applied to**: FR-012, FR-014, the Variant Attribute Sync Record (Key Entities), SC-004, and the Assumptions section. This changes the Variant Attribute store's behavior only — the Sales Line store (FR-008, `compl_sync_sales_line`) is unaffected and continues to be fully cleared and rebuilt each run.
+
+### `/speckit-specify` Update 2 — `eutr_progression` Type / PurchId / Status (2026-10-13)
+
+**Change requested**: Thêm 3 cột vào bảng `eutr_progression`: `Type` (tinyint), `PurchId` (varchar 50), `Status` (tinyint). Dữ liệu hiện có mang `Type = 0` (lưu thông tin SalesId); `Type = 1` dành cho thông tin PurchId. Màn hình `eutr/sales-orders` (progress) và hàm `test-so-progression` chỉ đọc/ghi/xử lý dữ liệu `Type = 0`.
+
+**Code verified** (compliance-sys-api): `EutrProgressionRepository.GetBySalesIdsAsync` (nguồn progress của màn eutr/sales-orders qua `eutr-progression/by-sales-ids`), `UpsertAsync`, `DeleteAsync`; `EutrSynchronizeDataService.RunSoProgressionAsync` chỉ đi qua `IEutrProgressionService` → các repo method trên, nên lọc ở repository là đủ cho cả hai.
+
+**Functional Requirements (Update 2)**:
+
+- **FR-018** (Update 2): `eutr_progression` MUST có thêm `Type tinyint NOT NULL DEFAULT 0`, `PurchId varchar(50) NOT NULL DEFAULT ''`, `Status tinyint NOT NULL DEFAULT 0`. Bản ghi hiện có tự động nhận `Type = 0`.
+- **FR-019** (Update 2): `Type = 0` lưu theo SalesId (cột `SalesId`); `Type = 1` lưu theo PurchId (cột `PurchId`). Ý nghĩa cột `Status` chưa được định nghĩa — hiện chỉ lưu mặc định 0.
+- **FR-020** (Update 2): UNIQUE KEY `(SalesId)` MUST đổi thành `(Type, SalesId, PurchId)` để các bản ghi `Type = 1` (SalesId rỗng) không xung đột nhau; upsert `ON DUPLICATE KEY` của Type 0 vẫn hoạt động.
+- **FR-021** (Update 2): Màn hình `eutr/sales-orders` MUST chỉ lấy progress từ bản ghi `Type = 0` (`GetBySalesIdsAsync` thêm `WHERE Type = 0`).
+- **FR-022** (Update 2): `test-so-progression` (`RunSoProgressionAsync`) MUST chỉ lưu/xử lý/đọc lại `Type = 0`: `UpsertAsync` ghi `Type = 0, PurchId = ''`; `DeleteAsync` chỉ xóa `Type = 0`.
+
+**Success Criteria (Update 2)**: **SC-007** — sau migration, mọi bản ghi cũ có `Type = 0`; thêm bản ghi `Type = 1` không làm thay đổi kết quả progress của màn eutr/sales-orders hay số liệu summary của `test-so-progression`.
+
+**Edge Cases / Assumptions (Update 2)**: Bản ghi `Type = 1` không được tạo bởi code nào hiện tại (chỉ chuẩn bị schema). Thay đổi bảng đi kèm migration `Sqls/Migration/41_alter_eutr_progression_add_type_purchid_status.sql`.
+
+### `/speckit-specify` Update 3 — Hàm tính progress PO: trích Vendor từ tên file vào `eutr_purchase_relationship` (2026-10-14)
+
+**Change requested**: Hàm tính progress của PO (dòng `eutr_progression` `Type = 1`, `PurchId`) khi chạy phải kiểm tra tên các file user đã upload cho PO: cắt bỏ tên Step (ví dụ `1.1 Invoice (AP-PD)` gắn Step `1.1 Invoice` → còn ` (AP-PD)`), đối chiếu phần còn lại với `Code` Vendor ở `026-eutr-vendors` (AP, PD… khớp), rồi lưu các cặp (PurchId, Vendor) vào bảng mới `eutr_purchase_relationship` (ví dụ PO1 → `PO1, AP` và `PO1, PD`). Mỗi lần chạy, Vendor nào không còn file nào chứa mã (ví dụ không còn file có `AP`) thì xóa dòng `(PurchId, AP)` theo điều kiện PurchId.
+
+**Applied to**: dùng chung logic với `012-eutr-purchase-orders` Update 54 (FR-239…FR-242, SC-017) — hàm tính progress của PO là một, nên các lần chạy từ luồng đồng bộ của 013 cũng MUST đồng bộ bảng này.
+
+- **FR-023** (Update 3): Mọi lần tính progress `Type = 1` cho một PO (kể cả khi chạy từ luồng đồng bộ ở 013) MUST đồng bộ `eutr_purchase_relationship` theo FR-239/FR-241 của 012.
+- **FR-024** (Update 3): Bước này MUST NOT thay đổi số liệu progress `Type = 0` hay `Type = 1` (Total/Missing/Finished/Status) và không làm run thất bại nếu trích Vendor lỗi (chỉ log).
+
+**Success Criteria (Update 3)**: **SC-008** — sau một run, `eutr_purchase_relationship` phản ánh đúng các Vendor còn xuất hiện trong tên file của từng PO; chạy lại không đổi dữ liệu thì không phát sinh dòng trùng; số liệu summary của `test-so-progression` không đổi.
+
+**Assumptions (Update 3)**: Phụ thuộc `026-eutr-vendors` (bảng `eutr_vendors`) đã có dữ liệu; Vendor chưa khai báo bị bỏ qua. Thay đổi bảng đi kèm migration mới.

@@ -10,6 +10,43 @@
 
 ## Clarifications
 
+### Session 2026-10-15 (Update 61) — Upload với Type = "General": chỉ chọn Step, ẩn Value (FR-086, SC-26)
+
+- **Bối cảnh**: Popup Add/Upload (`EutrDocumentsFormDialog.jsx`) luôn hiện ô Value (`EutrAddValueAutocomplete`) và bắt buộc ≥ 1 chip (`canSubmit`: `chips.length > 0`); backend `SharePointController.eutr-upload-multi-by-type` trả 400 "At least one reference value is required" và `UploadMultipleForReferenceTypeAsync` ghi 1 dòng `eutr_references` cho mỗi RefValue. Type "General" là tài liệu chung, không gắn PO/Vendor/Invoice cụ thể nên không có Value để nhập.
+- **Yêu cầu**: "khi upload với type là General, chỉ cần chọn step, không cần hiển thị chọn value, step sẽ được assign trong reference-types".
+- **Quyết định**:
+  - Type có Name = "General" (`Trim` + không phân biệt hoa/thường, giống `isPoTypeName`/`isVendorTypeName`) → popup MUST **ẩn hoàn toàn** ô Value và danh sách chip; Step vẫn **bắt buộc**; danh sách Step lấy từ Assign Steps của Type "General" (`eutr_reference_type_details`, `loadFilteredSteps`, FR-043/FR-044 — không đổi) và mặc định chọn dòng đầu. `canSubmit` (Add) = có Type + có Step (không yêu cầu chip).
+  - Backend: nhánh Type = "General" cho phép `RefValues` rỗng (controller không trả 400); vẫn ghi **đúng 1** dòng `eutr_references` cho mỗi document với `StepId` đã chọn, `RefType = TypeId`, **`RefValue = NULL`** (cột đã cho phép NULL) để document còn gắn Step. Thư mục SharePoint: nhánh mặc định `ResolveFolderName` → `General` (phẳng dưới `SharePointEutrPath`). Không enqueue `RecomputeForPurchIdAsync` (không có RefValue). Tên file lưu theo Step Name như các Type khác (FR-068).
+  - Check-existing (Spec 025) bỏ qua Type "General" (không có RefValue để đối chiếu → trả rỗng, không chặn upload).
+  - Popup Edit document Type "General": cũng ẩn Value/chip, chỉ cho đổi Step (`updateEutrDocumentReferenceStepUseCase` gửi `refValues = undefined`, giống Type = "PO").
+  - **Bổ sung (cùng Update 61) — General dùng chung cho mọi PO**: document Type "General" (`RefValue = NULL`) không thuộc PO nào nên `IEutrReferencesRepository.GetDocumentsByPoCodesAsync` MUST trả thêm các document này, nhân bản cho **từng mã PO được hỏi** (`list-po-references`, tính Progress, đồng bộ đều dùng chung hàm này).
+  - **Khớp theo Type**: file Type "General" chỉ gắn vào Step có `TakeFrom` = "General" (cùng tên Step nhưng Step lấy từ Type khác, vd "PO", KHÔNG nhận file General). File Type khác giữ nguyên khớp theo tên Step. Hàm client `fileMatchesDetail` (`progressUtils.js`) dùng cho `buildTemplateComputations`/`buildPoTemplateComputations`.
+  - **AVAILABLE FILES**: file General chỉ hiện khi Template của PO có Step General cùng tên (`onlyMatchedGeneral`); các danh sách file được khử trùng theo id vì bản nhân bản khớp cả PurchId lẫn Vendor code.
+  - **Nhãn TakeFrom**: `TakeFrom` là FK tới `eutr_reference_types.Id`; API chi tiết Template trả thêm `TakeFromName` (JOIN `eutr_reference_types`) và `normalizeTemplateDetail` ưu tiên tên này thay cho bảng hằng số `TAKE_FROM_LABELS` (trước đó Id 5 bị hiện sai "General agreement").
+  - **Progress**: `EutrProgressionService` áp cùng quy tắc — Step General đánh dấu bằng tiền tố (`RequiredKey`), file General chỉ khớp Step General, file Type khác khớp cả hai (`MatchedKeys`). Upload General không enqueue Recompute; Progress cập nhật khi mở View/lần Recompute kế tiếp.
+  - Type khác "General" không đổi hành vi (Value vẫn bắt buộc).
+- **Acceptance scenarios**: xem User Story 2, kịch bản 42.
+
+### Session 2026-10-15 (Update 35) — Upload: so khớp tên file với tên Step bỏ toàn bộ khoảng trắng và UPPERCASE (FR-085, SC-025)
+
+- **Bối cảnh**: FR-074/FR-075 so khớp "tên file gốc có chứa Name của Step" (không phân biệt hoa/thường) nhưng không bỏ khoảng trắng → Step `1.step1` với file `1.step1 PD-AP` (hoặc `1. step 1 PD-AP`) không gắn được vào Step.
+- **Yêu cầu**: Trước khi so sánh, xoá toàn bộ khoảng trắng ở cả tên Step lẫn tên file và đổi cả hai sang chữ HOA (Step `1.step1` ↔ file `1.step1PD-AP` → khớp).
+- **Quyết định**: Backend `EutrUploadService.NormalizeForStepMatch` (đoạn dựng `matchedSteps`; tie-break FR-081 đo độ dài sau chuẩn hoá) và client `loadMatchingStepsForPoByName` (`EutrDocumentsFormDialog.jsx`, combobox Step khi Edit Type "PO") dùng cùng quy tắc. Không đổi API/DB; tên file lưu không đổi. `005-eutr-sales-orders` và `012-eutr-purchase-orders` kế thừa (Update 60 của hai spec đó).
+- **Acceptance scenarios**: xem User Story 2, kịch bản 41.
+
+### Session 2026-10-13 (Update 34) — Màn hình index: ẩn 2 cột Valid from, Valid to
+
+- **Bối cảnh**: `useEutrDocumentsColumns.jsx` đặt `validFrom: true`, `validTo: true` trong `defaultColumnVisibility` nên 2 cột luôn hiện khi mở màn hình index.
+- **Yêu cầu**: "ẩn 2 cột Valid from, Valid to màn hình index đi".
+- **Quyết định**: Đặt `validFrom: false`, `validTo: false` trong `defaultColumnVisibility` (ẩn mặc định; người dùng vẫn bật lại được qua menu Columns của DataGrid). Không đổi backend/API/DB; dữ liệu `ValidFrom`/`ValidTo`, popup Add/Edit (FR-014/FR-080) và quy tắc lọc/sắp xếp giữ nguyên.
+
+### Session 2026-10-13 (Update 33) — Màn hình index: cho phép user resize độ rộng các cột
+
+- **Bối cảnh**: Bảng danh sách (index) dùng MUI DataGrid v7 vốn hỗ trợ resize cột, nhưng
+  `DataGridStyled` ẩn toàn bộ `.MuiDataGrid-columnSeparator` (`compliance-client/src/presentation/components/shared/DataGridStyles.jsx`) nên người dùng không thấy/không kéo được tay nắm resize.
+- **Yêu cầu**: Các cột của bảng ở màn hình index `004-eutr-documents` MUST cho user kéo thay đổi độ rộng.
+- **Quyết định**: Thêm prop `resizableColumns` (mặc định `false`) cho `DataGridStyled` để hiện lại separator; chỉ màn hình này bật. `DataGrid` đặt `disableColumnResize={false}`. Không đổi backend/API/DB; độ rộng không lưu giữa các lần tải lại (chỉ trong phiên).
+
 ### Session 2026-10-08 (Update 32) — Type = "PO": chỉ khớp Step trong Template của PO; PO chưa gắn Template thì chặn Upload
 
 - Input: "template có step là `APH Business License`, dữ liệu step có `APH Business License` và `APH Business License(AP)`. File úp là `APH Business License(AP).pdf` => phải gắn step `APH Business License` nhưng lại gắn vào step `…(AP)`. Phải dựa vào step của template mà gắn chứ không phải toàn bộ step trong dữ liệu"; "PO chưa gắn template thì nên chặn upload và báo lỗi"; "edit dialog và cập nhật spec luôn".
@@ -746,6 +783,9 @@ tương ứng", không tạo document nào cho file đó.
     Type của document đó không phải "Vendor".
 
 ---
+41. **(Update 35, FR-085)** **Given** Template của PO có Step `1.step1`, **When** Upload file `1.step1PD-AP.pdf` (hoặc `1.step1 PD-AP.pdf`, `1. STEP 1 pd-ap.pdf`), **Then** document được gắn vào Step `1.step1` (khoảng trắng bị bỏ qua, không phân biệt hoa/thường).
+42. **(Update 61, FR-086)** **Given** Type "General" đã được Assign Step `General doc` ở reference-types, **When** mở popup Add và chọn Type = "General", **Then** chỉ thấy ô Step (đã lọc theo Assign Steps) — không có ô Value/chip; chọn Step và Upload được ngay, document được tạo với Step đó và `eutr_references.RefValue = NULL`.
+43. **(Update 61, FR-086)** **Given** Template có Step `3.Response CSR Manual` lấy từ "PO" và file General cùng tên Step, **When** mở Map File/View, **Then** Step vẫn "Required - missing", file General không hiện ở AVAILABLE FILES và không tính vào Progress; nếu Step đó có TakeFrom = "General" thì file hiện (1 lần) và Step được tính "Mapped".
 
 ### Session 2026-07-24 (Update 22) — Cho phép thêm/xóa chip Value trong Edit với Type khác "PO"
 
@@ -1118,6 +1158,8 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
 - **(Update 29)** Document Type = "PO" tạo TRƯỚC Update 29 giữ nguyên File name cũ (tên đã đổi theo
   Step ở Update 25/26) — không có migration/backfill nào chạm dữ liệu cũ; chỉ document Upload MỚI sau
   Update 29 mới giữ tên file gốc.
+- **(Update 35)** Hai Step chỉ khác nhau về khoảng trắng/hoa-thường (vd `Invoice AP` và `INVOICEAP`) trở nên đồng nhất khi so khớp → rơi vào quy tắc "Name dài nhất, bằng nhau lấy Id nhỏ nhất" (FR-081). Tên file chứa Step bị tách bởi ký tự khác khoảng trắng (vd `1.ste-p1`) vẫn KHÔNG khớp.
+- **(Update 61)** Type "General" chưa Assign Step nào ở reference-types → combobox Step rỗng, không Upload được (cần cấu hình Assign Steps). Document "General" có `RefValue = NULL` không xuất hiện ở cây theo PO/Vendor (không có khoá liên kết) — chỉ thấy ở màn hình index 004.
 
 ## Requirements *(mandatory)*
 
@@ -1426,6 +1468,10 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   trường này cho mọi Type như FR-030 hiện có.
 - **FR-081 (Update 31)**: Khi Upload Type "PO", một file MUST tạo document gắn với đúng 1 Step; nếu tên file khớp nhiều Step thì chọn Step có Name dài nhất, hoà thì Id nhỏ nhất. Thay thế phần multi-match của FR-023/FR-074/FR-075.
 - **FR-082 (Update 32)**: Khi Upload Type "PO", tập Step dùng để khớp tên file MUST là các Step thuộc Template đã gắn cho PO (không phải toàn bộ `eutr_steps`); thay thế nguồn "toàn bộ `eutr_steps`" của Update 29/FR-074/FR-075 (quy tắc chọn 1 Step của FR-081 giữ nguyên, áp dụng trong tập này). PO chưa gắn Template (hoặc Template không có Step) MUST bị chặn Upload với thông báo lỗi trên từng file, không có tác dụng phụ (SharePoint/DB). Combobox Step của popup Edit document Type "PO" MUST dùng cùng tập Step này.
+- **FR-083 (Update 33)**: Bảng ở màn hình index MUST cho phép người dùng kéo mép header để thay đổi độ rộng từng cột (tay nắm resize hiển thị rõ khi di chuột); việc resize không được làm đổi sắp xếp, phân trang, bộ lọc hay ẩn/hiện cột. Các màn hình khác dùng `DataGridStyled` KHÔNG bị ảnh hưởng.
+- **FR-084 (Update 34)**: Bảng ở màn hình index MUST ẩn 2 cột Valid from và Valid to theo mặc định khi mở màn hình; người dùng vẫn có thể bật lại qua menu chọn cột. Popup Add/Edit và dữ liệu `ValidFrom`/`ValidTo` không đổi.
+- **FR-085 (Update 35)**: Khi Upload (và khi lọc Step cho combobox Edit của document Type "PO"), việc so khớp "tên file có chứa Name của Step" (FR-074/FR-075 của `004-eutr-documents`) MUST xoá **toàn bộ khoảng trắng** ở cả tên file lẫn Name của Step và chuyển cả hai sang **chữ HOA** trước khi so sánh. Ví dụ Step `1.step1` khớp file `1.step1PD-AP`, `1.step1 PD-AP`, `1. STEP 1 pd-ap`. Chuẩn hoá chỉ dùng để so sánh — tên file lưu không đổi; Step có Name rỗng/chỉ khoảng trắng MUST bị bỏ qua; khi file khớp nhiều Step vẫn chọn Step có Name dài nhất (đo theo độ dài sau chuẩn hoá, FR-081). Áp dụng chung cho `005-eutr-sales-orders` (Update 60) và `012-eutr-purchase-orders` (Update 60).
+- **FR-086 (Update 61)**: Khi Type được chọn có Name = "General" (không phân biệt hoa/thường), popup Add/Upload MUST ẩn ô Value và chip; Step là trường duy nhất bắt buộc và lấy từ Assign Steps của Type đó (`eutr_reference_type_details`). Backend MUST chấp nhận `RefValues` rỗng cho Type này và ghi 1 dòng `eutr_references` (`StepId`, `RefType`, `RefValue = NULL`) cho mỗi document; không chạy Recompute Progress theo RefValue; check-existing bỏ qua. Popup Edit cũng ẩn Value, chỉ đổi Step. Type khác không đổi. Áp dụng chung cho `004-eutr-documents` (Update 61), `005-eutr-sales-orders` (Update 62), `012-eutr-purchase-orders` (Update 62). Tài liệu General dùng chung cho mọi PO (nhân bản theo mã PO ở `GetDocumentsByPoCodesAsync`); file General CHỈ khớp Step có TakeFrom = "General" (hiển thị, AVAILABLE FILES, tính Progress ở `EutrProgressionService`); nhãn TakeFrom lấy từ `TakeFromName` (`eutr_reference_types.Name`).
 
 ## Key Entities *(include if feature involves data)*
 
@@ -1568,6 +1614,10 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   hiển thị Valid from/Valid to; 100% document tạo qua các lượt đó có Valid from/Valid to đúng bằng giá
   trị mặc định (ngày hiện tại/`9999-12-31`) dù người dùng không thấy/không sửa được 2 trường này. 100%
   lượt chọn Type = "Vendor" hiển thị lại đúng 2 trường, cho phép sửa như trước Update 30.
+- **SC-023 (Update 33)**: 100% cột dữ liệu trên bảng index kéo resize được bằng chuột; độ rộng mới giữ nguyên khi đổi trang/sắp xếp/lọc trong cùng phiên; 0 màn hình khác thay đổi hành vi separator cột.
+- **SC-024 (Update 34)**: Mở màn hình index lần đầu, 0 cột Valid from/Valid to hiển thị; 100% lần bật lại qua menu cột hiển thị đúng giá trị như trước.
+- **SC-025 (Update 35)**: 100% file có tên chứa Name của Step sau khi bỏ khoảng trắng và đổi HOA (vd `1.step1PD-AP` với Step `1.step1`) được gắn đúng Step khi Upload; 0 trường hợp file không gắn được chỉ vì khác khoảng trắng/hoa-thường.
+- **SC-26 (Update 61)**: 100% lần Upload với Type "General" hoàn tất chỉ bằng thao tác chọn Step (không nhập Value) và tạo document có Step đúng; 0 trường hợp ô Value hiện ra với Type "General".
 
 ## Assumptions
 
@@ -1689,3 +1739,6 @@ kiện, bấm Search, xác nhận danh sách đầy đủ hiển thị lại.
   đổi gì thêm — cả hai đều mở đúng popup Add/Edit dùng chung (`EutrDocumentsFormDialog.jsx`) qua nút
   Upload ở Step 2 Map File/`PurchId/View`, không có logic hiển thị Valid from/Valid to riêng nào ở tầng
   feature của chúng.
+- (Update 35) Chuẩn hoá chỉ gồm bỏ ký tự khoảng trắng (`char.IsWhiteSpace` ở backend, regex khoảng trắng ở client) và đổi HOA (`ToUpperInvariant`/`toUpperCase`); không bỏ dấu câu, không bỏ dấu tiếng Việt. Không đổi API, DB, tên file lưu.
+- (Update 61) Tên Type được nhận diện là "General" theo Name (như "PO"/"Vendor"); không thêm cột cờ vào `eutr_reference_types`. Cột `eutr_references.RefValue` đã cho phép NULL nên không cần migration.
+

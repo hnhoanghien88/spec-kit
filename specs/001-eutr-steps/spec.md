@@ -10,6 +10,13 @@
 
 ## Clarifications
 
+### Session 2026-10-14 (Update 3) — Thêm cột **IsGroup** cho Step (đánh dấu Step có các mục con được gom nhóm theo Trader relationship ở 012)
+
+- **Bối cảnh**: Ở màn hình `PurchId/View` của 012-eutr-purchase-orders, một số Step của Template (ví dụ "Trader or secondary processer") chứa các file thuộc nhiều Vendor trung gian và cần được gom nhóm theo Trader relationship (012 Update 55/57). Step nào cần gom nhóm không cố định theo tên mà do người dùng cấu hình.
+- **Yêu cầu**: Bảng `eutr_steps` thêm cột **`IsGroup`** (BOOLEAN/TINYINT(1), NOT NULL, mặc định 0). Form Add/Edit Step có checkbox **"Group by trader relationship"**; bảng danh sách có cột **Group** (hiển thị Yes/No hoặc checkbox, mặc định hiển thị). Giá trị được trả về trong response của Step và trong chi tiết Template (`StepName` kèm `IsGroup`) để 012 sử dụng.
+- **Quyết định**: Step hiện có mặc định `IsGroup = 0` (không đổi hành vi). Không ảnh hưởng chống trùng Name, xóa Step (Update 2). Migration `45_alter_eutr_steps_add_isgroup.sql`.
+- **Acceptance scenarios**: (1) Thêm Step với checkbox bật → lưu `IsGroup = 1`, danh sách hiển thị Group = Yes. (2) Sửa bỏ chọn → `IsGroup = 0`. (3) Step cũ trước migration có `IsGroup = 0`.
+
 ### Session 2026-10-08 (Update 2) — Cho phép xóa Step kể cả khi đang nằm trong Template (xóa kèm dữ liệu liên quan)
 
 - Yêu cầu: "cho phép xóa step, dù step có nằm ở template hay không. Nếu step nằm ở template, hiển thị box confirm: step này ở template A, B.. xác nhận xóa không?, nếu có thì xóa luôn step và các dữ liệu step đó ở các bảng liên quan như eutr_template_details."
@@ -248,3 +255,5 @@ rollback toàn bộ lượt xóa đó (không xóa một phần).
   document-type).
 - (Update 2) Xóa Step là thao tác phá hủy dữ liệu; chỉ người có quyền `EutrSteps.Delete` thực hiện được. Tên Template trong hộp xác nhận lấy từ các Template có dòng `eutr_template_details` mang StepId đó. Tài liệu gốc (`eutr_documents`) không bị xóa, chỉ xóa liên kết `eutr_references`.
 - (Update 2) `eutr_reference_details` (khóa ngoại tới `eutr_references`) buộc phải xóa trước `eutr_references`. Dòng template_details con (ParentId trỏ tới dòng bị xóa, thuộc Step khác) được nối lên cha của dòng bị xóa để cây Template không còn ParentId mồ côi.
+- **FR-016 (Update 3)**: Step MUST có thuộc tính `IsGroup` (mặc định không); người dùng có quyền Create/Update MUST bật/tắt được ở form Add/Edit, và danh sách MUST hiển thị cột Group.
+- **SC-008 (Update 3)**: 100% Step lưu với `IsGroup` bật/tắt hiển thị đúng ở danh sách và có trong dữ liệu chi tiết Template trả về cho 012.

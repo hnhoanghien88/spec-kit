@@ -170,3 +170,13 @@ ComplSynchronizeDataController.TestComplSynchronizeData (GET test-compl-synchron
 Any D365 call failure in either phase stops the run and returns `Success = false` with a partial-counts
 message (FR-017), consistent with 011's established failure handling — no automatic rollback of rows
 already saved before the failure.
+
+## Update 2 (2026-10-13) — `eutr_progression` columns
+
+| Column | Type | Default | Ghi chú |
+|---|---|---|---|
+| `Type` | tinyint unsigned | 0 | 0 = theo SalesId (dữ liệu cũ), 1 = theo PurchId |
+| `PurchId` | varchar(50) | '' | Dùng khi `Type = 1` |
+| `Status` | tinyint unsigned | 0 | Chưa định nghĩa ý nghĩa |
+
+Unique key: `(Type, SalesId, PurchId)` (thay cho `(SalesId)`). Entity: `EutrProgression` thêm `Type`, `PurchId`, `Status`.

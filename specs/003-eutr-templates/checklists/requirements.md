@@ -1022,3 +1022,4 @@
   the JSX block vs. a permanently-false render condition) and the precise backend call placement
   within `ApproveAsync` are implementation details left to `/speckit-plan`.
 - Update 30 (Excel export/import): all items pass; no [NEEDS CLARIFICATION] markers (defaults documented in Update 30 session + Assumptions).
+- Update 31 (Versions panel + read-only View): all items pass; no [NEEDS CLARIFICATION] markers (defaults documented in Update 31 session + Assumptions)

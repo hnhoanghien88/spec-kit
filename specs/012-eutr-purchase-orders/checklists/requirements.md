@@ -148,3 +148,5 @@
 - Không cần [NEEDS CLARIFICATION] — yêu cầu rõ ràng, không có cách hiểu khác.
 - Re-validated toàn bộ checklist: tất cả mục vẫn PASS, không phát sinh chi tiết triển khai hay yêu cầu
   không kiểm chứng được.
+
+- **2026-10-15 (Update 60)**: Re-validated after adding FR-256, SC-023 và acceptance scenario/edge case/assumption liên quan — so khớp tên file với Step bỏ khoảng trắng + UPPERCASE. Không [NEEDS CLARIFICATION]: yêu cầu có ví dụ cụ thể; ngoài phạm vi: bỏ dấu câu/dấu tiếng Việt, so khớp mờ.

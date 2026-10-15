@@ -165,3 +165,12 @@ ALTER TABLE
     `eutr_reference_type_details` ADD CONSTRAINT `eutr_reference_type_details_typeid_foreign` FOREIGN KEY(`TypeId`) REFERENCES `eutr_reference_types`(`Id`);
  ALTER TABLE
     `eutr_reference_type_details` ADD CONSTRAINT `eutr_reference_type_details_stepid_foreign` FOREIGN KEY(`StepId`) REFERENCES `eutr_steps`(`Id`);       
+-- feature 026-eutr-vendors
+CREATE TABLE `eutr_vendors`(
+    `Id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    `Code` VARCHAR(50) NOT NULL,
+    `Name` VARCHAR(255) NOT NULL,
+    `CreatedBy` VARCHAR(50) NULL,
+    `CreatedDate` DATETIME NULL,
+    UNIQUE KEY `eutr_vendors_code_unique` (`Code`)
+);

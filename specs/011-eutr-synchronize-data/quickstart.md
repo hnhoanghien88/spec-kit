@@ -293,3 +293,9 @@ Contract: [contracts/eutr-synchronize-data-test-clear-file.md](./contracts/eutr-
 5. Break D365 access -> `success=false`, no recompute started (FR-044).
 
 Contract: [contracts/eutr-synchronize-data-test-so-progression.md](./contracts/eutr-synchronize-data-test-so-progression.md).
+
+## Update 4 (2026-10-12) — scheduled jobs
+
+1. Run `Migration/40_seed_eutr_synchronize_data_jobs.sql`, then restart the Api (or call the job-schedule reload endpoint).
+2. Hangfire Dashboard → Recurring Jobs: `eutr_so_template_sync` (0 19 * * *), `eutr_purchase_missing_alert` (0 21 * * *), `eutr_so_progression` (0 1 * * *), `eutr_clear_orphan_files` (0 1 1 * *), next-run times in SE Asia time (FR-046).
+3. Use "Trigger now" on a job to verify it runs; triggering the same job twice must not overlap (second fails fast).

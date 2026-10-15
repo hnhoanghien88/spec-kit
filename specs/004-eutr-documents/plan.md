@@ -766,7 +766,7 @@ shape công khai của endpoint (research Quyết định 62/63).
 
 **Performance Goals**: Tương đương các màn CRUD hiện có; phân trang server-side.
 
-**Constraints**: Comment code **tiếng Việt**, nhưng **toàn bộ văn bản UI hiển thị bằng tiếng Anh**
+**Constraints**: Comment code **tiếng Việt**, nhưng **toàn bộ văn bản UI hiển thị bằng tiếng Anh** **Update 61**: Upload Type "General" chỉ chọn Step, ẩn Value; `RefValue = NULL`, không đổi schema (FR-086).
 (FR-015); không có ràng buộc duy nhất trên File name (FR-007b); Add page hiện KHÔNG có control
 chọn/upload file (FR-006, deferred). **Update 4**: List PO (cột PO name) MUST lấy dữ liệu qua
 endpoint tham chiếu dùng chung `POST /api/dynamics/reference` với `refType = 15`, KHÔNG tạo
@@ -840,7 +840,7 @@ search box (Type/Step name/Conditions/Search) phía trên bảng (FR-046); nhấ
 mọi điều kiện đã cung cấp, kết hợp AND, mỗi điều kiện chỉ cần khớp một bản ghi `eutr_references` bất
 kỳ của document đó — không bắt buộc cùng một bản ghi (FR-047/FR-048); kết quả lọc MUST hỗ trợ phân
 trang như danh sách gốc (FR-049); không cung cấp điều kiện nào rồi Search MUST hiển thị lại toàn bộ
-danh sách.
+danh sách. **Update 35**: so khớp tên file với Name của Step bỏ mọi khoảng trắng và đổi HOA ở cả hai vế (backend `EutrUploadService.NormalizeForStepMatch` + client `loadMatchingStepsForPoByName`), không đổi API/DB (FR-085).
 
 **Testing bổ sung (Update 10)**: kiểm thử thủ công theo `quickstart.md` kịch bản 6/6a/9r/9s — bao
 gồm xác nhận popup xem trước hiển thị đúng nội dung và xác nhận file KHÔNG bị xóa khỏi SharePoint

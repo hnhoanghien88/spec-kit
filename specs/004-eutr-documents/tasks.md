@@ -2263,3 +2263,33 @@ file) → **Update 21 / US6** (search box Type/Step name/Conditions/Search phía
 - [X] T-U32-5 `EutrUploadServiceTests`: cập nhật constructor/mocks; thêm test "chỉ khớp Step của Template" và "chặn Upload khi PO chưa gắn Template" — 7/7 pass; `dotnet build` ComplianceSys.Api: 0 errors
 - [ ] T-U32-6 Kiểm thử thủ công (file `APH Business License(AP).pdf` với Template-015; PO chưa gắn Template; Edit document Type "PO") — **NOT run** (cần môi trường thật)
 - `005-eutr-sales-orders` (Update 47) và `012-eutr-purchase-orders` (Update 45) kế thừa, không có task riêng ngoài việc ghi nhận trong spec.
+
+## Phase 38: Update 33 - Index cho phép user resize cột (FR-083)
+
+- [X] T-U33-1 `DataGridStyled`: thêm prop `resizableColumns` (mặc định false) hiện lại `.MuiDataGrid-columnSeparator`; `eutr-documents/index.jsx` bật prop + `disableColumnResize={false}`
+- [ ] T-U33-2 Kiểm thử thủ công: kéo resize từng cột, đổi trang/sort/lọc giữ độ rộng; màn hình khác không đổi — **NOT run** (cần môi trường thật)
+
+## Phase 39: Update 34 - Index ẩn cột Valid from/Valid to mặc định (FR-084)
+
+- [X] T-U34-1 `useEutrDocumentsColumns.jsx`: `defaultColumnVisibility.validFrom/validTo = false`
+- [ ] T-U34-2 Kiểm thử thủ công: mở index không thấy 2 cột; bật lại qua menu Columns hiển thị đúng — **NOT run** (cần môi trường thật)
+
+## Phase 40: Update 35 - So khớp tên file với tên Step bỏ khoảng trắng + UPPERCASE (FR-085, SC-025)
+
+- [X] T-U35-1 Backend `EutrUploadService`: thêm `NormalizeForStepMatch`; `matchedSteps` so khớp trên chuỗi đã chuẩn hoá; tie-break theo độ dài sau chuẩn hoá — `dotnet build ComplianceSys.Application` 0 lỗi
+- [X] T-U35-2 Client `EutrDocumentsFormDialog.jsx` `loadMatchingStepsForPoByName`: chuẩn hoá cùng quy tắc
+- [X] T-U35-3 Unit test `EutrUploadServiceTests.UploadMultipleToSharePointAndSaveDataAsync_ShouldMatchStep_IgnoringWhitespaceAndCase` (3 file mẫu) — 10/10 pass; case `1.ste-p1` không khớp chưa có test
+- [ ] T-U35-4 eslint client + kiểm thử thủ công theo quickstart Update 35 — **NOT run** (cần môi trường thật)
+- Kế thừa tự động bởi `005-eutr-sales-orders` (Update 60) và `012-eutr-purchase-orders` (Update 60) — không có task riêng ở hai spec đó ngoài ghi nhận.
+
+## Phase 41: Update 61 - Upload Type "General": chỉ chọn Step, ẩn Value (FR-086, SC-26)
+
+- [ ] T-U61-1 Client `EutrDocumentsFormDialog.jsx`: `isGeneralTypeName`; ẩn `EutrAddValueAutocomplete` + chip, `canSubmit` không yêu cầu chip (Add), Edit ẩn Value khi Type "General"
+- [ ] T-U61-2 Backend `SharePointController.eutr-upload-multi-by-type`: cho phép `RefValues` rỗng khi `TypeName` = "General"
+- [ ] T-U61-3 Backend `EutrUploadService.UploadMultipleForReferenceTypeAsync`: Type "General" ghi 1 dòng `eutr_references` `RefValue = NULL`, bỏ Recompute; kiểm tra `EutrDocumentsService.UpdateReferenceStepAsync` xử lý dòng `RefValue = NULL`
+- [ ] T-U61-4 Unit test + eslint/`dotnet build` + kiểm thử thủ công theo quickstart Update 61 — **NOT run**
+- [X] T-U61-5 Backend `EutrReferencesRepository.GetDocumentsByPoCodesAsync`: nhân bản document General (`RefValue IS NULL`, Type "General") cho từng mã PO — `dotnet build` Infrastructure pass
+- [X] T-U61-6 Backend `EutrTemplateDetailsResponseDto.TakeFromName` + 3 query `EutrTemplatesRepository` JOIN `eutr_reference_types` — build pass
+- [X] T-U61-7 Client `progressUtils.js`: `fileMatchesDetail`, `onlyMatchedGeneral`, `takeFromName`, khử trùng id (MapFile/ViewSalesOrder/PurchaseOrderView; Overview thêm `typeName`) — eslint file progressUtils pass
+- [X] T-U61-8 Backend `EutrProgressionService`: `RequiredKey`/`MatchedKeys` — `dotnet build` Application pass
+- [ ] T-U61-9 Unit test Progress (Step General vs Step PO cùng tên) + kiểm thử thủ công quickstart bước 7–8 — **NOT run** (cần môi trường thật)

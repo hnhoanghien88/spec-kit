@@ -1909,3 +1909,75 @@ Tiền đề: đã chạy `Sqls/Migration/37_create_eutr_history.sql`.
 5. Save lỗi (thiếu TemplateCode): không có dòng.
 
 Success criteria mapping: SC-118 → bước 1–5.
+
+## Update 54 (2026-10-13) — Sales ID là link ở index
+
+1. Mở Overview, click chữ Sales ID của một Sales Order → mở View summary của đúng SO (SC-120).
+2. Bấm Back → về Overview với search/page cũ.
+3. Icon View summary ở Actions vẫn hoạt động như cũ.
+
+## Update 56 (2026-10-13) — Template theo EUTRVersion của PO
+
+1. SO có PO gán Templates-001 version 1 trong D365 nhưng template đã Request change lên V2: Map File Step 2 và View hiện cây V1 (SC-121).
+2. Progress ở Overview (sau khi recompute) khớp với View; so sánh với màn View của 012 cho cùng PO.
+3. PO không có EUTRVersion → cây bản hiện hành như cũ.
+
+## Update 57 (2026-10-13) — Dialog tiến trình Download
+
+1. View → nhấn **Download** (SO có tài liệu Mapped) → dialog `Downloading Files...` hiện ngay (`Status: Preparing...`), `Files: 0/N`, % hoặc `Downloaded <bytes>` tăng; xong → dialog đóng, file zip được tải (SC-122).
+2. Overview → icon Download của 1 dòng → cùng dialog; xong tự đóng.
+3. View → nút Download ở dòng AVAILABLE FILES → dialog `Files: 0/1 → 1/1`, tự đóng.
+4. SO không có tài liệu Mapped → chỉ snackbar `No documents available for download.`, không mở dialog (FR-074).
+5. Ngắt mạng/backend lỗi giữa chừng → dialog đóng, snackbar `Download failed. please try again.`.
+
+## Update 58 (2026-10-14) — Gom nhóm theo Trader relationship
+
+1. Step "Trader or secondary processer" bật `IsGroup` (001 Update 3); PO của Sales Order có `DS>PD`, `AP>PD`, `PD>RES` và các file `(AP-PD)`, `(DS-PD)`, `(PD)`.
+2. Mở `map-file` (Step 2) và View của Sales Order → cây của PO đang chọn hiện nhóm AP, DS, PD (FR-262, SC-123).
+3. Đổi PO ở toolbar → nhóm theo quan hệ của PO mới. Step `IsGroup = 0`/PO không quan hệ → phẳng.
+4. Map/unmap file, Progress, đếm missing không đổi.
+
+## Update 60 (2026-10-15) — Upload: tên file khớp Step bỏ khoảng trắng và không phân biệt hoa/thường
+
+1. Template của PO có Step `1.step1`.
+2. Upload (Type = "PO") file `1.step1PD-AP.pdf` → document gắn Step `1.step1` (trước đây không gắn được).
+3. Upload `1.step1 PD-AP.pdf`, `1. STEP 1 pd-ap.pdf` → vẫn gắn Step `1.step1`.
+4. Upload `1.ste-p1.pdf` → KHÔNG khớp (chỉ bỏ khoảng trắng, không bỏ ký tự khác).
+5. Edit document Type "PO" có tên file như bước 2 → combobox Step liệt kê Step `1.step1`.
+6. Có hai Step `Invoice AP` và `Invoice AP PD`: file `InvoiceAPPD.pdf` → chọn Step có Name dài nhất (`Invoice AP PD`).
+
+### Success criteria mapping (Update 60)
+
+- SC-125: bước 2–3. FR-264: bước 2–6.
+
+
+## Update 61 (2026-10-15) — Sau Upload: Vendor trong tên file khớp Code Vendor không phân biệt hoa/thường
+
+1. Sales Order có PO với Template chứa Step `IsGroup = 1` (vd `1.1 Invoice`); Vendor `AP`, `PD` có ở 026.
+2. Ở `map-file` (Step 2) Upload file `1.1 Invoice (ap-Pd).pdf` → `eutr_purchase_relationship` có `PO, AP` và `PO, PD`; `eutr_trader_relationship` có `AP → PD`.
+3. Cây Template của PO đang chọn (map-file và View) gom file vào nhóm AP (FR-262).
+4. Upload file có mã không thuộc 026 (`(xx)`) → bỏ qua, không tạo dòng.
+
+### Success criteria mapping (Update 61)
+
+- SC-126: bước 2–3. FR-265: bước 2–4.
+
+---
+
+## Update 62 (2026-10-15) — Upload Type "General": chỉ chọn Step
+
+1. Ở Reference Types → Type "General" → Assign Steps: gán ít nhất 1 Step.
+2. Mở popup Add (004 index / 005 Map File / 012 PurchId View) → chọn Type = "General": chỉ còn ô Step (đã lọc), không có ô Value/chip.
+3. Chọn Step → Upload 1 file → thành công; document có Step đúng, thư mục SharePoint `General`.
+4. DB: `eutr_references` có 1 dòng `RefValue IS NULL` cho document.
+5. Mở Edit document đó: không có ô Value, đổi Step lưu được.
+6. Chọn Type khác (vd "Invoice") → Value vẫn hiện và bắt buộc.
+
+### Success criteria mapping (Update 62)
+
+- SC-127: bước 2–3. FR-266: bước 2–6.
+
+### Bổ sung Update 62 — General dùng chung mọi PO
+
+7. Template có Step General `3.Business license_Response VN` (TakeFrom = General) ở PO A và PO B: upload 1 file General cho Step đó → mở Map File/View của cả A và B: Step "Mapped", file hiện 1 lần, badge TakeFrom = "General".
+8. Template có Step cùng tên nhưng TakeFrom = "PO": Step vẫn "Required - missing", file General không hiện ở AVAILABLE FILES, Progress không tăng.

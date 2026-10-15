@@ -2134,3 +2134,7 @@ Add `duplicateStep` to `useStepTree.js` and a Duplicate toolbar button + `handle
 ## Update 30 (2026-10-12) — Export/Import Excel cho template
 
 **Summary**: Mở rộng Export/Import hiện có (chỉ header) thành 1 dòng/step có cây; thêm nút Export/Import trên TemplateListPage. Chi tiết quyết định: research.md "Update 30". **Technical Context**: .NET 8 + ClosedXML (đã dùng), React/MUI; Storage không đổi (MySQL, không migration); Testing: unit test xUnit cho parser/builder Import + build FE; Constraints: tái dùng AddAsync/UpdateAsync (transaction, validation); Scale: vài trăm template/vài nghìn dòng. **Constitution Check**: không vi phạm (không schema mới, không endpoint mới). **Files**: BE `EutrTemplatesExportService`, `EutrTemplatesImportService`, `ImportEutrTemplatesResultDto`, `IEutrTemplatesRepository`+`EutrTemplatesRepository` (GetCurrentByCodeAsync); FE `TemplateListPage.jsx`, `ImportResultDialog.jsx`.
+
+## Update 31 (2026-10-13) — Panel Versions + View chỉ-xem
+
+**Summary**: Master-detail trên TemplateListPage; endpoint đọc version theo Code; View tái dùng TemplateBuilderPage ở chế độ chỉ-xem. Chi tiết: research.md "Update 31". **Constitution Check**: không đổi schema.

@@ -197,3 +197,9 @@ US1 (Phase 3) — xem + tìm kiếm + phân trang — là lát cắt tối thi�
 - [x] T033 `EutrStepsController`: `POST template-usage` (policy `EutrSteps.Delete`). `dotnet build` không có lỗi biên dịch CS (còn lỗi copy DLL do API đang chạy giữ file)
 - [x] T034 Client: `eutrStepApi.getTemplateUsage`, repository/interface, `GetEutrStepTemplateUsageUseCase`, `eutr-steps/index.jsx` dựng nội dung xác nhận liệt kê Template (xóa đơn + nhiều), `ConfirmDialog` pre-line; eslint sạch ở file mới/sửa
 - [ ] T035 Kiểm tra tay theo quickstart Update 2 trên DB thử nghiệm — CHƯA chạy (cần backend chạy lại + DB); SQL cascade chưa được chạy thử trên MySQL thật
+
+## Phase 10: Update 3 (2026-10-14) — Cột IsGroup (FR-016, SC-008)
+
+- [X] T036 Migration 45 + `EutrStep.IsGroup` + `EutrStepRequestDto.IsGroup` + `EutrTemplateDetailsResponseDto.IsGroup` + 3 câu SQL chi tiết Template (012 Update 58)
+- [X] T037 Client: checkbox ở `EutrStepModal` + cột Group ở `useEutrStepColumns`
+- [X] T038 Build/lint: eslint 0 lỗi mới, `vite build` OK, `dotnet test` pass. Kiểm tra tay theo quickstart Update 3 — **NOT run** (cần DB đã chạy migration 45)

@@ -10,6 +10,13 @@
 
 ## Clarifications
 
+### Session 2026-10-13 (Update 31) — Panel "Versions" bên phải màn hình danh sách + xem (chỉ đọc) cây step của từng version
+
+- Input: "cập nhật 003-eutr-templates. màn hình index, 1 template có thể có nhiều version. nên thêm 1 cột bên phải để hiển thị version. Khi click vào 1 template, bên phải sẽ hiển thị toàn bộ version của template đó với các cột Version, Steps, Action chỉ View, CreatedDate, CreatedBy. Khi click nút view sẽ hiển thị template tree của version đó, không cho sửa, chỉ xem".
+- Bối cảnh: mỗi lần "Request change" (Update 16) tạo một dòng mới cùng Code với VersionId+1 và ẩn dòng cũ (IsHide=1); grid danh sách chỉ hiện version hiện hành nên người dùng không có cách nào xem lại các version trước.
+- Change: TemplateListPage được chia thành hai vùng — grid template hiện có ở bên trái, panel **Versions** ở bên phải. Click một template ở grid → panel liệt kê toàn bộ version của template đó (cùng Code) với cột **Version, Steps, Actions (chỉ nút View), Created Date, Created By**. Nút **View** mở cây step của đúng version đó ở chế độ chỉ-xem (không sửa được). Xem User Story 11, FR-118 đến FR-123.
+- Quyết định (mặc định hợp lý, không cần hỏi thêm): (1) Cột Version hiện có trên grid trái được giữ nguyên (hiển thị version hiện hành). (2) Panel sắp xếp version mới nhất trước và bao gồm cả version cũ đã ẩn; version đã xóa mềm không hiển thị. (3) Chế độ chỉ-xem áp dụng cho MỌI version (kể cả Draft hiện hành) — muốn sửa thì dùng Edit ở grid như hiện nay. (4) Created Date/Created By là thời điểm và người tạo chính dòng version đó (với version ≥ 2 là người thực hiện Request change).
+
 ### Session 2026-07-03
 
 - Q: Khi đánh dấu template là Default, phạm vi ràng buộc là gì? → A: Mỗi VendorCode chỉ có tối đa 1 template IsDefault=1. Khi đánh dấu template mới là default, hệ thống tự bỏ cờ default trên template cũ cùng VendorCode.
@@ -1317,6 +1324,25 @@ Người dùng xuất các template ra file Excel, chỉnh sửa trên Excel (đ
 
 ---
 
+### User Story 11 - Xem các version của template và xem cây step từng version (Priority: P2, Update 31)
+
+Trên TemplateListPage, người dùng click vào một template ở grid bên trái; panel **Versions** bên phải liệt kê toàn bộ version của template đó với các cột **Version**, **Steps**, **Actions** (chỉ có nút View), **Created Date**, **Created By**. Nhấn **View** ở một version sẽ mở màn hình cây step (template tree) của đúng version đó ở chế độ chỉ-xem.
+
+**Why this priority**: Version cũ bị ẩn khỏi danh sách sau Request change; cần cách tra cứu lịch sử mà không nguy cơ sửa nhầm.
+
+**Independent Test**: Chọn template có ≥ 2 version (đã Request change ít nhất một lần), kiểm tra panel liệt kê đủ version với thông tin đúng, nhấn View ở version cũ và xác nhận cây step hiển thị đúng dữ liệu của version đó và không có thao tác chỉnh sửa nào.
+
+**Acceptance Scenarios**:
+
+1. **Given** chưa click template nào, **When** xem màn hình, **Then** panel Versions hiển thị thông báo hướng dẫn chọn một template.
+2. **Given** template Code="T-001" có V1 (đã ẩn) và V2 (hiện hành), **When** click dòng T-001 ở grid, **Then** panel liệt kê V2 rồi V1, mỗi dòng có Steps, Created Date, Created By và chỉ một nút View ở cột Actions.
+3. **Given** template chỉ có một version, **When** click dòng đó, **Then** panel hiển thị đúng một dòng.
+4. **Given** đang xem panel của template A, **When** click template B, **Then** panel chuyển sang version của B; click các icon Edit/Clone/Apply/Delete trên dòng không làm đổi hành vi hiện có của các icon đó.
+5. **Given** panel hiển thị V1 (đã ẩn), **When** nhấn View, **Then** mở màn hình cây step của V1 chỉ-xem: không có thao tác thêm/sửa/xóa/kéo thả/di chuyển/duplicate step, không có Save/Public D365/Request change; có cách quay lại danh sách.
+6. **Given** nhấn View ở version Draft hiện hành, **When** màn hình mở, **Then** vẫn ở chế độ chỉ-xem.
+
+---
+
 ### Edge Cases
 
 - Khi danh sách rỗng, bảng hiển thị trạng thái "No data" thay vì lỗi.
@@ -1498,6 +1524,7 @@ Người dùng xuất các template ra file Excel, chỉnh sửa trên Excel (đ
   Clone/Confirm, hoặc hủy ở hộp thoại cảnh báo xác nhận, hệ thống KHÔNG tạo template mới, KHÔNG sao
   chép bất kỳ dữ liệu nào.
 - (Update 30) Edge: hai dòng cùng step trong một template → lỗi trùng tên; Parent Step trỏ tới step không tồn tại trong file → lỗi; xóa một step cha khỏi file thì các step con còn trong file có Parent Step không hợp lệ → lỗi (không tự xóa lan); các dòng cùng Template Code ở những khối không liên tiếp vẫn gom thành một template; Name mới trùng template khác → lỗi cho template đó; khoảng trắng thừa được Trim; file không có dòng dữ liệu → thông báo không có gì để import.
+- (Update 31) Edge: template vừa Request change/xóa trong lúc panel đang mở → panel làm mới (version mới xuất hiện / panel trở về trạng thái chưa chọn); View một version mà dữ liệu đã bị xóa → báo lỗi không tìm thấy, không crash; màn hình hẹp → panel Versions xếp dưới grid.
 
 ### Session 2026-09-10 (Update 24) — Chặn chọn trùng step khi Edit step trong cây
 
@@ -2399,6 +2426,12 @@ Người dùng xuất các template ra file Excel, chỉnh sửa trên Excel (đ
 - **FR-115 (Update 30)**: Step có tên chưa tồn tại trong danh sách step chuẩn MUST được tự tạo khi Import thành công, cùng cơ chế với FR-007a.
 - **FR-116 (Update 30)**: Sau Import, hệ thống MUST hiển thị kết quả chi tiết theo từng template và từng dòng (OK hoặc lỗi + lý do, kèm số dòng trong file) và tự làm mới danh sách.
 - **FR-117 (Update 30)**: File do Export xuất ra, Import lại không chỉnh sửa gì MUST không làm đổi dữ liệu của template Draft (idempotent); template Public D365 trong file đó được báo là bị từ chối.
+- **FR-118 (Update 31)**: TemplateListPage MUST có hai tab: **General** (grid template hiện có, hiển thị đầy đủ 100% khung, giữ nguyên cột/bộ lọc/phân trang/cột Version hiện hành) và **Versions** (panel version của template đang chọn, hiển thị đầy đủ 100% khung). Click một dòng ở General chọn template; tab Versions hiển thị version của template đó (chưa chọn thì có hướng dẫn).
+- **FR-119 (Update 31)**: Click vào một dòng template (ngoài các icon Actions) MUST đánh dấu dòng đó đang chọn và panel Versions MUST liệt kê toàn bộ version chưa xóa của template cùng Code (kể cả version cũ đã ẩn), mới nhất trước, với cột Version, Steps (số step của chính version đó), Actions, Created Date, Created By. Khi chưa chọn template, panel hiển thị thông báo hướng dẫn.
+- **FR-120 (Update 31)**: Cột Actions của panel Versions MUST chỉ có nút **View**; không có Edit/Clone/Delete/Apply/Request change.
+- **FR-121 (Update 31)**: Nhấn View MUST mở cây step của đúng version đã chọn ở chế độ chỉ-xem hoàn toàn (kể cả version Draft, Public D365 hay đã ẩn): không thể thêm/sửa/xóa/kéo thả/di chuyển/duplicate step, không có Save, Public D365, Request change; người dùng quay lại được danh sách.
+- **FR-122 (Update 31)**: Panel Versions MUST được làm mới khi dữ liệu thay đổi (Request change tạo version mới, xóa template; nếu dòng đang chọn biến mất do đổi trang/tìm kiếm thì panel về trạng thái chưa chọn). Tính năng không thay đổi dữ liệu và không đổi hành vi của các chức năng hiện có.
+- **FR-123 (Update 31)**: Panel Versions và màn hình View dùng cùng quyền truy cập hiện có của màn hình EUTR Templates.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -2759,6 +2792,8 @@ Người dùng xuất các template ra file Excel, chỉnh sửa trên Excel (đ
 - **SC-077 (Update 30)**: Người dùng đổi một template Draft có 30 step (thêm, xóa, đổi step) qua Excel và nhận kết quả trong dưới 2 phút, nhanh hơn thao tác thủ công trên màn hình Edit.
 - **SC-078 (Update 30)**: 100% dòng lỗi trong file Import được báo kèm số dòng và lý do, và 0 template có lỗi bị thay đổi dữ liệu một phần.
 - **SC-079 (Update 30)**: Export rồi Import lại cùng file với template Draft cho 0 thay đổi dữ liệu.
+- **SC-080 (Update 31)**: Người dùng xem được cây step của một version cũ chỉ với 2 thao tác (chọn template, nhấn View) trong dưới 10 giây.
+- **SC-081 (Update 31)**: 100% version mở bằng View không thể bị chỉnh sửa (0 thao tác thay đổi dữ liệu khả dụng), và panel liệt kê đủ 100% version chưa xóa của template.
 
 ## Assumptions
 
@@ -3099,3 +3134,4 @@ Người dùng xuất các template ra file Excel, chỉnh sửa trên Excel (đ
 
 
 - (Update 30) Chỉ có Export/Import ở mức danh sách (không có trên màn hình Edit/ApplyCustomerPage); vendor mapping (eutr_template_references) KHÔNG nằm trong file này và không bị đổi khi Import (đã có Import/Export riêng ở Update 14). Import chỉnh sửa tại chỗ nên không tạo version mới; muốn sửa template Public D365 phải Request change trước. IsDefault không bị Import thay đổi (UI đã ẩn ở Update 28). Template mới từ Import tuân theo mọi ràng buộc của Create (FR-099). Quyền truy cập dùng cùng quyền hiện có của màn hình EUTR Templates. Giới hạn kích thước file/số dòng dùng mặc định chung của hệ thống cho import Excel.
+- (Update 31) Chỉ thêm giao diện xem; không đổi schema, không đổi quy tắc tạo version (Update 16). Dữ liệu version dựa trên các dòng cùng Code đã có sẵn (version cũ giữ nguyên cây step khi bị ẩn). Created Date/Created By lấy từ chính dòng version đó. Không phân trang trong panel (số version/template nhỏ). Version đã xóa mềm không hiển thị.

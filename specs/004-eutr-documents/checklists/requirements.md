@@ -229,3 +229,5 @@
   `research.md`, `tasks.md` Phase 33, `contracts/eutr-documents-api.md`), and the
   `EutrUploadService.cs`/`EutrDocumentsFormDialog.jsx` size-limit constant changes described here should
   be applied to match.
+
+- **2026-10-15 (Update 35)**: Re-validated after adding FR-085, SC-025 và acceptance scenario/edge case/assumption liên quan — so khớp tên file với Step bỏ khoảng trắng + UPPERCASE. Không [NEEDS CLARIFICATION]: yêu cầu có ví dụ cụ thể; ngoài phạm vi: bỏ dấu câu/dấu tiếng Việt, so khớp mờ.

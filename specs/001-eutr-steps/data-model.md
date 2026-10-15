@@ -39,3 +39,7 @@ Nguồn sự thật: `compliance-sys-api/src/ComplianceSys.Domain/Entities/EutrS
 ## Update 2 (2026-10-08)
 
 Không đổi schema. Xóa Step tác động: `eutr_steps`, `eutr_template_details` (StepId), `eutr_references` (StepId trực tiếp hoặc RefId trỏ tới template_details bị xóa) + `eutr_reference_details` (RefId), `eutr_master_documents` (StepId), `eutr_reference_type_details` (StepId). `eutr_documents` giữ nguyên. DTO mới `EutrStepTemplateUsageDto { StepId, StepName, TemplateNames[] }`.
+
+## Update 3 — Cột `IsGroup`
+
+`eutr_steps`: thêm `IsGroup` TINYINT(1) NOT NULL DEFAULT 0 (sau `Name`). Entity `EutrStep.IsGroup` (bool); `EutrStepRequestDto.IsGroup`; `EutrTemplateDetailsResponseDto.IsGroup` (lấy từ JOIN `eutr_steps`).

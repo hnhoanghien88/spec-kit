@@ -3237,3 +3237,13 @@ T454 sequentially (build + end-to-end)
 - [X] T30-05 Unit test cho Import/Export
 - [X] T30-06 FE: nút Export/Import + input .xlsx trên TemplateListPage; cập nhật ImportResultDialog
 - [X] T30-07 Backend compile OK (Api exe locked by running process → copy step failed, không phải lỗi code); 6 unit test pass; FE eslint + vite build OK. NOT run — cần môi trường live: Export/Import thật với DB, tạo/sửa template qua file
+
+## Phase 31: Update 31 — Panel Versions + View chỉ-xem (FR-118..FR-123)
+
+- [X] T31-01 BE: endpoint/repo/service đọc danh sách version theo Code (gồm IsHide=1, StepsCount, CreatedDate, CreatedBy)
+- [X] T31-02 BE: đảm bảo lấy chi tiết theo Id đọc được version ẩn
+- [X] T31-03 FE: API/repository/use case lấy version theo Code
+- [X] T31-04 FE: TemplateListPage bố cục 2 cột + chọn dòng + VersionsPanel (Version, Steps, Actions=View, Created Date, Created By)
+- [X] T31-05 FE: chế độ chỉ-xem cho TemplateBuilderPage (khóa mọi thao tác sửa, ẩn Save/Public D365/Request change)
+- [X] T31-06a eslint (file đã sửa: 0 lỗi mới), vite build OK, BE Application/Infrastructure build OK (Api exe đang chạy nên bước copy bị khóa, không phải lỗi code)
+- [ ] T31-06b Manual theo quickstart Update 31 — NOT run (cần môi trường live)

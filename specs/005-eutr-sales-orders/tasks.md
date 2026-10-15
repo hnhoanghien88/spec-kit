@@ -6234,3 +6234,71 @@ ItemId/ConfigId (AND khi cả hai có giá trị, AND với mọi filter khác �
 - [X] T506 DB: cột `ProductVariant` ở `Sqls/Tables/eutr_history.sql` + `37_create_eutr_history.sql` (gộp, không còn file 38); entity `EutrHistory.ProductVariant`
 - [X] T507 Backend: `SavePoMappingAsync` diff theo (PurchId, ProductVariant), ghi ProductVariant; unit test cập nhật — 14/14 pass
 - [ ] T508 Kiểm thử thủ công: Save PO Mapping → `eutr_history.ProductVariant` đúng — **CHƯA chạy**
+
+## Phase 102: Update 53 - Index cho phép user resize cột (FR-257)
+
+- [X] T-U53-1 Component `ResizableHeaderCell` + hook `useResizableColumns`; SalesOrderOverviewPage dùng cho header bảng (eslint các file thay đổi: 0 lỗi mới)
+- [ ] T-U53-2 Kiểm thử thủ công: kéo resize từng cột, đổi trang/tìm kiếm giữ độ rộng — **NOT run** (cần môi trường thật)
+
+## Phase 103: Update 54 - Sales ID ở index là link mở View summary (FR-258)
+
+- [X] T-U54-1 `SalesOrderOverviewPage.jsx`: ô Sales ID render link (MUI `Link component="button"`), onClick `navigate('/eutr/sales-orders/${row.code}/view', { state: { fromOverview: true } })`, underline khi hover (eslint: 0 lỗi mới)
+- [ ] T-U54-2 Kiểm thử thủ công: click Sales ID → View summary đúng SO; Back về đúng search/page; icon View summary vẫn hoạt động; resize cột không kích hoạt link — **NOT run** (cần môi trường thật)
+
+## Phase 104: Update 55 - View: không có PO hiển thị thông báo EUDR (FR-259)
+
+- [X] T-U55-1 `SalesLineGroupedPoTable.jsx` thêm prop `emptyPoText`; `ViewSalesOrderPage.jsx` truyền "No materials have been set up for EUDR." — nhóm không có PO hiện text thay bảng (eslint: 0 lỗi mới)
+- [ ] T-U55-2 Kiểm thử thủ công: nhóm không có PO → text; nhóm có PO → bảng như cũ — **NOT run** (cần môi trường thật)
+
+## Phase 105: Update 56 - Template của PO theo EUTRVersion (FR-260)
+
+- [X] T-U56-1 Client: `utils/poTemplateLoader.js` (version từ refType=15 + `by-code-version`, fallback bản hiện hành); `MapFilePage.jsx` + `ViewSalesOrderPage.jsx` dùng cho `templatesData`/`poTemplates` (eslint: 0 lỗi mới; `vite build` OK)
+- [X] T-U56-2 Backend: `EutrProgressionService.RecomputeAsync` tính theo version từng PO (`GetD365PurchOrderAsync`, `GetByCodeAndVersionWithDetailsAsync`) (`dotnet build` OK)
+- [X] T-U56-3 Backend: `EutrSynchronizeDataService.SendPurchaseMissingAlertAsync` chọn template theo (Code, EUTRVersion) của từng PO (`dotnet build` OK)
+- [ ] T-U56-4 Kiểm thử thủ công: PO V1 khi template đã V2 → Step 2/View/Progress/email Missing theo V1; PO không có version → bản hiện hành; chạy lại recompute cho SalesId hiện có — **NOT run** (cần môi trường thật)
+
+## Phase 106: Update 57 - Dialog tiến trình Download (FR-261, SC-122)
+
+- [X] T-U57-1 `eutrDocumentsApi.downloadZip` + `RestEutrDocumentsRepository.downloadZip` + `DownloadEutrSalesOrderZipUseCase.execute` nhận `onProgress` (axios `onDownloadProgress`)
+- [X] T-U57-2 `ViewSalesOrderPage.jsx`: `useDownloadProgress` + `<ExportProgressDialog>`; mở trong `handleDownload` (zip) và `handleDownloadFile` (file đơn, `0/1 → 1/1`), đóng trong `finally`
+- [X] T-U57-3 `SalesOrderOverviewPage.jsx`: cùng cơ chế cho `handleDownload` theo dòng; không mở dialog khi không có tài liệu (FR-074)
+- [X] T-U57-4 eslint các file thay đổi
+- [ ] T-U57-5 Kiểm thử thủ công theo quickstart Update 57 — **NOT run** (cần môi trường thật)
+
+## Phase 107: Update 58 - Gom nhóm theo Trader relationship ở map-file và View (FR-262, SC-123; 012 Update 58)
+
+- [X] T-U58-1 `MapFilePage.jsx`: TreeNode dùng `GroupedTreeChildren` + `useTraderGraph(PO đang chọn)`, truyền `traderGraph` xuống đệ quy và root
+- [X] T-U58-2 `ViewSalesOrderPage.jsx`: tương tự cho ViewNode
+- [X] T-U58-3 `vite build` OK; eslint: chỉ còn các lỗi no-unused-vars có sẵn từ trước (saveError, setFileSearch, selectedDetail, selectedDetailFiles, selectedPOCount, canSubmit, isMapped), không có lỗi mới từ thay đổi này
+- [ ] T-U58-4 Kiểm thử thủ công theo quickstart Update 58 — **NOT run** (cần migration 45 + dữ liệu thật)
+
+## Phase 108: Update 59 - Download zip: thư mục theo ItemId-ConfigId thay PO (FR-263, SC-124)
+
+- [X] T-U59-1 `ViewSalesOrderPage.jsx` `buildDownloadFolders`: gom file Mapped của các PO theo ProductVariant, `folderPath` = [`ItemId-ConfigId Name - Description`], dedupe theo `fileId` — logic ở `utils/downloadFolders.js` (`buildItemConfigFolders`)
+- [X] T-U59-2 `SalesOrderOverviewPage.jsx` `handleDownload`: cùng cách gom/đặt tên
+- [X] T-U59-3 Kiểm tra backend làm sạch tên thư mục zip với các ký tự còn lại trong Name/Description; bổ sung nếu thiếu — làm sạch ngay ở client (`/:*?"<>|` → `_`)
+- [ ] T-U59-4 eslint OK (chỉ lỗi cũ canSubmit/isMapped) + kiểm thử thủ công — **NOT run** (cần môi trường thật)
+
+## Phase 109: Update 60 - So khớp tên file với tên Step bỏ khoảng trắng + UPPERCASE (FR-264, SC-125)
+
+- [X] T-U60-1 Backend `EutrUploadService`: thêm `NormalizeForStepMatch`; `matchedSteps` so khớp trên chuỗi đã chuẩn hoá; tie-break theo độ dài sau chuẩn hoá — `dotnet build ComplianceSys.Application` 0 lỗi
+- [X] T-U60-2 Client `EutrDocumentsFormDialog.jsx` `loadMatchingStepsForPoByName`: chuẩn hoá cùng quy tắc
+- [X] T-U60-3 Unit test `EutrUploadServiceTests.UploadMultipleToSharePointAndSaveDataAsync_ShouldMatchStep_IgnoringWhitespaceAndCase` (3 file mẫu) — 10/10 pass; case `1.ste-p1` không khớp chưa có test
+- [ ] T-U60-4 eslint client + kiểm thử thủ công theo quickstart Update 60 — **NOT run** (cần môi trường thật)
+- Kế thừa `004-eutr-documents` Update 35 (FR-085) — không có code riêng ở Map File ngoài popup/`EutrUploadService` dùng chung.
+
+## Phase 110: Update 61 - Chuẩn hoá HOA tên file + Code Vendor khi tạo relationship sau Upload (FR-265, SC-126; 012 Update 61)
+
+- [X] T-U61-1 Backend `EutrProgressionService` — thay đổi dùng chung với 012 T-U61-1/2 (không có code riêng của 005)
+- [ ] T-U61-2 Kiểm thử thủ công theo quickstart Update 61 (Upload ở map-file → relationship → nhóm Vendor ở cây) — **NOT run** (cần môi trường thật)
+- Không đổi API/DB/client.
+
+## Phase 111: Update 62 - Upload Type "General": chỉ chọn Step, ẩn Value (FR-266, SC-127)
+
+- [ ] T-U62-1 Không có code riêng — dùng chung thay đổi `004-eutr-documents` T-U61-1..4 (popup `EutrDocumentsFormDialog.jsx`, `SharePointController`, `EutrUploadService`)
+- [ ] T-U62-2 Kiểm thử thủ công theo quickstart Update 62 (Upload Type "General" từ màn hình này) — **NOT run** (cần môi trường thật)
+- [X] T-U62-5 Backend `EutrReferencesRepository.GetDocumentsByPoCodesAsync`: nhân bản document General (`RefValue IS NULL`, Type "General") cho từng mã PO — `dotnet build` Infrastructure pass
+- [X] T-U62-6 Backend `EutrTemplateDetailsResponseDto.TakeFromName` + 3 query `EutrTemplatesRepository` JOIN `eutr_reference_types` — build pass
+- [X] T-U62-7 Client `progressUtils.js`: `fileMatchesDetail`, `onlyMatchedGeneral`, `takeFromName`, khử trùng id (MapFile/ViewSalesOrder/PurchaseOrderView; Overview thêm `typeName`) — eslint file progressUtils pass
+- [X] T-U62-8 Backend `EutrProgressionService`: `RequiredKey`/`MatchedKeys` — `dotnet build` Application pass
+- [ ] T-U62-9 Unit test Progress (Step General vs Step PO cùng tên) + kiểm thử thủ công quickstart bước 7–8 — **NOT run** (cần môi trường thật)

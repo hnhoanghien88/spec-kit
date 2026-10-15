@@ -1924,3 +1924,16 @@ No data-model change. Client-only view state `filePage` is removed; the file lis
 ## Update 51 (2026-10-08): dùng bảng `eutr_history` (FR-255)
 
 Bảng định nghĩa đầy đủ ở `specs/012-eutr-purchase-orders/data-model.md` Update 15. 005 ghi Type=1: Value=SalesId, RefValue=PurchId, Version=NULL, Note=`checked`|`Unchecked`. Không đổi `eutr_purchase_attachments`.
+
+## Update 60 — Không đổi DB (FR-264)
+
+Không thêm/sửa bảng, cột, stored procedure; không cần migration. Chuẩn hoá khoảng trắng/HOA chỉ áp dụng khi so sánh `file.FileName` với `eutr_steps.Name` trong bộ nhớ; `eutr_documents.Name` và `eutr_steps.Name` lưu nguyên văn.
+
+## Update 61 — Không đổi DB (FR-265)
+
+Không thêm/sửa bảng, cột, stored procedure; không cần migration. Chuẩn hoá (bỏ khoảng trắng + HOA) chỉ áp dụng khi so sánh token tên file với `Code` Vendor; `eutr_purchase_relationship`/`eutr_trader_relationship` lưu `Code` gốc như 012 Update 54/55.
+
+## Update 62 — Không đổi DB (FR-266)
+
+- `eutr_references.RefValue` đã `VARCHAR(255) NULL`; document Type "General" ghi `RefValue = NULL`, `StepId` = Step đã chọn, `RefType` = Id Type "General". Không migration, không đổi SP.
+- API chi tiết Template (`EutrTemplateDetailsResponseDto`) thêm `TakeFromName` (JOIN `eutr_reference_types` theo `TakeFrom`) — chỉ DTO/query, không đổi bảng.

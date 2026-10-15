@@ -742,3 +742,13 @@ don't depend on `ComplSynchronizeDataService` itself.
 - T025 (D365 `Range` field verification) is time-sensitive — do it as early as practical (ideally
   right after T002/T004 land) so any needed correction to the `Range` mapping happens before T016's
   unit tests and T026's quickstart pass are written against a possibly-wrong assumption.
+
+---
+
+## Phase 7: Update 2 — `eutr_progression` Type / PurchId / Status (2026-10-13)
+
+- [X] T101 Migration `Sqls/Migration/41_alter_eutr_progression_add_type_purchid_status.sql` + cập nhật `Sqls/Tables/eutr_progression.sql` (FR-018, FR-020)
+- [X] T102 `EutrProgression` entity thêm `Type`, `PurchId`, `Status` (FR-018)
+- [X] T103 `EutrProgressionRepository`: `GetBySalesIdsAsync`/`UpsertAsync`/`DeleteAsync` chỉ Type = 0 (FR-021, FR-022)
+- [ ] T104 Chạy migration 41 trên DB và kiểm tra thủ công theo quickstart Update 2 — NOT run (cần môi trường thật; dotnet build chỉ gặp lỗi khóa file do API đang chạy, không có lỗi biên dịch)
+- [ ] T105 Cập nhật unit test `EutrProgressionServiceTests`/`EutrSynchronizeDataServiceTests` nếu cần — NOT run

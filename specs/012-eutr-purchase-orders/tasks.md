@@ -595,3 +595,93 @@ mới.
 - [X] T076 [P] Unit test `EutrPurchaseOrdersServiceTests`: ghi đúng 1 dòng khi OK; không ghi khi D365 lỗi; lỗi ghi lịch sử không ném
 - [X] T077 Build + `dotnet test --filter "EutrPurchaseOrdersServiceTests|EutrPurchaseAttachmentsServiceTests"` 13/13 pass
 - [ ] T078 Kiểm thử thủ công theo quickstart Update 15 — cần môi trường thật
+
+## Phase 17: Update 52 - Index cho phép user resize cột (FR-237)
+
+- [X] T-U52-1 Component `ResizableHeaderCell` + hook `useResizableColumns`; PurchaseOrderOverviewPage dùng cho header bảng (eslint các file thay đổi: 0 lỗi mới)
+- [ ] T-U52-2 Kiểm thử thủ công: kéo resize từng cột, đổi trang/tìm kiếm giữ độ rộng — **NOT run** (cần môi trường thật)
+
+## Phase 18: Update 53 - Dialog tiến trình Download (FR-238, SC-016)
+
+- [ ] T-U53-1 `PurchaseOrderViewPage.jsx`: `useDownloadProgress` + `<ExportProgressDialog>`; mở trong `handleDownloadFile` (`0/1 → 1/1`), đóng trong `finally`
+- [ ] T-U53-2 eslint file thay đổi
+- [ ] T-U53-3 Kiểm thử thủ công theo quickstart Update 53 — **NOT run** (cần môi trường thật)
+
+## Phase 19: Update 54 - Vendor từ tên file PO → `eutr_purchase_relationship` (FR-239..FR-242, SC-017; 013 Update 3)
+
+- [X] T-U54-1 Migration `compliance-sys-api/src/ComplianceSys.Infrastructure/Sqls/Migration/43_create_eutr_purchase_relationship.sql` (PurchId, Vendor, UNIQUE)
+- [X] T-U54-2 [P] Entity `Domain/Entities/EutrPurchaseRelationship.cs`
+- [X] T-U54-3 `IEutrVendorsRepository.GetAllCodesAsync` + `EutrVendorsRepository`
+- [X] T-U54-4 `IEutrPurchaseRelationshipRepository` + `EutrPurchaseRelationshipRepository.SyncAsync` + đăng ký DI (Infrastructure/DependencyInjection.cs)
+- [X] T-U54-5 `EutrProgressionService.RecomputeForPurchOrderAsync`: trích Vendor (cắt tên Step, token, khớp Code) và gọi SyncAsync; try/catch chỉ log
+- [X] T-U54-6 Unit test trong `tests/ComplianceSysApi.UnitTests/Services/EutrProgressionServiceTests.cs` (AP-PD, xóa AP, token lạ, không hậu tố); sửa constructor mock
+- [X] T-U54-7 `dotnet build` + `dotnet test` — build OK; EutrProgressionServiceTests 5/5 pass; toàn suite còn 3 test fail ở vùng khác (MappingConfigurationTests, 2 ComplSynchronizeDataServiceTests), chưa xác minh có sẵn từ trước
+- [ ] T-U54-8 Kiểm thử thủ công theo quickstart Update 54 — **NOT run** (cần môi trường thật)
+
+## Phase 20: Update 55 - Trader relationship (FR-243..FR-247, SC-018)
+
+- [X] T-U55-1 Migration `Sqls/Migration/44_create_eutr_trader_relationship.sql` + bản `Sqls/Tables/eutr_trader_relationship.sql`
+- [X] T-U55-2 [P] Entity `EutrTraderRelationship.cs`
+- [X] T-U55-3 `IEutrTraderRelationshipRepository` + implementation (`GetByPurchIdAsync`, `GetVendorsOfPurchAsync`, `ReplaceAsync`; transaction mở ở service) + đăng ký DI
+- [X] T-U55-4 `EutrPurchaseRelationshipRepository.SyncAsync` dọn mũi tên mồ côi trong cùng lần chạy (FR-247) — làm bằng SQL trực tiếp, không cần `GetByPurchIdAsync`/`DeleteOrphansAsync`
+- [X] T-U55-5 Service `GetTraderRelationshipAsync` / `SaveTraderRelationshipAsync` (validate Vendor ∈ PO, không tự nối, không trùng, không vòng) + DTO
+- [X] T-U55-6 Controller `GET`/`PUT /{purchId}/trader-relationship`
+- [X] T-U55-7 Unit test service (hợp lệ, tự nối, trùng, vòng, Vendor ngoài PO, replace-all; phần mồ côi chưa có test tự động)
+- [X] T-U55-8 Client: thêm `@xyflow/react`; `TraderRelationshipDialog.jsx` (khối Code/Name, kéo nối, xóa, chặn tự nối/trùng/vòng, Save, trạng thái rỗng); API service
+- [X] T-U55-9 Nút **Trader relationship** ở cột Action của `PurchaseOrderOverviewPage.jsx`, ẩn khi thiếu quyền `Update` của `eutr-purchase-orders` (cùng `canAssignTemplate`)
+- [X] T-U55-10 Backend: `dotnet test` (build ra thư mục tạm vì API đang chạy khoá DLL) — EutrPurchaseOrdersServiceTests + EutrProgressionServiceTests 24/24 pass (8 test mới cho Trader relationship). Client: eslint 0 lỗi, `vite build` OK. Dọn mồ côi (SQL trong SyncAsync) chưa có test tự động — cần DB thật.
+- [ ] T-U55-11 Kiểm thử thủ công theo quickstart Update 55 — **NOT run** (cần môi trường thật)
+
+## Phase 21: Update 56 - Cột Trader relationship ở index (FR-248, FR-249, SC-019)
+
+- [X] T-U56-1 Repo `GetNamedEdgesByPurchIdsAsync` (JOIN `eutr_vendors` ×2) + `TraderRelationshipSummaryDto`
+- [X] T-U56-2 Service `GetTraderRelationshipSummariesAsync` + controller `POST trader-relationships` (policy Read)
+- [X] T-U56-3 Unit test service (gom line theo PO, input rỗng)
+- [X] T-U56-4 Client: use case + API/repository + cột **Trader relationship** (nhiều line, resize, colSpan 7), nạp lại sau Save popup
+- [X] T-U56-5 `dotnet test` 26/26 pass (EutrPurchaseOrdersServiceTests + EutrProgressionServiceTests); eslint 0 lỗi, `vite build` OK. Câu SQL JOIN chưa chạy trên DB thật.
+- [ ] T-U56-6 Kiểm thử thủ công theo quickstart Update 56 — **NOT run** (cần môi trường thật)
+
+## Phase 22: Update 57 - Tự suy ra mũi tên Trader relationship từ tên file (FR-250, FR-251, SC-020)
+
+- [X] T-U57-1 Repo `IEutrTraderRelationshipRepository.AddMissingAsync` (INSERT IGNORE) + `EutrTraderRelationshipRepository`
+- [X] T-U57-2 `EutrProgressionService`: `ExtractTraderEdges` (thứ tự viết, cặp liền kề, bỏ trùng/vòng) + gọi sau `SyncAsync` Vendor trong `SyncPurchaseVendorsAsync`; inject `IEutrTraderRelationshipRepository`
+- [X] T-U57-3 Unit test (AP-PD, DS-PD, `PD AP`, `DS>AP`, chuỗi 3 vendor, bỏ vòng, insert) — `EutrProgressionServiceTests` + `EutrPurchaseOrdersServiceTests` 32/32 pass
+- [ ] T-U57-4 Kiểm thử thủ công — **NOT run** (cần môi trường thật)
+
+## Phase 23: Update 58 - Gom nhóm file theo Trader relationship (FR-252..FR-254, SC-021; 001 Update 3)
+
+- [X] T-U58-1 Backend: migration 45, `IsGroup` ở entity/DTO/3 SQL chi tiết Template, policy GET trader-relationship → Read
+- [X] T-U58-2 Client 001: checkbox + cột Group
+- [X] T-U58-3 Client 012: `normalizeTemplateDetail.isGroup`, `utils/traderGrouping.js`, TreeNode gom nhóm, nạp relationship ở View
+- [X] T-U58-4 `dotnet test` 40/40 pass; eslint 0 lỗi, `vite build` OK; hàm `traderGrouping.js` đã kiểm tra bằng script Node với ví dụ DS>PD/AP>PD/PD>RES (nhóm AP, DS, PD + mục không nhóm). Kiểm tra tay theo quickstart Update 58 — **NOT run** (cần migration 45 + dữ liệu thật)
+
+## Phase 24: Update 59 - Tìm theo Vendor name (FR-255, SC-022)
+
+- [X] T-U59-1 Client `PurchaseOrderOverviewPage.jsx`: `findVendorCodesByName` (refType=14) + `buildSearchFilters` OR thêm `VendorCode eq <code>`; eslint 0 lỗi
+- [ ] T-U59-2 Kiểm thử thủ công theo quickstart Update 59 — **NOT run** (cần môi trường thật)
+
+## Phase 25: Update 60 - So khớp tên file với tên Step bỏ khoảng trắng + UPPERCASE (FR-256, SC-023)
+
+- [X] T-U60-1 Backend `EutrUploadService`: thêm `NormalizeForStepMatch`; `matchedSteps` so khớp trên chuỗi đã chuẩn hoá; tie-break theo độ dài sau chuẩn hoá — `dotnet build ComplianceSys.Application` 0 lỗi
+- [X] T-U60-2 Client `EutrDocumentsFormDialog.jsx` `loadMatchingStepsForPoByName`: chuẩn hoá cùng quy tắc
+- [X] T-U60-3 Unit test `EutrUploadServiceTests.UploadMultipleToSharePointAndSaveDataAsync_ShouldMatchStep_IgnoringWhitespaceAndCase` (3 file mẫu) — 10/10 pass; case `1.ste-p1` không khớp chưa có test
+- [ ] T-U60-4 eslint client + kiểm thử thủ công theo quickstart Update 60 — **NOT run** (cần môi trường thật)
+- Kế thừa `004-eutr-documents` Update 35 (FR-085) — không có code riêng ở PurchId/View ngoài popup/`EutrUploadService` dùng chung.
+
+## Phase 26: Update 61 - Chuẩn hoá HOA tên file + Code Vendor khi tạo relationship sau Upload (FR-257, SC-024)
+
+- [X] T-U61-1 Backend `EutrProgressionService`: thêm hàm chuẩn hoá (bỏ khoảng trắng + `ToUpperInvariant`, dùng chung/tương tự `EutrUploadService.NormalizeForStepMatch`); `BuildCodeMap` khoá theo Code đã chuẩn hoá (giá trị = Code gốc); `OrderedVendorsOfFile` chuẩn hoá tên file + tên Step, bỏ tiền tố Step, tách token theo ký tự không phải chữ/số, so ordinal
+- [X] T-U61-2 Xác nhận `ExtractVendors` (Update 54) và `ExtractTraderEdges` (Update 57) cùng dùng hàm chuẩn hoá; dedupe theo giá trị HOA
+- [X] T-U61-3 Unit test `EutrProgressionServiceTests`: file `(ap-Pd)` + Vendor `AP`,`PD` → 2 Vendor + mũi tên AP→PD; Vendor Code `Ds` (thường) khớp `(DS-AP)`; token `APPLE` không khớp `AP`; `(xx)` bỏ qua; file `1. STEP 1 pd-ap` với Step `1.step1` cắt đúng; `(AP PD)` (chỉ khoảng trắng) KHÔNG tách — 12/12 pass (EutrProgressionServiceTests)
+- [ ] T-U61-4 `dotnet build`/`dotnet test` + kiểm thử thủ công theo quickstart Update 61 — **NOT run** (cần môi trường thật)
+- Không đổi API/DB/client; 013 gọi cùng hàm nên không cần việc riêng.
+
+## Phase 27: Update 62 - Upload Type "General": chỉ chọn Step, ẩn Value (FR-258, SC-25)
+
+- [ ] T-U62-1 Không có code riêng — dùng chung thay đổi `004-eutr-documents` T-U61-1..4 (popup `EutrDocumentsFormDialog.jsx`, `SharePointController`, `EutrUploadService`)
+- [ ] T-U62-2 Kiểm thử thủ công theo quickstart Update 62 (Upload Type "General" từ màn hình này) — **NOT run** (cần môi trường thật)
+- [X] T-U62-5 Backend `EutrReferencesRepository.GetDocumentsByPoCodesAsync`: nhân bản document General (`RefValue IS NULL`, Type "General") cho từng mã PO — `dotnet build` Infrastructure pass
+- [X] T-U62-6 Backend `EutrTemplateDetailsResponseDto.TakeFromName` + 3 query `EutrTemplatesRepository` JOIN `eutr_reference_types` — build pass
+- [X] T-U62-7 Client `progressUtils.js`: `fileMatchesDetail`, `onlyMatchedGeneral`, `takeFromName`, khử trùng id (MapFile/ViewSalesOrder/PurchaseOrderView; Overview thêm `typeName`) — eslint file progressUtils pass
+- [X] T-U62-8 Backend `EutrProgressionService`: `RequiredKey`/`MatchedKeys` — `dotnet build` Application pass
+- [ ] T-U62-9 Unit test Progress (Step General vs Step PO cùng tên) + kiểm thử thủ công quickstart bước 7–8 — **NOT run** (cần môi trường thật)

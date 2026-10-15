@@ -1186,3 +1186,7 @@ the "PO" default for them); StepId 8 defaults to TypeId 3.
 
 - `GET /api/eutr-templates/export` → `.xlsx`, sheet "EUTR Templates", cột: Template Code, Template Name, Alert for, Step, Parent Step, Requirement Type (Optional/Required), Take From. Mỗi step 1 dòng, DFS; template không có step → 1 dòng chỉ có 3 cột đầu.
 - `POST /api/eutr-templates/import` (multipart `file`, chỉ `.xlsx`) → `ApiResponse<ImportEutrTemplatesResultDto>`: `{totalRows, successCount, failCount, errors:[{row, templateCode, name, alertFor, message}], templates:[{code, name, action, rows, message}]}`. Code trống = tạo; Code Draft = sửa; Code lạ / Public D365 = lỗi. Mỗi template all-or-nothing.
+
+## Update 31 — Danh sách version theo Code (bổ sung ở bước plan)
+
+Chỉ đọc: trả về danh sách version {Id, Code, VersionId, Status, StepsCount, CreatedDate, CreatedBy} của một Code, VersionId giảm dần, gồm IsHide=1, không gồm IsDeleted=1. Route: `GET /api/eutr-templates/{id}/versions` (policy EutrTemplates.Read), trả `ApiResponse<List<EutrTemplatesResponseDto>>` (id = Id của bất kỳ version nào; Code suy ra từ id). FE route chỉ-xem: `/eutr/templates/view/:id` (TemplateBuilderPage viewOnly). GetById hiện có KHÔNG lọc IsHide nên đọc được version ẩn (đã xác minh). View dùng endpoint lấy chi tiết theo Id hiện có (phải đọc được version ẩn).

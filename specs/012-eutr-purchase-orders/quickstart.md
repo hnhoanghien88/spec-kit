@@ -231,3 +231,96 @@ Tiền đề: đã chạy `Sqls/Migration/37_create_eutr_history.sql`.
 4. Tạm đổi tên bảng để ghi lịch sử lỗi: Assign vẫn thành công, log có cảnh báo, không có dòng.
 
 Success criteria mapping: SC-014 → bước 1–4.
+
+## Update 53 (2026-10-13) — Dialog tiến trình Download
+
+1. PurchId/View → nhấn **Download** ở 1 dòng AVAILABLE FILES → dialog `Downloading Files...` hiện ngay (`Files: 0/1`), xong → `1/1` rồi tự đóng, file tải với tên như cũ (SC-016).
+2. Giả lập lỗi tải (ngắt mạng) → dialog đóng, snackbar lỗi như cũ.
+
+## Update 54 (2026-10-14) — Vendor từ tên file PO → `eutr_purchase_relationship`
+
+1. Chạy migration `43_create_eutr_purchase_relationship.sql`; đảm bảo `eutr_vendors` có `AP`, `PD`.
+2. Upload cho PO1 file `1.1 Invoice (AP-PD).pdf` vào Step `1.1 Invoice` → bảng có `PO1,AP` và `PO1,PD` (FR-239, SC-017).
+3. Xóa file đó (hoặc đổi tên bỏ `AP`) → Progress tính lại → còn `PO1,PD` (FR-241).
+4. Upload file `(XX)` / không có hậu tố → không thêm dòng. Tính lại nhiều lần → không dòng trùng (FR-240).
+5. Cột Progress không đổi (FR-242). Unit test: `dotnet test --filter EutrProgressionServiceTests`.
+Contracts: không có thay đổi API (xem `contracts/`).
+
+## Update 55 (2026-10-14) — Trader relationship
+
+1. Chạy migration `44_create_eutr_trader_relationship.sql`; PO1 đã có `AP`, `PD`, `XY` trong `eutr_purchase_relationship`.
+2. Danh sách Purchase Orders → dòng PO1 → nút **Trader relationship** ở cột Action → 3 khối Code/Name (FR-243).
+3. Kéo `AP → PD`, `PD → XY` → Save → bảng có 2 dòng; đóng/mở lại popup thấy đúng 2 mũi tên (FR-244/245, SC-018).
+4. Thử `PD → AP`, `AP → AP`, kéo trùng → bị chặn; gọi PUT trực tiếp → 400, bảng không đổi (FR-246).
+5. Gỡ `AP` khỏi PO (xóa file chứa `AP`, tính lại Progress) → dòng có `AP` biến mất (FR-247).
+6. User không có quyền `Update` của `eutr-purchase-orders` → không thấy nút.
+Unit test: `dotnet test --filter EutrPurchaseOrdersServiceTests`.
+
+## Update 56 (2026-10-14) — Cột Trader relationship
+
+1. PO00000720 có `(DS,PD)`, `(AP,PD)`, `(PD,RES)` trong `eutr_trader_relationship`; `eutr_vendors` có tên tương ứng → ô cột **Trader relationship** hiển thị 3 line đúng thứ tự (FR-248, SC-019).
+2. PO không có dữ liệu → ô trống. Vendor thiếu trong `eutr_vendors` → hiện Code.
+3. Mở popup Trader relationship, Save → cột cập nhật không cần reload (FR-249).
+4. DevTools: mỗi lần tải/đổi trang chỉ 1 request `trader-relationships`.
+Unit test: `dotnet test --filter EutrPurchaseOrdersServiceTests`.
+
+## Update 58 (2026-10-14) — Gom nhóm theo Trader relationship
+
+1. Chạy migration 45; ở 001-eutr-steps bật "Group by trader relationship" cho Step "Trader or secondary processer".
+2. PO có `DS>PD`, `AP>PD`, `PD>RES`; upload file `1.1 Bill of Lading (AP-PD)`, `1.2 Bill of Lading (DS-PD)`, file chỉ `(PD)` vào các Step con → `PurchId/View` hiện nhóm AP, DS, PD (FR-252, SC-021).
+3. Mục thiếu file / file không có mã vendor → hiển thị sau nhóm, không tiêu đề (FR-253).
+4. Tắt `IsGroup` hoặc PO không có relationship → hiển thị phẳng.
+5. User chỉ có quyền Read vẫn thấy nhóm (FR-254).
+
+## Update 59 (2026-10-14) — Tìm theo Vendor name
+
+1. Mở danh sách Purchase Orders, nhập một phần tên Vendor (vd `acme`) → danh sách chỉ còn PO của Vendor có tên chứa từ khóa (FR-255, SC-022).
+2. Nhập Purch id / Vendor code như cũ → vẫn khớp.
+3. DevTools: có 1 request `refType=14` trước request `refType=15`.
+
+## Update 60 (2026-10-15) — Upload: tên file khớp Step bỏ khoảng trắng và không phân biệt hoa/thường
+
+1. Template của PO có Step `1.step1`.
+2. Upload (Type = "PO") file `1.step1PD-AP.pdf` → document gắn Step `1.step1` (trước đây không gắn được).
+3. Upload `1.step1 PD-AP.pdf`, `1. STEP 1 pd-ap.pdf` → vẫn gắn Step `1.step1`.
+4. Upload `1.ste-p1.pdf` → KHÔNG khớp (chỉ bỏ khoảng trắng, không bỏ ký tự khác).
+5. Edit document Type "PO" có tên file như bước 2 → combobox Step liệt kê Step `1.step1`.
+6. Có hai Step `Invoice AP` và `Invoice AP PD`: file `InvoiceAPPD.pdf` → chọn Step có Name dài nhất (`Invoice AP PD`).
+
+### Success criteria mapping (Update 60)
+
+- SC-023: bước 2–3. FR-256: bước 2–6.
+
+
+## Update 61 (2026-10-15) — Sau Upload: Vendor trong tên file khớp Code Vendor không phân biệt hoa/thường
+
+1. Ở 026 có Vendor `AP`, `PD` (thử thêm một Vendor lưu dạng thường, vd `Ds`). PO có Template với Step `1.1 Invoice`.
+2. Upload (Type = "PO") file `1.1 Invoice (ap-Pd).pdf` → sau Upload, `eutr_purchase_relationship` có đúng 2 dòng `PO, AP` và `PO, PD` (Code gốc); `eutr_trader_relationship` có mũi tên `AP → PD`.
+3. Upload `1.1 Invoice (ds-AP).pdf` → thêm Vendor `Ds` (đúng Code gốc) và mũi tên `Ds → AP` nếu không tạo vòng.
+4. Upload `1. INVOICE (xx).pdf` → mã `xx` không có ở 026 bị bỏ qua, không tạo dòng.
+5. Chạy lại (Upload lần nữa/Recompute) → không sinh dòng trùng; cột Trader relationship ở danh sách hiển thị `Name` Vendor đúng.
+6. Xoá file chứa `ap` → dòng `PO, AP` bị xoá (FR-241) dù trước đó file viết thường.
+
+### Success criteria mapping (Update 61)
+
+- SC-024: bước 2–3, 5. FR-257: bước 2–6.
+
+---
+
+## Update 62 (2026-10-15) — Upload Type "General": chỉ chọn Step
+
+1. Ở Reference Types → Type "General" → Assign Steps: gán ít nhất 1 Step.
+2. Mở popup Add (004 index / 005 Map File / 012 PurchId View) → chọn Type = "General": chỉ còn ô Step (đã lọc), không có ô Value/chip.
+3. Chọn Step → Upload 1 file → thành công; document có Step đúng, thư mục SharePoint `General`.
+4. DB: `eutr_references` có 1 dòng `RefValue IS NULL` cho document.
+5. Mở Edit document đó: không có ô Value, đổi Step lưu được.
+6. Chọn Type khác (vd "Invoice") → Value vẫn hiện và bắt buộc.
+
+### Success criteria mapping (Update 62)
+
+- SC-25: bước 2–3. FR-258: bước 2–6.
+
+### Bổ sung Update 62 — General dùng chung mọi PO
+
+7. Template có Step General `3.Business license_Response VN` (TakeFrom = General) ở PO A và PO B: upload 1 file General cho Step đó → mở Map File/View của cả A và B: Step "Mapped", file hiện 1 lần, badge TakeFrom = "General".
+8. Template có Step cùng tên nhưng TakeFrom = "PO": Step vẫn "Required - missing", file General không hiện ở AVAILABLE FILES, Progress không tăng.

@@ -1506,3 +1506,11 @@ implemented).
 4. Để trống Template Code + Name mới → Import → có template Draft mới (FR-110); Name trùng → lỗi (FR-099).
 5. Lỗi: Parent Step không tồn tại / trùng tên step / Take From sai → template đó không đổi, dialog kết quả báo số dòng (FR-113/114/116).
 6. Chọn file .csv → bị từ chối (FR-108).
+
+## Update 31 (2026-10-13) — Panel Versions + View chỉ-xem
+
+1. Mở EUTR Templates, chưa chọn dòng → panel Versions hiện hướng dẫn (US11-1).
+2. Chọn template đã Request change ≥ 1 lần → panel liệt kê đủ version, mới nhất trước, cột Version/Steps/Actions/Created Date/Created By (FR-119, SC-081).
+3. Nhấn View ở version cũ → cây step đúng dữ liệu version đó, mọi nút sửa bị ẩn/khóa (FR-121, SC-080).
+4. Request change / xóa template khi panel mở → panel làm mới (FR-122).
+5. Thu hẹp cửa sổ → panel xếp dưới grid (FR-118).

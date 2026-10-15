@@ -723,3 +723,36 @@ Mở SPA, đăng nhập, vào menu **EUTR documents** (đường dẫn `/eutr/do
   kèm cảnh báo rõ ràng. File khớp nhiều `StepId` tạo đúng nhiều dòng `eutr_references` (cùng
   `DocumentId`, khác `StepId`). Không có document "mồ côi" nào (document tồn tại mà không có
   `eutr_references` tương ứng) xuất hiện trong danh sách EUTR documents sau bất kỳ lượt upload nào.
+
+## Update 35 (2026-10-15) — Upload: tên file khớp Step bỏ khoảng trắng và không phân biệt hoa/thường
+
+1. Template của PO có Step `1.step1`.
+2. Upload (Type = "PO") file `1.step1PD-AP.pdf` → document gắn Step `1.step1` (trước đây không gắn được).
+3. Upload `1.step1 PD-AP.pdf`, `1. STEP 1 pd-ap.pdf` → vẫn gắn Step `1.step1`.
+4. Upload `1.ste-p1.pdf` → KHÔNG khớp (chỉ bỏ khoảng trắng, không bỏ ký tự khác).
+5. Edit document Type "PO" có tên file như bước 2 → combobox Step liệt kê Step `1.step1`.
+6. Có hai Step `Invoice AP` và `Invoice AP PD`: file `InvoiceAPPD.pdf` → chọn Step có Name dài nhất (`Invoice AP PD`).
+
+### Success criteria mapping (Update 35)
+
+- SC-025: bước 2–3. FR-085: bước 2–6.
+
+---
+
+## Update 61 (2026-10-15) — Upload Type "General": chỉ chọn Step
+
+1. Ở Reference Types → Type "General" → Assign Steps: gán ít nhất 1 Step.
+2. Mở popup Add (004 index / 005 Map File / 012 PurchId View) → chọn Type = "General": chỉ còn ô Step (đã lọc), không có ô Value/chip.
+3. Chọn Step → Upload 1 file → thành công; document có Step đúng, thư mục SharePoint `General`.
+4. DB: `eutr_references` có 1 dòng `RefValue IS NULL` cho document.
+5. Mở Edit document đó: không có ô Value, đổi Step lưu được.
+6. Chọn Type khác (vd "Invoice") → Value vẫn hiện và bắt buộc.
+
+### Success criteria mapping (Update 61)
+
+- SC-26: bước 2–3. FR-086: bước 2–6.
+
+### Bổ sung Update 61 — General dùng chung mọi PO
+
+7. Template có Step General `3.Business license_Response VN` (TakeFrom = General) ở PO A và PO B: upload 1 file General cho Step đó → mở Map File/View của cả A và B: Step "Mapped", file hiện 1 lần, badge TakeFrom = "General".
+8. Template có Step cùng tên nhưng TakeFrom = "PO": Step vẫn "Required - missing", file General không hiện ở AVAILABLE FILES, Progress không tăng.

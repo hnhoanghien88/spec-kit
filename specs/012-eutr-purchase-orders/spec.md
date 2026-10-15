@@ -10,6 +10,160 @@
 
 ## Clarifications
 
+### Session 2026-10-15 (Update 62) — Upload với Type = "General": chỉ chọn Step, ẩn Value (FR-258, SC-25) (kế thừa 004 Update 61)
+
+- **Bối cảnh**: Popup Add/Upload (`EutrDocumentsFormDialog.jsx`) luôn hiện ô Value (`EutrAddValueAutocomplete`) và bắt buộc ≥ 1 chip (`canSubmit`: `chips.length > 0`); backend `SharePointController.eutr-upload-multi-by-type` trả 400 "At least one reference value is required" và `UploadMultipleForReferenceTypeAsync` ghi 1 dòng `eutr_references` cho mỗi RefValue. Type "General" là tài liệu chung, không gắn PO/Vendor/Invoice cụ thể nên không có Value để nhập.
+- **Yêu cầu**: "khi upload với type là General, chỉ cần chọn step, không cần hiển thị chọn value, step sẽ được assign trong reference-types".
+- **Quyết định**:
+  - Type có Name = "General" (`Trim` + không phân biệt hoa/thường, giống `isPoTypeName`/`isVendorTypeName`) → popup MUST **ẩn hoàn toàn** ô Value và danh sách chip; Step vẫn **bắt buộc**; danh sách Step lấy từ Assign Steps của Type "General" (`eutr_reference_type_details`, `loadFilteredSteps`, FR-043/FR-044 — không đổi) và mặc định chọn dòng đầu. `canSubmit` (Add) = có Type + có Step (không yêu cầu chip).
+  - Backend: nhánh Type = "General" cho phép `RefValues` rỗng (controller không trả 400); vẫn ghi **đúng 1** dòng `eutr_references` cho mỗi document với `StepId` đã chọn, `RefType = TypeId`, **`RefValue = NULL`** (cột đã cho phép NULL) để document còn gắn Step. Thư mục SharePoint: nhánh mặc định `ResolveFolderName` → `General` (phẳng dưới `SharePointEutrPath`). Không enqueue `RecomputeForPurchIdAsync` (không có RefValue). Tên file lưu theo Step Name như các Type khác (FR-068).
+  - Check-existing (Spec 025) bỏ qua Type "General" (không có RefValue để đối chiếu → trả rỗng, không chặn upload).
+  - Popup Edit document Type "General": cũng ẩn Value/chip, chỉ cho đổi Step (`updateEutrDocumentReferenceStepUseCase` gửi `refValues = undefined`, giống Type = "PO").
+  - **Bổ sung (cùng Update 62) — General dùng chung cho mọi PO**: document Type "General" (`RefValue = NULL`) không thuộc PO nào nên `IEutrReferencesRepository.GetDocumentsByPoCodesAsync` MUST trả thêm các document này, nhân bản cho **từng mã PO được hỏi** (`list-po-references`, tính Progress, đồng bộ đều dùng chung hàm này).
+  - **Khớp theo Type**: file Type "General" chỉ gắn vào Step có `TakeFrom` = "General" (cùng tên Step nhưng Step lấy từ Type khác, vd "PO", KHÔNG nhận file General). File Type khác giữ nguyên khớp theo tên Step. Hàm client `fileMatchesDetail` (`progressUtils.js`) dùng cho `buildTemplateComputations`/`buildPoTemplateComputations`.
+  - **AVAILABLE FILES**: file General chỉ hiện khi Template của PO có Step General cùng tên (`onlyMatchedGeneral`); các danh sách file được khử trùng theo id vì bản nhân bản khớp cả PurchId lẫn Vendor code.
+  - **Nhãn TakeFrom**: `TakeFrom` là FK tới `eutr_reference_types.Id`; API chi tiết Template trả thêm `TakeFromName` (JOIN `eutr_reference_types`) và `normalizeTemplateDetail` ưu tiên tên này thay cho bảng hằng số `TAKE_FROM_LABELS` (trước đó Id 5 bị hiện sai "General agreement").
+  - **Progress**: `EutrProgressionService` áp cùng quy tắc — Step General đánh dấu bằng tiền tố (`RequiredKey`), file General chỉ khớp Step General, file Type khác khớp cả hai (`MatchedKeys`). Upload General không enqueue Recompute; Progress cập nhật khi mở View/lần Recompute kế tiếp.
+  - Type khác "General" không đổi hành vi (Value vẫn bắt buộc). Thay đổi dùng chung với `004-eutr-documents` Update 61 (FR-086): popup Add/Edit `EutrDocumentsFormDialog.jsx` và backend `EutrUploadService.UploadMultipleForReferenceTypeAsync` là code chung, spec này không có code riêng.
+- **Acceptance scenarios**: xem User Story 2, kịch bản 24.
+
+### Session 2026-10-15 (Update 61) — Sau Upload: hàm lấy danh sách Vendor và tạo `eutr_purchase_relationship`/`eutr_trader_relationship` chuẩn hoá HOA cả tên file lẫn Code Vendor trước khi so sánh (kế thừa Update 54/57)
+
+- **Bối cảnh**: Sau khi user Upload file cho PO, client gọi `POST /api/eutr-progression/recompute-purch-order` → `EutrProgressionService.RecomputeForPurchOrderAsync` → `SyncPurchaseVendorsAsync` (`EutrProgressionService.cs:285`): lấy danh sách Code Vendor (`IEutrVendorsRepository.GetAllCodesAsync`), trích Vendor từ tên file (`ExtractVendors` :352 / `OrderedVendorsOfFile` :321) và tạo dữ liệu relationship (`eutr_purchase_relationship` Update 54, mũi tên `eutr_trader_relationship` Update 57). Code Vendor ở `eutr_vendors` và mã viết trong tên file lúc HOA lúc thường (vd Vendor `Ap` ↔ file `1.1 Invoice (ap-PD)`; file `(Ap-pd)` ↔ Vendor `AP`), khiến việc gắn Vendor vào PO không ổn định/khó kiểm soát.
+- **Yêu cầu**: Trước khi so sánh, MUST chuẩn hoá cả hai vế bằng **bỏ toàn bộ khoảng trắng + chuyển chữ HOA** (`char.IsWhiteSpace` + `ToUpperInvariant`, cùng quy tắc Update 60 / `NormalizeForStepMatch`) cho: (a) tên file đã upload (sau khi bỏ đuôi mở rộng), (b) tên Step, (c) `Code` của từng Vendor ở `026-eutr-vendors`. Sau chuẩn hoá: cắt tên Step là bỏ tiền tố tên Step (ordinal `StartsWith`); phần còn lại tách token theo ký tự không phải chữ/số (`-`, `(`, `)`, `,`…) rồi so token với Code Vendor đã chuẩn hoá. Lưu ý: vì khoảng trắng bị bỏ nên Vendor chỉ ngăn cách bằng khoảng trắng (`AP PD`) sẽ dính thành `APPD` và không khớp — tên file MUST dùng ký tự phân cách khác (vd `AP-PD`). Vendor ghi vào `eutr_purchase_relationship`/`eutr_trader_relationship` vẫn là `Code` gốc của `eutr_vendors` (không ghi bản đã chuẩn hoá) để JOIN `eutr_vendors` không đổi.
+- **Quyết định**:
+  1. Thêm bước chuẩn hoá đứng đầu chuỗi xử lý của hàm (hàm dùng chung với Update 60, vd `NormalizeForMatch`: bỏ khoảng trắng + `ToUpperInvariant`): `BuildCodeMap` đổi khoá thành Code đã chuẩn hoá (giá trị = `Code` gốc đã Trim), so sánh ordinal thay vì phụ thuộc `StringComparer.OrdinalIgnoreCase`. Hai Vendor có Code chỉ khác hoa/thường/khoảng trắng coi là trùng khoá — giữ Vendor đầu tiên (`TryAdd`), thực tế `Code` Vendor là duy nhất.
+  2. Cắt tên Step khỏi tên file làm trên chuỗi đã chuẩn hoá (cả tên file lẫn tên Step bỏ khoảng trắng + HOA) bằng bỏ tiền tố — file `1. STEP 1 pd-ap` với Step `1.step1` → `1.STEP1PD-AP` bỏ `1.STEP1` còn `PD-AP`, thay vì không cắt được do lệch khoảng trắng. Phần còn lại tách token theo ký tự không phải chữ/số nên `PD-AP` vẫn tách thành `PD`, `AP`; chỉ trường hợp Vendor ngăn cách thuần bằng khoảng trắng (`PD AP`) là không tách được.
+  3. Dùng chung đúng một hàm chuẩn hoá cho `ExtractVendors` (Update 54) và `ExtractTraderEdges` (Update 57) để Vendor trong `eutr_purchase_relationship` và mũi tên ở `eutr_trader_relationship` luôn nhất quán; dedupe theo giá trị HOA. Thứ tự viết trong tên file (mũi tên From → To), tính chạy lặp không sinh dòng trùng, dọn Vendor lỗi thời (FR-241) và hành vi chỉ-log-lỗi (FR-242) giữ nguyên.
+  4. Không đổi schema, API, hợp đồng, công thức Progress; không cần migration. Tên file lưu và `Code` Vendor lưu không đổi (chỉ chuẩn hoá để so sánh).
+- **Acceptance scenarios**: xem User Story 1, kịch bản 23.
+
+### Session 2026-10-15 (Update 60) — Upload: so khớp tên file với tên Step bỏ toàn bộ khoảng trắng và UPPERCASE (kế thừa 004 FR-074/FR-075)
+
+- **Bối cảnh**: Bước Upload gắn file vào Step (popup `PurchId/View` dùng chung popup Add/Edit `004-eutr-documents`) so khớp "tên file có chứa Name của Step". Với Step `1.step1` và file `1.step1 PD-AP`/`1. step 1 PD-AP` thì không khớp do khoảng trắng và/hoặc khác hoa thường trong phần khoảng trắng → file không gắn được vào Step.
+- **Yêu cầu**: Trước khi so khớp, xoá **toàn bộ khoảng trắng** ở cả tên Step lẫn tên file, và **chuyển cả hai sang chữ HOA**, rồi mới kiểm tra "chứa". Ví dụ Step `1.step1` ↔ file `1.step1PD-AP` (hoặc `1.step1 PD-AP`) → khớp.
+- **Quyết định**: Gốc là `004-eutr-documents` Update 35 (FR-085); sửa tại 2 chỗ dùng chung (không đổi API, DB, hợp đồng): backend `EutrUploadService.NormalizeForStepMatch` (đoạn so khớp `matchedSteps`, tie-break "Name dài nhất" của FR-081 tính theo độ dài sau chuẩn hoá) và client `loadMatchingStepsForPoByName` trong `EutrDocumentsFormDialog.jsx` (combobox Step khi Edit). Tên file lưu/đổi tên không bị ảnh hưởng — chỉ chuẩn hoá để so sánh. Step có Name rỗng/chỉ khoảng trắng bị bỏ qua. Spec `005-eutr-sales-orders` (Map File Step 2) kế thừa cùng thay đổi (Update 60).
+- **Acceptance**: Upload file `1.step1PD-AP.pdf` ở PO có Template chứa Step `1.step1` → document gắn đúng Step đó; file `1.STEP1 pd-ap.pdf` cũng khớp.
+
+### Session 2026-10-14 (Update 59) — Tìm kiếm theo Vendor name dạng `eq '*ten*'`
+
+- **Bối cảnh**: Ô tìm kiếm chỉ khớp Purch id và Vendor code (research.md Decision 6 hoãn Vendor name vì `RSVNEutrPurchOrders` không có trường tên Vendor).
+- **Yêu cầu**: Cho tìm theo Vendor name với điều kiện dạng `VendorOrganizationName eq '*ten*'` (cách `ODataOperatorConverter.FormatValue` đã sinh cho filter `like`).
+- **Quyết định**: Tra cứu 2 bước ở client (`PurchaseOrderOverviewPage.jsx`, `findVendorCodesByName`): (1) `POST /api/dynamics/reference` `refType=14`, filter `Name like <từ khóa>` → backend sinh `VendorOrganizationName eq '*ten*'`; (2) các Vendor code trả về (tối đa 100) thêm vào filter `VendorCode eq <code>` của `refType=15` (cùng nhóm OR với Code/VendorCode like). Không đổi backend, API, DB.
+- **Acceptance scenarios**: xem User Story 3, kịch bản 5.
+
+### Session 2026-10-14 (Update 58) — Màn hình PurchId/View: gom nhóm file theo Trader relationship trong Step có `IsGroup` (kế thừa 001 Update 3)
+
+- **Bối cảnh**: Trong cây Template, Step như "Trader or secondary processer" chứa nhiều file đặt tên theo dạng `<tên Step> (<mã>-<mã>)` (ví dụ `1.1 Bill of Lading (AP-PD)`, `1.2 Bill of Lading (DS-PD)`). Khi PO có Trader relationship (Update 55) cần gom các file này thành nhóm theo chuỗi Vendor.
+- **Yêu cầu**: Ở cây Template của `PurchId/View`, với Step có `IsGroup = 1` (cấu hình ở 001-eutr-steps Update 3, **không cố định tên Step**) và PO có dữ liệu `eutr_trader_relationship`, các mục con của Step đó MUST được **gom thành nhóm** theo Vendor, mỗi nhóm có 1 dòng tiêu đề (Name Vendor + Code) và các mục thuộc nhóm thụt vào dưới tiêu đề. Chỉ áp dụng cho Step `IsGroup = 1`; mọi Step khác hiển thị như cũ.
+- **Cách xác định nhóm của một mục** (mục có file đã map): lấy tên file (bỏ đuôi, bỏ tiền tố tên Step — cùng cách tách mã của Update 54), tách thành các mã, giữ các mã trùng `Code` Vendor có tham gia quan hệ (xuất hiện ở FromVendor/ToVendor của PO), rồi xếp mục vào nhóm của **Vendor đứng đầu chuỗi nhất** (xếp hạng = độ sâu theo mũi tên: Vendor không có mũi tên vào = hạng 0, đích của nó = +1…; hạng thấp hơn ưu tiên; bằng hạng thì theo Code).
+- **Ví dụ**: Quan hệ `DS > PD`, `AP > PD`, `PD > RES` (hạng: DS=0, AP=0, PD=1, RES=2). File `(AP-PD)` → nhóm **AP**; `(DS-PD)` → nhóm **DS**; file chỉ có `(PD)` hoặc `(PD-RES)` → nhóm **PD** ("các file còn lại là PD"); chỉ `(RES)` → nhóm RES. Chỉ hiển thị nhóm có ít nhất 1 mục; thứ tự nhóm theo hạng rồi Code (AP, DS, PD).
+- **Quyết định**:
+  - Mục không có file (Step Required còn thiếu) hoặc file không chứa mã Vendor nào của quan hệ → **không thuộc nhóm nào**, hiển thị sau các nhóm, không có tiêu đề (không bị ẩn).
+  - PO chưa có Trader relationship, hoặc Step `IsGroup = 0` → hiển thị phẳng như cũ.
+  - Chỉ đổi cách hiển thị: không đổi Progress, đếm missing, mapping, AVAILABLE FILES.
+  - Dữ liệu nhóm lấy từ `GET /api/eutr-purchase-orders/{purchId}/trader-relationship` (Update 55); endpoint này đổi sang policy **`EutrPurchaseOrders.Read`** để mọi user xem được màn hình View đều thấy nhóm (PUT vẫn `.Update`). Dữ liệu `IsGroup` đi kèm chi tiết Template (`isGroup`).
+  - Lỗi nạp Trader relationship chỉ log, cây hiển thị phẳng.
+- **Acceptance scenarios**:
+  1. **Given** Step "Trader or secondary processer" có `IsGroup = 1`, PO có `DS>PD`, `AP>PD`, `PD>RES` và 3 mục file `(AP-PD)`, `(DS-PD)`, `(PD)`, **Then** cây hiện 3 nhóm AP, DS, PD, mỗi nhóm chứa đúng mục tương ứng.
+  2. **Given** Step `IsGroup = 0`, **Then** không có nhóm.
+  3. **Given** PO không có dòng `eutr_trader_relationship`, **Then** hiển thị phẳng.
+  4. **Given** mục còn thiếu file hoặc file không có mã vendor, **Then** hiển thị sau các nhóm, không tiêu đề.
+  5. **Given** user chỉ có quyền Read, **Then** vẫn thấy nhóm.
+
+### Session 2026-10-14 (Update 57) — Tự suy ra mũi tên `eutr_trader_relationship` (From → To) từ thứ tự mã Vendor trong tên file PO
+
+- **Bối cảnh**: Update 54 đã tìm ra các Vendor của PO từ tên file; Update 55 cho user vẽ mũi tên Trader relationship thủ công. Tên file đã chứa sẵn thứ tự: `1.1 Bill of Lading (AP-PD)` nghĩa là AP → PD.
+- **Yêu cầu**: Ngay sau khi đồng bộ xong toàn bộ Vendor của PO (`eutr_purchase_relationship`), cùng lần chạy hàm tính Progress, hệ thống MUST suy ra mũi tên từ tên file và chèn vào `eutr_trader_relationship`:
+  1. Sau khi cắt tên Step, các mã Vendor khớp (ở 026) trong phần còn lại được lấy **theo thứ tự viết**; mã viết trước là **From**, mã viết sau là **To**. Ví dụ `(AP-PD)` → From = AP, To = PD; `(DS-PD)` → From = DS, To = PD.
+  2. Dấu phân cách không cố định (`-`, khoảng trắng, `>`, `,`…): mọi ký tự không phải chữ/số đều là dấu phân cách.
+  3. File có ≥ 3 Vendor (`A-B-C`) tạo các cặp liền kề `A → B`, `B → C`. File chỉ có 1 Vendor hoặc không có thì không tạo mũi tên.
+- **Quyết định**:
+  - Chỉ **thêm mũi tên còn thiếu** (không xóa/ghi đè mũi tên đã có, kể cả do user lưu ở Update 55); chạy lặp không sinh dòng trùng (UNIQUE `PurchId, FromVendor, ToVendor`).
+  - Áp cùng quy tắc hợp lệ của FR-246: bỏ qua mũi tên tự nối, trùng, hoặc **tạo vòng** với mũi tên đã có/đã thêm (vd đã có AP→PD thì file `(PD-AP)` bị bỏ qua).
+  - `CreatedBy` = email người kích hoạt (mặc định `system`); mũi tên mồ côi vẫn được dọn theo FR-247 trong bước Vendor, trước khi thêm mũi tên mới.
+  - Lỗi bước này chỉ log, không chặn Progress (như FR-242). Không đổi API/UI.
+- **Acceptance scenarios**:
+  1. **Given** PO1 có file `1.1 Bill of Lading (AP-PD)`, **Then** `eutr_trader_relationship` có `(PO1, AP, PD)`.
+  2. **Given** PO1 có thêm file `(DS-PD)`, **Then** có thêm `(PO1, DS, PD)`.
+  3. **Given** file `(PD AP)` hoặc `(DS>AP)`, **Then** lần lượt tạo `PD → AP` và `DS → AP`.
+  4. **Given** đã có `AP → PD` (user lưu), **When** file `(PD-AP)` xuất hiện, **Then** không thêm mũi tên (tạo vòng); mũi tên của user giữ nguyên.
+  5. **Given** chạy lại nhiều lần, **Then** không có dòng trùng.
+
+### Session 2026-10-14 (Update 56) — Màn hình index: thêm cột **Trader relationship** hiển thị các mũi tên đã cấu hình (lấy từ `eutr_trader_relationship` + `eutr_vendors`)
+
+- **Bối cảnh**: Update 55 cho phép cấu hình quan hệ có hướng giữa các Vendor của PO nhưng danh sách Purchase Orders chưa hiển thị kết quả.
+- **Yêu cầu**: Thêm cột **Trader relationship** vào bảng ở `eutr/purchase-orders`. Mỗi dòng PO hiển thị mỗi bản ghi `eutr_trader_relationship` của PO đó thành **1 line** dạng `<Name của FromVendor> > <Name của ToVendor>` (Name lấy từ `eutr_vendors` theo `Code`). PO chưa có bản ghi nào thì ô **để trống**.
+- **Ví dụ**: `PO00000720` có 3 dòng `(DS, PD)`, `(AP, PD)`, `(PD, RES)` → ô hiển thị 3 line:
+  `Devereaux sawmill > Phương Đông` / `Atlantic Paciffic > Phương Đông` / `Phương Đông > Response`.
+- **Quyết định**:
+  - Thứ tự line theo thứ tự lưu (`Id` tăng dần). Vendor không tìm thấy trong `eutr_vendors` (hoặc Name rỗng) hiển thị **Code** thay cho Name.
+  - Dữ liệu nạp **theo lô** cho các PO của trang hiện tại (như cột Progress, Update 16) qua endpoint mới `POST /api/eutr-purchase-orders/trader-relationships` (body: danh sách PurchId, policy `EutrPurchaseOrders.Read`) — không gọi từng dòng.
+  - Hiển thị cho mọi user xem được danh sách (không cần quyền `Update`); cột cũng resize được (Update 52). Sau khi Save ở popup Update 55, cột nạp lại.
+  - Lỗi khi nạp cột này chỉ log, ô để trống, không chặn danh sách. Không đổi bảng/migration.
+- **Acceptance scenarios**:
+  1. **Given** PO00000720 có 3 mũi tên như ví dụ, **Then** ô Trader relationship có đúng 3 line theo thứ tự trên.
+  2. **Given** PO không có bản ghi nào trong `eutr_trader_relationship`, **Then** ô trống.
+  3. **Given** vendor có trong `eutr_trader_relationship` nhưng không có trong `eutr_vendors`, **Then** line hiển thị Code của vendor đó.
+  4. **Given** user Save popup Update 55, **Then** cột cập nhật không cần tải lại trang.
+
+### Session 2026-10-14 (Update 55) — Cấu hình Trader relationship giữa các Vendor của PO (popup kéo mũi tên A → B → C) và lưu vào `eutr_trader_relationship`
+
+- **Bối cảnh**: Update 54 đã lưu các Vendor liên quan tới một PO vào `eutr_purchase_relationship` (`PurchId`, `Vendor`). Các Vendor này trong thực tế là chuỗi trung gian/mua bán (trader): hàng đi từ Vendor A qua B tới C. Hệ thống chưa có chỗ ghi nhận quan hệ *có hướng* giữa các Vendor của cùng một PO để dùng cho hiển thị về sau.
+- **Yêu cầu**:
+  1. Ở màn hình danh sách `eutr/purchase-orders`, thêm nút **Trader relationship** vào cột **Action** của từng dòng PO (cạnh View / Assign template). Nhấn nút mở popup cho PO của dòng đó.
+  2. Popup hiển thị mỗi Vendor của PO đó (lấy từ `eutr_purchase_relationship` theo `PurchId`, ghép `Name` từ `eutr_vendors` theo `Code`) thành một **khối** gồm **Code** và **Name**.
+  3. User **kéo mũi tên** từ khối này sang khối khác để tạo quan hệ có hướng: `A → B → C`, hoặc `A → C`, `B → C`… (một khối có thể có nhiều mũi tên ra/vào). Có thể chọn mũi tên rồi xóa để bỏ quan hệ.
+  4. Nhấn **Save** → ghi toàn bộ danh sách mũi tên của PO vào bảng mới **`eutr_trader_relationship`** (cột `PurchId`, `FromVendor`, `ToVendor`; mỗi mũi tên 1 dòng). Mở lại popup MUST hiển thị lại đúng các mũi tên đã lưu.
+- **Quyết định** (tên bảng/cột do nhóm phát triển đặt theo ủy quyền của user):
+  - Bảng `eutr_trader_relationship`: `Id` BIGINT AUTO_INCREMENT PK, `PurchId` VARCHAR(50), `FromVendor` VARCHAR(50), `ToVendor` VARCHAR(50) (= `eutr_vendors.Code`), `CreatedBy` VARCHAR(50), `CreatedDate` DATETIME; UNIQUE (`PurchId`, `FromVendor`, `ToVendor`). Không FK; migration mới `44_create_eutr_trader_relationship.sql`.
+  - Save = **thay thế toàn bộ** mũi tên của PO (xóa theo `PurchId` rồi chèn lại, trong 1 transaction). Danh sách rỗng = xóa hết mũi tên của PO.
+  - Backend validate: `FromVendor`/`ToVendor` MUST thuộc tập Vendor hiện có của PO trong `eutr_purchase_relationship`; không tự nối (A → A); không trùng cặp; **không tạo vòng** (A → B → A) — vi phạm trả 400, không ghi gì. Frontend chặn các trường hợp này ngay khi kéo.
+  - Vị trí khối trong popup tự xếp theo layout (không lưu tọa độ).
+  - (Sửa sau khi dùng thử) Mỗi khối có chấm nối ở **cả 4 cạnh** (trên/phải/dưới/trái); kéo được theo mọi hướng, kể cả từ trên xuống. Hướng mũi tên = khối bắt đầu kéo → khối thả; chỉ vị trí chấm là hiển thị, không lưu.
+  - Khi Update 54 xóa một Vendor khỏi `eutr_purchase_relationship` (không còn file nào chứa mã), các mũi tên của PO đó có Vendor ấy ở đầu hoặc cuối MUST bị xóa theo trong cùng lần đồng bộ.
+  - Nút chỉ hiển thị với user có quyền `'Update'` của menu `eutr-purchase-orders` (cùng cơ chế nút Assign template ở Update 13); user không có quyền thì **ẩn nút**.
+  - Dùng thư viện `@xyflow/react` (React Flow) cho việc kéo-nối khối (thêm 1 dependency client); chỉ dùng cho popup này.
+  - Không đổi Progress, danh sách index; chưa dùng dữ liệu này để hiển thị ở nơi khác (bước sau).
+- **Acceptance scenarios**:
+  1. **Given** PO1 có Vendor `AP`, `PD`, `XY` trong `eutr_purchase_relationship`, **When** user nhấn Trader relationship, **Then** popup hiện 3 khối (Code + Name).
+  2. **Given** popup đang mở, **When** user kéo `AP` → `PD` và `PD` → `XY` rồi Save, **Then** `eutr_trader_relationship` có đúng 2 dòng `(PO1, AP, PD)`, `(PO1, PD, XY)`; mở lại popup thấy đúng 2 mũi tên.
+  3. **Given** đã lưu, **When** user thêm `AP → XY`, xóa `AP → PD` rồi Save, **Then** bảng chỉ còn `(PO1, PD, XY)`, `(PO1, AP, XY)`.
+  4. **Given** `AP → PD` đã có, **When** user cố kéo `PD → AP` hoặc `AP → AP`, **Then** không tạo được; gọi API trực tiếp với dữ liệu đó → 400, bảng không đổi.
+  5. **Given** PO chưa có Vendor nào, **When** mở popup, **Then** hiển thị trạng thái rỗng, Save vô hiệu.
+  6. **Given** có `AP → PD`, **When** Progress được tính lại và `AP` không còn trong `eutr_purchase_relationship`, **Then** dòng `(PO1, AP, PD)` bị xóa.
+  7. **Given** user không có quyền `Update` của `eutr-purchase-orders`, **Then** không thấy nút Trader relationship.
+
+### Session 2026-10-14 (Update 54) — Hàm tính Progress của PO: trích Vendor từ tên file đã upload (sau khi cắt tên Step) và lưu quan hệ PO–Vendor vào `eutr_purchase_relationship`
+
+- **Bối cảnh**: Tên file user upload cho PO thường có dạng `<tên Step> (<mã vendor>-<mã vendor>)`, ví dụ `1.1 Invoice (AP-PD)` gắn vào Step `1.1 Invoice`. Phần trong ngoặc cho biết file đó áp dụng cho những vendor nào (AP = Atlantic, PD = Phương Đông…), nhưng hệ thống hiện chưa ghi nhận thông tin này.
+- **Yêu cầu**: Mỗi lần chạy hàm tính Progress cho một PO (`RecomputeForPurchOrderAsync`), ngoài việc tính `completed/total` như cũ, hệ thống MUST:
+  1. Lấy tên các file đã upload cho PO đó (cùng tập tài liệu mà Progress đang đối chiếu), bỏ phần đuôi mở rộng file.
+  2. Với mỗi file, **cắt bỏ tên Step** mà file được gắn vào → phần còn lại, ví dụ `1.1 Invoice (AP-PD)` → ` (AP-PD)`.
+  3. Tách phần còn lại thành các ký tự/mã (bỏ dấu ngoặc, tách theo `-`/khoảng trắng/dấu phân cách), rồi **đối chiếu từng mã với `Code` của danh sách Vendor** ở `026-eutr-vendors` (không phân biệt hoa/thường). Mã nào khớp là Vendor của PO đó; mã không khớp bị bỏ qua.
+  4. Đồng bộ kết quả vào bảng mới **`eutr_purchase_relationship`** gồm 2 cột `PurchId`, `Vendor` (Vendor = `Code` của vendor): mỗi cặp (PurchId, Vendor) tìm thấy là 1 dòng — ví dụ PO1 có file `(AP-PD)` → 2 dòng `PO1, AP` và `PO1, PD`.
+  5. **Xóa dữ liệu lỗi thời**: nếu sau lần kiểm tra này không còn file nào của PO chứa mã một vendor đã có trong bảng (ví dụ không còn file nào chứa `AP`), dòng `(PurchId, AP)` MUST bị xóa — điều kiện xóa theo `PurchId` (+ Vendor); dữ liệu của PO khác không bị ảnh hưởng. PO không còn file nào chứa mã vendor hợp lệ → xóa toàn bộ dòng của PO đó.
+- **Quyết định**: Việc này là tác dụng phụ của hàm tính Progress; **không đổi** công thức `completed/total/%`, cột Progress, hay `eutr_progression`. Chạy lặp lại với cùng dữ liệu cho cùng kết quả (không sinh dòng trùng). Lỗi ở bước trích Vendor chỉ được log, không chặn việc tính Progress/thao tác chính (giống xử lý lỗi hiện có của hàm này).
+- **Acceptance scenarios**:
+  1. **Given** PO1 có file `1.1 Invoice (AP-PD).pdf` gắn Step `1.1 Invoice` và Vendor `AP`, `PD` tồn tại ở 026, **When** Progress của PO1 được tính, **Then** `eutr_purchase_relationship` có đúng 2 dòng `PO1, AP` và `PO1, PD`.
+  2. **Given** như trên, **When** user xóa/đổi tên file để không còn file nào chứa `AP` rồi Progress được tính lại, **Then** dòng `PO1, AP` bị xóa, `PO1, PD` giữ nguyên.
+  3. **Given** file có phần còn lại chứa mã không có trong danh sách Vendor (ví dụ `(XX)`), **Then** mã đó bị bỏ qua, không tạo dòng.
+  4. **Given** file không có phần còn lại sau khi cắt tên Step (ví dụ `1.1 Invoice.pdf`), **Then** không tạo dòng cho file đó.
+  5. **Given** Progress được tính lại nhiều lần không đổi dữ liệu, **Then** bảng không có dòng trùng.
+
+### Session 2026-10-13 (Update 53) — Download file ở AVAILABLE FILES: hiển thị thanh tiến trình "Downloading Files..."
+
+- Input: "khi nhấn nút download, hiển thị thanh tiến trình download như hình để user biết" (dialog `Downloading Files...`: thanh progress, `0.0%`, `Files: 0/0`, `Current: Preparing...`, `Status: idle`).
+- **Bối cảnh**: Nút Download ở mỗi dòng AVAILABLE FILES của PurchId/View (`PurchaseOrderViewPage.jsx`, `handleDownloadFile`, Update 9) tải file trực tiếp nhưng không có dấu hiệu tiến độ; file lớn (tới 20MB — Update 8) làm user không biết đang tải.
+- **Yêu cầu (FR-238)**: Khi user nhấn Download ở một dòng AVAILABLE FILES, hệ thống MUST mở ngay dialog `Downloading Files...` (thanh % + `Files: x/1` + `Current`/`Downloaded` + `Status`) và tự đóng khi tải xong hoặc lỗi (lỗi vẫn hiện snackbar như cũ).
+- **Quyết định**: Dùng lại `ExportProgressDialog` + `useDownloadProgress` (cùng cơ chế với `005-eutr-sales-orders` Update 57); `Preparing... → Files 0/1 → 1/1`; nếu không biết tổng dung lượng thì dialog hiện thanh indeterminate. Danh sách Overview của 012 không có nút Download nên không đổi. Không đổi backend/API/DB; không đổi tên file tải về (Update 9/11).
+
+### Session 2026-10-13 (Update 52) — Màn hình index: cho phép user resize độ rộng các cột
+
+- **Bối cảnh**: Bảng index (PurchaseOrderOverviewPage) là MUI `<Table>` với độ rộng cột cố định/tự co giãn, người dùng không chỉnh được.
+- **Yêu cầu**: Các cột (Purch id, Vendor code, Vendor name, Template, Progress, Action) ở màn hình index MUST cho user kéo thay đổi độ rộng.
+- **Quyết định**: Thêm component dùng chung `ResizableHeaderCell` + hook `useResizableColumns` (`compliance-client/src/presentation/components/common/`), bảng dùng `tableLayout: 'fixed'`, kéo mép phải header để resize (min 60px), bảng cuộn ngang khi tổng rộng vượt khung. Độ rộng chỉ giữ trong phiên. Không đổi backend/API/DB; tiếp nối `004-eutr-documents` Update 33.
+
 ### Session 2026-10-08 (Update 15) — Assign template: ghi lịch sử vào bảng `eutr_history`
 
 - Input: "thêm bảng eutr_history gồm cột Id, Type, Value, RefValue, Version, Note, CreatedBy, CreatedDate (Id BIGINT, Type TINYINT, Value/RefValue/CreatedBy/Note VARCHAR(50), CreatedDate Datetime, Version Int). Khi user ở 012-eutr-purchase-orders sử dụng chức năng Assign template, sẽ lưu vào bảng eutr_history với type = 0, Value = PO, RefValue = templateId, Version = templateVersion".
@@ -480,6 +634,10 @@ trạng thái của step đó trong cây được cập nhật ngay mà không c
     `eutr_documents.Name` đã lưu — KHÔNG còn tính lại thành Step Name.
 
 ---
+22. **(Update 60, FR-256)** **Given** Template của PO có Step `1.step1`, **When** Upload file `1.step1PD-AP.pdf` (hoặc `1.step1 PD-AP.pdf`, `1. STEP 1 pd-ap.pdf`), **Then** document được gắn vào Step `1.step1` (khoảng trắng bị bỏ qua, không phân biệt hoa/thường).
+23. **(Update 61, FR-257)** **Given** Vendor `AP`, `PD` tồn tại ở 026 và PO có file `1.1 Invoice (ap-Pd).pdf` gắn Step `1.1 Invoice`, **When** Upload xong và hàm tính Progress/đồng bộ Vendor chạy, **Then** `eutr_purchase_relationship` có đúng 2 dòng `PO, AP` và `PO, PD` (Code gốc của Vendor, không phải bản HOA/thường của tên file) và `eutr_trader_relationship` có mũi tên `AP → PD`; Vendor có Code lưu dạng thường (vd `Ap`) cũng khớp với file `(AP-PD)`.
+24. **(Update 62, FR-258)** **Given** Type "General" đã được Assign Step `General doc` ở reference-types, **When** mở popup Add và chọn Type = "General", **Then** chỉ thấy ô Step (đã lọc theo Assign Steps) — không có ô Value/chip; chọn Step và Upload được ngay, document được tạo với Step đó và `eutr_references.RefValue = NULL`.
+25. **(Update 62, FR-258)** **Given** Template có Step `3.Response CSR Manual` lấy từ "PO" và file General cùng tên Step, **When** mở Map File/View, **Then** Step vẫn "Required - missing", file General không hiện ở AVAILABLE FILES và không tính vào Progress; nếu Step đó có TakeFrom = "General" thì file hiện (1 lần) và Step được tính "Mapped".
 
 ### User Story 3 - Tìm kiếm Purchase Order theo Purch Id hoặc Vendor (Priority: P2)
 
@@ -507,8 +665,12 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
    ngay (không đợi 500ms debounce), **Then** danh sách được lọc lại ngay lập tức theo đúng từ khóa
    đang nhập, về lại trang đầu — không cần chờ.
 
+5. **(Update 59, FR-255)** **Given** có Vendor tên "Acme Vendor Co.", **When** nhập `acme` vào ô tìm kiếm, **Then** danh sách hiển thị mọi PO có Vendor code của Vendor đó (cột Vendor name hiển thị "Acme Vendor Co.").
+
 ### Edge Cases
 
+- (Update 58) Tên file chứa mã của nhiều Vendor cùng hạng (ví dụ `(AP-DS)`): xếp vào nhóm có Code nhỏ hơn theo thứ tự chữ (AP). Step `IsGroup = 1` nhưng không có mục nào khớp Vendor: không hiện tiêu đề nhóm nào, các mục hiển thị phẳng.
+- (Update 55) Hai người cùng sửa quan hệ của một PO: Save sau ghi đè hoàn toàn (thay thế toàn bộ). Popup mở khi Vendor của PO vừa đổi (Progress tính lại): Save gặp Vendor không còn hợp lệ → 400, popup báo lỗi và tải lại dữ liệu. PO có đúng 1 Vendor: chỉ có 1 khối, không nối được.
 - Khi tổng số Purchase Order vượt quá một trang, người dùng MUST có thể chuyển trang.
 - Khi nguồn dữ liệu tham chiếu type = 15 tạm thời không phản hồi (lỗi mạng/ERP), danh sách MUST hiển
   thị thông báo lỗi rõ ràng, không làm trắng trang hay crash.
@@ -542,6 +704,9 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
   dấu "Current", OK vô hiệu cho tới khi chọn template khác; nếu không nằm trong danh sách (Draft/đã ẩn/đã xóa)
   thì không chọn sẵn mục nào. Nhấn OK nhiều lần liên tiếp chỉ
   gửi 1 yêu cầu. Template bị xóa/ẩn giữa lúc popup đang mở mà D365 từ chối: xử lý như lỗi (FR-046).
+- **(Update 60)** Hai Step chỉ khác nhau về khoảng trắng/hoa-thường (vd `Invoice AP` và `INVOICEAP`) trở nên đồng nhất khi so khớp → rơi vào quy tắc "Name dài nhất, bằng nhau lấy Id nhỏ nhất" (FR-081). Tên file chứa Step bị tách bởi ký tự khác khoảng trắng (vd `1.ste-p1`) vẫn KHÔNG khớp.
+- **(Update 61)** Tên file chứa token trùng Code Vendor chỉ khác hoa/thường (`ap`, `AP`, `Ap`) tính là MỘT Vendor (không sinh 2 dòng). Token là phần của từ dài hơn (vd `APPLE`) vẫn KHÔNG khớp vì chỉ so sánh nguyên token sau khi tách theo ký tự không phải chữ/số. Code Vendor rỗng/chỉ khoảng trắng bị bỏ qua.
+- **(Update 62)** Type "General" chưa Assign Step nào ở reference-types → combobox Step rỗng, không Upload được (cần cấu hình Assign Steps). Document "General" có `RefValue = NULL` không xuất hiện ở cây theo PO/Vendor (không có khoá liên kết) — chỉ thấy ở màn hình index 004.
 
 ## Requirements *(mandatory)*
 
@@ -727,6 +892,31 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
   định step nào đã có tài liệu, step nào còn thiếu, và hiển thị ở khu vực AVAILABLE FILES.
 - **EUTR History (mới — Update 15, dùng chung với 005)**: Một dòng lịch sử thao tác: Id, Type (0 = Assign template, 1 = Map/Unmap PO), Value (PO hoặc SalesId), RefValue (templateId hoặc PO), Version (version Template; chỉ dùng khi Type = 0), Note, CreatedBy, CreatedDate. Chỉ thêm mới, không sửa/xóa.
 
+- **FR-238 (Update 53)**: Nút Download ở dòng AVAILABLE FILES MUST hiển thị dialog tiến trình `Downloading Files...` cho tới khi tải xong/lỗi; dùng lại `ExportProgressDialog` + `useDownloadProgress`.
+- **FR-237 (Update 52)**: Bảng ở màn hình index MUST cho phép người dùng kéo mép header để thay đổi độ rộng từng cột; resize không làm đổi dữ liệu, phân trang, tìm kiếm hay các nút Action.
+
+- **FR-239 (Update 54)**: Mỗi lần tính Progress cho một PO, hệ thống MUST cắt tên Step khỏi tên các file đã upload của PO, đối chiếu phần còn lại với `Code` Vendor của 026-eutr-vendors (không phân biệt hoa/thường) và đồng bộ các cặp (PurchId, Vendor) tìm thấy vào bảng `eutr_purchase_relationship`.
+- **FR-240 (Update 54)**: Bảng `eutr_purchase_relationship` MUST có 2 cột `PurchId`, `Vendor`; cặp (PurchId, Vendor) là duy nhất (không có dòng trùng).
+- **FR-241 (Update 54)**: Mỗi lần chạy, dòng (PurchId, Vendor) mà không còn file nào của PO chứa mã Vendor đó MUST bị xóa theo điều kiện PurchId (+ Vendor); không ảnh hưởng PO khác.
+- **FR-242 (Update 54)**: Việc trích Vendor MUST NOT thay đổi kết quả `completed/total/%` của Progress; lỗi ở bước này chỉ được log, không chặn Progress hay thao tác Upload/Assign/View.
+- **FR-243 (Update 55)**: Cột Action của danh sách Purchase Orders MUST có nút **Trader relationship** ở mỗi dòng (chỉ hiển thị với user có quyền `'Update'` của menu `eutr-purchase-orders`) mở popup hiển thị mỗi Vendor của PO (lấy từ `eutr_purchase_relationship`, kèm `Name` từ `eutr_vendors`) thành một khối gồm Code, Name.
+- **FR-244 (Update 55)**: Trong popup, user MUST kéo được mũi tên có hướng giữa hai khối (A → B → C, A → C, B → C…) và xóa được mũi tên đã tạo; frontend MUST chặn nối vào chính nó, trùng cặp và tạo vòng.
+- **FR-245 (Update 55)**: Nhấn Save MUST thay thế toàn bộ mũi tên của PO trong bảng `eutr_trader_relationship` (`PurchId`, `FromVendor`, `ToVendor`, UNIQUE theo bộ ba) trong 1 transaction; mở lại popup MUST hiển thị đúng các mũi tên đã lưu.
+- **FR-246 (Update 55)**: Backend MUST từ chối (400, không ghi) khi `PurchId` rỗng, `FromVendor`/`ToVendor` không thuộc Vendor của PO trong `eutr_purchase_relationship`, tự nối, trùng cặp hoặc tạo vòng.
+- **FR-247 (Update 55)**: Khi bước đồng bộ của Update 54 xóa một Vendor khỏi `eutr_purchase_relationship`, mọi dòng `eutr_trader_relationship` của PO đó có Vendor ấy ở `FromVendor` hoặc `ToVendor` MUST bị xóa trong cùng lần chạy; lỗi bước này chỉ log (như FR-242).
+- **FR-248 (Update 56)**: Bảng ở màn hình index MUST có cột **Trader relationship**; mỗi bản ghi `eutr_trader_relationship` của PO là 1 line `<Name FromVendor> > <Name ToVendor>` (Name từ `eutr_vendors`, thiếu Name thì dùng Code), PO không có bản ghi thì ô trống.
+- **FR-249 (Update 56)**: Dữ liệu cột MUST được nạp theo lô cho các PO của trang hiện tại (1 request), lỗi nạp chỉ log và để ô trống; cột nạp lại sau khi Save ở popup Update 55.
+- **FR-252 (Update 58)**: Ở `PurchId/View`, các mục con của Step có `IsGroup = 1` MUST được gom nhóm theo Vendor dựa trên `eutr_trader_relationship` của PO: mục thuộc nhóm của Vendor hạng thấp nhất (đứng đầu chuỗi) có mã xuất hiện trong tên file; mỗi nhóm có dòng tiêu đề (Name + Code), chỉ hiển thị nhóm không rỗng, thứ tự theo hạng rồi Code.
+- **FR-253 (Update 58)**: Mục không có file hoặc file không chứa mã Vendor nào của quan hệ MUST hiển thị sau các nhóm, không tiêu đề; Step `IsGroup = 0` hoặc PO không có quan hệ MUST hiển thị phẳng như cũ; việc gom nhóm MUST NOT đổi Progress/missing/mapping.
+- **FR-254 (Update 58)**: `GET .../trader-relationship` MUST dùng policy `EutrPurchaseOrders.Read`; chi tiết Template MUST kèm `isGroup` của Step.
+- **FR-255 (Update 59)**: Ô tìm kiếm ở danh sách MUST tìm được theo **Vendor name** dạng chứa: client gửi tra cứu Vendor (`refType=14`) với điều kiện tên `eq '*ten*'` (OData wildcard), lấy các Vendor code khớp (tối đa 100) và OR vào bộ lọc `OrderAccount` của `refType=15` cùng Purch id/Vendor code. Lỗi tra cứu Vendor chỉ log; tìm theo Purch id/Vendor code vẫn chạy.
+- **FR-256 (Update 60)**: Khi Upload (và khi lọc Step cho combobox Edit của document Type "PO"), việc so khớp "tên file có chứa Name của Step" (FR-074/FR-075 của `004-eutr-documents`, mở rộng bởi 004 Update 35/FR-085) MUST xoá **toàn bộ khoảng trắng** ở cả tên file lẫn Name của Step và chuyển cả hai sang **chữ HOA** trước khi so sánh. Ví dụ Step `1.step1` khớp file `1.step1PD-AP`, `1.step1 PD-AP`, `1. STEP 1 pd-ap`. Chuẩn hoá chỉ dùng để so sánh — tên file lưu không đổi; Step có Name rỗng/chỉ khoảng trắng MUST bị bỏ qua; khi file khớp nhiều Step vẫn chọn Step có Name dài nhất (đo theo độ dài sau chuẩn hoá, FR-081). Kế thừa từ `004-eutr-documents` Update 35 (FR-085); popup Upload của PurchId/View dùng chung.
+- **FR-257 (Update 61)**: Hàm lấy danh sách Vendor chạy sau Upload (`RecomputeForPurchOrderAsync` → `SyncPurchaseVendorsAsync`) MUST chuẩn hoá (bỏ toàn bộ khoảng trắng + chuyển **chữ HOA**) tên file đã upload, tên Step và `Code` của từng Vendor (026) TRƯỚC khi đối chiếu; sau đó cắt tên Step khỏi tên file bằng bỏ tiền tố, tách phần còn lại theo ký tự không phải chữ/số và so token với Code Vendor để xác định Vendor của PO, tạo/xoá dòng `eutr_purchase_relationship` (FR-239..FR-241) và suy ra mũi tên `eutr_trader_relationship` (Update 57). Vendor chỉ ngăn cách bằng khoảng trắng (`AP PD`) không được tách; tên file phải dùng ký tự phân cách như `-`. Giá trị Vendor ghi vào hai bảng MUST là `Code` gốc của `eutr_vendors`; chuẩn hoá chỉ để so sánh, không đổi tên file hay Code lưu; không đổi API/DB.
+- **FR-258 (Update 62)**: Khi Type được chọn có Name = "General" (không phân biệt hoa/thường), popup Add/Upload MUST ẩn ô Value và chip; Step là trường duy nhất bắt buộc và lấy từ Assign Steps của Type đó (`eutr_reference_type_details`). Backend MUST chấp nhận `RefValues` rỗng cho Type này và ghi 1 dòng `eutr_references` (`StepId`, `RefType`, `RefValue = NULL`) cho mỗi document; không chạy Recompute Progress theo RefValue; check-existing bỏ qua. Popup Edit cũng ẩn Value, chỉ đổi Step. Type khác không đổi. Áp dụng chung cho `004-eutr-documents` (Update 61), `005-eutr-sales-orders` (Update 62), `012-eutr-purchase-orders` (Update 62). Tài liệu General dùng chung cho mọi PO (nhân bản theo mã PO ở `GetDocumentsByPoCodesAsync`); file General CHỈ khớp Step có TakeFrom = "General" (hiển thị, AVAILABLE FILES, tính Progress ở `EutrProgressionService`); nhãn TakeFrom lấy từ `TakeFromName` (`eutr_reference_types.Name`).
+
+- **FR-250 (Update 57)**: Sau khi đồng bộ Vendor (FR-239), hàm tính Progress MUST suy ra mũi tên từ tên file (cắt tên Step; mã Vendor viết trước = From, viết sau = To; dấu phân cách bất kỳ ngoài chữ/số; file ≥ 3 Vendor tạo các cặp liền kề) và chèn các mũi tên còn thiếu vào `eutr_trader_relationship`, không ghi đè/xóa mũi tên đã có.
+- **FR-251 (Update 57)**: Mũi tên suy ra MUST tuân FR-246 (bỏ tự nối, trùng, tạo vòng); lỗi chỉ log, không chặn Progress.
+
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
@@ -769,6 +959,20 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
   Template/Progress của dòng phản ánh template mới mà không cần tải lại trang thủ công; không có
   trường hợp nào gửi được nhiều hơn 1 template trong một lần nhấn OK.
 - **SC-014 (Update 15)**: 100% lần Assign template thành công tạo đúng 1 dòng lịch sử (Type = 0) với PO, templateId, version, người dùng và thời điểm chính xác; 0 dòng được tạo khi Assign thất bại.
+
+- **SC-016 (Update 53)**: 100% lượt nhấn Download ở AVAILABLE FILES hiện dialog `Downloading Files...` trong vòng 1 giây và tự đóng khi xong/lỗi.
+- **SC-015 (Update 52)**: 100% cột trên bảng index kéo resize được bằng chuột; độ rộng giữ nguyên khi đổi trang/tìm kiếm trong cùng phiên.
+
+- **SC-017 (Update 54)**: Với PO có file đặt tên theo dạng `<tên Step> (<mã>-<mã>)`, 100% mã khớp Vendor 026 xuất hiện đúng 1 dòng trong `eutr_purchase_relationship` sau khi Progress được tính; 0 dòng cho mã không khớp; 0 dòng còn sót cho Vendor không còn file nào chứa mã đó.
+- **SC-018 (Update 55)**: 100% mũi tên hợp lệ user vẽ và Save xuất hiện đúng 1 dòng trong `eutr_trader_relationship` và hiển thị lại đầy đủ khi mở lại popup; 0 dòng được ghi cho mũi tên không hợp lệ (tự nối, trùng, vòng, Vendor ngoài PO); 0 mũi tên mồ côi sau khi một Vendor bị gỡ khỏi `eutr_purchase_relationship`.
+- **SC-019 (Update 56)**: 100% PO có mũi tên hiển thị đúng số line và thứ tự trong cột Trader relationship; 0 line cho PO không có dữ liệu; số request nạp cột = 1 mỗi lần tải/đổi trang.
+- **SC-021 (Update 58)**: Với ví dụ DS>PD, AP>PD, PD>RES và file `(AP-PD)`, `(DS-PD)`, `(PD)`, cây hiển thị đúng 3 nhóm AP, DS, PD; 100% mục có file thuộc đúng 1 nhóm hoặc không nhóm; 0 thay đổi ở Progress.
+- **SC-022 (Update 59)**: Nhập một phần Vendor name vào ô tìm kiếm trả về 100% PO của các Vendor có tên chứa từ khóa (không phân biệt hoa/thường), ngoài các PO khớp Purch id/Vendor code như cũ.
+- **SC-023 (Update 60)**: 100% file có tên chứa Name của Step sau khi bỏ khoảng trắng và đổi HOA (vd `1.step1PD-AP` với Step `1.step1`) được gắn đúng Step khi Upload; 0 trường hợp file không gắn được chỉ vì khác khoảng trắng/hoa-thường.
+- **SC-024 (Update 61)**: 100% mã Vendor có trong tên file, ngăn cách bằng `-`/ký tự không phải chữ-số (bất kể HOA/thường, khoảng trắng thừa, vd `ap`, `Ap`, `AP-PD`, `1. STEP 1 pd-ap`), khớp được với Vendor có Code tương ứng ở 026 và sinh đúng một dòng `eutr_purchase_relationship` (cùng mũi tên Trader relationship theo thứ tự viết); 0 trường hợp Vendor không gắn được chỉ vì khác hoa/thường hoặc khoảng trắng.
+- **SC-25 (Update 62)**: 100% lần Upload với Type "General" hoàn tất chỉ bằng thao tác chọn Step (không nhập Value) và tạo document có Step đúng; 0 trường hợp ô Value hiện ra với Type "General".
+
+- **SC-020 (Update 57)**: 100% file có ≥ 2 mã Vendor hợp lệ cho ra đúng mũi tên From→To theo thứ tự viết trong `eutr_trader_relationship`; 0 dòng trùng, 0 vòng, 0 mũi tên của user bị mất sau khi chạy lại.
 
 ## Assumptions
 
@@ -837,3 +1041,13 @@ xác nhận danh sách kết quả chỉ còn các dòng khớp từ khóa đó.
 - (Update 13) Danh sách popup Assign template KHÔNG lọc theo Vendor của Purchase Order (đã chốt ở clarify);
   mọi template active (Approved) đều hiển thị cho mọi Purchase Order.
 - (Update 15) `Version` lấy từ VersionId của dòng template được chọn (cùng giá trị gửi D365 ở `versionId`, ép về số nguyên); `CreatedBy` lấy tên đăng nhập người dùng hiện tại (tối đa 50 ký tự); `Note` để trống ở Type = 0. Thay đổi DB MUST đi kèm file migration đánh số mới.
+- (Update 53) Thanh tiến trình chỉ phản ánh tiến độ tải file về trình duyệt; file được backend trả về một lần (base64) nên tiến độ hiển thị `Preparing...` → hoàn tất.
+- (Update 54) Mã Vendor trong tên file được nhận diện bằng khớp nguyên mã (không phân biệt hoa/thường) với `Code` ở 026-eutr-vendors, sau khi bỏ phần mở rộng file và tên Step; Vendor chưa khai báo ở 026 bị bỏ qua. Bảng đi kèm migration mới trong `Sqls/Migration/`. Việc này chỉ lưu quan hệ PO–Vendor, chưa dùng để lọc/hiển thị ở UI.
+- (Update 55) Tên bảng/cột `eutr_trader_relationship` do nhóm phát triển đề xuất (user cho phép tự đặt). Quan hệ là có hướng và không có vòng; dữ liệu chỉ lưu, chưa dùng để hiển thị ở nơi khác. Thay đổi DB đi kèm migration `44_…` mới. Thêm dependency `@xyflow/react` cho client.
+- (Update 56) Cột Trader relationship chỉ đọc; không lọc/sắp xếp theo cột này. Dùng Name của `eutr_vendors` tại thời điểm hiển thị (đổi tên vendor thì cột đổi theo).
+- (Update 59) Tìm theo Vendor name là tra cứu hai bước ở client (không đổi backend/API/DB): tối đa 100 Vendor khớp tên được đưa vào bộ lọc PO; nếu Vendor khớp nhiều hơn, chỉ 100 Vendor đầu (theo Code) được xét.
+- (Update 58) Cách nhận diện mã Vendor trong tên file dùng lại quy tắc Update 54 (bỏ đuôi + tên Step, tách theo ký tự không phải chữ/số, khớp Code không phân biệt hoa/thường). Chỉ gom nhóm ở một cấp: các mục con trực tiếp của Step `IsGroup = 1`. Hạng tính theo độ dài đường đi dài nhất từ Vendor không có mũi tên vào.
+- (Update 60) Chuẩn hoá chỉ gồm bỏ ký tự khoảng trắng (`char.IsWhiteSpace` ở backend, regex khoảng trắng ở client) và đổi HOA (`ToUpperInvariant`/`toUpperCase`); không bỏ dấu câu, không bỏ dấu tiếng Việt. Không đổi API, DB, tên file lưu.
+- (Update 61) Chuẩn hoá của hàm Vendor gồm bỏ khoảng trắng (`char.IsWhiteSpace`) + đổi HOA (`ToUpperInvariant`) — cùng quy tắc Update 60; không bỏ dấu câu, không bỏ dấu tiếng Việt, không so khớp mờ. Hệ quả: Vendor chỉ ngăn cách bằng khoảng trắng không tách được. Không đổi API, DB, tên file lưu, `Code` Vendor lưu.
+- (Update 62) Tên Type được nhận diện là "General" theo Name (như "PO"/"Vendor"); không thêm cột cờ vào `eutr_reference_types`. Cột `eutr_references.RefValue` đã cho phép NULL nên không cần migration.
+

@@ -2312,3 +2312,26 @@ Phase 0 — chốt các quyết định kỹ thuật. Các điểm nghiệp vụ
 - **Decision**: Resolve Template của PO qua service mới `IEutrPoTemplateStepResolver` (`EutrPoTemplateStepResolver`): TemplateCode lấy từ D365 qua `IComplDynamicsService.GetDynRefePagedAsync` refType 15 (`RSVNEutrPurchOrders.EutrTemplate`, nguồn của màn hình 012) filter `Code eq PoCode`, không có thì refType 16 (`RSVNEutrSalesOrderPurchases`, màn hình 005) → `IEutrTemplatesRepository.GetManyByCodesWithDetailsAsync` (chỉ template `IsDeleted=0, IsHide=0`) → tập `StepId` của `eutr_template_details`. **Không dùng `eutr_purchase_attachments`** (chỉ có dòng sau Save PO Mapping; bản đầu của Update 32 dùng bảng này nên chặn nhầm PO có Template ở D365); lọc `eutr_steps` theo tập này trước khi so khớp `Contains` + chọn Name dài nhất (Quyết định 82). Tập rỗng (chưa gắn Template/Template không Step) → trả lỗi từng file, KHÔNG tạo thư mục SharePoint. Popup Edit dùng endpoint mới `POST /api/eutr-documents/po-template-step-ids` (`EutrDocumentsService.GetPoTemplateStepIdsAsync`, hợp Step của mọi PO truyền vào) để lọc cùng tập.
 - **Lý do**: nguồn Step thật sự của PO là cây Template (cùng nguồn `EutrProgressionService`/Map File); khớp toàn bộ `eutr_steps` + "Name dài nhất" gắn nhầm vào Step ngoài Template khi tên Step là tiền tố của Step khác (vd. `APH Business License` vs `APH Business License(AP)`).
 - **Rejected**: bỏ tie-break "dài nhất" (vẫn khớp Step ngoài Template); fallback toàn bộ `eutr_steps` khi PO chưa gắn Template (giữ nguyên lỗi gắn nhầm — người dùng đã chọn chặn Upload); ném exception thay vì kết quả từng file (UI hiện lỗi theo file ở Upload progress).
+
+## Quyết định 84 — So khớp tên file với tên Step: bỏ toàn bộ khoảng trắng + UPPERCASE (spec Update 35, FR-085)
+
+- **Decision 1**: Chuẩn hoá cả tên file lẫn `eutr_steps.Name` bằng "bỏ mọi ký tự khoảng trắng + đổi HOA" rồi mới `Contains` (ordinal). Backend: `EutrUploadService.NormalizeForStepMatch` (`char.IsWhiteSpace`, `ToUpperInvariant`); client: `loadMatchingStepsForPoByName` (regex khoảng trắng, `toUpperCase`) — hai nơi PHẢI cùng quy tắc để combobox Edit và kết quả Upload không lệch nhau.
+- **Decision 2**: Chuẩn hoá chỉ để so sánh; tên file lưu/đặt lại và Step Name hiển thị giữ nguyên (không đổi dữ liệu, không cần migration).
+- **Decision 3**: Tie-break FR-081 ("Name dài nhất, bằng nhau lấy Id nhỏ nhất") đo theo độ dài Name sau chuẩn hoá để nhất quán với phép so khớp.
+- **Decision 4**: Không bỏ dấu câu/dấu tiếng Việt và không dùng so khớp mờ — chỉ khoảng trắng + hoa/thường theo đúng yêu cầu; Step Name rỗng/chỉ khoảng trắng bị bỏ qua để tránh khớp mọi file.
+- **Rejected**: chỉ `Replace(" ", "")` (bỏ sót tab/NBSP); chuẩn hoá ở DB/cột tính sẵn (thừa, không cần đổi schema).
+- **Phạm vi**: `progressUtils.js` (`stepNames.includes(detail.stepName)`) giữ nguyên — so khớp Step Name đã lưu trên document, không phải tên file.
+
+## Update 61 — Upload Type "General": chỉ chọn Step, ẩn Value (FR-086)
+
+- **Decision 1**: Nhận diện Type theo Name "General" (`trim` + lower-case) như `isPoTypeName`; không thêm cờ/cột DB.
+- **Decision 2**: Vẫn ghi 1 dòng `eutr_references` với `RefValue = NULL` (thay vì không ghi dòng nào) vì Step của document chỉ lưu ở `eutr_references.StepId` — không ghi sẽ mất liên kết Step.
+- **Decision 3**: Step lấy từ Assign Steps (`eutr_reference_type_details`) — cơ chế `loadFilteredSteps` sẵn có (FR-043) nên không đổi.
+- **Decision 4**: Controller `eutr-upload-multi-by-type` bỏ ràng buộc "RefValues ≥ 1" chỉ cho "General"; Type khác vẫn trả 400.
+- **Rejected**: gán RefValue giả (`"GENERAL"`) — sinh dòng rác khi JOIN theo PO/Vendor và `RecomputeForPurchIdAsync`; tạo luồng Upload riêng — trùng lặp với `UploadMultipleForReferenceTypeAsync`.
+- **Phạm vi**: client `EutrDocumentsFormDialog.jsx` (`isGeneralTypeName`, `showValue`, `canSubmit`); backend `SharePointController`, `EutrUploadService`; không đổi schema.
+- **Decision 5 (Update 61)**: Document General (`RefValue = NULL`) dùng chung mọi PO — nhân bản trong `GetDocumentsByPoCodesAsync` để mọi consumer (list-po-references, Progress, đồng bộ) nhận cùng dữ liệu, thay vì sửa từng nơi. Đánh đổi: bản nhân bản khớp cả PurchId và Vendor code nên client khử trùng theo id.
+- **Decision 6 (Update 61)**: Khớp theo Type chỉ siết cho file General (General ↔ Step General); file Type khác giữ khớp theo tên để không đổi hành vi cũ.
+- **Decision 7 (Update 61)**: Nhãn TakeFrom lấy từ `eutr_reference_types` qua `TakeFromName` vì TakeFrom là FK; bảng hằng số `TAKE_FROM_LABELS` chỉ còn là fallback.
+- **Decision 8 (Update 61)**: Progress backend mã hoá Step General bằng tiền tố khoá thay vì đổi kiểu danh sách Step sang tuple (ít sửa ở 3 điểm so khớp).
+- **Rejected**: gán RefValue = PurchId cho General (không còn "dùng chung"); enqueue Recompute mọi PO khi upload General (tốn kém).

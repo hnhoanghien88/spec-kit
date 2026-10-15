@@ -125,3 +125,9 @@ If reachable in a test environment (e.g. by temporarily forcing a D365 call to f
 the run stops at the first failure, `data.success = false`, and `data.message` reports which phase was
 in progress and the counts completed before the failure — with no automatic rollback of rows already
 saved.
+
+## Update 2 (2026-10-13) — `eutr_progression` Type filter
+
+1. Chạy migration 41; `SELECT Type, COUNT(*) FROM eutr_progression GROUP BY Type;` → toàn bộ bản ghi cũ `Type = 0` (SC-007).
+2. Chèn tay 1 bản ghi `Type = 1, PurchId = 'PO-X'`; mở eutr/sales-orders → progress không đổi (FR-021).
+3. Gọi `test-so-progression`; kiểm tra bản ghi `Type = 1` không bị sửa/xóa, summary không đếm nó (FR-022).

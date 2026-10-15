@@ -2271,3 +2271,9 @@ Code audit: backend đã có `GET /api/eutr-templates/export`, `POST /api/eutr-t
 - **Decision 4 — Tra template theo Code**: thêm `GetCurrentByCodeAsync` (IsDeleted=0, IsHide=0) vào repository.
 - **Decision 5 — Kết quả**: mở rộng `ImportEutrTemplatesResultDto` (giữ `TotalRows/SuccessCount/FailCount/Errors`, thêm `Templates[]` {Code, Name, Action: Created|Updated|Failed, Rows, Message}); `ImportResultDialog` hiển thị thêm bảng theo template.
 - **Decision 6 — Vendor mapping/IsDefault**: không đọc/ghi (FR Assumption Update 30); `IsDefault` giữ nguyên giá trị hiện có khi Update.
+
+## Update 31 (2026-10-13) — Panel Versions + View chỉ-xem
+
+- **Decision 1 — Nguồn dữ liệu**: Liệt kê version = các dòng `eutr_templates` cùng Code, IsDeleted=0 (gồm IsHide=1), VersionId giảm dần, kèm StepsCount/CreatedDate/CreatedBy; lúc plan cần kiểm tra endpoint lấy chi tiết theo Id hiện có đã đọc được dòng IsHide=1 chưa. Rationale: RequestChange (Update 16) đã giữ nguyên dòng cũ nên không cần schema mới.
+- **Decision 2 — View chỉ-xem**: Tái dùng màn hình cây step (TemplateBuilderPage) với cờ chỉ-xem bắt buộc (mở rộng `isReadOnly` hiện chỉ áp dụng cho PublicD365) thay vì tạo màn hình mới.
+- **Decision 3 — Bố cục**: Master-detail hai cột; giữ cột Version trên grid trái.

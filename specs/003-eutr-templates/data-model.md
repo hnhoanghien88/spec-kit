@@ -551,3 +551,7 @@ A duplicated step is a new in-memory `eutr_template_details` row (no Id) copying
 ## Update 30 (2026-10-12)
 
 Không đổi schema. Thêm DTO response `ImportEutrTemplatesTemplateResult` {Code, Name, Action(Created|Updated|Failed), Rows, Message} và trường `Templates` trong `ImportEutrTemplatesResultDto`; `ImportEutrTemplatesRowError` thêm `TemplateCode`. Thêm repository method `GetCurrentByCodeAsync(code)`. Quy tắc Import: nhóm theo Template Code (trống → theo Name); cha phải đứng trước con; tên step duy nhất trong template (so khớp không phân biệt hoa/thường); Public D365 bị từ chối.
+
+## Update 31 (2026-10-13)
+
+Không đổi bảng/cột. Panel Versions đọc các dòng `eutr_templates` cùng `Code` (IsDeleted=0, gồm IsHide=1): VersionId, StepsCount (đếm `eutr_template_details` theo TemplateId), CreatedDate, CreatedBy.

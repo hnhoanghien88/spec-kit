@@ -57,3 +57,8 @@ Chạy trên DB thử nghiệm (thao tác phá hủy dữ liệu).
 3. Như 2, bấm Delete xác nhận → Step biến mất; kiểm tra DB: không còn dòng `StepId` đó ở `eutr_template_details`, `eutr_master_documents`, `eutr_reference_type_details`, `eutr_references`/`eutr_reference_details` liên quan; Template A, B vẫn còn các step khác, cây không lỗi.
 4. Chọn nhiều Step (một số nằm trong Template) → hộp liệt kê theo từng Step → xác nhận → tất cả xóa.
 5. Lỗi giữa chừng (mô phỏng) → không xóa gì (transaction).
+
+## Update 3 (2026-10-14) — IsGroup
+
+1. Chạy migration `45_alter_eutr_steps_add_isgroup.sql`; Step cũ có Group = No.
+2. Thêm/sửa Step, bật checkbox "Group by trader relationship" → danh sách cột Group = Yes (FR-016, SC-008).
