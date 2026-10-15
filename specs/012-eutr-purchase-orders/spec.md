@@ -10,6 +10,13 @@
 
 ## Clarifications
 
+### Session 2026-10-15 (Update 63) — Màn hình index: giữ điều kiện tìm kiếm (PO/Vendor), trang và page size khi vào View rồi Back
+
+- **Bối cảnh**: Tìm theo PO/Vendor rồi bấm View một PO, bấm Back (`navigate('/eutr/purchase-orders')`) thì `PurchaseOrderOverviewPage` mount lại với state rỗng → mất điều kiện tìm kiếm, danh sách về trang đầu.
+- **Yêu cầu**: Quay lại từ View MUST giữ nguyên ô Search, trang hiện tại và page size, và nạp lại danh sách theo đúng các giá trị đó.
+- **Quyết định**: Lưu `{ search, page, pageSize }` vào `sessionStorage` (khoá `eutrPurchaseOrdersListState`, cùng cách `TemplateListPage`) mỗi lần `fetchPurchaseOrders` chạy; khi mount khởi tạo state từ đó. Chỉ client (`PurchaseOrderOverviewPage.jsx`), không đổi API/DB. `sessionStorage` lỗi/không dùng được thì rơi về giá trị mặc định; đóng tab thì mất.
+- **Acceptance scenarios**: **Given** user search "X" ở trang 2, **When** bấm View một PO rồi Back, **Then** ô Search vẫn là "X", ở trang 2 và danh sách lọc theo "X".
+
 ### Session 2026-10-15 (Update 62) — Upload với Type = "General": chỉ chọn Step, ẩn Value (FR-258, SC-25) (kế thừa 004 Update 61)
 
 - **Bối cảnh**: Popup Add/Upload (`EutrDocumentsFormDialog.jsx`) luôn hiện ô Value (`EutrAddValueAutocomplete`) và bắt buộc ≥ 1 chip (`canSubmit`: `chips.length > 0`); backend `SharePointController.eutr-upload-multi-by-type` trả 400 "At least one reference value is required" và `UploadMultipleForReferenceTypeAsync` ghi 1 dòng `eutr_references` cho mỗi RefValue. Type "General" là tài liệu chung, không gắn PO/Vendor/Invoice cụ thể nên không có Value để nhập.
