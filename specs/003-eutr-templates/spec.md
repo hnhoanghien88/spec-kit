@@ -10,6 +10,13 @@
 
 ## Clarifications
 
+### Session 2026-10-16 (Update 32) — Nút Save ở panel Template Information (đổi Name / Alert for)
+
+- Input: "cập nhật 003-eutr-templates, trong màn hình Edit, khi click vào template Tree, bên template information hiển thị nhưng chỉnh không được, cho nút Save để có thể đổi tên, đổi alert cho template"
+- Bối cảnh: từ Update 26 nút "Save template" bị gỡ, chỉ còn "Save template & Public D365"; panel Template Information (TemplateBuilderPage.jsx) cho nhập Name/Alert for nhưng không có cách lưu riêng, người dùng buộc phải Public D365 mới lưu được.
+- Change: thêm nút **Save** trong panel Template Information. Save → validate Name/Alert for (dùng lại `validateAndBuildPayload`) → gọi Update-template hiện có (payload gồm cả cây step hiện tại), giữ Status Draft, KHÔNG đồng bộ D365, KHÔNG rời màn hình; snackbar thành công/lỗi (kể cả lỗi trùng tên từ backend).
+- Quyết định (mặc định hợp lý): (1) Không thêm endpoint/schema. (2) Save khóa khi chỉ-xem/Public D365 (`isReadOnly`) hoặc đang lưu/đang publish. (3) Save cũng lưu thay đổi cây step chưa lưu (cùng payload) và reset cờ dirty.
+
 ### Session 2026-10-13 (Update 31) — Panel "Versions" bên phải màn hình danh sách + xem (chỉ đọc) cây step của từng version
 
 - Input: "cập nhật 003-eutr-templates. màn hình index, 1 template có thể có nhiều version. nên thêm 1 cột bên phải để hiển thị version. Khi click vào 1 template, bên phải sẽ hiển thị toàn bộ version của template đó với các cột Version, Steps, Action chỉ View, CreatedDate, CreatedBy. Khi click nút view sẽ hiển thị template tree của version đó, không cho sửa, chỉ xem".
@@ -2432,6 +2439,8 @@ Trên TemplateListPage, người dùng click vào một template ở grid bên t
 - **FR-121 (Update 31)**: Nhấn View MUST mở cây step của đúng version đã chọn ở chế độ chỉ-xem hoàn toàn (kể cả version Draft, Public D365 hay đã ẩn): không thể thêm/sửa/xóa/kéo thả/di chuyển/duplicate step, không có Save, Public D365, Request change; người dùng quay lại được danh sách.
 - **FR-122 (Update 31)**: Panel Versions MUST được làm mới khi dữ liệu thay đổi (Request change tạo version mới, xóa template; nếu dòng đang chọn biến mất do đổi trang/tìm kiếm thì panel về trạng thái chưa chọn). Tính năng không thay đổi dữ liệu và không đổi hành vi của các chức năng hiện có.
 - **FR-123 (Update 31)**: Panel Versions và màn hình View dùng cùng quyền truy cập hiện có của màn hình EUTR Templates.
+- **FR-124 (Update 32)**: Panel Template Information MUST có nút **Save** lưu Name và Alert for của template (kèm cây step hiện tại) qua Update-template hiện có, giữ Status Draft, không đồng bộ D365, không rời màn hình; validate Name/Alert for bắt buộc; hiện thông báo thành công/lỗi.
+- **FR-125 (Update 32)**: Nút Save MUST bị khóa khi màn hình chỉ-xem, template Public D365, hoặc đang Save/Public D365.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -2794,6 +2803,7 @@ Trên TemplateListPage, người dùng click vào một template ở grid bên t
 - **SC-079 (Update 30)**: Export rồi Import lại cùng file với template Draft cho 0 thay đổi dữ liệu.
 - **SC-080 (Update 31)**: Người dùng xem được cây step của một version cũ chỉ với 2 thao tác (chọn template, nhấn View) trong dưới 10 giây.
 - **SC-081 (Update 31)**: 100% version mở bằng View không thể bị chỉnh sửa (0 thao tác thay đổi dữ liệu khả dụng), và panel liệt kê đủ 100% version chưa xóa của template.
+- **SC-082 (Update 32)**: Người dùng đổi tên/Alert for và lưu được chỉ với 1 thao tác Save, không cần Public D365.
 
 ## Assumptions
 
@@ -3135,3 +3145,4 @@ Trên TemplateListPage, người dùng click vào một template ở grid bên t
 
 - (Update 30) Chỉ có Export/Import ở mức danh sách (không có trên màn hình Edit/ApplyCustomerPage); vendor mapping (eutr_template_references) KHÔNG nằm trong file này và không bị đổi khi Import (đã có Import/Export riêng ở Update 14). Import chỉnh sửa tại chỗ nên không tạo version mới; muốn sửa template Public D365 phải Request change trước. IsDefault không bị Import thay đổi (UI đã ẩn ở Update 28). Template mới từ Import tuân theo mọi ràng buộc của Create (FR-099). Quyền truy cập dùng cùng quyền hiện có của màn hình EUTR Templates. Giới hạn kích thước file/số dòng dùng mặc định chung của hệ thống cho import Excel.
 - (Update 31) Chỉ thêm giao diện xem; không đổi schema, không đổi quy tắc tạo version (Update 16). Dữ liệu version dựa trên các dòng cùng Code đã có sẵn (version cũ giữ nguyên cây step khi bị ẩn). Created Date/Created By lấy từ chính dòng version đó. Không phân trang trong panel (số version/template nhỏ). Version đã xóa mềm không hiển thị.
+- (Update 32) Nút Save ở Template Information chỉ là thao tác UI mới trên Update-template hiện có; không đổi schema/API. Save không đổi Status và không đụng D365; muốn sửa template Public D365 vẫn phải Request change trước.

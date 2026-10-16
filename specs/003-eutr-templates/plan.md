@@ -2138,3 +2138,7 @@ Add `duplicateStep` to `useStepTree.js` and a Duplicate toolbar button + `handle
 ## Update 31 (2026-10-13) — Panel Versions + View chỉ-xem
 
 **Summary**: Master-detail trên TemplateListPage; endpoint đọc version theo Code; View tái dùng TemplateBuilderPage ở chế độ chỉ-xem. Chi tiết: research.md "Update 31". **Constitution Check**: không đổi schema.
+
+## Update 32 (2026-10-16) — Nút Save ở Template Information
+
+**Summary**: Thêm nút Save vào panel Template Information của TemplateBuilderPage (handleSaveInfo, tái dùng validateAndBuildPayload + updateUseCase). Chỉ FE; không đổi schema/API. **Constitution Check**: không vi phạm.

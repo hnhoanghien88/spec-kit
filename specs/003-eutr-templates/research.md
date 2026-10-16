@@ -2277,3 +2277,8 @@ Code audit: backend đã có `GET /api/eutr-templates/export`, `POST /api/eutr-t
 - **Decision 1 — Nguồn dữ liệu**: Liệt kê version = các dòng `eutr_templates` cùng Code, IsDeleted=0 (gồm IsHide=1), VersionId giảm dần, kèm StepsCount/CreatedDate/CreatedBy; lúc plan cần kiểm tra endpoint lấy chi tiết theo Id hiện có đã đọc được dòng IsHide=1 chưa. Rationale: RequestChange (Update 16) đã giữ nguyên dòng cũ nên không cần schema mới.
 - **Decision 2 — View chỉ-xem**: Tái dùng màn hình cây step (TemplateBuilderPage) với cờ chỉ-xem bắt buộc (mở rộng `isReadOnly` hiện chỉ áp dụng cho PublicD365) thay vì tạo màn hình mới.
 - **Decision 3 — Bố cục**: Master-detail hai cột; giữ cột Version trên grid trái.
+
+## Update 32 (2026-10-16) — Nút Save ở Template Information
+
+- **Decision 1**: Tái dùng Update-template hiện có (payload name/alertFor/isDefault/details) và `validateAndBuildPayload`; không thêm endpoint. Rationale: Update 26 chỉ gỡ nút UI, backend vẫn sẵn.
+- **Decision 2**: Save không gọi approve/D365, không navigate; khóa theo `isReadOnly`.

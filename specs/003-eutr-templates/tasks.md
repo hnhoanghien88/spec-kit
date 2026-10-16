@@ -3247,3 +3247,9 @@ T454 sequentially (build + end-to-end)
 - [X] T31-05 FE: chế độ chỉ-xem cho TemplateBuilderPage (khóa mọi thao tác sửa, ẩn Save/Public D365/Request change)
 - [X] T31-06a eslint (file đã sửa: 0 lỗi mới), vite build OK, BE Application/Infrastructure build OK (Api exe đang chạy nên bước copy bị khóa, không phải lỗi code)
 - [ ] T31-06b Manual theo quickstart Update 31 — NOT run (cần môi trường live)
+
+## Phase 32: Update 32 — Nút Save ở Template Information (FR-124..FR-125, SC-082)
+
+- [X] T32-01 FE: TemplateBuilderPage.jsx thêm `savingInfo` + `handleSaveInfo` + nút Save trong panel Template Information (khóa khi isReadOnly/savingInfo/publishing)
+- [X] T32-02 `npx eslint` TemplateBuilderPage.jsx: 0 lỗi
+- [ ] T32-03 Manual theo quickstart Update 32 — NOT run (cần môi trường live)

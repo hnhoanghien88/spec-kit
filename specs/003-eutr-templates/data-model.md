@@ -555,3 +555,7 @@ Không đổi schema. Thêm DTO response `ImportEutrTemplatesTemplateResult` {Co
 ## Update 31 (2026-10-13)
 
 Không đổi bảng/cột. Panel Versions đọc các dòng `eutr_templates` cùng `Code` (IsDeleted=0, gồm IsHide=1): VersionId, StepsCount (đếm `eutr_template_details` theo TemplateId), CreatedDate, CreatedBy.
+
+## Update 32 (2026-10-16)
+
+Không đổi bảng/cột; Save ghi lại Name/AlertFor (và details) qua Update-template hiện có.

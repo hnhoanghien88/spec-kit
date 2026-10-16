@@ -1514,3 +1514,10 @@ implemented).
 3. Nhấn View ở version cũ → cây step đúng dữ liệu version đó, mọi nút sửa bị ẩn/khóa (FR-121, SC-080).
 4. Request change / xóa template khi panel mở → panel làm mới (FR-122).
 5. Thu hẹp cửa sổ → panel xếp dưới grid (FR-118).
+
+## Update 32 (2026-10-16) — Nút Save ở Template Information
+
+1. Mở Edit template Draft, click tiêu đề Template Tree → panel Template Information; đổi Name + Alert for, nhấn Save → snackbar thành công, vẫn ở màn hình, Status vẫn Draft, về danh sách thấy tên/alert mới (FR-124, SC-082).
+2. Xóa trống Name hoặc Alert for rồi Save → báo lỗi bắt buộc, không gọi API.
+3. Đổi sang tên đã tồn tại → hiện lỗi trùng tên từ backend.
+4. Template Public D365 / màn hình View → nút Save bị khóa (FR-125).
